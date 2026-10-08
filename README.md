@@ -2,9 +2,9 @@
 
 An intended standalone Rust reimplementation of Insaniquarium Deluxe, targeting Windows first and reading assets from each user's owned installation. This is an unofficial fan project, unaffiliated with the game's developers or publisher.
 
-The workflow is installed and a first-tank Rust runtime builds with source-based regression checks. Runtime execution validation is in progress; full gameplay fidelity is not yet established. The installed game binaries are authoritative and WinFish is secondary. See [STATUS.md](STATUS.md) for actual evidence and gaps.
+The workflow is installed and the first-tank Rust feeding/growth/coin loop passed a normal-speed window run. Fish facing was corrected and visually checked. Full gameplay fidelity remains unverified. The installed game binaries are authoritative and WinFish is secondary. See [STATUS.md](STATUS.md) for current evidence and gaps.
 
-The complete runtime goal remains in [requirements](docs/requirements.md). The first milestone is a real tank interaction loop with an animated guppy, food consumption, and naturally produced collectible currency; the next concrete task and evidence requirements are in [DESIGN](docs/DESIGN.md#next-task-original-game-contract).
+The complete runtime goal remains in [requirements](docs/requirements.md). The [coverage checklist](docs/compatibility.md) records missing systems; the next integrated task is [first Adventure completion](docs/DESIGN.md#m2-next-integrated-outcome).
 
 ## Start here
 
@@ -42,7 +42,7 @@ That host helper requires PSScriptAnalyzer; it was available for setup. It is op
 
 ## Build and run
 
-Use the installed Rust1.95 MSVC toolchain from PowerShell7. Direct dependencies and transitives are pinned. Formatting, warnings-as-errors lint,24 regression tests and native build passed. Normal-speed gameplay validation is in progress.
+Use the installed Rust1.95 MSVC toolchain from PowerShell7. Direct dependencies and transitives are pinned. Formatting, warnings-as-errors lint,26 regression tests and native build passed. The [controlled window report](docs/playtests/2026-10-08-m1-03.md) identifies the tested build and limits.
 
 ```powershell
 $cargoExecutable = (Get-Command cargo).Source
@@ -53,7 +53,7 @@ $runtimeArguments = @('--new-game', '--seed', '42')
 & $runtimeExecutable @runtimeArguments
 ```
 
-Steam discovery is automatic; pass `--game-dir <directory>` if needed. Project saves use `%LOCALAPPDATA%/TurbofishDeluxe`, separate from retail saves; use `--save-dir` for isolated checks. `--evidence-dir` records identity, normal-speed events/state, and requested screenshots. Escape pauses; S saves; Q while paused saves/exits. Runtime commands are implemented but their visible path is still under validation.
+Steam discovery is automatic; pass `--game-dir <directory>` if needed. Project saves use `%LOCALAPPDATA%/TurbofishDeluxe`, separate from retail saves; use `--save-dir` for isolated checks. `--evidence-dir` records identity, normal-speed events/state, and requested screenshots. Escape pauses; S saves; Q while paused saves/exits. These commands currently support the first tank only.
 
 ```powershell
 $validatorPath = Join-Path $env:USERPROFILE '.codex\tools\Invoke-CodexPowerShell.ps1'

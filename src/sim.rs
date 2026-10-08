@@ -1,0 +1,1371 @@
+//! First Adventure tank simulation. Functional rules are source-derived from
+//! WinFish f919b3c (see docs/behavior-contract.md); retail parity is untested.
+//! Positions are logical 640x480 coordinates and advance in 28 ms ticks.
+
+use serde::{Deserialize, Serialize};
+
+pub const TICK_MS: u32 = 28;
+pub const BOARD_WIDTH: f32 = 640.0;
+pub const BOARD_HEIGHT: f32 = 480.0;
+pub const FOOD_PRICE: i32 = 5;
+pub const GUPPY_PRICE: i32 = 100;
+pub const EGG_PRICE: i32 = 150;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FishSize {
+    Small,
+    Medium,
+    Large,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FishPose {
+    Swim,
+    Eat,
+    Turn,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CoinKind {
+    Silver,
+    Gold,
+}
+
+impl CoinKind {
+    pub fn value(self) -> i32 {
+        match self {
+            Self::Silver => 15,
+            Self::Gold => 35,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Fish {
+    pub id: u64,
+    pub x: f32,
+    pub y: f32,
+    pub vx: f32,
+    pub vy: f32,
+    pub facing_right: bool,
+    pub frame: u8,
+    pub turn_ticks: i8,
+    pub hunger_visible: bool,
+    pub size: FishSize,
+    pub hunger: i32,
+    pub food_ate: u8,
+    pub food_needed_to_grow: u8,
+    pub beginner: bool,
+    pub eating_ticks: u8,
+    pub growth_ticks: u8,
+    pub coin_timer: u16,
+    pub coin_threshold: u16,
+    pub alive: bool,
+    speed_mod: f32,
+    movement_state: u8,
+    movement_timer: u8,
+    special_timer: u8,
+    x_direction: i8,
+    previous_vx: f32,
+    swim_counter: u8,
+    bought_timer: u8,
+}
+
+impl Fish {
+    pub fn sprite_pose(&self) -> FishPose {
+        if self.turn_ticks != 0 {
+            FishPose::Turn
+        } else if self.eating_ticks > 0 {
+            FishPose::Eat
+        } else {
+            FishPose::Swim
+        }
+    }
+
+    /// Fish.cpp::DrawFish uses a centered scale during the ten update growth pulse.
+    pub fn growth_scale(&self) -> f32 {
+        match self.growth_ticks {
+            0 => 1.0,
+            4..=10 => 0.5 + (10 - self.growth_ticks) as f32 * 0.1,
+            ticks => 1.0 + ticks as f32 / 15.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeadFish {
+    pub id: u64,
+    pub x: f32,
+    pub y: f32,
+    pub size: FishSize,
+    pub facing_right: bool,
+    pub frame: u8,
+    pub opacity: f32,
+    pub remaining_ticks: u16,
+    vx: f32,
+    vy: f32,
+    speed_mod: f32,
+}
+
+impl DeadFish {
+    fn from_live(fish: &Fish) -> Self {
+        Self {
+            id: fish.id,
+            x: fish.x,
+            y: fish.y,
+            size: fish.size,
+            facing_right: fish.vx >= 0.0,
+            frame: 0,
+            opacity: 1.0,
+            remaining_ticks: 125,
+            vx: fish.vx,
+            vy: fish.vy
+                - if fish.x < 115.0 || fish.vy < -3.0 {
+                    1.0
+                } else {
+                    2.0
+                },
+            speed_mod: fish.speed_mod,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TutorialCue {
+    Hungry,
+    VeryHungry,
+    Starving,
+    BuyFish,
+    BuyEgg,
+    CollectCoin,
+    EggsRemaining,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TutorialState {
+    pub buy_fish_hint: bool,
+    pub buy_egg_hint: bool,
+    pub coin_hint: bool,
+    hunger_shown: [bool; 3],
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Food {
+    pub id: u64,
+    pub x: f32,
+    pub y: f32,
+    pub frame: u8,
+    pub ineligible_ticks: u8,
+    pub removal_ticks: u8,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Coin {
+    pub id: u64,
+    pub x: f32,
+    pub y: f32,
+    pub kind: CoinKind,
+    pub frame: u8,
+    pub collecting: bool,
+    pub bottom_ticks: u16,
+    pub fade_ticks: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Action {
+    Click { x: f32, y: f32 },
+    BuyGuppy,
+    BuyEgg,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Rejection {
+    OutsideTank,
+    FoodCapacity,
+    InsufficientFunds,
+    Locked,
+    Completed,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Event {
+    Action {
+        tick: u64,
+        action: Action,
+    },
+    Rejected {
+        tick: u64,
+        reason: Rejection,
+    },
+    FoodDropped {
+        tick: u64,
+        food_id: u64,
+        balance: i32,
+    },
+    FoodEaten {
+        tick: u64,
+        fish_id: u64,
+        food_id: u64,
+        hunger: i32,
+    },
+    FoodExpired {
+        tick: u64,
+        food_id: u64,
+    },
+    FishGrew {
+        tick: u64,
+        fish_id: u64,
+        size: FishSize,
+    },
+    FishDied {
+        tick: u64,
+        fish_id: u64,
+    },
+    Tutorial {
+        tick: u64,
+        cue: TutorialCue,
+    },
+    GuppyBought {
+        tick: u64,
+        fish_id: u64,
+        balance: i32,
+    },
+    CoinDropped {
+        tick: u64,
+        coin_id: u64,
+        fish_id: u64,
+        kind: CoinKind,
+    },
+    CoinCollectionStarted {
+        tick: u64,
+        coin_id: u64,
+    },
+    CoinExpired {
+        tick: u64,
+        coin_id: u64,
+    },
+    CoinCredited {
+        tick: u64,
+        coin_id: u64,
+        amount: i32,
+        balance: i32,
+    },
+    EggBought {
+        tick: u64,
+        pieces: u8,
+        balance: i32,
+    },
+    LevelCompleted {
+        tick: u64,
+        next_tank: u8,
+        next_level: u8,
+    },
+}
+
+/// Adventure tank 1, level 1. The PRNG is controlled for repeatable Rust runs,
+/// but its sequence is deliberately not claimed to match the original game.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdventureState {
+    pub tick: u64,
+    pub tank: u8,
+    pub level: u8,
+    pub balance: i32,
+    pub eggs: u8,
+    pub victory: bool,
+    pub guppy_unlocked: bool,
+    pub egg_unlocked: bool,
+    pub fish: Vec<Fish>,
+    pub dead_fish: Vec<DeadFish>,
+    pub food: Vec<Food>,
+    pub coins: Vec<Coin>,
+    pub tutorial: TutorialState,
+    next_id: u64,
+    rng_state: u64,
+}
+
+impl AdventureState {
+    pub fn new_adventure(seed: u64) -> Self {
+        let mut state = Self {
+            tick: 0,
+            tank: 1,
+            level: 1,
+            balance: 200,
+            eggs: 0,
+            victory: false,
+            guppy_unlocked: false,
+            egg_unlocked: false,
+            fish: Vec::new(),
+            dead_fish: Vec::new(),
+            food: Vec::new(),
+            coins: Vec::new(),
+            tutorial: TutorialState::default(),
+            next_id: 1,
+            rng_state: if seed == 0 {
+                0x9e37_79b9_7f4a_7c15
+            } else {
+                seed
+            },
+        };
+        for _ in 0..2 {
+            let x = state.rand_range(520) as f32 + 20.0;
+            let y = state.rand_range(265) as f32 + 105.0;
+            let mut fish = state.make_fish(x, y, true, false);
+            fish.food_ate = 2;
+            state.fish.push(fish);
+        }
+        state
+    }
+
+    /// Apply an ordered input without advancing simulation time.
+    pub fn apply(&mut self, action: Action) -> Vec<Event> {
+        let mut events = vec![Event::Action {
+            tick: self.tick,
+            action: action.clone(),
+        }];
+        if self.victory {
+            events.push(Event::Rejected {
+                tick: self.tick,
+                reason: Rejection::Completed,
+            });
+            return events;
+        }
+        match action {
+            Action::Click { x, y } => {
+                if !x.is_finite() || !y.is_finite() {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::OutsideTank,
+                    });
+                } else if let Some(coin) = self.coins.iter_mut().rev().find(|coin| {
+                    !coin.collecting
+                        && x >= coin.x
+                        && x < coin.x + 72.0
+                        && y >= coin.y
+                        && y < coin.y + 72.0
+                }) {
+                    coin.collecting = true;
+                    events.push(Event::CoinCollectionStarted {
+                        tick: self.tick,
+                        coin_id: coin.id,
+                    });
+                } else if x > 30.0 && x < 587.0 && y > 60.0 && y < 400.0 {
+                    if self.balance < FOOD_PRICE {
+                        events.push(Event::Rejected {
+                            tick: self.tick,
+                            reason: Rejection::InsufficientFunds,
+                        });
+                    } else if !self.food.is_empty() {
+                        // Board::DropFood refunds the charge when the cap rejects a pellet.
+                        events.push(Event::Rejected {
+                            tick: self.tick,
+                            reason: Rejection::FoodCapacity,
+                        });
+                    } else {
+                        self.balance -= FOOD_PRICE;
+                        let id = self.id();
+                        self.food.push(Food {
+                            id,
+                            x: x - 10.0,
+                            y: y - 10.0,
+                            frame: 0,
+                            // Board::MouseDown passes override 0 to DropFood. The
+                            // Food constructor's 20-tick default does not apply here.
+                            ineligible_ticks: 0,
+                            removal_ticks: 0,
+                        });
+                        events.push(Event::FoodDropped {
+                            tick: self.tick,
+                            food_id: id,
+                            balance: self.balance,
+                        });
+                    }
+                } else {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::OutsideTank,
+                    });
+                }
+            }
+            Action::BuyGuppy => {
+                if !self.guppy_unlocked {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::Locked,
+                    });
+                } else if self.balance < GUPPY_PRICE {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::InsufficientFunds,
+                    });
+                } else {
+                    self.balance -= GUPPY_PRICE;
+                    let x = self.rand_range(520) as f32 + 20.0;
+                    let _target_y = self.rand_range(265) as f32 + 105.0;
+                    let mut fish = self.make_fish(x, 30.0, true, true);
+                    fish.vy = self.rand_range(5) as f32 + 18.0;
+                    fish.bought_timer = self.rand_range(10) as u8 + 45;
+                    let id = fish.id;
+                    self.fish.push(fish);
+                    self.tutorial.buy_fish_hint = false;
+                    events.push(Event::GuppyBought {
+                        tick: self.tick,
+                        fish_id: id,
+                        balance: self.balance,
+                    });
+                }
+            }
+            Action::BuyEgg => {
+                if !self.egg_unlocked {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::Locked,
+                    });
+                } else if self.balance < EGG_PRICE {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::InsufficientFunds,
+                    });
+                } else {
+                    self.balance -= EGG_PRICE;
+                    self.eggs += 1;
+                    if self.eggs == 1 && self.tutorial.buy_egg_hint {
+                        self.tutorial.buy_egg_hint = false;
+                        events.push(Event::Tutorial {
+                            tick: self.tick,
+                            cue: TutorialCue::EggsRemaining,
+                        });
+                    }
+                    events.push(Event::EggBought {
+                        tick: self.tick,
+                        pieces: self.eggs,
+                        balance: self.balance,
+                    });
+                    if self.eggs == 3 {
+                        self.victory = true;
+                        events.push(Event::LevelCompleted {
+                            tick: self.tick,
+                            next_tank: 1,
+                            next_level: 2,
+                        });
+                    }
+                }
+            }
+        }
+        events
+    }
+
+    /// One fixed 28 ms simulation update. Board::SortGameObjects places food
+    /// before ordinary guppies and coins after them. Newly spawned coins join
+    /// this tick's coin phase.
+    pub fn tick(&mut self) -> Vec<Event> {
+        if self.victory {
+            return Vec::new();
+        }
+        self.tick += 1;
+        let mut events = Vec::new();
+        self.update_dead_fish();
+        self.update_food(&mut events);
+        self.update_fish(&mut events);
+        self.update_coins(&mut events);
+        events
+    }
+
+    pub fn step(&mut self, actions: &[Action]) -> Vec<Event> {
+        let mut events = Vec::new();
+        for action in actions {
+            events.extend(self.apply(action.clone()));
+        }
+        events.extend(self.tick());
+        events
+    }
+
+    fn id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
+    fn rand(&mut self) -> u64 {
+        let mut value = self.rng_state;
+        value ^= value >> 12;
+        value ^= value << 25;
+        value ^= value >> 27;
+        self.rng_state = value;
+        value.wrapping_mul(0x2545_f491_4f6c_dd1d)
+    }
+
+    fn rand_range(&mut self, upper: u64) -> u64 {
+        self.rand() % upper
+    }
+
+    fn make_fish(&mut self, x: f32, y: f32, beginner: bool, bought: bool) -> Fish {
+        let id = self.id();
+        let vx = if self.rand_range(2) == 0 { 0.1 } else { -0.1 };
+        let speed_mod = match self.rand_range(3) {
+            0 => 2.0,
+            1 => 1.8,
+            _ => 1.6,
+        };
+        let hunger = self.rand_range(200) as i32 + 400;
+        let food_needed_to_grow = self.rand_range(3) as u8 + 4;
+        let movement_state = self.rand_range(10) as u8;
+        let coin_threshold = self.rand_range(200) as u16 + 150;
+        Fish {
+            id,
+            x,
+            y,
+            vx,
+            vy: -0.5,
+            facing_right: vx >= 0.0,
+            frame: 0,
+            turn_ticks: 0,
+            hunger_visible: false,
+            size: FishSize::Small,
+            hunger,
+            food_ate: 0,
+            food_needed_to_grow,
+            beginner,
+            eating_ticks: 0,
+            growth_ticks: 0,
+            coin_timer: 0,
+            coin_threshold,
+            alive: true,
+            speed_mod,
+            movement_state,
+            movement_timer: 0,
+            special_timer: 40,
+            x_direction: 1,
+            previous_vx: if vx < 0.0 { -1.0 } else { 1.0 },
+            swim_counter: 0,
+            bought_timer: if bought { 45 } else { 0 },
+        }
+    }
+
+    fn update_fish(&mut self, events: &mut Vec<Event>) {
+        for index in 0..self.fish.len() {
+            if !self.fish[index].alive {
+                continue;
+            }
+            let choose_new_state =
+                self.fish[index].movement_timer >= 20 && self.rand_range(10) == 0;
+            let next_state = if choose_new_state {
+                Some(self.rand_range(9) as u8 + 1)
+            } else {
+                None
+            };
+            let coin_drop;
+            let mut eaten_food = None;
+            let mut grew = None;
+            let mut died = false;
+            let mut hunger_cue = None;
+            {
+                let fish = &mut self.fish[index];
+                fish.hunger = (fish.hunger - 1).max(-1000);
+                if fish.beginner {
+                    hunger_cue = match fish.hunger {
+                        -1 => Some(TutorialCue::Hungry),
+                        -200 => Some(TutorialCue::VeryHungry),
+                        -400 => Some(TutorialCue::Starving),
+                        _ => None,
+                    };
+                }
+                if (!fish.beginner && fish.hunger < 1) || (fish.beginner && fish.hunger < -499) {
+                    fish.alive = false;
+                    died = true;
+                    // Fish::Hungry returns false after Die; this Update call
+                    // still reaches DropCoin before deferred widget deletion.
+                    coin_drop = Self::coin_due(fish);
+                } else {
+                    let fish_cx = fish.x + 40.0;
+                    let fish_cy = fish.y + 40.0;
+                    let nearest = if fish.hunger < 500 {
+                        self.food
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, food)| food.ineligible_ticks == 0)
+                            .min_by(|(_, a), (_, b)| {
+                                let da = (fish_cx - (a.x + 20.0)).powi(2)
+                                    + (fish_cy - (a.y + 20.0)).powi(2);
+                                let db = (fish_cx - (b.x + 20.0)).powi(2)
+                                    + (fish_cy - (b.y + 20.0)).powi(2);
+                                da.total_cmp(&db)
+                            })
+                            .map(|(index, _)| index)
+                    } else {
+                        None
+                    };
+                    if let Some(food_index) = nearest {
+                        let food = &self.food[food_index];
+                        if fish_cx > food.x + 5.0
+                            && fish_cx < food.x + 35.0
+                            && fish_cy > food.y
+                            && fish_cy < food.y + 35.0
+                        {
+                            eaten_food = Some(food.id);
+                            fish.hunger =
+                                (fish.hunger + if fish.beginner { 700 } else { 500 }).min(800);
+                            fish.food_ate += 1;
+                            if fish.eating_ticks == 0 {
+                                fish.eating_ticks = 8;
+                            }
+                            if fish.food_ate >= fish.food_needed_to_grow
+                                && fish.size != FishSize::Large
+                            {
+                                fish.size = match fish.size {
+                                    FishSize::Small => FishSize::Medium,
+                                    FishSize::Medium => FishSize::Large,
+                                    FishSize::Large => unreachable!(),
+                                };
+                                fish.food_ate = 0;
+                                fish.growth_ticks = 10;
+                                grew = Some(fish.size);
+                            }
+                        } else {
+                            let dx = food.x + 20.0 - fish_cx;
+                            let dy = food.y + 20.0 - fish_cy;
+                            if fish.eating_ticks == 0 && dx.abs() < 30.0 && dy.abs() < 22.0 {
+                                fish.eating_ticks = 20;
+                            }
+                            if fish.special_timer > 2 {
+                                fish.special_timer = 0;
+                                Self::steer_to_food(fish, dx, dy);
+                            }
+                        }
+                    }
+                    if nearest.is_none() && fish.bought_timer == 0 {
+                        Self::wander(fish);
+                    }
+                    fish.special_timer = fish.special_timer.saturating_add(1);
+                    fish.movement_timer += 1;
+                    if fish.movement_timer > 20 {
+                        fish.movement_timer = 0;
+                        if let Some(state) = next_state {
+                            fish.movement_state = state;
+                        }
+                    }
+                    // Fish.cpp::Update checks coin production before its final
+                    // animation and position integration (lines 429, 519-533).
+                    coin_drop = Self::coin_due(fish);
+                    if fish.bought_timer > 0 {
+                        fish.bought_timer -= 1;
+                        fish.vy *= 0.9;
+                    }
+                    Self::advance_animation(fish);
+                    fish.facing_right = fish.vx >= 0.0;
+                    fish.x = (fish.x + fish.vx / fish.speed_mod).clamp(10.0, 540.0);
+                    let min_y = if fish.bought_timer > 0 && fish.vy > 0.0 {
+                        30.0
+                    } else {
+                        95.0
+                    };
+                    fish.y = (fish.y + fish.vy / fish.speed_mod).clamp(min_y, 370.0);
+                    if fish.x <= 10.0 || fish.x >= 540.0 {
+                        fish.vx = -fish.vx;
+                    }
+                    if fish.y <= 95.0 || fish.y >= 370.0 {
+                        fish.vy = -fish.vy;
+                    }
+                    fish.hunger_visible = fish.hunger < 301;
+                }
+            }
+            if died {
+                self.dead_fish.push(DeadFish::from_live(&self.fish[index]));
+                events.push(Event::FishDied {
+                    tick: self.tick,
+                    fish_id: self.fish[index].id,
+                });
+            }
+            if let Some(cue) = hunger_cue {
+                let cue_index = match cue {
+                    TutorialCue::Hungry => 0,
+                    TutorialCue::VeryHungry => 1,
+                    _ => 2,
+                };
+                if !self.tutorial.hunger_shown[cue_index] {
+                    self.tutorial.hunger_shown[cue_index] = true;
+                    events.push(Event::Tutorial {
+                        tick: self.tick,
+                        cue,
+                    });
+                }
+            }
+            if let Some(food_id) = eaten_food {
+                self.food.retain(|food| food.id != food_id);
+                let fish = &self.fish[index];
+                events.push(Event::FoodEaten {
+                    tick: self.tick,
+                    fish_id: fish.id,
+                    food_id,
+                    hunger: fish.hunger,
+                });
+            }
+            if let Some(size) = grew {
+                if size == FishSize::Medium && !self.guppy_unlocked {
+                    self.guppy_unlocked = true;
+                    self.tutorial.buy_fish_hint = true;
+                    events.push(Event::Tutorial {
+                        tick: self.tick,
+                        cue: TutorialCue::BuyFish,
+                    });
+                }
+                if size == FishSize::Large && !self.egg_unlocked {
+                    self.egg_unlocked = true;
+                    self.tutorial.buy_fish_hint = false;
+                    self.tutorial.buy_egg_hint = true;
+                    events.push(Event::Tutorial {
+                        tick: self.tick,
+                        cue: TutorialCue::BuyEgg,
+                    });
+                }
+                events.push(Event::FishGrew {
+                    tick: self.tick,
+                    fish_id: self.fish[index].id,
+                    size,
+                });
+            }
+            if let Some((fish_id, x, y, kind)) = coin_drop {
+                let id = self.id();
+                self.coins.push(Coin {
+                    id,
+                    x,
+                    y,
+                    kind,
+                    frame: 0,
+                    collecting: false,
+                    bottom_ticks: 0,
+                    fade_ticks: 0,
+                });
+                events.push(Event::CoinDropped {
+                    tick: self.tick,
+                    coin_id: id,
+                    fish_id,
+                    kind,
+                });
+                if !self.tutorial.coin_hint {
+                    self.tutorial.coin_hint = true;
+                    events.push(Event::Tutorial {
+                        tick: self.tick,
+                        cue: TutorialCue::CollectCoin,
+                    });
+                }
+            }
+        }
+    }
+
+    fn coin_due(fish: &mut Fish) -> Option<(u64, f32, f32, CoinKind)> {
+        if fish.size == FishSize::Small {
+            return None;
+        }
+        fish.coin_timer += 1;
+        if fish.coin_timer < fish.coin_threshold {
+            return None;
+        }
+        fish.coin_timer = 0;
+        // DropCoin uses the widget's integer position, which Move updated on
+        // the previous integration, rather than its floating position.
+        Some((
+            fish.id,
+            fish.x.trunc() + 5.0,
+            fish.y.trunc() + 10.0,
+            if fish.size == FishSize::Medium {
+                CoinKind::Silver
+            } else {
+                CoinKind::Gold
+            },
+        ))
+    }
+
+    fn steer_to_food(fish: &mut Fish, dx: f32, dy: f32) {
+        let urgent = fish.hunger < 301;
+        let horizontal = if dx.abs() > 8.0 {
+            if urgent { 1.3 } else { 1.0 }
+        } else if dx.abs() > 4.0 {
+            if urgent { 0.2 } else { 0.1 }
+        } else {
+            0.05
+        };
+        let vertical = if dy.abs() > 6.0 {
+            if urgent { 1.15 } else { 0.8 }
+        } else {
+            if urgent { 0.6 } else { 0.4 }
+        };
+        let x_limit = if urgent { 4.0 } else { 3.0 };
+        let y_max = if urgent { 4.0 } else { 3.0 };
+        let y_min = if urgent { -3.0 } else { -2.0 };
+        fish.vx = (fish.vx + dx.signum() * horizontal).clamp(-x_limit, x_limit);
+        fish.vy = (fish.vy + dy.signum() * vertical).clamp(y_min, y_max);
+    }
+
+    fn wander(fish: &mut Fish) {
+        let change_velocity = fish.special_timer > 39;
+        if change_velocity {
+            fish.special_timer = 0;
+        }
+        match fish.movement_state {
+            0 => {
+                if change_velocity {
+                    fish.vx = Self::approach(fish.vx, 0.0, 0.5);
+                }
+                fish.vy = 0.5;
+                fish.y -= 0.25 / fish.speed_mod;
+            }
+            1 | 2 => {
+                if change_velocity {
+                    fish.vx = Self::approach(
+                        fish.vx,
+                        if fish.movement_state == 1 { 1.0 } else { -1.0 },
+                        1.0,
+                    );
+                }
+                fish.vy = -0.5;
+                fish.y -= 0.5 / fish.speed_mod;
+            }
+            3 | 4 => {
+                if change_velocity {
+                    fish.vx = Self::approach(
+                        fish.vx,
+                        if fish.movement_state == 3 { -1.0 } else { 1.0 },
+                        1.0,
+                    );
+                    fish.vy = Self::approach(fish.vy, 3.0, 1.0);
+                }
+                if fish.y > 240.0 {
+                    fish.movement_state = 0;
+                }
+            }
+            _ => {
+                fish.vy = if fish.y >= 115.0 { -0.5 } else { -0.1 };
+                if change_velocity {
+                    fish.vx += fish.x_direction as f32;
+                    if fish.x > 250.0 {
+                        fish.x_direction = -1;
+                    } else if fish.x < 175.0 {
+                        fish.x_direction = 1;
+                    }
+                }
+            }
+        }
+    }
+
+    fn approach(value: f32, target: f32, step: f32) -> f32 {
+        if value < target {
+            (value + step).min(target)
+        } else {
+            (value - step).max(target)
+        }
+    }
+
+    fn advance_animation(fish: &mut Fish) {
+        if fish.previous_vx < 0.0 && fish.vx > 0.0 {
+            fish.turn_ticks = -20;
+        } else if fish.previous_vx > 0.0 && fish.vx < 0.0 {
+            fish.turn_ticks = 20;
+        }
+        fish.turn_ticks -= fish.turn_ticks.signum();
+        if fish.eating_ticks > 0 {
+            fish.eating_ticks -= 1;
+        }
+        fish.frame = if fish.turn_ticks != 0 {
+            (9 - (fish.turn_ticks.abs() / 2)) as u8
+        } else if fish.eating_ticks > 0 {
+            9 - fish.eating_ticks / 2
+        } else {
+            fish.swim_counter = (fish.swim_counter + if fish.vx.abs() < 2.0 { 1 } else { 2 }) % 20;
+            fish.swim_counter / 2
+        };
+        if fish.growth_ticks > 0 {
+            fish.growth_ticks -= 1;
+        }
+        if fish.vx != 0.0 {
+            fish.previous_vx = fish.vx;
+        }
+    }
+
+    fn update_dead_fish(&mut self) {
+        let mut expired = Vec::new();
+        for dead in &mut self.dead_fish {
+            if dead.remaining_ticks == 0 {
+                expired.push(dead.id);
+                continue;
+            }
+            dead.frame = if dead.remaining_ticks >= 106 {
+                (9 - (dead.remaining_ticks - 106) / 2) as u8
+            } else if dead.remaining_ticks >= 103 {
+                8
+            } else if dead.remaining_ticks >= 101 {
+                7
+            } else {
+                6
+            };
+            if dead.remaining_ticks < 105 {
+                dead.opacity = (dead.opacity - 0.02).max(0.0);
+            }
+            if dead.remaining_ticks > 105 || dead.y > 370.0 {
+                dead.remaining_ticks -= 1;
+            }
+            dead.vx = Self::approach(dead.vx, 0.0, 0.03);
+            dead.vy = (dead.vy + 0.05).min(2.0);
+            dead.x = (dead.x + dead.vx / dead.speed_mod).clamp(10.0, 540.0);
+            dead.y = (dead.y + dead.vy / dead.speed_mod).clamp(85.0, 380.0);
+        }
+        self.dead_fish.retain(|dead| !expired.contains(&dead.id));
+        self.fish
+            .retain(|fish| fish.alive || self.dead_fish.iter().any(|dead| dead.id == fish.id));
+    }
+
+    fn update_food(&mut self, events: &mut Vec<Event>) {
+        let mut expired = Vec::new();
+        for food in &mut self.food {
+            if food.ineligible_ticks > 0 {
+                food.ineligible_ticks -= 1;
+            }
+            food.frame = (food.frame + 1) % 30;
+            if food.removal_ticks > 0 {
+                food.removal_ticks -= 1;
+                if food.removal_ticks == 0 {
+                    expired.push(food.id);
+                }
+                continue;
+            }
+            food.y += 1.5;
+            if food.y > 410.0 {
+                food.removal_ticks = 15;
+            }
+        }
+        for id in expired {
+            self.food.retain(|food| food.id != id);
+            events.push(Event::FoodExpired {
+                tick: self.tick,
+                food_id: id,
+            });
+        }
+    }
+
+    fn update_coins(&mut self, events: &mut Vec<Event>) {
+        let mut credited = Vec::new();
+        let mut expired = Vec::new();
+        for coin in &mut self.coins {
+            coin.frame = (coin.frame + 1) % 10;
+            if coin.collecting {
+                // Coin::Update tests last tick's integer widget Y before its
+                // easing calculation and Move, then credits exactly once.
+                if coin.y.trunc() < 40.0 {
+                    credited.push((coin.id, coin.kind.value()));
+                    continue;
+                }
+                coin.x += (550.0 - coin.x) / 7.0;
+                coin.y += (30.0 - coin.y) / 7.0;
+                continue;
+            }
+            if coin.fade_ticks > 0 {
+                coin.fade_ticks -= 1;
+                if coin.fade_ticks == 0 {
+                    expired.push(coin.id);
+                }
+                continue;
+            }
+            coin.y = (coin.y + 1.5).min(370.0);
+            if coin.y >= 370.0 {
+                coin.bottom_ticks += 1;
+                if coin.bottom_ticks >= 150 {
+                    coin.fade_ticks = 5;
+                }
+            }
+        }
+        for (id, amount) in credited {
+            self.coins.retain(|coin| coin.id != id);
+            self.balance = (self.balance + amount).min(9_999_999);
+            events.push(Event::CoinCredited {
+                tick: self.tick,
+                coin_id: id,
+                amount,
+                balance: self.balance,
+            });
+        }
+        for id in expired {
+            self.coins.retain(|coin| coin.id != id);
+            events.push(Event::CoinExpired {
+                tick: self.tick,
+                coin_id: id,
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_first_tank_initial_state_and_purchase_gates() {
+        let mut state = AdventureState::new_adventure(42);
+        assert_eq!((state.tank, state.level, state.balance), (1, 1, 200));
+        assert_eq!(state.fish.len(), 2);
+        assert!(
+            state
+                .fish
+                .iter()
+                .all(|fish| fish.size == FishSize::Small && fish.food_ate == 2 && fish.beginner)
+        );
+        assert!(
+            state
+                .fish
+                .iter()
+                .all(|fish| (400..600).contains(&fish.hunger)
+                    && (4..=6).contains(&fish.food_needed_to_grow))
+        );
+        assert!(state.apply(Action::BuyEgg).iter().any(|event| matches!(
+            event,
+            Event::Rejected {
+                reason: Rejection::Locked,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn clicked_food_uses_board_override_and_cap_refund() {
+        let mut state = AdventureState::new_adventure(17);
+        let dropped = state.apply(Action::Click { x: 320.0, y: 200.0 });
+        assert!(
+            dropped
+                .iter()
+                .any(|event| matches!(event, Event::FoodDropped { balance: 195, .. }))
+        );
+        assert_eq!(state.food[0].ineligible_ticks, 0);
+        assert_eq!((state.food[0].x, state.food[0].y), (310.0, 190.0));
+        assert!(
+            state
+                .apply(Action::Click { x: 350.0, y: 200.0 })
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::FoodCapacity,
+                        ..
+                    }
+                ))
+        );
+        assert_eq!(state.balance, 195);
+    }
+
+    #[test]
+    fn coin_click_credits_only_after_arrival_once() {
+        let mut state = AdventureState::new_adventure(1);
+        state.coins.push(Coin {
+            id: 99,
+            x: 100.0,
+            y: 300.0,
+            kind: CoinKind::Silver,
+            frame: 0,
+            collecting: false,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+        });
+        let click = Action::Click { x: 110.0, y: 310.0 };
+        assert!(
+            state
+                .apply(click.clone())
+                .iter()
+                .any(|event| matches!(event, Event::CoinCollectionStarted { coin_id: 99, .. }))
+        );
+        assert_eq!(state.balance, 200);
+        assert!(
+            !state
+                .apply(click)
+                .iter()
+                .any(|event| matches!(event, Event::CoinCollectionStarted { .. }))
+        );
+        // After collection starts, the coin stops catching clicks. The next
+        // click can buy food, but it cannot credit this coin twice.
+        assert_eq!(state.balance, 195);
+        let mut credit_count = 0;
+        for _ in 0..100 {
+            credit_count += state
+                .tick()
+                .iter()
+                .filter(|event| matches!(event, Event::CoinCredited { coin_id: 99, .. }))
+                .count();
+        }
+        assert_eq!(credit_count, 1);
+        assert_eq!(state.balance, 210);
+    }
+
+    #[test]
+    fn three_affordable_eggs_complete_first_level_once() {
+        let mut state = AdventureState::new_adventure(3);
+        state.egg_unlocked = true;
+        state.balance = 450;
+        for pieces in 1..=3 {
+            assert!(
+                state.apply(Action::BuyEgg).iter().any(
+                    |event| matches!(event, Event::EggBought { pieces: n, .. } if *n == pieces)
+                )
+            );
+        }
+        assert_eq!((state.eggs, state.balance, state.victory), (3, 0, true));
+        assert!(state.apply(Action::BuyEgg).iter().any(|event| matches!(
+            event,
+            Event::Rejected {
+                reason: Rejection::Completed,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn feeding_to_medium_allows_a_naturally_timed_silver_coin() {
+        let mut state = AdventureState::new_adventure(11);
+        state.fish[0].x = 100.0;
+        state.fish[0].y = 100.0;
+        state.fish[0].hunger = 400;
+        state.fish[0].food_ate = state.fish[0].food_needed_to_grow - 1;
+        state.fish[1].x = 500.0;
+        state.fish[1].y = 300.0;
+        let fish_id = state.fish[0].id;
+        state.apply(Action::Click { x: 130.0, y: 130.0 });
+        let first_tick = state.tick();
+        assert!(
+            first_tick.iter().any(
+                |event| matches!(event, Event::FoodEaten { fish_id: id, .. } if *id == fish_id)
+            )
+        );
+        assert!(first_tick.iter().any(|event| matches!(event, Event::FishGrew { fish_id: id, size: FishSize::Medium, .. } if *id == fish_id)));
+        assert!(state.food.is_empty());
+        assert!(state.guppy_unlocked);
+        let threshold = state.fish[0].coin_threshold;
+        for _ in 1..(threshold - 1) {
+            assert!(!state.tick().iter().any(
+                |event| matches!(event, Event::CoinDropped { fish_id: id, .. } if *id == fish_id)
+            ));
+        }
+        // The growth tick already advanced the coin timer once.
+        assert!(state.tick().iter().any(|event| matches!(event, Event::CoinDropped { fish_id: id, kind: CoinKind::Silver, .. } if *id == fish_id)));
+    }
+
+    #[test]
+    fn source_starvation_thresholds_keep_beginner_alive_longer() {
+        let mut state = AdventureState::new_adventure(8);
+        state.fish[0].hunger = -498;
+        state.fish[1].beginner = false;
+        state.fish[1].hunger = 1;
+        let ordinary_id = state.fish[1].id;
+        let first = state.tick();
+        assert!(state.fish[0].alive);
+        assert!(!state.fish[1].alive);
+        assert!(first.iter().any(
+            |event| matches!(event, Event::FishDied { fish_id, .. } if *fish_id == ordinary_id)
+        ));
+        let second = state.tick();
+        assert!(!state.fish[0].alive);
+        assert_eq!(
+            second
+                .iter()
+                .filter(|event| matches!(event, Event::FishDied { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn food_and_coin_expire_after_source_bottom_countdowns() {
+        let mut state = AdventureState::new_adventure(9);
+        state.fish.clear();
+        state.food.push(Food {
+            id: 50,
+            x: 100.0,
+            y: 410.0,
+            frame: 0,
+            ineligible_ticks: 0,
+            removal_ticks: 0,
+        });
+        state.coins.push(Coin {
+            id: 51,
+            x: 100.0,
+            y: 370.0,
+            kind: CoinKind::Gold,
+            frame: 0,
+            collecting: false,
+            bottom_ticks: 149,
+            fade_ticks: 0,
+        });
+        state.tick();
+        assert_eq!(state.food[0].removal_ticks, 15);
+        assert_eq!(state.coins[0].fade_ticks, 5);
+        for _ in 0..4 {
+            state.tick();
+        }
+        assert_eq!(state.coins.len(), 1);
+        assert!(
+            state
+                .tick()
+                .iter()
+                .any(|event| matches!(event, Event::CoinExpired { coin_id: 51, .. }))
+        );
+        for _ in 0..9 {
+            state.tick();
+        }
+        assert_eq!(state.food.len(), 1);
+        assert!(
+            state
+                .tick()
+                .iter()
+                .any(|event| matches!(event, Event::FoodExpired { food_id: 50, .. }))
+        );
+    }
+
+    #[test]
+    fn sorted_food_update_can_make_a_collision_this_tick() {
+        let mut state = AdventureState::new_adventure(12);
+        state.fish[0].x = 100.0;
+        state.fish[0].y = 100.0;
+        state.fish[0].hunger = 400;
+        state.fish[1].x = 500.0;
+        state.fish[1].y = 300.0;
+        let fish_id = state.fish[0].id;
+        // Fish center Y=140. Food begins at Y=105, just outside the strict
+        // collision bound; its 1.5-pixel fall opens that bound before fish update.
+        state.apply(Action::Click { x: 130.0, y: 115.0 });
+        assert!(
+            state.tick().iter().any(
+                |event| matches!(event, Event::FoodEaten { fish_id: id, .. } if *id == fish_id)
+            )
+        );
+    }
+
+    #[test]
+    fn death_tick_can_still_drop_a_coin_before_deferred_deletion() {
+        let mut state = AdventureState::new_adventure(13);
+        state.fish[0].size = FishSize::Medium;
+        state.fish[0].beginner = false;
+        state.fish[0].hunger = 1;
+        state.fish[0].coin_timer = state.fish[0].coin_threshold - 1;
+        let fish_id = state.fish[0].id;
+        let events = state.tick();
+        assert!(
+            events.iter().any(
+                |event| matches!(event, Event::FishDied { fish_id: id, .. } if *id == fish_id)
+            )
+        );
+        assert!(events.iter().any(|event| matches!(event, Event::CoinDropped { fish_id: id, kind: CoinKind::Silver, .. } if *id == fish_id)));
+        assert!(!state.tick().iter().any(
+            |event| matches!(event, Event::CoinDropped { fish_id: id, .. } if *id == fish_id)
+        ));
+    }
+
+    #[test]
+    fn collection_checks_previous_integer_y_before_easing() {
+        let mut state = AdventureState::new_adventure(14);
+        state.coins.push(Coin {
+            id: 90,
+            x: 550.0,
+            y: 40.5,
+            kind: CoinKind::Gold,
+            frame: 0,
+            collecting: true,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+        });
+        let first = state.tick();
+        assert!(
+            !first
+                .iter()
+                .any(|event| matches!(event, Event::CoinCredited { coin_id: 90, .. }))
+        );
+        assert_eq!(state.balance, 200);
+        assert!(state.tick().iter().any(|event| matches!(
+            event,
+            Event::CoinCredited {
+                coin_id: 90,
+                amount: 35,
+                ..
+            }
+        )));
+        assert_eq!(state.balance, 235);
+    }
+
+    #[test]
+    fn source_turn_eat_and_growth_pulses_expose_render_state() {
+        let mut state = AdventureState::new_adventure(21);
+        state.fish[0].x = 100.0;
+        state.fish[0].y = 100.0;
+        state.fish[0].hunger = 400;
+        state.fish[0].previous_vx = -1.0;
+        state.fish[0].vx = 1.0;
+        state.fish[0].special_timer = 0;
+        state.fish[0].movement_state = 3;
+        state.tick();
+        assert_eq!(state.fish[0].turn_ticks, -19);
+        assert_eq!(state.fish[0].sprite_pose(), FishPose::Turn);
+        for _ in 0..19 {
+            state.tick();
+        }
+        assert_eq!(state.fish[0].turn_ticks, 0);
+
+        state.fish[0].x = 100.0;
+        state.fish[0].y = 100.0;
+        state.fish[0].hunger = 400;
+        state.apply(Action::Click { x: 155.0, y: 130.0 });
+        state.tick();
+        assert_eq!(state.fish[0].sprite_pose(), FishPose::Eat);
+        assert_eq!(state.fish[0].eating_ticks, 19);
+
+        state.food.clear();
+        state.fish[0].x = 100.0;
+        state.fish[0].y = 100.0;
+        state.fish[0].hunger = 400;
+        state.fish[0].food_ate = state.fish[0].food_needed_to_grow - 1;
+        state.apply(Action::Click { x: 130.0, y: 130.0 });
+        state.tick();
+        assert_eq!(state.fish[0].size, FishSize::Medium);
+        assert_eq!(state.fish[0].growth_ticks, 9);
+        assert!((state.fish[0].growth_scale() - 0.6).abs() < 0.001);
+    }
+
+    #[test]
+    fn beginner_hunger_tutorial_thresholds_are_once_only() {
+        let mut state = AdventureState::new_adventure(22);
+        let thresholds = [
+            (0, TutorialCue::Hungry),
+            (-199, TutorialCue::VeryHungry),
+            (-399, TutorialCue::Starving),
+        ];
+        for (prior_hunger, expected) in thresholds {
+            state.fish[0].hunger = prior_hunger;
+            assert!(
+                state
+                    .tick()
+                    .iter()
+                    .any(|event| matches!(event, Event::Tutorial { cue, .. } if *cue == expected))
+            );
+        }
+        state.fish[0].hunger = 0;
+        assert!(!state.tick().iter().any(|event| matches!(
+            event,
+            Event::Tutorial {
+                cue: TutorialCue::Hungry,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn dead_guppy_animates_at_bottom_until_source_lifetime_ends() {
+        let mut state = AdventureState::new_adventure(23);
+        state.fish[0].hunger = -499;
+        state.fish[0].y = 370.0;
+        state.fish[0].vy = 4.0;
+        let id = state.fish[0].id;
+        state.tick();
+        assert_eq!(state.dead_fish[0].id, id);
+        assert_eq!(state.dead_fish[0].remaining_ticks, 125);
+        for _ in 0..125 {
+            state.tick();
+        }
+        assert_eq!(state.dead_fish[0].remaining_ticks, 0);
+        assert_eq!(state.dead_fish[0].opacity, 0.0);
+        state.tick();
+        assert!(state.dead_fish.is_empty());
+        assert!(!state.fish.iter().any(|fish| fish.id == id));
+    }
+}

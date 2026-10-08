@@ -12,16 +12,16 @@ Recover the smallest original-game behavior contract, choose the necessary libra
 
 | Responsibility | Intended boundary | Decision status |
 |---|---|---|
-| Simulation and game state | Own fish, food, currency, state transitions, and ordered updates; accept controlled time, input, and randomness | Separation required; concrete structures and original cadence unknown |
-| Asset access | Read install assets and metadata; report missing/unsupported inputs without mutating the install | Required; direct decoding versus a local reproducible cache unresolved |
-| Presentation | Render original sprite frames, masks, offsets, UI; trigger audio from simulation events | Required; graphics/window/audio libraries not selected |
-| Input | Convert actual window input to ordered simulation actions with correct tank coordinates | Required; mapping and tick assignment to recover |
-| Persistence | Separate project saves/configuration from retail data | Required; format and local storage convention unresolved |
+| Simulation and game state | Own fish, food, currency and ordered updates; controlled tick/actions/PRNG | Explicit serializable Rust state; effective retail cadence/RNG still unresolved |
+| Asset access | Read install assets and metadata without mutating the install | Direct decoding, no conversion cache for the first slice |
+| Presentation | Render owned sprite frames/masks/fonts; trigger audio from events | macroquad chosen; corrected camera/facing exercised, full fidelity pending |
+| Input | Convert actual window input to ordered simulation actions | Logical640×480 inverse letterbox mapping exercised |
+| Persistence | Separate project saves/configuration from retail data | Versioned JSON under LOCALAPPDATA/TurbofishDeluxe or override; broader progression pending |
 | Validation | Independently derived rule tests plus original/Rust scenarios and runtime evidence | Required; no gameplay baseline exists yet |
 
 The first implementation uses one Rust 2024 crate, macroquad for the Windows window/2D/input/sound path, image for direct owned-image decoding and separate explicit simulation state. Dependencies are recorded in [provenance](provenance.md#rust-dependencies). The owned assets use sprite sheets and companion masks; no conversion cache is needed for the first slice. A 28ms fixed-tick accumulator separates the source-derived simulation cadence from rendering. Cap stalled-frame catch-up at the source framework's 200ms bound and record stalls. Do not silently accelerate simulation for an acceptance run.
 
-This is a source-informed implementation of recovered functional rules with new Rust organization; no WinFish/PopLib source files are imported. PRNG control and rendering separation aid testing but do not establish exact retail PRNG sequence. Original bitmap font parsing, MO3 tracker order/loop audio and full save semantics remain pending decisions.
+This is a source-informed implementation of secondary functional expectations with new Rust organization; no WinFish/PopLib source files are imported. PRNG control and rendering separation aid testing but do not establish exact retail PRNG sequence. Owned bitmap fonts are parsed; MO3 tracker order/loop audio and full save semantics remain pending. The installed main EXE's base-app10ms field does not establish the game tick; identify the actual game payload before changing the28ms hypothesis.
 
 ## Next task: original-game contract
 
@@ -53,6 +53,14 @@ The product behaviors are specified in [requirements M1](requirements.md#m1-firs
 
 ## Open questions
 
-Original simulation cadence/order, RNG equivalence, movement/hunger/growth/coin timing, sprite metadata and masking rules, audio decoding, framework choice, save format, and distribution/code licensing remain unresolved. The local version string does not establish WinFish compatibility. These are recovery/design tasks, not setup blockers.
+Effective original cadence/order, RNG equivalence, exact movement/hunger/growth/coin timing, renderer equivalence, audible sound selection, MO3 music, complete progression/save semantics and distribution/code licensing remain unresolved. The local version string does not establish WinFish compatibility. These are recovery/design tasks, not setup blockers.
 
 M2 and M3 retain their full scope in [requirements](requirements.md#playable-milestones). Advance only after the evidence supports the previous increment; do not redefine the first loop as completion of the runtime.
+
+## M2 next integrated outcome
+
+The [run03 report](playtests/2026-10-08-m1-03.md) supports the first Rust interaction loop. Retail parity checks remain open while independent progression work advances.
+
+Recover third-egg handling, hatch/reward/profile advancement, next-stage initialization and all-fish-dead behavior from exact W1 callers, then confirm/correct against the actual installed game payload. Extend the existing state rather than replacing the working feeding/collection loop. Keep project progression separate from original profiles; retain compatibility with existing project snapshots or explicitly migrate them.
+
+Acceptance: complete the first tank through ordinary feeding/growth/earned money and three affordable eggs at normal speed; display the recovered completion flow, advance once to the correct next starting state, save/reload that progress, and exercise starvation/game-over/restart. No forced victory or debug balance in the execution report. Tests cover independently grounded progression boundaries and save transitions; the identified window run, source/binary evidence, audio gaps and human checks must remain distinct. After this outcome is validated, select the next missing system from [coverage](compatibility.md) automatically.

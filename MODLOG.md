@@ -2,6 +2,18 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-08 — Correct facing and validate the first Rust interaction loop
+
+**Changed:** Corrected vertical camera mapping and guppy/dead-fish mirror direction after actual visual findings. Optional state telemetry now retries Windows sharing failures without aborting gameplay; critical project saves still fail visibly. Added atomic persistence/resumed-state regressions, retained failed reports, and populated current coverage/provenance/handoff. Guide-based workflow checkpoint committed as `b50225b`; runtime source is the next coherent checkpoint.
+
+**Why:** The user observed backward swimming. Original smallswim pixels face left; the mirror predicate was reversed. Run01 had exposed an inverted viewport and run02 a reader-blocked snapshot crash. Changes address observed errors while preserving the existing runtime.
+
+**Tested:** Formatting, strict Clippy,26 all-target tests and native build passed. Actual246 images/65 effects/15 fonts decode. [Run03](docs/playtests/2026-10-08-m1-03.md) completed100.376s through ordinary feeding/growth/natural silver collection, save and clean exit. Paired state/frames show mouth-left at vx−3 and mouth-right at vx+2; full install before/after digest matches. A controlled2s read lock deferred/recovered telemetry and exited cleanly. No owned processes left running.
+
+**Failures retained:** [Runs01–02](docs/playtests/2026-10-08-m1-01.md) document camera inversion, unidentified pre-helper input in run02 and reproduced Windows error5. Primary analysis found a base10ms interval and a nonstandard Lua header; effective game cadence/payload remains unresolved, so these are not substituted as game rules.
+
+**Limits/next:** Rust first-loop execution passes; original fidelity, audible output and human feel are not tested. Continue M2 hatch/profile/next-stage/rescue work and installed-payload recovery, then later systems automatically. No original executable launched, game install/save modified, assets bundled or existing implementation removed.
+
 ## 2026-10-08 — Build first-tank runtime and establish primary binary validation
 
 **Changed:** Added single Rust crate/lockfile, owned-install discovery/hash inventory, assets/font adapters, first-tank simulation, macroquad window/input/effects, event/state/capture instrumentation, separate JSON project saves and maintained validation command. Retained all previous work. The user clarified installed binaries as the game-detail authority and authorized incremental commits; WinFish expectations remain secondary until checked.
