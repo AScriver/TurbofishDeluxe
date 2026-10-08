@@ -1,0 +1,34 @@
+# Allow only maintained project files. Review new file types deliberately.
+*
+!*/
+!/.gitignore
+!/.gitattributes
+!/AGENTS.md
+!/README.md
+!/STATUS.md
+!/MODLOG.md
+!/THIRD-PARTY-NOTICES.md
+!/docs/**/*.md
+!/scripts/*.ps1
+
+# Reserved Rust source layout; no crate exists at the setup checkpoint.
+!/Cargo.toml
+!/Cargo.lock
+!/rust-toolchain.toml
+!/src/**/*.rs
+!/tests/**/*.rs
+
+# Private trees override the allowlist, including source-shaped files.
+/.scratch/
+/private/
+/local/
+/references/
+/context/
+/target/
+**/game-data/
+**/extracted/
+**/dumps/
+**/captures/
+**/.env
+**/.env.*
+**/*.local.*
