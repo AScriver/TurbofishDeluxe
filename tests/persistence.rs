@@ -210,6 +210,126 @@ fn tank_four_fourth_session(pets: &[PetKind]) -> AdventureSession {
     session
 }
 
+fn tank_four_finale_session(pets: &[PetKind]) -> AdventureSession {
+    let mut session = tank_four_fourth_session(&[]);
+    session.progress.level = 5;
+    session.progress.unlocked_pets.push(PetKind::Angie);
+    session.progress.selected_pets = pets.to_vec();
+    session.board = Some(AdventureState::new_tank4_finale(42, pets).unwrap());
+    session
+}
+
+fn tank_four_finale_dead_guppy_session(pets: &[PetKind]) -> AdventureSession {
+    use turbofish_deluxe::breeder::BreederSize;
+
+    // Ordinary Board birth and starvation create a real guppy corpse;
+    // this controlled fixture is separate from native earned play.
+    let mut session = tank_four_finale_session(pets);
+    let board = session.board.as_mut().unwrap();
+    let breeder = &mut board.breeders[0];
+    breeder.size = BreederSize::Medium;
+    breeder.food_points = 0;
+    breeder.food_needed_to_grow = 7;
+    breeder.birth_clock = 999;
+    breeder.birth_threshold = 1000;
+    breeder.hunger = 300;
+    board.breeder_unlocked = true;
+    session.step(&[]);
+    assert_eq!(session.board.as_ref().unwrap().fish.len(), 1);
+    let fish = &mut session.board.as_mut().unwrap().fish[0];
+    fish.beginner = false;
+    fish.hunger = 1;
+    session.step(&[]);
+    assert_eq!(session.board.as_ref().unwrap().dead_fish.len(), 1);
+    session.validate().unwrap();
+    session
+}
+
+fn tank_four_finale_supported_corpse_session(pets: &[PetKind]) -> AdventureSession {
+    use turbofish_deluxe::{
+        breeder::{BreederState, DeadBreeder},
+        oscar::{DeadOscar, OscarState},
+        ultra::{DeadUltra, UltraState},
+    };
+
+    // Tank 4 can own Oscar, Ultra, Breeder and ordinary guppy corpses.
+    let mut session = tank_four_finale_dead_guppy_session(pets);
+
+    let mut value = serde_json::to_value(&session).unwrap();
+    let next_id = value["board"]["next_id"].as_u64().unwrap();
+    value["board"]["next_id"] = (next_id + 3).into();
+    session = serde_json::from_value(value).unwrap();
+    let board = session.board.as_mut().unwrap();
+    board.upgrades.quality_unlocked = true;
+    board.upgrades.quantity_unlocked = true;
+    board.oscar_unlocked = true;
+    board.ultra_unlocked = true;
+    board.weapon_unlocked = true;
+    board.egg_unlocked = true;
+    board
+        .dead_oscars
+        .push(DeadOscar::from_impact(&OscarState::spawn_bought(
+            next_id,
+            &mut |_| 1,
+        )));
+    board
+        .dead_ultras
+        .push(DeadUltra::from_impact(&UltraState::spawn_bought(
+            next_id + 1,
+            &mut |_| 1,
+        )));
+    board
+        .dead_breeders
+        .push(DeadBreeder::from_impact(&BreederState::spawn_bought(
+            next_id + 2,
+            &mut |_| 1,
+        )));
+    session.validate().unwrap();
+    session
+}
+
+fn tank_two_starcatcher_corpse_session() -> AdventureSession {
+    let mut session = AdventureSession::new(42);
+    session.progress.tank = 2;
+    session.progress.level = 2;
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Clyde,
+    ];
+    session.progress.selected_pets = vec![PetKind::Niko, PetKind::Clyde];
+    session.board =
+        Some(AdventureState::new_tank2_second_stage(42, &session.progress.selected_pets).unwrap());
+    let board = session.board.as_mut().unwrap();
+    board.balance = 2000;
+    board.upgrades.quality_unlocked = true;
+    board.upgrades.quantity_unlocked = true;
+    board.potion_unlocked = true;
+    board.starcatcher_unlocked = true;
+    session.apply_actions(&[Action::BuyStarcatcher, Action::BuyStarcatcher]);
+    session.board.as_mut().unwrap().starcatchers[0].hunger = 1;
+    session.step(&[]);
+    assert_eq!(session.board.as_ref().unwrap().dead_starcatchers.len(), 1);
+    session.validate().unwrap();
+    session
+}
+
+fn tank_three_grubber_gekko_corpse_session() -> AdventureSession {
+    use turbofish_deluxe::{gekko::DeadGekko, grubber::DeadGrubber};
+
+    let mut session = bought_gekko_session();
+    let board = session.board.as_mut().unwrap();
+    let grubber = board.grubbers.remove(0);
+    let gekko = board.gekkos.remove(0);
+    board.dead_grubbers.push(DeadGrubber::from_impact(&grubber));
+    board.dead_gekkos.push(DeadGekko::from_impact(&gekko));
+    session.validate().unwrap();
+    session
+}
+
 fn current_bytes(session: AdventureSession) -> Vec<u8> {
     serde_json::to_vec(&cli::ProjectSave {
         format_version: cli::SAVE_FORMAT_VERSION,
@@ -485,7 +605,7 @@ fn current_tank_four_second_pause_keeps_live_board_while_session_time_advances()
 fn current_tank_four_third_accepts_seventeen_rosters_and_persists_live_amp_setup() {
     use turbofish_deluxe::{alien::SylvesterKind, fish_pet::FishPetKind, invasion::EncounterKind};
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 19);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 20);
     let canonical = tank_four_third_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 17);
     for pet in canonical {
@@ -746,7 +866,7 @@ fn current_tank_four_fourth_accepts_eighteen_rosters_and_persists_gash_setup() {
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 19);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 20);
     let canonical = tank_four_fourth_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 18);
     for pet in canonical {
@@ -993,6 +1113,343 @@ fn current_tank_four_fourth_pending_pair_preserves_constructor_order_and_next_pl
 }
 
 #[test]
+fn current_tank_four_finale_accepts_nineteen_rosters_and_starts_with_bilaterus() {
+    use turbofish_deluxe::{
+        fish_pet::FishPetKind,
+        invasion::{EncounterKind, WavePlan},
+    };
+
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 20);
+    let canonical = tank_four_finale_session(&[]).progress.unlocked_pets;
+    assert_eq!(canonical.len(), 19);
+    for pet in canonical {
+        let session = tank_four_finale_session(&[pet]);
+        session.validate().unwrap();
+        let reopened = cli::decode_save(&current_bytes(session.clone())).unwrap();
+        assert_eq!(
+            serde_json::to_value(reopened).unwrap(),
+            serde_json::to_value(session).unwrap(),
+            "single-pet roster {pet:?} changed on reload"
+        );
+    }
+    let session = tank_four_finale_session(&[PetKind::Niko, PetKind::Gash, PetKind::Angie]);
+    let board = session.board.as_ref().unwrap();
+    assert_eq!(
+        (board.tank, board.level, board.balance, board.egg_price),
+        (4, 5, 200, 99_999)
+    );
+    assert_eq!(board.breeders.len(), 1);
+    assert_eq!(board.breeders[0].food_points, 2);
+    assert!(board.fish.is_empty());
+    assert!(
+        board
+            .fish_pets
+            .iter()
+            .any(|pet| pet.kind == FishPetKind::Angie)
+    );
+    let wave = board.invasion.as_ref().unwrap();
+    assert_eq!(wave.plan.expected(), EncounterKind::Bilaterus);
+    assert!(matches!(
+        wave.plan,
+        WavePlan::CyclingTank4Finale { wave_count: 0, .. }
+    ));
+    assert_eq!(wave.countdown, 3000);
+    assert!(wave.actors.is_empty() && wave.bilaterus.is_empty());
+    assert!(AdventureState::new_tank4_fourth_stage(42, &[PetKind::Angie]).is_err());
+}
+
+#[test]
+fn current_twenty_requires_revival_clock_on_all_seven_valid_corpse_kinds() {
+    // Each complete source state first decodes on its own valid stage. The
+    // seven negative probes then remove only one required clock at a time.
+    for (session, lists) in [
+        (
+            tank_four_finale_supported_corpse_session(&[]),
+            &["dead_fish", "dead_oscars", "dead_ultras", "dead_breeders"][..],
+        ),
+        (
+            tank_two_starcatcher_corpse_session(),
+            &["dead_starcatchers"][..],
+        ),
+        (
+            tank_three_grubber_gekko_corpse_session(),
+            &["dead_grubbers", "dead_gekkos"][..],
+        ),
+    ] {
+        let complete = serde_json::to_value(cli::ProjectSave {
+            format_version: cli::SAVE_FORMAT_VERSION,
+            session,
+        })
+        .unwrap();
+        cli::decode_save(&serde_json::to_vec(&complete).unwrap()).unwrap();
+        for list in lists {
+            assert_eq!(complete["session"]["board"][*list][0]["revival_ticks"], 100);
+            let mut missing = complete.clone();
+            missing["session"]["board"][*list][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("revival_ticks");
+            let error = cli::decode_save(&serde_json::to_vec(&missing).unwrap()).unwrap_err();
+            assert!(
+                error.to_string().contains("Incomplete format-twenty"),
+                "missing {list}[0].revival_ticks: {error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn current_tank_four_finale_live_angie_pending_revival_survives_pause_and_reload() {
+    use turbofish_deluxe::sim::{Coin, CoinKind, Event};
+
+    // The corpse came from an ordinary Breeder-born guppy. Marking its
+    // 100-clock as 10 models a successful Angie contact without claiming
+    // that this fixture exercised the native/widget contact route.
+    let mut uninterrupted =
+        tank_four_finale_dead_guppy_session(&[PetKind::Amp, PetKind::Gash, PetKind::Angie]);
+    let mut value = serde_json::to_value(&uninterrupted).unwrap();
+    let coin_id = value["board"]["next_id"].as_u64().unwrap();
+    value["board"]["next_id"] = (coin_id + 1).into();
+    uninterrupted = serde_json::from_value(value).unwrap();
+    let board = uninterrupted.board.as_mut().unwrap();
+    let corpse_id = board.dead_fish[0].id;
+    let corpse_size = board.dead_fish[0].size;
+    board.dead_fish[0].revival_ticks = 10;
+    board.coins.push(Coin {
+        id: coin_id,
+        x: 100.25,
+        y: 160.5,
+        kind: CoinKind::Diamond,
+        frame: 0,
+        animation_ticks: 6,
+        hazard_age_ticks: 0,
+        collecting: false,
+        bottom_ticks: 0,
+        fade_ticks: 0,
+        penta_rising: false,
+    });
+    uninterrupted.validate().unwrap();
+
+    let mut reopened = cli::decode_save(&current_bytes(uninterrupted.clone())).unwrap();
+    assert_eq!(
+        serde_json::to_value(&reopened).unwrap(),
+        serde_json::to_value(&uninterrupted).unwrap()
+    );
+    let board_before = serde_json::to_value(reopened.board.as_ref().unwrap()).unwrap();
+    let before_ticks = reopened.ticks;
+    for _ in 0..12 {
+        reopened.paused_step();
+        uninterrupted.paused_step();
+        assert_eq!(
+            serde_json::to_value(reopened.board.as_ref().unwrap()).unwrap(),
+            board_before
+        );
+    }
+    assert_eq!(reopened.ticks, before_ticks + 12);
+    reopened = cli::decode_save(&current_bytes(reopened)).unwrap();
+    assert_eq!(
+        serde_json::to_value(&reopened).unwrap(),
+        serde_json::to_value(&uninterrupted).unwrap()
+    );
+    let mut revived = Vec::new();
+    for _ in 0..10 {
+        let actual = reopened.step(&[]);
+        let expected = uninterrupted.step(&[]);
+        assert_eq!(
+            serde_json::to_value(&actual).unwrap(),
+            serde_json::to_value(&expected).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&reopened).unwrap(),
+            serde_json::to_value(&uninterrupted).unwrap()
+        );
+        revived.extend(actual.into_iter().filter_map(|event| match event {
+            Event::FishRevived {
+                corpse_id: old_id,
+                fish_id,
+                ..
+            } if old_id == corpse_id => Some(fish_id),
+            _ => None,
+        }));
+        reopened.validate().unwrap();
+    }
+    assert_eq!(revived.len(), 1);
+    let new_id = revived[0];
+    assert!(new_id > coin_id && new_id != corpse_id);
+    let board = reopened.board.as_ref().unwrap();
+    assert!(board.dead_fish.iter().all(|corpse| corpse.id != corpse_id));
+    let fresh = board.fish.iter().find(|fish| fish.id == new_id).unwrap();
+    assert_eq!(fresh.size, corpse_size);
+    assert!(
+        fresh.hunger > 300,
+        "revival reused the starving fish's hunger"
+    );
+    assert_eq!(board.coins[0].kind, CoinKind::Diamond);
+}
+
+#[test]
+fn current_tank_four_finale_pending_balrog_bilaterus_keeps_order_and_counter() {
+    use turbofish_deluxe::{
+        alien::SylvesterKind,
+        invasion::{EncounterKind, WarningCoords, WavePlan},
+    };
+
+    // PB73's raw12 first creates Balrog and then Bilaterus. This explicit
+    // pre-spawn state exercises source order and the post-construction draw.
+    let mut uninterrupted = tank_four_finale_session(&[]);
+    let wave = uninterrupted
+        .board
+        .as_mut()
+        .unwrap()
+        .invasion
+        .as_mut()
+        .unwrap();
+    wave.plan = WavePlan::CyclingTank4Finale {
+        next: EncounterKind::BalrogBilaterusPair,
+        wave_count: 6,
+    };
+    wave.countdown = 1;
+    wave.warning = Some(WarningCoords {
+        first_x: 125,
+        first_y: 175,
+        second_x: 410,
+        second_y: 235,
+    });
+    uninterrupted.validate().unwrap();
+    let mut reopened = cli::decode_save(&current_bytes(uninterrupted.clone())).unwrap();
+    assert_eq!(
+        serde_json::to_value(&reopened).unwrap(),
+        serde_json::to_value(&uninterrupted).unwrap()
+    );
+    for _ in 0..8 {
+        assert_eq!(
+            serde_json::to_value(reopened.step(&[])).unwrap(),
+            serde_json::to_value(uninterrupted.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&reopened).unwrap(),
+            serde_json::to_value(&uninterrupted).unwrap()
+        );
+        reopened.validate().unwrap();
+    }
+    let wave = reopened.board.as_ref().unwrap().invasion.as_ref().unwrap();
+    assert_eq!(wave.actors.len(), 1);
+    assert_eq!(wave.actors[0].kind, SylvesterKind::Balrog);
+    assert_eq!(wave.bilaterus.len(), 1);
+    assert!(wave.actors[0].id < wave.bilaterus[0].id);
+    assert_eq!(wave.countdown, 3000);
+    assert!(wave.battle_active);
+    assert!(matches!(
+        wave.plan,
+        WavePlan::CyclingTank4Finale { wave_count: 7, .. }
+    ));
+}
+
+#[test]
+fn current_tank_four_finale_special_hatch_reload_keeps_nineteen_pets_and_lock() {
+    use turbofish_deluxe::sim::{Event, Rejection};
+
+    // Controlled shop fixture: three actual BuyEgg actions exercise the
+    // special phase transaction, without claiming earned native progress.
+    let mut uninterrupted = tank_four_finale_session(&[PetKind::Angie]);
+    let pets_before = uninterrupted.progress.unlocked_pets.clone();
+    let shells_before = uninterrupted.progress.shell_balance;
+    let board = uninterrupted.board.as_mut().unwrap();
+    board.balance = 299_997;
+    board.breeder_unlocked = true;
+    board.upgrades.quality_unlocked = true;
+    board.upgrades.quantity_unlocked = true;
+    board.oscar_unlocked = true;
+    board.ultra_unlocked = true;
+    board.weapon_unlocked = true;
+    board.egg_unlocked = true;
+    uninterrupted.validate().unwrap();
+    let events = uninterrupted.apply_actions(&[
+        Action::BuyEgg,
+        Action::BuyEgg,
+        Action::BuyEgg,
+        Action::BuyEgg,
+    ]);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, Event::EggBought { .. }))
+            .count(),
+        3
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, Event::TankFourFinaleHatchStarted { .. }))
+            .count(),
+        1
+    );
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        Event::PetUnlocked { .. } | Event::HatchStarted { .. }
+    )));
+    assert_eq!(
+        (uninterrupted.progress.tank, uninterrupted.progress.level),
+        (5, 1)
+    );
+    assert_eq!(uninterrupted.progress.unlocked_pets, pets_before);
+    assert_eq!(uninterrupted.progress.unlocked_pets.len(), 19);
+    assert_eq!(uninterrupted.progress.shell_balance, shells_before);
+    assert!(uninterrupted.board.is_none());
+    assert!(matches!(
+        uninterrupted.phase,
+        AdventurePhase::TankFourFinaleHatch { updates: 0 }
+    ));
+    let mut reopened = cli::decode_save(&current_bytes(uninterrupted.clone())).unwrap();
+    assert_eq!(
+        serde_json::to_value(&reopened).unwrap(),
+        serde_json::to_value(&uninterrupted).unwrap()
+    );
+    for _ in 0..171 {
+        assert_eq!(
+            serde_json::to_value(reopened.step(&[])).unwrap(),
+            serde_json::to_value(uninterrupted.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&reopened).unwrap(),
+            serde_json::to_value(&uninterrupted).unwrap()
+        );
+    }
+    assert!(matches!(
+        reopened.phase,
+        AdventurePhase::TankFourFinaleHatch { updates: 171 }
+    ));
+    let mut reopened = cli::decode_save(&current_bytes(reopened)).unwrap();
+    reopened.apply_actions(&[Action::Continue]);
+    assert!(matches!(
+        reopened.phase,
+        AdventurePhase::PetSelection { .. }
+    ));
+    reopened.apply_actions(&[Action::TogglePet {
+        pet: PetKind::Angie,
+    }]);
+    let before = serde_json::to_value(&reopened).unwrap();
+    assert!(
+        reopened
+            .apply_actions(&[Action::Continue])
+            .iter()
+            .any(|event| matches!(
+                event,
+                Event::Rejected {
+                    reason: Rejection::Locked,
+                    ..
+                }
+            ))
+    );
+    assert_eq!(serde_json::to_value(&reopened).unwrap(), before);
+    let final_reload = cli::decode_save(&current_bytes(reopened.clone())).unwrap();
+    assert_eq!(
+        serde_json::to_value(final_reload).unwrap(),
+        serde_json::to_value(reopened).unwrap()
+    );
+}
+
+#[test]
 fn current_tank_four_accepts_fifteen_pet_rosters_and_rejects_unearned_nimbus() {
     let canonical = tank_four_first_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 15);
@@ -1029,7 +1486,7 @@ fn current_tank_four_requires_all_breeder_and_rhubarb_state_without_backfill() {
             cli::decode_save(&serde_json::to_vec(&missing).unwrap())
                 .unwrap_err()
                 .to_string()
-                .contains("Incomplete format-nineteen"),
+                .contains("Incomplete format-twenty"),
             "missing {field}"
         );
     }

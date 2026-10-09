@@ -86,6 +86,8 @@ pub struct DeadOscar {
     pub opacity: f32,
     pub facing_right: bool,
     pub remaining_ticks: u16,
+    /// Angie changes the fresh corpse's 100 to a ten-update revival.
+    pub revival_ticks: i32,
     vx: f64,
     vy: f64,
     speed_mod: f64,
@@ -134,6 +136,7 @@ impl DeadOscar {
             opacity: 1.0,
             facing_right: pose.facing_right,
             remaining_ticks: 125,
+            revival_ticks: 100,
             vx: pose.vx,
             vy,
             speed_mod: pose.speed_mod,
@@ -152,6 +155,7 @@ impl DeadOscar {
             || ![1.6, 1.8, 2.0].contains(&self.speed_mod)
             || self.frame > 9
             || self.remaining_ticks > 125
+            || !(self.revival_ticks == 100 || (0..=10).contains(&self.revival_ticks))
             || !self.opacity.is_finite()
             || !(0.0..=1.0).contains(&self.opacity)
         {
@@ -160,7 +164,7 @@ impl DeadOscar {
         Ok(())
     }
 
-    /// True on the update after the countdown reaches zero. The ordinary
+    /// True when the lifetime expires or Angie's revival countdown finishes. The ordinary
     /// non-Angel body pauses at 105 while it sinks, then fades near the floor.
     pub fn tick(&mut self) -> bool {
         let remaining = self.remaining_ticks;
@@ -174,10 +178,17 @@ impl DeadOscar {
                 _ => 9,
             }
         };
+        if (1..=10).contains(&self.revival_ticks) {
+            self.revival_ticks -= 1;
+            self.frame = self.revival_ticks as u8;
+        }
         if remaining < 105 {
             self.opacity = (self.opacity - 0.02).max(0.0);
         }
         if remaining == 0 {
+            return true;
+        }
+        if self.revival_ticks == 0 {
             return true;
         }
         if remaining > 105 || self.y > 370.0 {
@@ -206,7 +217,34 @@ impl OscarState {
     /// places a bought Oscar at Y=40. This is W1 order, not retail RNG parity.
     pub fn spawn_bought(id: u64, rand_range: &mut impl FnMut(u64) -> u64) -> Self {
         let x = rand_range(520) as i32 + 20;
-        let _constructor_y = rand_range(265) as i32 + 105;
+        let y = rand_range(265) as i32 + 105;
+        let mut actor = Self::spawn_at(id, x, y, None, rand_range);
+        actor.vy = rand_range(5) as f64 + 23.0;
+        actor.y = 40.0;
+        actor.widget_y = 40;
+        actor.bought_timer = rand_range(10) as u8 + 45;
+        actor
+    }
+
+    /// W1 Board::RessurectOscar creates a fresh Oscar at the corpse's current
+    /// integer pose, preserving only the corpse's facing direction.
+    pub fn spawn_revived(
+        id: u64,
+        x: i32,
+        y: i32,
+        facing_right: bool,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
+        Self::spawn_at(id, x, y, Some(facing_right), rand_range)
+    }
+
+    fn spawn_at(
+        id: u64,
+        x: i32,
+        y: i32,
+        facing_right: Option<bool>,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
         let left = rand_range(2) != 0;
         let speed_mod = match rand_range(3) {
             0 => 2.0,
@@ -218,17 +256,18 @@ impl OscarState {
         let movement_state = rand_range(10) as u8;
         let coin_threshold = rand_range(200) as u16 + 150;
         let hunger = rand_range(200) as i32 + 600;
-        let vy = rand_range(5) as f64 + 23.0;
-        let bought_timer = rand_range(10) as u8 + 45;
+        let vx = facing_right.map_or(if left { -0.1 } else { 0.0 }, |right| {
+            if right { 1.0 } else { -1.0 }
+        });
         Self {
             id,
             alive: true,
             x: x as f64,
-            y: 40.0,
+            y: y as f64,
             widget_x: x,
-            widget_y: 40,
-            vx: if left { -0.1 } else { 0.0 },
-            vy,
+            widget_y: y,
+            vx,
+            vy: -0.5,
             hunger,
             cannot_be_eaten_ticks: 0,
             frame: 0,
@@ -236,9 +275,9 @@ impl OscarState {
             eating_ticks: 0,
             coin_timer: 0,
             coin_threshold,
-            bought_timer,
+            bought_timer: 0,
             speed_mod,
-            previous_vx: if left { -1.0 } else { 1.0 },
+            previous_vx: if vx < 0.0 { -1.0 } else { 1.0 },
             movement_state,
             movement_timer: 0,
             special_timer: 40,
@@ -667,6 +706,55 @@ impl OscarState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn revival_uses_fresh_constructor_draws_and_facing_without_entrance() {
+        let mut draws = Vec::new();
+        let actor = OscarState::spawn_revived(8, 220, 175, false, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(draws, [2, 3, 200, 3, 10, 200, 200]);
+        assert_eq!((actor.id, actor.widget_x, actor.widget_y), (8, 220, 175));
+        assert_eq!((actor.vx, actor.previous_vx, actor.vy), (-1.0, -1.0, -0.5));
+        assert_eq!(
+            (actor.hunger, actor.coin_threshold, actor.bought_timer),
+            (600, 150, 0)
+        );
+        actor.validate().unwrap();
+    }
+
+    #[test]
+    fn revival_countdown_expires_before_motion_and_lifetime_removal_wins() {
+        let actor = OscarState::spawn_bought(7, &mut |_| 0);
+        let mut corpse = DeadOscar::from_impact(&actor);
+        assert_eq!(corpse.revival_ticks, 100);
+        corpse.revival_ticks = 10;
+        for _ in 0..9 {
+            assert!(!corpse.tick());
+        }
+        let pose = (corpse.x, corpse.y);
+        assert_eq!(corpse.revival_ticks, 1);
+        assert!(corpse.tick());
+        assert_eq!(
+            (corpse.revival_ticks, corpse.x, corpse.y),
+            (0, pose.0, pose.1)
+        );
+        assert!(corpse.remaining_ticks > 0);
+        corpse.remaining_ticks = 0;
+        corpse.revival_ticks = 1;
+        assert!(corpse.tick());
+        assert_eq!(corpse.remaining_ticks, 0);
+    }
+
+    #[test]
+    fn corpse_revival_timer_is_required_save_state() {
+        let actor = OscarState::spawn_bought(7, &mut |_| 0);
+        let corpse = DeadOscar::from_impact(&actor);
+        let mut saved = serde_json::to_value(corpse).unwrap();
+        saved.as_object_mut().unwrap().remove("revival_ticks");
+        assert!(serde_json::from_value::<DeadOscar>(saved).is_err());
+    }
 
     fn actor() -> OscarState {
         OscarState::spawn_bought(7, &mut |_| 0)

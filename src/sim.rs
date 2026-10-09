@@ -8,8 +8,8 @@ use crate::{
     breeder::{BreederFoodView, BreederSize, BreederState, DeadBreeder},
     clyde::{ClydeCoinView, ClydeState},
     fish_pet::{
-        AmpTap, FishPetKind, FishPetState, GashFishView, NimbusCoinView, NimbusFoodView,
-        PetAlienView, WardFishView, ZorfHungryView,
+        AmpTap, AngieCorpseView, FishPetKind, FishPetState, GashFishView, NimbusCoinView,
+        NimbusFoodView, PetAlienView, WardFishView, ZorfHungryView,
     },
     gekko::{DeadGekko, GekkoPrey, GekkoPreyKind, GekkoState},
     grubber::{DeadGrubber, GrubberPrey, GrubberState},
@@ -58,6 +58,7 @@ pub const TANK4_FIRST_EGG_PRICE: i32 = 3000;
 pub const TANK4_SECOND_EGG_PRICE: i32 = 25_000;
 pub const TANK4_THIRD_EGG_PRICE: i32 = 50_000;
 pub const TANK4_FOURTH_EGG_PRICE: i32 = 75_000;
+pub const TANK4_FINALE_EGG_PRICE: i32 = 99_999;
 pub const ULTRA_PRICE: i32 = 10_000;
 pub const TANK4_WEAPON_PRICE: i32 = 5000;
 pub const POTION_PRICE: i32 = 250;
@@ -332,6 +333,7 @@ pub struct DeadFish {
     pub frame: u8,
     pub opacity: f32,
     pub remaining_ticks: u16,
+    pub revival_ticks: i32,
     vx: f32,
     vy: f32,
     speed_mod: f32,
@@ -348,6 +350,7 @@ impl DeadFish {
             frame: 0,
             opacity: 1.0,
             remaining_ticks: 125,
+            revival_ticks: 100,
             vx: fish.vx,
             vy: fish.vy
                 - if fish.x < 115.0 || fish.vy < -3.0 {
@@ -358,6 +361,49 @@ impl DeadFish {
             speed_mod: fish.speed_mod,
         }
     }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.id == 0
+            || ![
+                self.x,
+                self.y,
+                self.vx,
+                self.vy,
+                self.speed_mod,
+                self.opacity,
+            ]
+            .into_iter()
+            .all(f32::is_finite)
+            || self.remaining_ticks > 125
+            || self.frame > 9
+            || !(0.0..=1.0).contains(&self.opacity)
+            || ![1.6, 1.8, 2.0].contains(&self.speed_mod)
+            || !(self.revival_ticks == 100 || (0..=10).contains(&self.revival_ticks))
+        {
+            return Err("invalid ordinary guppy corpse state".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum RevivalKind {
+    Guppy(FishSize),
+    Oscar,
+    Ultra,
+    Starcatcher,
+    Grubber,
+    Gekko,
+    Breeder(BreederSize),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CorpseRevival {
+    corpse_id: u64,
+    kind: RevivalKind,
+    x: i32,
+    y: i32,
+    facing_right: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1018,6 +1064,25 @@ pub enum Event {
     HatchReady {
         tick: u64,
         pet: PetKind,
+    },
+    TankFourFinaleHatchStarted {
+        tick: u64,
+    },
+    TankFourFinaleHatchOpened {
+        tick: u64,
+    },
+    TankFourFinaleHatchReady {
+        tick: u64,
+    },
+    AngieRevivalStarted {
+        tick: u64,
+        pet_id: u64,
+        corpse_id: u64,
+    },
+    FishRevived {
+        tick: u64,
+        corpse_id: u64,
+        fish_id: u64,
     },
     StageStarted {
         tick: u64,
@@ -1758,6 +1823,10 @@ impl AdventureState {
         Self::new_tank4_stage(seed, pets, 4)
     }
 
+    pub fn new_tank4_finale(seed: u64, pets: &[PetKind]) -> Result<Self, String> {
+        Self::new_tank4_stage(seed, pets, 5)
+    }
+
     fn new_tank4_stage(seed: u64, pets: &[PetKind], level: u8) -> Result<Self, String> {
         let canonical = [
             PetKind::Stinky,
@@ -1778,6 +1847,7 @@ impl AdventureState {
             PetKind::Nimbus,
             PetKind::Amp,
             PetKind::Gash,
+            PetKind::Angie,
         ];
         if pets.len() > 3
             || pets.iter().any(|pet| {
@@ -1785,6 +1855,7 @@ impl AdventureState {
                     || (level == 1 && *pet == PetKind::Nimbus)
                     || (level < 3 && *pet == PetKind::Amp)
                     || (level < 4 && *pet == PetKind::Gash)
+                    || (level < 5 && *pet == PetKind::Angie)
             })
             || pets.windows(2).any(|pair| {
                 canonical.iter().position(|pet| *pet == pair[0])
@@ -1801,6 +1872,7 @@ impl AdventureState {
             2 => TANK4_SECOND_EGG_PRICE,
             3 => TANK4_THIRD_EGG_PRICE,
             4 => TANK4_FOURTH_EGG_PRICE,
+            5 => TANK4_FINALE_EGG_PRICE,
             _ => unreachable!("unsupported Tank 4 stage"),
         };
         state.invasion = Some(match level {
@@ -1808,6 +1880,7 @@ impl AdventureState {
             2 => Invasion1_2::new_bilaterus(),
             3 => Invasion1_2::new_tank4_third_stage(),
             4 => Invasion1_2::new_tank4_fourth_stage(),
+            5 => Invasion1_2::new_tank4_finale(),
             _ => unreachable!(),
         });
         state.spawn_tank4_pets(pets);
@@ -1875,7 +1948,7 @@ impl AdventureState {
                 PetKind::Nimbus => self.spawn_fish_pet(FishPetKind::Nimbus),
                 PetKind::Amp => self.spawn_fish_pet(FishPetKind::Amp),
                 PetKind::Gash => self.spawn_fish_pet(FishPetKind::Gash),
-                PetKind::Angie => unreachable!("Angie is unlocked after stage 4-4"),
+                PetKind::Angie => self.spawn_fish_pet(FishPetKind::Angie),
             }
         }
     }
@@ -2181,7 +2254,7 @@ impl AdventureState {
         if !((self.tank == 1 && (1..=5).contains(&self.level))
             || (self.tank == 2 && (1..=5).contains(&self.level))
             || (self.tank == 3 && (1..=5).contains(&self.level))
-            || matches!((self.tank, self.level), (4, 1..=4)))
+            || matches!((self.tank, self.level), (4, 1..=5)))
             || self.next_id == 0
             || self.next_id == u64::MAX
             || self.rng_state == 0
@@ -2208,7 +2281,7 @@ impl AdventureState {
                             || food.direction == 0))
                     || (!food.free_from_zorf && food.direction != 0)
                     || (food.nimbus_rising
-                        && (!matches!((self.tank, self.level), (4, 2..=4))
+                        && (!matches!((self.tank, self.level), (4, 2..=5))
                             || food.direction != 0
                             || food.free_from_zorf))
                     || (food.quality == 3 && (self.tank != 2 || !self.potion_unlocked))
@@ -2216,25 +2289,26 @@ impl AdventureState {
             || !(2..=12).contains(&self.weapon_strength)
             || (!self.weapon_unlocked && self.weapon_strength > 2)
             || self.punch_sound_cooldown > 11
-            || (!matches!((self.tank, self.level), (4, 3..=4)) && self.pets.contains(&PetKind::Amp))
-            || ((self.tank, self.level) != (4, 4) && self.pets.contains(&PetKind::Gash))
-            || self.pets.contains(&PetKind::Angie)
-            || (!matches!((self.tank, self.level), (4, 2..=4))
+            || (!matches!((self.tank, self.level), (4, 3..=5)) && self.pets.contains(&PetKind::Amp))
+            || (!matches!((self.tank, self.level), (4, 4..=5))
+                && self.pets.contains(&PetKind::Gash))
+            || ((self.tank, self.level) != (4, 5) && self.pets.contains(&PetKind::Angie))
+            || (!matches!((self.tank, self.level), (4, 2..=5))
                 && self.pets.contains(&PetKind::Nimbus))
-            || (!matches!((self.tank, self.level), (4, 2..=4))
+            || (!matches!((self.tank, self.level), (4, 2..=5))
                 && (self.ultra_unlocked || !self.ultras.is_empty() || !self.dead_ultras.is_empty()))
-            || (!matches!((self.tank, self.level), (4, 1..=4))
+            || (!matches!((self.tank, self.level), (4, 1..=5))
                 && self.pets.contains(&PetKind::Rhubarb))
-            || !matches!((self.tank, self.level), (3, 5) | (4, 1..=4))
+            || !matches!((self.tank, self.level), (3, 5) | (4, 1..=5))
                 && self.pets.contains(&PetKind::Blip)
-            || !matches!((self.tank, self.level), (3, 4..=5) | (4, 1..=4))
+            || !matches!((self.tank, self.level), (3, 4..=5) | (4, 1..=5))
                 && self.pets.contains(&PetKind::Gumbo)
-            || !matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=4))
+            || !matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=5))
                 && self.pets.contains(&PetKind::Shrapnel)
-            || !matches!((self.tank, self.level), (3, 2..=5) | (4, 1..=4))
+            || !matches!((self.tank, self.level), (3, 2..=5) | (4, 1..=5))
                 && self.pets.contains(&PetKind::Seymour)
             || !matches!(self.tank, 3 | 4) && self.pets.contains(&PetKind::Wadsworth)
-            || (!matches!((self.tank, self.level), (4, 1..=4))
+            || (!matches!((self.tank, self.level), (4, 1..=5))
                 && (self.breeder_unlocked
                     || !self.breeders.is_empty()
                     || !self.dead_breeders.is_empty()
@@ -2252,7 +2326,7 @@ impl AdventureState {
                     || !self.dead_starcatchers.is_empty())
             || !((self.tank == 2 && (2..=5).contains(&self.level))
                 || (self.tank == 3 && (1..=5).contains(&self.level))
-                || matches!((self.tank, self.level), (4, 1..=4)))
+                || matches!((self.tank, self.level), (4, 1..=5)))
                 && self.clyde.is_some()
             || self.coins.iter().any(|coin| {
                 (coin.penta_rising && coin.kind != CoinKind::DiamondPenta && !coin.kind.is_shell())
@@ -2263,12 +2337,12 @@ impl AdventureState {
                     || (coin.kind == CoinKind::Pearl
                         && !(self.tank == 3 && (2..=5).contains(&self.level)))
                     || (coin.kind == CoinKind::ShrapnelBomb
-                        && (!matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=4))
+                        && (!matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=5))
                             || !self.pets.contains(&PetKind::Shrapnel)
                             || coin.fade_ticks != 0))
-                    || (coin.kind.is_shell() && !matches!((self.tank, self.level), (4, 2..=4)))
+                    || (coin.kind.is_shell() && !matches!((self.tank, self.level), (4, 2..=5)))
                     || (coin.kind == CoinKind::Treasure
-                        && !matches!((self.tank, self.level), (4, 2..=4)))
+                        && !matches!((self.tank, self.level), (4, 2..=5)))
                     || (coin.kind == CoinKind::DiamondPenta
                         && !(self.tank == 2 && (2..=5).contains(&self.level)))
             })
@@ -2286,6 +2360,7 @@ impl AdventureState {
                 2 => TANK4_SECOND_EGG_PRICE,
                 3 => TANK4_THIRD_EGG_PRICE,
                 4 => TANK4_FOURTH_EGG_PRICE,
+                5 => TANK4_FINALE_EGG_PRICE,
                 _ => unreachable!(),
             }
         } else if self.tank == 3 {
@@ -2320,7 +2395,7 @@ impl AdventureState {
             return Err("wrong egg price for Adventure stage".into());
         }
         match (self.tank, self.level) {
-            (4, 1..=4)
+            (4, 1..=5)
                 if self.invasion.as_ref().is_none_or(|wave| {
                     !matches!(
                         (self.level, wave.plan),
@@ -2328,6 +2403,7 @@ impl AdventureState {
                             | (2, WavePlan::FixedBilaterus)
                             | (3, WavePlan::CyclingTank4Third { .. })
                             | (4, WavePlan::CyclingTank4Fourth { .. })
+                            | (5, WavePlan::CyclingTank4Finale { .. })
                     )
                 }) || self.pets.len() > 3
                     || self.pets.windows(2).any(|pair| {
@@ -2350,6 +2426,7 @@ impl AdventureState {
                             PetKind::Nimbus,
                             PetKind::Amp,
                             PetKind::Gash,
+                            PetKind::Angie,
                         ];
                         canonical.iter().position(|pet| *pet == pair[0])
                             >= canonical.iter().position(|pet| *pet == pair[1])
@@ -2381,6 +2458,7 @@ impl AdventureState {
                                 PetKind::Nimbus => Some(FishPetKind::Nimbus),
                                 PetKind::Amp => Some(FishPetKind::Amp),
                                 PetKind::Gash => Some(FishPetKind::Gash),
+                                PetKind::Angie => Some(FishPetKind::Angie),
                                 _ => None,
                             })
                             .collect::<Vec<_>>()
@@ -2787,7 +2865,7 @@ impl AdventureState {
             || (self.tank == 3
                 && (1..=5).contains(&self.level)
                 && self.pets.contains(&PetKind::Meryl))
-            || (matches!((self.tank, self.level), (4, 1..=4))
+            || (matches!((self.tank, self.level), (4, 1..=5))
                 && self.pets.contains(&PetKind::Meryl)))
             || self
                 .notes
@@ -2815,7 +2893,7 @@ impl AdventureState {
             rhubarb.validate()?;
         }
         let projectile_stage = self.tank == 2 && (4..=5).contains(&self.level)
-            || matches!((self.tank, self.level), (3, 2 | 4 | 5));
+            || matches!((self.tank, self.level), (3, 2 | 4 | 5) | (4, 4..=5));
         if !(self.missiles.is_empty() || projectile_stage)
             || (!(matches!(self.tank, 3 | 4) || self.tank == 2 && (4..=5).contains(&self.level))
                 && self.rufus.is_some())
@@ -2825,8 +2903,9 @@ impl AdventureState {
         let mut assigned = HashSet::new();
         for missile in &self.missiles {
             missile.validate()?;
-            if matches!((self.tank, self.level), (3, 4 | 5))
-                != (missile.kind == MissileKind::EnergyBall)
+            if self.tank != 4
+                && (matches!((self.tank, self.level), (3, 4 | 5))
+                    != (missile.kind == MissileKind::EnergyBall))
             {
                 return Err("missile kind disagrees with Adventure stage".into());
             }
@@ -2914,9 +2993,9 @@ impl AdventureState {
             if shot.shot_type == 2 {
                 !matches!((self.tank, self.level), (3, 4 | 5))
             } else {
-                !matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=4))
+                !matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=5))
                     || !(self.pets.contains(&PetKind::Shrapnel)
-                        || (matches!((self.tank, self.level), (4, 3..=4))
+                        || (matches!((self.tank, self.level), (4, 3..=5))
                             && self.pets.contains(&PetKind::Amp)))
             }
         }) {
@@ -2966,6 +3045,7 @@ impl AdventureState {
         }
         let mut corpse_ids = HashSet::new();
         for corpse in &self.dead_fish {
+            corpse.validate()?;
             if !corpse_ids.insert(corpse.id) {
                 return Err("duplicate dead guppy ID".into());
             }
@@ -3715,8 +3795,17 @@ impl AdventureState {
                         self.victory = true;
                         events.push(Event::LevelCompleted {
                             tick: self.tick,
-                            next_tank: self.tank,
-                            next_level: self.level + 1,
+                            next_tank: if (self.tank, self.level) == (4, 5) {
+                                5
+                            } else {
+                                self.tank
+                            },
+                            // Final Tank4 advances to the boss tank directly.
+                            next_level: if (self.tank, self.level) == (4, 5) {
+                                1
+                            } else {
+                                self.level + 1
+                            },
                         });
                     }
                 }
@@ -3780,7 +3869,7 @@ impl AdventureState {
                 }
             }
             Action::BuyUltra => {
-                if !matches!((self.tank, self.level), (4, 2..=4)) || !self.ultra_unlocked {
+                if !matches!((self.tank, self.level), (4, 2..=5)) || !self.ultra_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -3905,7 +3994,7 @@ impl AdventureState {
                 if !(self.tank == 1
                     || (self.tank == 2 && (2..=5).contains(&self.level))
                     || (self.tank == 3 && (2..=5).contains(&self.level))
-                    || matches!((self.tank, self.level), (4, 2..=4)))
+                    || matches!((self.tank, self.level), (4, 2..=5)))
                     || !self.weapon_unlocked
                 {
                     events.push(Event::Rejected {
@@ -4453,13 +4542,8 @@ impl AdventureState {
             return Vec::new();
         }
         let mut events = Vec::new();
-        self.update_dead_fish();
-        self.dead_oscars.retain_mut(|corpse| !corpse.tick());
-        self.dead_starcatchers.retain_mut(|corpse| !corpse.tick());
-        self.dead_grubbers.retain_mut(|corpse| !corpse.tick());
-        self.dead_gekkos.retain_mut(|corpse| !corpse.tick());
-        self.dead_breeders.retain_mut(|corpse| !corpse.tick());
-        self.dead_ultras.retain_mut(|corpse| !corpse.tick());
+        self.update_dead_fish(&mut events);
+        self.update_other_corpses(&mut events);
         self.update_starcatchers(&mut events);
         self.update_food(&mut events);
         self.update_fish(&mut events);
@@ -5183,22 +5267,39 @@ impl AdventureState {
         }
     }
 
-    fn update_dead_fish(&mut self) {
+    fn update_dead_fish(&mut self, events: &mut Vec<Event>) {
         let mut expired = Vec::new();
+        let mut revivals = Vec::new();
         for dead in &mut self.dead_fish {
             if dead.remaining_ticks == 0 {
                 expired.push(dead.id);
                 continue;
             }
-            dead.frame = if dead.remaining_ticks >= 106 {
-                (9 - (dead.remaining_ticks - 106) / 2) as u8
-            } else if dead.remaining_ticks >= 103 {
-                8
-            } else if dead.remaining_ticks >= 101 {
-                7
+            if dead.revival_ticks <= 10 {
+                dead.revival_ticks -= 1;
+                dead.frame = dead.revival_ticks.max(0) as u8;
+                if dead.revival_ticks <= 0 {
+                    expired.push(dead.id);
+                    revivals.push(CorpseRevival {
+                        corpse_id: dead.id,
+                        kind: RevivalKind::Guppy(dead.size),
+                        x: dead.x as i32,
+                        y: dead.y as i32,
+                        facing_right: dead.facing_right,
+                    });
+                    continue;
+                }
             } else {
-                6
-            };
+                dead.frame = if dead.remaining_ticks >= 106 {
+                    (9 - (dead.remaining_ticks - 106) / 2) as u8
+                } else if dead.remaining_ticks >= 103 {
+                    8
+                } else if dead.remaining_ticks >= 101 {
+                    7
+                } else {
+                    6
+                };
+            }
             if dead.remaining_ticks < 105 {
                 dead.opacity = (dead.opacity - 0.02).max(0.0);
             }
@@ -5213,6 +5314,145 @@ impl AdventureState {
         self.dead_fish.retain(|dead| !expired.contains(&dead.id));
         self.fish
             .retain(|fish| fish.alive || self.dead_fish.iter().any(|dead| dead.id == fish.id));
+        for request in revivals {
+            self.revive_corpse(request, events);
+        }
+    }
+
+    fn update_other_corpses(&mut self, events: &mut Vec<Event>) {
+        // Preserve the existing category update order. Equivalence to the
+        // original shared corpse-list order remains explicitly unproved.
+        let mut revivals = Vec::new();
+        self.dead_oscars.retain_mut(|corpse| {
+            let removed = corpse.tick();
+            if removed && corpse.remaining_ticks > 0 && corpse.revival_ticks == 0 {
+                revivals.push(CorpseRevival {
+                    corpse_id: corpse.id,
+                    kind: RevivalKind::Oscar,
+                    x: corpse.widget_x,
+                    y: corpse.widget_y,
+                    facing_right: corpse.facing_right,
+                });
+            }
+            !removed
+        });
+        self.dead_starcatchers.retain_mut(|corpse| {
+            let removed = corpse.tick();
+            if removed && corpse.remaining_ticks > 0 && corpse.revival_ticks == 0 {
+                revivals.push(CorpseRevival {
+                    corpse_id: corpse.id,
+                    kind: RevivalKind::Starcatcher,
+                    x: corpse.widget_x,
+                    y: corpse.widget_y,
+                    facing_right: corpse.facing_right,
+                });
+            }
+            !removed
+        });
+        self.dead_grubbers.retain_mut(|corpse| {
+            let removed = corpse.tick();
+            if removed && corpse.remaining_ticks > 0 && corpse.revival_ticks == 0 {
+                revivals.push(CorpseRevival {
+                    corpse_id: corpse.id,
+                    kind: RevivalKind::Grubber,
+                    x: corpse.widget_x,
+                    y: corpse.widget_y,
+                    facing_right: corpse.facing_right,
+                });
+            }
+            !removed
+        });
+        self.dead_gekkos.retain_mut(|corpse| {
+            let removed = corpse.tick();
+            if removed && corpse.remaining_ticks > 0 && corpse.revival_ticks == 0 {
+                revivals.push(CorpseRevival {
+                    corpse_id: corpse.id,
+                    kind: RevivalKind::Gekko,
+                    x: corpse.widget_x,
+                    y: corpse.widget_y,
+                    facing_right: corpse.facing_right,
+                });
+            }
+            !removed
+        });
+        self.dead_breeders.retain_mut(|corpse| {
+            let removed = corpse.tick();
+            if removed && corpse.remaining_ticks > 0 && corpse.revival_ticks == 0 {
+                revivals.push(CorpseRevival {
+                    corpse_id: corpse.id,
+                    kind: RevivalKind::Breeder(corpse.size),
+                    x: corpse.widget_x,
+                    y: corpse.widget_y,
+                    facing_right: corpse.facing_right,
+                });
+            }
+            !removed
+        });
+        self.dead_ultras.retain_mut(|corpse| {
+            let removed = corpse.tick();
+            if removed && corpse.remaining_ticks > 0 && corpse.revival_ticks == 0 {
+                revivals.push(CorpseRevival {
+                    corpse_id: corpse.id,
+                    kind: RevivalKind::Ultra,
+                    x: corpse.widget_x,
+                    y: corpse.widget_y,
+                    facing_right: corpse.facing_right,
+                });
+            }
+            !removed
+        });
+        for request in revivals {
+            self.revive_corpse(request, events);
+        }
+    }
+
+    fn revive_corpse(&mut self, request: CorpseRevival, events: &mut Vec<Event>) {
+        if let RevivalKind::Guppy(size) = request.kind {
+            let mut fish = self.make_fish(request.x as f32, request.y as f32, false, false);
+            fish.size = size;
+            fish.vx = if request.facing_right { 1.0 } else { -1.0 };
+            fish.previous_vx = fish.vx;
+            fish.facing_right = request.facing_right;
+            let fish_id = fish.id;
+            self.fish.push(fish);
+            events.push(Event::FishRevived {
+                tick: self.tick,
+                corpse_id: request.corpse_id,
+                fish_id,
+            });
+            return;
+        }
+        let fish_id = self.id();
+        let mut rng_state = self.rng_state;
+        let mut rng = |upper| Self::advance_rng(&mut rng_state) % upper;
+        let (x, y, facing) = (request.x, request.y, request.facing_right);
+        match request.kind {
+            RevivalKind::Oscar => self
+                .oscars
+                .push(OscarState::spawn_revived(fish_id, x, y, facing, &mut rng)),
+            RevivalKind::Ultra => self
+                .ultras
+                .push(UltraState::spawn_revived(fish_id, x, y, facing, &mut rng)),
+            RevivalKind::Starcatcher => self
+                .starcatchers
+                .push(StarcatcherState::spawn_revived(fish_id, x, &mut rng)),
+            RevivalKind::Grubber => self
+                .grubbers
+                .push(GrubberState::spawn_revived(fish_id, x, &mut rng)),
+            RevivalKind::Gekko => self
+                .gekkos
+                .push(GekkoState::spawn_revived(fish_id, x, y, facing, &mut rng)),
+            RevivalKind::Breeder(size) => self.breeders.push(BreederState::spawn_revived(
+                fish_id, x, y, size, facing, &mut rng,
+            )),
+            RevivalKind::Guppy(_) => unreachable!(),
+        }
+        self.rng_state = rng_state;
+        events.push(Event::FishRevived {
+            tick: self.tick,
+            corpse_id: request.corpse_id,
+            fish_id,
+        });
     }
 
     fn update_food(&mut self, events: &mut Vec<Event>) {
@@ -6359,6 +6599,11 @@ impl AdventureState {
                 self.fish_pets[index].tick_amp(self.tank != 5 && aliens.is_empty(), &mut |upper| {
                     Self::advance_rng(&mut rng_state) % upper
                 })
+            } else if self.fish_pets[index].kind == FishPetKind::Angie {
+                let corpses = self.angie_corpse_views();
+                self.fish_pets[index].tick_angie(&corpses, &mut |upper| {
+                    Self::advance_rng(&mut rng_state) % upper
+                })
             } else if self.fish_pets[index].kind == FishPetKind::Gash {
                 let fish = self
                     .fish
@@ -6449,6 +6694,9 @@ impl AdventureState {
                 })
             };
             self.rng_state = rng_state;
+            if let Some(corpse_id) = update.angie_revive {
+                self.mark_corpse_for_revival(pet_id, corpse_id, events);
+            }
             if update.amp_became_ready {
                 events.push(Event::AmpReady {
                     tick: self.tick,
@@ -6565,6 +6813,9 @@ impl AdventureState {
                 });
             }
             if self.fish_pets[index].kind == FishPetKind::Gash {
+                if let Some(alien_id) = update.gash_group_hit {
+                    self.gash_hit_alien(pet_id, alien_id, update.punch_sound, events);
+                }
                 if let Some(alien_id) = update.damaged_alien {
                     self.gash_hit_alien(pet_id, alien_id, update.punch_sound, events);
                 }
@@ -6705,6 +6956,127 @@ impl AdventureState {
                     food_id,
                 });
             }
+        }
+    }
+
+    fn angie_corpse_views(&self) -> Vec<AngieCorpseView> {
+        let mut views = self
+            .dead_fish
+            .iter()
+            .map(|corpse| AngieCorpseView {
+                id: corpse.id,
+                widget_x: corpse.x as i32,
+                widget_y: corpse.y as i32,
+                remaining_ticks: i32::from(corpse.remaining_ticks),
+                revival_ticks: corpse.revival_ticks,
+                ultra: false,
+            })
+            .collect::<Vec<_>>();
+        // Explicit category ordering is the existing adapter; original shared
+        // DeadFish-list ordering across categories has not been recovered.
+        views.extend(self.dead_oscars.iter().map(|corpse| AngieCorpseView {
+            id: corpse.id,
+            widget_x: corpse.widget_x,
+            widget_y: corpse.widget_y,
+            remaining_ticks: i32::from(corpse.remaining_ticks),
+            revival_ticks: corpse.revival_ticks,
+            ultra: false,
+        }));
+        views.extend(self.dead_starcatchers.iter().map(|corpse| AngieCorpseView {
+            id: corpse.id,
+            widget_x: corpse.widget_x,
+            widget_y: corpse.widget_y,
+            remaining_ticks: i32::from(corpse.remaining_ticks),
+            revival_ticks: corpse.revival_ticks,
+            ultra: false,
+        }));
+        views.extend(self.dead_grubbers.iter().map(|corpse| AngieCorpseView {
+            id: corpse.id,
+            widget_x: corpse.widget_x,
+            widget_y: corpse.widget_y,
+            remaining_ticks: i32::from(corpse.remaining_ticks),
+            revival_ticks: corpse.revival_ticks,
+            ultra: false,
+        }));
+        views.extend(self.dead_gekkos.iter().map(|corpse| AngieCorpseView {
+            id: corpse.id,
+            widget_x: corpse.widget_x,
+            widget_y: corpse.widget_y,
+            remaining_ticks: i32::from(corpse.remaining_ticks),
+            revival_ticks: corpse.revival_ticks,
+            ultra: false,
+        }));
+        views.extend(self.dead_breeders.iter().map(|corpse| AngieCorpseView {
+            id: corpse.id,
+            widget_x: corpse.widget_x,
+            widget_y: corpse.widget_y,
+            remaining_ticks: i32::from(corpse.remaining_ticks),
+            revival_ticks: corpse.revival_ticks,
+            ultra: false,
+        }));
+        views.extend(self.dead_ultras.iter().map(|corpse| AngieCorpseView {
+            id: corpse.id,
+            widget_x: corpse.widget_x,
+            widget_y: corpse.widget_y,
+            remaining_ticks: i32::from(corpse.remaining_ticks),
+            revival_ticks: corpse.revival_ticks,
+            ultra: true,
+        }));
+        views
+    }
+
+    fn mark_corpse_for_revival(&mut self, pet_id: u64, corpse_id: u64, events: &mut Vec<Event>) {
+        let timer = if let Some(corpse) = self
+            .dead_fish
+            .iter_mut()
+            .find(|corpse| corpse.id == corpse_id && corpse.remaining_ticks > 95)
+        {
+            Some(&mut corpse.revival_ticks)
+        } else if let Some(corpse) = self
+            .dead_oscars
+            .iter_mut()
+            .find(|corpse| corpse.id == corpse_id && corpse.remaining_ticks > 95)
+        {
+            Some(&mut corpse.revival_ticks)
+        } else if let Some(corpse) = self
+            .dead_starcatchers
+            .iter_mut()
+            .find(|corpse| corpse.id == corpse_id && corpse.remaining_ticks > 95)
+        {
+            Some(&mut corpse.revival_ticks)
+        } else if let Some(corpse) = self
+            .dead_grubbers
+            .iter_mut()
+            .find(|corpse| corpse.id == corpse_id && corpse.remaining_ticks > 95)
+        {
+            Some(&mut corpse.revival_ticks)
+        } else if let Some(corpse) = self
+            .dead_gekkos
+            .iter_mut()
+            .find(|corpse| corpse.id == corpse_id && corpse.remaining_ticks > 95)
+        {
+            Some(&mut corpse.revival_ticks)
+        } else if let Some(corpse) = self
+            .dead_breeders
+            .iter_mut()
+            .find(|corpse| corpse.id == corpse_id && corpse.remaining_ticks > 95)
+        {
+            Some(&mut corpse.revival_ticks)
+        } else {
+            self.dead_ultras
+                .iter_mut()
+                .find(|corpse| corpse.id == corpse_id && corpse.remaining_ticks > 95)
+                .map(|corpse| &mut corpse.revival_ticks)
+        };
+        if let Some(timer) = timer
+            && *timer == 100
+        {
+            *timer = 10;
+            events.push(Event::AngieRevivalStarted {
+                tick: self.tick,
+                pet_id,
+                corpse_id,
+            });
         }
     }
 
@@ -7083,7 +7455,7 @@ impl AdventureState {
             (1, 2..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             (2, 1..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             (3, 1..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
-            (4, 1..=4) => SECOND_STAGE_COIN_BOTTOM_TICKS,
+            (4, 1..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             _ => unreachable!("coin lifetime for this Adventure stage is not implemented"),
         };
         let bottom_limit = if seymour_present { 200 } else { bottom_limit };
@@ -7466,6 +7838,177 @@ impl AdventureState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a35_board_revives_a_fresh_guppy_after_ten_updates_without_credit() {
+        // PB74: eligible lifetime is strictly >95; 100->10 is a single
+        // transaction, followed by fresh subtype construction, not restoration.
+        let mut board = AdventureState::new_tank4_finale(0x4501, &[PetKind::Angie]).unwrap();
+        let mut fish = board.make_fish(100.0, 100.0, false, false);
+        fish.size = FishSize::Large;
+        fish.hunger = 0;
+        fish.vx = -1.0;
+        fish.alive = false;
+        let old_id = fish.id;
+        board.dead_fish.push(DeadFish::from_live(&fish));
+        board.fish.push(fish);
+        board.dead_fish[0].remaining_ticks = 95;
+        let pet = &mut board.fish_pets[0];
+        pet.x = 100.0;
+        pet.y = 100.0;
+        pet.widget_x = 100;
+        pet.widget_y = 100;
+        let mut events = Vec::new();
+        board.update_fish_pets(&mut events);
+        assert_eq!(board.dead_fish[0].revival_ticks, 100);
+        board.dead_fish[0].remaining_ticks = 96;
+        let pet = &mut board.fish_pets[0];
+        pet.x = 100.0;
+        pet.y = 100.0;
+        board.update_fish_pets(&mut events);
+        assert_eq!(board.dead_fish[0].revival_ticks, 10);
+        board.mark_corpse_for_revival(board.fish_pets[0].id, old_id, &mut events);
+        assert_eq!(events.iter().filter(|event| matches!(event, Event::AngieRevivalStarted { corpse_id, .. } if *corpse_id == old_id)).count(), 1);
+        for remaining in (1..10).rev() {
+            board.update_dead_fish(&mut events);
+            assert_eq!(board.dead_fish[0].revival_ticks, remaining);
+            assert!(board.fish.iter().all(|fish| !fish.alive));
+        }
+        board.update_dead_fish(&mut events);
+        assert!(board.dead_fish.is_empty());
+        assert_eq!(board.fish.len(), 1);
+        let revived = &board.fish[0];
+        assert!(revived.alive && revived.id != old_id);
+        assert_eq!(revived.size, FishSize::Large);
+        assert!(!revived.facing_right);
+        assert!((400..600).contains(&revived.hunger));
+        assert_eq!(
+            (revived.food_ate, revived.coin_timer, revived.vx),
+            (0, 0, -1.0)
+        );
+        assert_eq!((board.balance, board.coins.len()), (200, 0));
+        assert_eq!(events.iter().filter(|event| matches!(event, Event::FishRevived { corpse_id, .. } if *corpse_id == old_id)).count(), 1);
+        board.update_dead_fish(&mut events);
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn a35_expired_body_wins_over_due_revival() {
+        // PB74 DeadFishUpdate checks the old remaining lifetime first.
+        let mut board = AdventureState::new_tank4_finale(0x4502, &[]).unwrap();
+        let mut fish = board.make_fish(100.0, 100.0, false, false);
+        fish.alive = false;
+        let mut corpse = DeadFish::from_live(&fish);
+        corpse.remaining_ticks = 0;
+        corpse.revival_ticks = 1;
+        board.fish.push(fish);
+        board.dead_fish.push(corpse);
+        let mut events = Vec::new();
+        board.update_dead_fish(&mut events);
+        assert!(board.fish.is_empty() && board.dead_fish.is_empty() && events.is_empty());
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn a35_gash_hits_both_registered_lists_in_group_then_alien_order() {
+        // PB71 contact walks Bilaterus then ordinary Alien independently.
+        let mut board = AdventureState::new_tank4_finale(0x4503, &[PetKind::Gash]).unwrap();
+        let pet = &mut board.fish_pets[0];
+        pet.x = 100.0;
+        pet.y = 100.0;
+        pet.widget_x = 100;
+        pet.widget_y = 100;
+        let group_id = board.id();
+        let alien_id = board.id();
+        let group = crate::bilaterus::BilaterusState::spawn(group_id, 100, 100, &mut || 1);
+        let before = group.heads[group.active_head].as_ref().unwrap().health;
+        let alien =
+            crate::alien::WeakSylvester::spawn_kind(SylvesterKind::Balrog, alien_id, 60, 60, 1, 1);
+        let alien_before = alien.health;
+        let wave = board.invasion.as_mut().unwrap();
+        wave.bilaterus.push(group);
+        wave.actors.push(alien);
+        wave.battle_active = true;
+        let mut events = Vec::new();
+        board.update_fish_pets(&mut events);
+        let wave = board.invasion.as_ref().unwrap();
+        let group = &wave.bilaterus[0];
+        assert_eq!(
+            group.heads[group.active_head].as_ref().unwrap().health,
+            before - 3.0
+        );
+        assert_eq!(wave.actors[0].health, alien_before - 3.0);
+        let hits = events
+            .iter()
+            .filter_map(|event| {
+                if let Event::FishPetHit {
+                    alien_id, sound, ..
+                } = event
+                {
+                    Some((*alien_id, *sound))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(hits, vec![(group_id, true), (alien_id, false)]);
+        assert_eq!(board.punch_sound_cooldown, 9);
+        assert_eq!(board.fish_pets[0].gash_timer, -1550);
+    }
+
+    #[test]
+    fn a35_tank4_mixed_projectiles_validate_without_relaxing_target_ownership() {
+        // PB73 paired Destructor/Ulysses can leave both projectile types.
+        for level in [4, 5] {
+            let mut board = if level == 4 {
+                AdventureState::new_tank4_fourth_stage(0x4504, &[]).unwrap()
+            } else {
+                AdventureState::new_tank4_finale(0x4504, &[]).unwrap()
+            };
+            let guppy = board.make_fish(200.0, 200.0, false, false);
+            let guppy_id = guppy.id;
+            board.fish.push(guppy);
+            let classic_id = board.id();
+            let energy_id = board.id();
+            board.missiles.push(ClassicMissile::launch(
+                classic_id,
+                board.breeders[0].id,
+                400,
+                100,
+                0,
+            ));
+            board.missiles.push(ClassicMissile::launch_energy(
+                energy_id, guppy_id, 400, 100, 0,
+            ));
+            board.invasion.as_mut().unwrap().countdown = 3000;
+            board.invasion.as_mut().unwrap().battle_active = true;
+            if level == 5 {
+                // Identified controlled state after a completed pair spawn;
+                // the pre-first-wave count zero cannot own projectiles.
+                board.invasion.as_mut().unwrap().plan = WavePlan::CyclingTank4Finale {
+                    next: EncounterKind::Bilaterus,
+                    wave_count: 2,
+                };
+            }
+            board.validate().unwrap();
+            let restored: AdventureState =
+                serde_json::from_value(serde_json::to_value(&board).unwrap()).unwrap();
+            restored.validate().unwrap();
+            board.missiles[1].target_id = board.missiles[0].target_id;
+            assert!(board.validate().unwrap_err().contains("duplicate"));
+        }
+        let mut earlier = AdventureState::new_tank4_third_stage(0x4505, &[]).unwrap();
+        let missile_id = earlier.id();
+        earlier.missiles.push(ClassicMissile::launch_energy(
+            missile_id,
+            earlier.breeders[0].id,
+            400,
+            100,
+            0,
+        ));
+        earlier.invasion.as_mut().unwrap().countdown = 3000;
+        assert!(earlier.validate().is_err());
+    }
 
     fn a34_gash_board() -> AdventureState {
         let mut board = AdventureState::new_tank4_fourth_stage(0x4401, &[PetKind::Gash]).unwrap();

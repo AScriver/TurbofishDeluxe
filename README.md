@@ -8,6 +8,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 
 ## Start here
 
+- Current code checkpoint: [Tank4-5/Angie](docs/adventure-4-5.md), current20,477 checks; native/manual acceptance deferred. The active next phase is [broad binary recovery](docs/binary-recovery.md) across all remaining systems before further implementation.
 - Agents: read [AGENTS.md](AGENTS.md), then follow its startup order.
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).

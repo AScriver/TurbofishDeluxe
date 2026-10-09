@@ -85,6 +85,8 @@ pub struct DeadBreeder {
     pub opacity: f32,
     pub facing_right: bool,
     pub remaining_ticks: u16,
+    /// Angie changes the fresh corpse's 100 to a ten-update revival.
+    pub revival_ticks: i32,
     vx: f64,
     vy: f64,
     speed_mod: f64,
@@ -93,6 +95,32 @@ pub struct DeadBreeder {
 impl BreederState {
     /// Called after Board consumes the starter's x/y placement draws.
     pub fn spawn_starter(id: u64, x: i32, y: i32, rand_range: &mut impl FnMut(u64) -> u64) -> Self {
+        let mut actor = Self::spawn_at(id, x, y, BreederSize::Small, None, rand_range);
+        actor.food_points = 2;
+        actor
+    }
+
+    /// W1 Board::RessurectBreeder constructs a new Breeder of the corpse's
+    /// size and facing at its current pose, with a new size-specific clock.
+    pub fn spawn_revived(
+        id: u64,
+        x: i32,
+        y: i32,
+        size: BreederSize,
+        facing_right: bool,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
+        Self::spawn_at(id, x, y, size, Some(facing_right), rand_range)
+    }
+
+    fn spawn_at(
+        id: u64,
+        x: i32,
+        y: i32,
+        size: BreederSize,
+        facing_right: Option<bool>,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
         let vx = if rand_range(2) == 0 { -0.1 } else { 0.0 };
         let speed_mod = match rand_range(3) {
             0 => 2.0,
@@ -102,7 +130,12 @@ impl BreederState {
         let hunger = rand_range(200) as i32 + 400;
         let food_needed_to_grow = rand_range(2) as u8 + 4;
         let movement_state = rand_range(10) as u8;
-        let birth_threshold = rand_range(400) as u16 + 1000;
+        let birth_threshold = if size == BreederSize::Large {
+            rand_range(200) as u16 + 800
+        } else {
+            rand_range(400) as u16 + 1000
+        };
+        let vx = facing_right.map_or(vx, |right| if right { 1.0 } else { -1.0 });
         Self {
             id,
             alive: true,
@@ -114,9 +147,9 @@ impl BreederState {
             vy: -0.5,
             previous_vx: if vx < 0.0 { -1.0 } else { 1.0 },
             speed_mod,
-            size: BreederSize::Small,
+            size,
             hunger,
-            food_points: 2,
+            food_points: 0,
             food_needed_to_grow,
             birth_clock: 0,
             birth_threshold,
@@ -240,7 +273,11 @@ impl BreederState {
                         || !(1000..=1399).contains(&self.birth_threshold)
                 }
                 BreederSize::Large => {
-                    self.birth_clock > 1398 || !(500..=699).contains(&self.birth_threshold)
+                    // Growth rolls 500..699; the fresh large resurrection
+                    // constructor rolls 800..999 (W1 Breeder.cpp:28-46).
+                    self.birth_clock > 1398
+                        || !((500..=699).contains(&self.birth_threshold)
+                            || (800..=999).contains(&self.birth_threshold))
                 }
             }
             || self.movement_state > 9
@@ -647,6 +684,7 @@ impl DeadBreeder {
             opacity: 1.0,
             facing_right: actor.vx >= 0.0,
             remaining_ticks: 125,
+            revival_ticks: 100,
             vx: actor.vx,
             vy: actor.vy
                 - if actor.widget_x < 115 || actor.vy < -3.0 {
@@ -674,6 +712,7 @@ impl DeadBreeder {
             || self.widget_x != self.x as i32
             || self.widget_y != self.y as i32
             || self.remaining_ticks > 125
+            || !(self.revival_ticks == 100 || (0..=10).contains(&self.revival_ticks))
             || self.frame >= 10
             || !self.opacity.is_finite()
             || !(0.0..=1.0).contains(&self.opacity)
@@ -695,10 +734,17 @@ impl DeadBreeder {
         } else {
             6
         };
+        if (1..=10).contains(&self.revival_ticks) {
+            self.revival_ticks -= 1;
+            self.frame = self.revival_ticks as u8;
+        }
         if remaining < 105 {
             self.opacity = (self.opacity - 0.02).max(0.0);
         }
         if remaining == 0 {
+            return true;
+        }
+        if self.revival_ticks == 0 {
             return true;
         }
         if remaining > 105 || self.y > 365.0 {
@@ -723,6 +769,31 @@ impl DeadBreeder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn revival_keeps_breeder_size_but_samples_a_new_large_clock() {
+        let mut draws = Vec::new();
+        let actor =
+            BreederState::spawn_revived(8, 190, 180, BreederSize::Large, true, &mut |upper| {
+                draws.push(upper);
+                0
+            });
+        assert_eq!(draws, [2, 3, 200, 2, 10, 200]);
+        assert_eq!(
+            (actor.widget_x, actor.widget_y, actor.vx, actor.vy),
+            (190, 180, 1.0, -0.5)
+        );
+        assert_eq!(
+            (
+                actor.size,
+                actor.food_points,
+                actor.birth_clock,
+                actor.birth_threshold
+            ),
+            (BreederSize::Large, 0, 0, 800)
+        );
+        actor.validate().unwrap();
+    }
 
     #[test]
     fn medium_birth_clock_and_large_growth_can_birth_on_same_update() {

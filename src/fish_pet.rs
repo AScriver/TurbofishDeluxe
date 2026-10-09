@@ -23,6 +23,7 @@ pub enum FishPetKind {
     Nimbus,
     Amp,
     Gash,
+    Angie,
 }
 
 /// A direct Amp handler result. The Board owns whether normal input reaches it.
@@ -47,6 +48,19 @@ pub struct GashFishView {
     pub id: u64,
     pub widget_x: i32,
     pub widget_y: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AngieCorpseView {
+    pub id: u64,
+    pub widget_x: i32,
+    pub widget_y: i32,
+    /// DeadFish lifetime +1a0, initially 125; eligibility is strictly >95.
+    pub remaining_ticks: i32,
+    /// Raw corpse subtype 6 uses the larger contact center and radius.
+    pub ultra: bool,
+    /// Board-owned revival timer +190; contact changes only 100 to 10.
+    pub revival_ticks: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,7 +122,7 @@ pub struct FishPetUpdate {
     /// Meryl's zero-value note is emitted at the prior integer widget.
     pub note_at: Option<(i32, i32)>,
     pub bomb_at: Option<(i32, i32)>,
-    /// The board applies its shared eleven-update punch sound delay.
+    /// The Board applies eleven-update Itchy or nine-update Gash punch delay.
     pub punch_sound: bool,
     /// Wadsworth's active-state transition after the clock has advanced.
     pub ward_transition: Option<bool>,
@@ -119,6 +133,10 @@ pub struct FishPetUpdate {
     pub amp_became_ready: bool,
     /// Board must commit removal, missile detachment and chomp before reset.
     pub gash_guppy_remove: Option<u64>,
+    /// A touching eligible corpse whose Board-owned timer is exactly 100.
+    pub angie_revive: Option<u64>,
+    /// Gash contacts the Bilaterus list before the ordinary Alien list.
+    pub gash_group_hit: Option<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -133,6 +151,7 @@ enum PetTargetViews<'a> {
     None,
     Nimbus(NimbusViews<'a>),
     Gash(&'a [GashFishView]),
+    Angie(&'a [AngieCorpseView]),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -332,12 +351,12 @@ impl FishPetState {
             || (self.kind == FishPetKind::Gash && self.gash_eating_ticks > 10)
             || (self.kind != FishPetKind::Gash
                 && (self.gash_timer != 0 || self.gash_eating_ticks != 0))
-            || (self.kind == FishPetKind::Gumbo
+            || (matches!(self.kind, FishPetKind::Gumbo | FishPetKind::Angie)
                 && (self.bomb_threshold != 0 || !(-1.0..1.0).contains(&self.glint_phase)))
             || (self.kind == FishPetKind::Amp && !(-1.0..1.0).contains(&self.glint_phase))
             || (!matches!(
                 self.kind,
-                FishPetKind::Shrapnel | FishPetKind::Gumbo | FishPetKind::Amp
+                FishPetKind::Shrapnel | FishPetKind::Gumbo | FishPetKind::Amp | FishPetKind::Angie
             ) && (self.bomb_threshold != 0 || self.glint_phase != 0.0))
             || (self.kind == FishPetKind::Amp && self.bomb_threshold != 0)
             || (!matches!(
@@ -434,6 +453,7 @@ impl FishPetState {
                     u8::from(self.gash_eating_ticks > 0) * 2
                 }
             }
+            FishPetKind::Angie => u8::from(self.turn_ticks != 0),
         }
     }
 
@@ -555,6 +575,24 @@ impl FishPetState {
         )
     }
 
+    /// PB74 reads corpse lifetime and contact geometry; the Board owns the
+    /// revival timer transition and later fresh fish construction.
+    pub fn tick_angie(
+        &mut self,
+        corpses: &[AngieCorpseView],
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> FishPetUpdate {
+        assert_eq!(self.kind, FishPetKind::Angie);
+        self.tick_inner(
+            &[],
+            0,
+            &[],
+            PetTargetViews::Angie(corpses),
+            false,
+            rand_range,
+        )
+    }
+
     /// Only call after the Board's requested ordinary-Fish removal succeeds.
     /// Source contact resets the timer before DropCoin runs in this update.
     pub fn commit_gash_meal(&mut self) {
@@ -580,9 +618,13 @@ impl FishPetState {
         assert!(
             !matches!(
                 self.kind,
-                FishPetKind::Zorf | FishPetKind::Nimbus | FishPetKind::Amp | FishPetKind::Gash
+                FishPetKind::Zorf
+                    | FishPetKind::Nimbus
+                    | FishPetKind::Amp
+                    | FishPetKind::Gash
+                    | FishPetKind::Angie
             ),
-            "Zorf, Nimbus, Amp and Gash need their subtype updates"
+            "Zorf, Nimbus, Amp, Gash and Angie need their subtype updates"
         );
         self.tick_inner(
             aliens,
@@ -689,6 +731,11 @@ impl FishPetState {
             }
             PetTargetViews::Gash(fish) => {
                 if !self.hunt_gash(aliens, fish, &mut update) {
+                    self.wander();
+                }
+            }
+            PetTargetViews::Angie(corpses) => {
+                if !self.hunt_angie(corpses, &mut update) {
                     self.wander();
                 }
             }
@@ -1048,11 +1095,22 @@ impl FishPetState {
             return true;
         }
         if enemies_registered {
-            for alien in aliens
-                .iter()
-                .filter(|alien| alien.bilaterus)
-                .chain(aliens.iter().filter(|alien| !alien.bilaterus))
-            {
+            for alien in aliens.iter().filter(|alien| alien.bilaterus) {
+                let dx = (cx - f64::from(alien.widget_x + alien.center_offset())).abs();
+                let dy = (cy - f64::from(alien.widget_y + alien.center_offset())).abs();
+                if dx < 20.0 && dy < 20.0 && !alien.healing {
+                    update.gash_group_hit = Some(alien.id);
+                    update.punch_sound = true;
+                    break;
+                }
+                if dx < 30.0 && dy < 30.0 && self.gash_eating_ticks == 0 {
+                    self.gash_eating_ticks = 10;
+                    break;
+                }
+            }
+            // CollideWithFood walks the ordinary Alien list even when the
+            // Bilaterus loop just hit or began an eating animation.
+            for alien in aliens.iter().filter(|alien| !alien.bilaterus) {
                 let dx = (cx - f64::from(alien.widget_x + alien.center_offset())).abs();
                 let dy = (cy - f64::from(alien.widget_y + alien.center_offset())).abs();
                 if dx < 20.0 && dy < 20.0 && !alien.healing {
@@ -1075,6 +1133,77 @@ impl FishPetState {
                 }
                 if dx < 30.0 && dy < 30.0 && self.gash_eating_ticks == 0 {
                     self.gash_eating_ticks = 10;
+                    break;
+                }
+            }
+        }
+        true
+    }
+
+    /// PB74 lifetime/contact gates; W1 supplies pursuit steering and ordering.
+    /// This stage never edits corpse membership or constructs the replacement.
+    fn hunt_angie(&mut self, corpses: &[AngieCorpseView], update: &mut FishPetUpdate) -> bool {
+        if corpses.is_empty() {
+            return false;
+        }
+        let cx = self.x + 40.0;
+        let cy = self.y + 40.0;
+        let mut nearest = None;
+        let mut best_distance = 10_000;
+        for corpse in corpses.iter().filter(|corpse| corpse.remaining_ticks > 95) {
+            // W1 nearest selection uses +40 even for an Ultra corpse.
+            let dx = (cx - f64::from(corpse.widget_x + 40)) as i32;
+            let dy = (cy - f64::from(corpse.widget_y + 40)) as i32;
+            let distance = ((f64::from(dx * dx + dy * dy)).sqrt()) as i32;
+            if distance < best_distance {
+                best_distance = distance;
+                nearest = Some(corpse);
+            }
+        }
+        if let Some(target) = nearest.filter(|_| self.special_timer >= 5) {
+            self.special_timer = 0;
+            let tx = f64::from(target.widget_x + if target.ultra { 80 } else { 40 });
+            let ty = f64::from(target.widget_y + if target.ultra { 80 } else { 40 });
+            if cx > tx + 4.0 && self.vx > -3.0 {
+                self.vx -= 1.0;
+            } else if cx < tx - 4.0 && self.vx < 3.0 {
+                self.vx += 1.0;
+            } else if cx > tx + 2.0 && self.vx > -3.0 {
+                self.vx -= 0.1;
+            } else if cx < tx - 2.0 && self.vx < 3.0 {
+                self.vx += 0.1;
+            } else if cx > tx && self.vx > -3.0 {
+                self.vx -= 0.05;
+            } else if cx < tx && self.vx < 3.0 {
+                self.vx += 0.05;
+            }
+            if cy > ty + 3.0 && self.vy > -2.0 {
+                self.vy -= 0.6;
+            } else if cy < ty - 3.0 && self.vy < 3.0 {
+                self.vy += 1.0;
+            } else if cy > ty && self.vy > -2.0 {
+                self.vy -= 0.3;
+            } else if cy < ty && self.vy < 3.0 {
+                self.vy += 0.5;
+            }
+            if self.vx_abs < 5 {
+                self.vx_abs += 1;
+            }
+        }
+        // HungryBehavior calls CollideWithFood only when an eligible nearest
+        // target exists, then collision scans every corpse in Board order.
+        if nearest.is_some() {
+            for corpse in corpses.iter().filter(|corpse| corpse.remaining_ticks > 95) {
+                let offset = if corpse.ultra { 80 } else { 40 };
+                let radius = if corpse.ultra { 60.0 } else { 30.0 };
+                let dx = (cx - f64::from(corpse.widget_x + offset)).abs();
+                let dy = (cy - f64::from(corpse.widget_y + offset)).abs();
+                if dx < radius && dy < radius {
+                    // PB74 returns after the first lifetime-eligible contact;
+                    // the helper changes 100→10 conditionally, then returns.
+                    if corpse.revival_ticks == 100 {
+                        update.angie_revive = Some(corpse.id);
+                    }
                     break;
                 }
             }
@@ -1251,6 +1380,12 @@ impl FishPetState {
                     self.glint_phase = -1.0;
                 }
                 self.swim_counter / 6
+            } else if self.kind == FishPetKind::Angie {
+                self.glint_phase += 0.1;
+                if self.glint_phase >= 1.0 {
+                    self.glint_phase = -1.0;
+                }
+                self.swim_counter / 2
             } else if self.kind == FishPetKind::Nimbus {
                 self.swim_counter / 4
             } else {
@@ -1269,6 +1404,112 @@ impl FishPetState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn angie_at(x: i32, y: i32) -> FishPetState {
+        let mut pet = actor(FishPetKind::Angie);
+        pet.x = f64::from(x);
+        pet.y = f64::from(y);
+        pet.widget_x = x;
+        pet.widget_y = y;
+        pet.published_x = x;
+        pet.published_y = y;
+        pet.vx = 0.0;
+        pet.previous_vx = 0.0;
+        pet
+    }
+
+    fn corpse_at(id: u64, x: i32, y: i32) -> AngieCorpseView {
+        AngieCorpseView {
+            id,
+            widget_x: x,
+            widget_y: y,
+            remaining_ticks: 96,
+            ultra: false,
+            revival_ticks: 100,
+        }
+    }
+
+    #[test]
+    fn angie_requires_remaining_lifetime_and_stops_at_first_contact() {
+        let mut pet = angie_at(100, 100);
+        let expired = AngieCorpseView {
+            remaining_ticks: 95,
+            ..corpse_at(7, 100, 100)
+        };
+        assert_eq!(pet.tick_angie(&[expired], &mut |_| 1).angie_revive, None);
+        assert_eq!(pet.special_timer, 41); // Nonempty list suppresses wandering.
+        let fresh = corpse_at(8, 100, 100);
+        assert_eq!(pet.tick_angie(&[fresh], &mut |_| 1).angie_revive, Some(8));
+        let already_reviving = AngieCorpseView {
+            revival_ticks: 10,
+            ..corpse_at(9, 100, 100)
+        };
+        assert_eq!(
+            pet.tick_angie(&[already_reviving, fresh], &mut |_| 1)
+                .angie_revive,
+            None
+        );
+        assert_eq!(
+            pet.tick_angie(&[fresh, already_reviving], &mut |_| 1)
+                .angie_revive,
+            Some(8)
+        );
+        assert!((pet.glint_phase - 0.4).abs() < 1e-9);
+        assert_eq!(pet.sprite_row(false), 0);
+        pet.turn_ticks = 3;
+        assert_eq!(pet.sprite_row(false), 1);
+        pet.validate().unwrap();
+    }
+
+    #[test]
+    fn angie_uses_strict_ordinary_30_and_ultra_60_contact_geometry() {
+        let mut ordinary = angie_at(100, 100);
+        assert_eq!(
+            ordinary
+                .tick_angie(&[corpse_at(1, 130, 100)], &mut |_| 1)
+                .angie_revive,
+            None
+        );
+        let mut inner = angie_at(100, 100);
+        assert_eq!(
+            inner
+                .tick_angie(&[corpse_at(2, 129, 100)], &mut |_| 1)
+                .angie_revive,
+            Some(2)
+        );
+        let mut ultra_edge = angie_at(100, 100);
+        let ultra = AngieCorpseView {
+            ultra: true,
+            ..corpse_at(3, 0, 0)
+        };
+        assert_eq!(
+            ultra_edge.tick_angie(&[ultra], &mut |_| 1).angie_revive,
+            None
+        );
+        let mut ultra_inner = angie_at(100, 100);
+        let inside = AngieCorpseView {
+            widget_x: 1,
+            widget_y: 1,
+            ..ultra
+        };
+        assert_eq!(
+            ultra_inner.tick_angie(&[inside], &mut |_| 1).angie_revive,
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn angie_steers_on_fifth_step_and_uses_shared_swim_halo_state() {
+        let mut pet = angie_at(100, 100);
+        pet.special_timer = 4;
+        let far = corpse_at(9, 180, 180);
+        pet.tick_angie(&[far], &mut |_| 1);
+        assert_eq!(pet.vx, 0.0);
+        pet.tick_angie(&[far], &mut |_| 1);
+        assert_eq!((pet.vx, pet.vy, pet.special_timer), (1.0, 0.5, 1));
+        assert!((pet.glint_phase - 0.2).abs() < 1e-9);
+        pet.validate().unwrap();
+    }
 
     fn gash_at(x: i32, y: i32) -> FishPetState {
         let mut pet = actor(FishPetKind::Gash);
@@ -1395,8 +1636,18 @@ mod tests {
             bilaterus: false,
         };
         let hit = pet.tick_gash(&[ordinary, group], &[], &mut |_| 1);
-        assert_eq!(hit.damaged_alien, Some(71));
+        assert_eq!(hit.gash_group_hit, Some(71));
+        assert_eq!(hit.damaged_alien, Some(72));
         assert!(hit.punch_sound);
+        let mut near_group = gash_at(100, 100);
+        let near = PetAlienView {
+            widget_x: 125,
+            ..group
+        };
+        let second_list = near_group.tick_gash(&[near, ordinary], &[], &mut |_| 1);
+        assert_eq!(second_list.gash_group_hit, None);
+        assert_eq!(second_list.damaged_alien, Some(72));
+        assert_eq!(near_group.gash_eating_ticks, 9);
         let mut healing = gash_at(100, 100);
         let healer = PetAlienView {
             id: 73,

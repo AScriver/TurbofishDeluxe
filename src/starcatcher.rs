@@ -68,7 +68,19 @@ impl StarcatcherState {
     /// A normal bought Penta starts at Y=65, with no entrance immunity.
     pub fn spawn_bought(id: u64, rand_range: &mut impl FnMut(u64) -> u64) -> Self {
         let x = rand_range(520) as i32 + 20;
-        let _constructor_y = rand_range(5) + 360;
+        let mut actor = Self::spawn_at(id, x, rand_range);
+        actor.y = 65.0;
+        actor.widget_y = 65;
+        actor
+    }
+
+    /// Penta's one-coordinate resurrection constructor samples a new floor Y.
+    pub fn spawn_revived(id: u64, x: i32, rand_range: &mut impl FnMut(u64) -> u64) -> Self {
+        Self::spawn_at(id, x, rand_range)
+    }
+
+    fn spawn_at(id: u64, x: i32, rand_range: &mut impl FnMut(u64) -> u64) -> Self {
+        let y = rand_range(5) as i32 + 360;
         let speed_mod = match rand_range(3) {
             0 => 2.7,
             1 => 2.5,
@@ -80,9 +92,9 @@ impl StarcatcherState {
             id,
             alive: true,
             x: f64::from(x),
-            y: 65.0,
+            y: f64::from(y),
             widget_x: x,
-            widget_y: 65,
+            widget_y: y,
             vx: 0.0,
             vy: 0.0,
             hunger,
@@ -373,6 +385,8 @@ pub struct DeadStarcatcher {
     pub opacity: f32,
     pub facing_right: bool,
     pub remaining_ticks: u16,
+    /// Angie changes the fresh corpse's 100 to a ten-update revival.
+    pub revival_ticks: i32,
     vx: f64,
     vy: f64,
     speed_mod: f64,
@@ -413,6 +427,7 @@ impl DeadStarcatcher {
             opacity: 1.0,
             facing_right: pose.facing_right,
             remaining_ticks: 125,
+            revival_ticks: 100,
             vx: pose.vx,
             vy: pose.vy
                 - if pose.x < 115 || pose.vy < -3.0 {
@@ -436,6 +451,7 @@ impl DeadStarcatcher {
             || ![2.5, 2.6, 2.7].contains(&self.speed_mod)
             || self.frame > 9
             || self.remaining_ticks > 125
+            || !(self.revival_ticks == 100 || (0..=10).contains(&self.revival_ticks))
             || !self.opacity.is_finite()
             || !(0.0..=1.0).contains(&self.opacity)
         {
@@ -444,7 +460,7 @@ impl DeadStarcatcher {
         Ok(())
     }
 
-    /// True only on the update after the countdown reaches zero.
+    /// True when the lifetime expires or Angie's revival countdown finishes.
     pub fn tick(&mut self) -> bool {
         let remaining = self.remaining_ticks;
         self.frame = if remaining >= 106 {
@@ -457,10 +473,17 @@ impl DeadStarcatcher {
                 _ => 9,
             }
         };
+        if (1..=10).contains(&self.revival_ticks) {
+            self.revival_ticks -= 1;
+            self.frame = self.revival_ticks as u8;
+        }
         if remaining < 105 {
             self.opacity = (self.opacity - 0.02).max(0.0);
         }
         if remaining == 0 {
+            return true;
+        }
+        if self.revival_ticks == 0 {
             return true;
         }
         if remaining > 105 || self.y > 365.0 {
@@ -486,6 +509,19 @@ impl DeadStarcatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn revival_uses_penta_floor_constructor_not_bought_entrance() {
+        let mut draws = Vec::new();
+        let actor = StarcatcherState::spawn_revived(8, 190, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(draws, [5, 3, 200, 10]);
+        assert_eq!((actor.widget_x, actor.widget_y, actor.vy), (190, 360, 0.0));
+        assert_eq!((actor.hunger, actor.bought_timer), (900, 45));
+        actor.validate().unwrap();
+    }
 
     #[test]
     fn constructor_draw_order_and_divisor_mapping_preserve_overwritten_y() {

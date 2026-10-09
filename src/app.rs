@@ -120,6 +120,8 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_GASH",
     "IMAGE_ANGIE",
     "IMAGE_SCL_ANGIE",
+    "IMAGE_HALO",
+    "IMAGE_BOSS",
     "IMAGE_ULTRA",
     "IMAGE_SCL_ULTRA",
     "IMAGE_BILATERUS",
@@ -161,6 +163,8 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_NIKOCLOSE",
     "SOUND_PEARL",
     "SOUND_CHOMP",
+    "SOUND_HEAL",
+    "SOUND_EVILLAFF",
     "SOUND_DIE",
     "SOUND_PUNCH",
     "SOUND_BABY",
@@ -623,6 +627,8 @@ impl Presentation {
                 Event::ShrapnelBombExploded { .. } => "SOUND_EXPLODE",
                 Event::BlipShopRevealed { .. } | Event::BlipSonar { .. } => "SOUND_SONAR",
                 Event::HatchOpened { .. } => "SOUND_HATCH",
+                Event::TankFourFinaleHatchOpened { .. } => "SOUND_EVILLAFF",
+                Event::FishRevived { .. } => "SOUND_HEAL",
                 Event::Invasion { event, .. } => match event {
                     InvasionEvent::WarningStarted(_) => "SOUND_AWOOGA",
                     InvasionEvent::AlienSpawned { .. } => "SOUND_ROAR",
@@ -1041,6 +1047,7 @@ impl Presentation {
                 FishPetKind::Nimbus => "IMAGE_NIMBUS",
                 FishPetKind::Amp => "IMAGE_AMP",
                 FishPetKind::Gash => "IMAGE_GASH",
+                FishPetKind::Angie => "IMAGE_ANGIE",
             };
             let (cell_width, cell_height) = if pet.kind == FishPetKind::Amp {
                 (160.0, 60.0)
@@ -1062,6 +1069,16 @@ impl Presentation {
                 1.0,
                 1.0,
             );
+            if pet.kind == FishPetKind::Angie {
+                self.additive_tinted_sprite(
+                    "IMAGE_HALO",
+                    pet.widget_x as f32,
+                    pet.widget_y as f32,
+                    source,
+                    pet.facing_right(),
+                    Color::from_rgba(255, 255, 255, (pet.glint_phase.abs() * 255.0) as u8),
+                );
+            }
             if pet.kind == FishPetKind::Amp
                 && (pet.amp_ready() || (pet.amp_timer < 0 && !aliens_present))
             {
@@ -2957,6 +2974,77 @@ impl Presentation {
         self.main_button(Rect::new(525.0, 4.0, 80.0, height), "Menu");
     }
 
+    fn draw_finale_hatch(&self, updates: u32) {
+        self.sprite("IMAGE_HATCHSCREEN", 0.0, 0.0, None, false, 1.0, 1.0);
+        self.centered_text(
+            "JungleFever17outline",
+            "You have found:",
+            25.0,
+            Color::from_rgba(255, 200, 0, 255),
+        );
+        if updates > 139 {
+            // Source-qualified special raw999 appearance. The screen clock
+            // reconstructs its pose across reload; visual fidelity is pending.
+            let travel = (updates.saturating_sub(140).min(21) * 12)
+                + (updates.saturating_sub(161).min(10) * 8)
+                + (updates.saturating_sub(171).min(10) * 5)
+                + (updates.saturating_sub(181).min(10) * 2)
+                + updates.saturating_sub(191).min(29);
+            let phase = updates % 16;
+            let bob = if updates >= 220 {
+                -(phase.min(4) as i32) + phase.saturating_sub(8).min(4) as i32
+            } else {
+                0
+            };
+            let y = 480.0 - travel as f32 + bob as f32;
+            self.sprite(
+                "IMAGE_BOSS",
+                238.0,
+                y,
+                Some(Rect::new(
+                    (updates % 20 / 2) as f32 * 160.0,
+                    0.0,
+                    160.0,
+                    160.0,
+                )),
+                false,
+                1.0,
+                1.0,
+            );
+        }
+        self.sprite("IMAGE_HATCHREFLECTION", 240.0, 60.0, None, false, 1.0, 1.0);
+        if updates > 170 {
+            self.centered_text(
+                "JungleFever15outline",
+                "Evil Alien Mastermind",
+                260.0,
+                Color::from_rgba(255, 200, 0, 255),
+            );
+            self.centered_text(
+                "JungleFever10outline",
+                "This creature devours the contents of your tank.",
+                310.0,
+                WHITE,
+            );
+            self.centered_text(
+                "JungleFever10outline",
+                "Your game has been saved.",
+                390.0,
+                Color::from_rgba(255, 255, 100, 255),
+            );
+        }
+        let height = self.images["IMAGE_MAINBUTTON"].height();
+        self.main_button(
+            Rect::new(186.0, 445.0, 264.0, height),
+            if updates > 170 {
+                "Click Here to Continue"
+            } else {
+                "Please Wait..."
+            },
+        );
+        self.main_button(Rect::new(525.0, 4.0, 80.0, height), "Menu");
+    }
+
     fn draw(
         &self,
         session: &AdventureSession,
@@ -2966,6 +3054,7 @@ impl Presentation {
     ) {
         match session.phase {
             AdventurePhase::Hatch { pet, updates } => self.draw_hatch(pet, updates),
+            AdventurePhase::TankFourFinaleHatch { updates } => self.draw_finale_hatch(updates),
             AdventurePhase::Bonus { ref state } => self.draw_bonus(state),
             AdventurePhase::BonusResults { ref result } => self.draw_bonus_results(result),
             AdventurePhase::PetSelection { ref selected }
@@ -3507,7 +3596,9 @@ pub async fn run(
         let button_height = presentation.images["IMAGE_MAINBUTTON"].height();
         let menu_rect = if matches!(
             session.phase,
-            AdventurePhase::Hatch { .. } | AdventurePhase::PetSelection { .. }
+            AdventurePhase::Hatch { .. }
+                | AdventurePhase::TankFourFinaleHatch { .. }
+                | AdventurePhase::PetSelection { .. }
         ) {
             Rect::new(525.0, 4.0, 80.0, button_height)
         } else {
@@ -3519,12 +3610,15 @@ pub async fn run(
                     session.phase,
                     AdventurePhase::Playing
                         | AdventurePhase::Hatch { .. }
+                        | AdventurePhase::TankFourFinaleHatch { .. }
                         | AdventurePhase::PetSelection { .. }
                 )
             {
                 if matches!(
                     session.phase,
-                    AdventurePhase::Hatch { .. } | AdventurePhase::PetSelection { .. }
+                    AdventurePhase::Hatch { .. }
+                        | AdventurePhase::TankFourFinaleHatch { .. }
+                        | AdventurePhase::PetSelection { .. }
                 ) {
                     pending_actions.push(Action::OpenMenu);
                 } else {
@@ -3566,12 +3660,13 @@ pub async fn run(
                         Action::ConfirmPetSelection { accept: false }
                     }
                     AdventurePhase::Hatch { updates, .. }
+                    | AdventurePhase::TankFourFinaleHatch { updates }
                         if updates > 170
                             && Rect::new(186.0, 445.0, 264.0, button_height).contains(pointer) =>
                     {
                         Action::Continue
                     }
-                    AdventurePhase::Hatch { .. } => {
+                    AdventurePhase::Hatch { .. } | AdventurePhase::TankFourFinaleHatch { .. } => {
                         hatch_pointer_owned = true;
                         hatch_background_down = is_mouse_button_down(MouseButton::Left);
                         Action::HatchHold {
@@ -3756,7 +3851,10 @@ pub async fn run(
             held_feed_at = None;
             held_fire_at = None;
         }
-        if matches!(session.phase, AdventurePhase::Hatch { .. }) {
+        if matches!(
+            session.phase,
+            AdventurePhase::Hatch { .. } | AdventurePhase::TankFourFinaleHatch { .. }
+        ) {
             let held = hatch_pointer_owned && is_mouse_button_down(MouseButton::Left);
             if held != hatch_background_down {
                 pending_actions.push(Action::HatchHold { down: held });
@@ -3772,6 +3870,7 @@ pub async fn run(
                 | AdventurePhase::InvasionTutorial { .. }
                 | AdventurePhase::HelpScreen
                 | AdventurePhase::Hatch { .. }
+                | AdventurePhase::TankFourFinaleHatch { .. }
                 | AdventurePhase::PetSelection { .. }
         ) || matches!(session.phase, AdventurePhase::GameOver { updates } if updates > 30)
             || matches!(session.phase, AdventurePhase::BonusResults { ref result } if result.updates >= 30);
@@ -3921,9 +4020,12 @@ pub async fn run(
                 }
                 clock.consume_step(paused);
                 if phase_transitioned
-                    || events
-                        .iter()
-                        .any(|event| matches!(event, Event::HatchStarted { .. }))
+                    || events.iter().any(|event| {
+                        matches!(
+                            event,
+                            Event::HatchStarted { .. } | Event::TankFourFinaleHatchStarted { .. }
+                        )
+                    })
                 {
                     clock.clear_backlog();
                     break;
@@ -3960,6 +4062,7 @@ pub async fn run(
                             ..
                         }
                         | Event::HatchStarted { .. }
+                        | Event::TankFourFinaleHatchStarted { .. }
                         | Event::StageStarted { .. }
                         | Event::RescueGuppyGranted { .. }
                         | Event::BonusResultsCommitted { .. }

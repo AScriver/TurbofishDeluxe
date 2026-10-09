@@ -64,7 +64,9 @@ impl MusicCue {
     pub fn for_session(session: &AdventureSession) -> Option<Self> {
         match &session.phase {
             AdventurePhase::Bonus { .. } => Some(Self::Bonus),
-            AdventurePhase::BonusResults { .. } | AdventurePhase::Hatch { .. } => Some(Self::Hatch),
+            AdventurePhase::BonusResults { .. }
+            | AdventurePhase::Hatch { .. }
+            | AdventurePhase::TankFourFinaleHatch { .. } => Some(Self::Hatch),
             AdventurePhase::PetSelection { .. }
             | AdventurePhase::PetSelectionConfirmation { .. } => Some(Self::PetSelection),
             AdventurePhase::Playing

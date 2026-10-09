@@ -52,6 +52,7 @@ pub enum EncounterKind {
     WeakBalrogPair,
     PsychosquidBalrogPair,
     DestructorUlyssesPair,
+    BalrogBilaterusPair,
     Bilaterus,
 }
 
@@ -59,12 +60,28 @@ pub enum EncounterKind {
 pub enum WavePlan {
     Fixed(SylvesterKind),
     FixedBilaterus,
-    CyclingTank1Finale { next: EncounterKind },
-    CyclingTank2Finale { next: EncounterKind },
-    CyclingTank3Second { next: SylvesterKind },
-    CyclingTank3Finale { next: SylvesterKind },
-    CyclingTank4Third { next: EncounterKind },
-    CyclingTank4Fourth { next: EncounterKind },
+    CyclingTank1Finale {
+        next: EncounterKind,
+    },
+    CyclingTank2Finale {
+        next: EncounterKind,
+    },
+    CyclingTank3Second {
+        next: SylvesterKind,
+    },
+    CyclingTank3Finale {
+        next: SylvesterKind,
+    },
+    CyclingTank4Third {
+        next: EncounterKind,
+    },
+    CyclingTank4Fourth {
+        next: EncounterKind,
+    },
+    CyclingTank4Finale {
+        next: EncounterKind,
+        wave_count: u32,
+    },
 }
 
 impl WavePlan {
@@ -75,7 +92,8 @@ impl WavePlan {
             Self::CyclingTank1Finale { next }
             | Self::CyclingTank2Finale { next }
             | Self::CyclingTank4Third { next }
-            | Self::CyclingTank4Fourth { next } => next,
+            | Self::CyclingTank4Fourth { next }
+            | Self::CyclingTank4Finale { next, .. } => next,
             Self::CyclingTank3Second { next } | Self::CyclingTank3Finale { next } => {
                 EncounterKind::Single(next)
             }
@@ -338,6 +356,15 @@ impl Invasion1_2 {
         wave
     }
 
+    pub fn new_tank4_finale() -> Self {
+        let mut wave = Self::new_bilaterus();
+        wave.plan = WavePlan::CyclingTank4Finale {
+            next: EncounterKind::Bilaterus,
+            wave_count: 0,
+        };
+        wave
+    }
+
     pub fn legacy_v5_balrog_resume() -> Self {
         Self::with_origin(InvasionOrigin::LegacyV5Resume, SylvesterKind::Balrog)
     }
@@ -577,6 +604,45 @@ impl Invasion1_2 {
         self.food_delay = self.food_delay.saturating_sub(1);
     }
 
+    fn spawn_ordinary(
+        &mut self,
+        kind: SylvesterKind,
+        x: i32,
+        y: i32,
+        next_random: &mut impl FnMut() -> u32,
+        next_id: &mut impl FnMut() -> u64,
+    ) -> InvasionEvent {
+        let id = next_id();
+        let actor = WeakSylvester::spawn_kind(kind, id, x, y, next_random(), next_random());
+        let spawn_y = actor.widget_y;
+        self.warps.push(WarpEffect {
+            x: x + 30,
+            y: spawn_y - 40,
+            remaining_ticks: 36,
+        });
+        self.actors.push(actor);
+        InvasionEvent::AlienSpawned { id, x, y: spawn_y }
+    }
+
+    fn spawn_bilaterus(
+        &mut self,
+        x: i32,
+        y: i32,
+        next_random: &mut impl FnMut() -> u32,
+        next_id: &mut impl FnMut() -> u64,
+    ) -> InvasionEvent {
+        let id = next_id();
+        let group = BilaterusState::spawn(id, x, y, next_random);
+        let (x, y) = group.active_head_position();
+        self.warps.push(WarpEffect {
+            x: x - 10,
+            y: y - 70,
+            remaining_ticks: 36,
+        });
+        self.bilaterus.push(group);
+        InvasionEvent::BilaterusSpawned { id, x, y }
+    }
+
     /// Runs the board's wave transition after its clock advances and before
     /// entity updates. Warning consumes both coordinate pairs; each actor
     /// constructor then consumes its own source-derived draw sequence.
@@ -663,61 +729,63 @@ impl Invasion1_2 {
                 let encounter = self.plan.expected();
                 let mut events = Vec::new();
                 match encounter {
-                    EncounterKind::Bilaterus => {
-                        let id = next_id();
-                        let group = BilaterusState::spawn(
-                            id,
+                    EncounterKind::Bilaterus => events.push(self.spawn_bilaterus(
+                        coords.first_x,
+                        coords.first_y,
+                        &mut next_random,
+                        &mut next_id,
+                    )),
+                    EncounterKind::Single(kind) => events.push(self.spawn_ordinary(
+                        kind,
+                        coords.first_x,
+                        coords.first_y,
+                        &mut next_random,
+                        &mut next_id,
+                    )),
+                    EncounterKind::WeakBalrogPair
+                    | EncounterKind::PsychosquidBalrogPair
+                    | EncounterKind::DestructorUlyssesPair => {
+                        let (first, second) = match encounter {
+                            EncounterKind::WeakBalrogPair => {
+                                (SylvesterKind::Weak, SylvesterKind::Balrog)
+                            }
+                            EncounterKind::PsychosquidBalrogPair => {
+                                (SylvesterKind::Psychosquid, SylvesterKind::Balrog)
+                            }
+                            EncounterKind::DestructorUlyssesPair => {
+                                (SylvesterKind::Destructor, SylvesterKind::Ulysses)
+                            }
+                            _ => unreachable!(),
+                        };
+                        events.push(self.spawn_ordinary(
+                            first,
                             coords.first_x,
                             coords.first_y,
                             &mut next_random,
-                        );
-                        let (x, y) = group.active_head_position();
-                        self.warps.push(WarpEffect {
-                            x: x - 10,
-                            y: y - 70,
-                            remaining_ticks: 36,
-                        });
-                        self.bilaterus.push(group);
-                        events.push(InvasionEvent::BilaterusSpawned { id, x, y });
+                            &mut next_id,
+                        ));
+                        events.push(self.spawn_ordinary(
+                            second,
+                            coords.second_x,
+                            coords.second_y,
+                            &mut next_random,
+                            &mut next_id,
+                        ));
                     }
-                    ordinary => {
-                        let mut spawn = |kind, x, y| {
-                            let id = next_id();
-                            let actor = WeakSylvester::spawn_kind(
-                                kind,
-                                id,
-                                x,
-                                y,
-                                next_random(),
-                                next_random(),
-                            );
-                            let spawn_y = actor.widget_y;
-                            self.warps.push(WarpEffect {
-                                x: x + 30,
-                                y: spawn_y - 40,
-                                remaining_ticks: 36,
-                            });
-                            self.actors.push(actor);
-                            events.push(InvasionEvent::AlienSpawned { id, x, y: spawn_y });
-                        };
-                        match ordinary {
-                            EncounterKind::Single(kind) => {
-                                spawn(kind, coords.first_x, coords.first_y)
-                            }
-                            EncounterKind::WeakBalrogPair => {
-                                spawn(SylvesterKind::Weak, coords.first_x, coords.first_y);
-                                spawn(SylvesterKind::Balrog, coords.second_x, coords.second_y);
-                            }
-                            EncounterKind::PsychosquidBalrogPair => {
-                                spawn(SylvesterKind::Psychosquid, coords.first_x, coords.first_y);
-                                spawn(SylvesterKind::Balrog, coords.second_x, coords.second_y);
-                            }
-                            EncounterKind::DestructorUlyssesPair => {
-                                spawn(SylvesterKind::Destructor, coords.first_x, coords.first_y);
-                                spawn(SylvesterKind::Ulysses, coords.second_x, coords.second_y);
-                            }
-                            EncounterKind::Bilaterus => unreachable!(),
-                        }
+                    EncounterKind::BalrogBilaterusPair => {
+                        events.push(self.spawn_ordinary(
+                            SylvesterKind::Balrog,
+                            coords.first_x,
+                            coords.first_y,
+                            &mut next_random,
+                            &mut next_id,
+                        ));
+                        events.push(self.spawn_bilaterus(
+                            coords.second_x,
+                            coords.second_y,
+                            &mut next_random,
+                            &mut next_id,
+                        ));
                     }
                 }
                 // Board::Update selects the next encounter after every actor
@@ -797,6 +865,20 @@ impl Invasion1_2 {
                             EncounterKind::Bilaterus
                         },
                     },
+                    WavePlan::CyclingTank4Finale { wave_count, .. } => {
+                        let choice = next_random() % 5;
+                        let next = match choice {
+                            0 | 1 => EncounterKind::PsychosquidBalrogPair,
+                            2 | 3 => EncounterKind::DestructorUlyssesPair,
+                            4 if wave_count > 4 => EncounterKind::BalrogBilaterusPair,
+                            4 => EncounterKind::Bilaterus,
+                            _ => unreachable!(),
+                        };
+                        WavePlan::CyclingTank4Finale {
+                            next,
+                            wave_count: wave_count.saturating_add(1),
+                        }
+                    }
                 };
                 self.post_spawn_flash_ticks = 35;
                 self.countdown = 3000;
@@ -1241,6 +1323,60 @@ impl Invasion1_2 {
                             kind: SylvesterKind::Destructor | SylvesterKind::Ulysses,
                             ..
                         }] | [
+                            WeakSylvester {
+                                kind: SylvesterKind::Destructor,
+                                ..
+                            },
+                            WeakSylvester {
+                                kind: SylvesterKind::Ulysses,
+                                ..
+                            }
+                        ]
+                    )
+            }
+            WavePlan::CyclingTank4Finale { next, wave_count } => {
+                matches!(
+                    next,
+                    EncounterKind::Bilaterus
+                        | EncounterKind::PsychosquidBalrogPair
+                        | EncounterKind::DestructorUlyssesPair
+                        | EncounterKind::BalrogBilaterusPair
+                ) && (wave_count != 0 || next == EncounterKind::Bilaterus)
+                    && (next != EncounterKind::BalrogBilaterusPair || wave_count >= 6)
+                    && (wave_count != 0
+                        || self.actors.is_empty()
+                            && self.bilaterus.is_empty()
+                            && self.fragments.is_empty()
+                            && self.dead_aliens.is_empty()
+                            && !self.battle_active)
+                    && self.bilaterus.len() <= 1
+                    && self.fragments.len() <= 8
+                    && (self.bilaterus.is_empty()
+                        || matches!(
+                            self.actors.as_slice(),
+                            [] | [WeakSylvester {
+                                kind: SylvesterKind::Balrog,
+                                ..
+                            }]
+                        ))
+                    && matches!(
+                        self.actors.as_slice(),
+                        [] | [WeakSylvester {
+                            kind: SylvesterKind::Psychosquid
+                                | SylvesterKind::Balrog
+                                | SylvesterKind::Destructor
+                                | SylvesterKind::Ulysses,
+                            ..
+                        }] | [
+                            WeakSylvester {
+                                kind: SylvesterKind::Psychosquid,
+                                ..
+                            },
+                            WeakSylvester {
+                                kind: SylvesterKind::Balrog,
+                                ..
+                            }
+                        ] | [
                             WeakSylvester {
                                 kind: SylvesterKind::Destructor,
                                 ..
@@ -1754,6 +1890,226 @@ mod tests {
         );
         assert!(wave.finish_if_no_threats(false).is_empty());
         wave.validate().unwrap();
+    }
+
+    #[test]
+    fn tank4_finale_samples_one_modulo_five_choice_after_group_and_uses_old_wave_count() {
+        for (old_count, roll, expected) in [
+            (0, 0, EncounterKind::PsychosquidBalrogPair),
+            (0, 1, EncounterKind::PsychosquidBalrogPair),
+            (0, 2, EncounterKind::DestructorUlyssesPair),
+            (0, 3, EncounterKind::DestructorUlyssesPair),
+            (4, 4, EncounterKind::Bilaterus),
+            (5, 4, EncounterKind::BalrogBilaterusPair),
+        ] {
+            let mut wave = Invasion1_2::new_tank4_finale();
+            assert_eq!(wave.plan.expected(), EncounterKind::Bilaterus);
+            wave.plan = WavePlan::CyclingTank4Finale {
+                next: EncounterKind::Bilaterus,
+                wave_count: old_count,
+            };
+            wave.warning = Some(WarningCoords {
+                first_x: 105,
+                first_y: 160,
+                second_x: 410,
+                second_y: 290,
+            });
+            wave.countdown = 1;
+            let mut draws = 0;
+            let events = wave.board_update(
+                || {
+                    draws += 1;
+                    if draws == 12 { roll } else { 1 }
+                },
+                || 91,
+            );
+            assert_eq!(draws, 12); // Existing group consumes eleven; choice consumes one.
+            assert_eq!(
+                events,
+                [InvasionEvent::BilaterusSpawned {
+                    id: 91,
+                    x: 105,
+                    y: 160
+                }]
+            );
+            assert_eq!(wave.plan.expected(), expected);
+            assert!(
+                matches!(wave.plan, WavePlan::CyclingTank4Finale { wave_count, .. }
+                if wave_count == old_count + 1)
+            );
+            wave.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn tank4_finale_raw_twelve_spawns_balrog_then_second_coordinate_group() {
+        let mut wave = Invasion1_2::new_tank4_finale();
+        wave.plan = WavePlan::CyclingTank4Finale {
+            next: EncounterKind::BalrogBilaterusPair,
+            wave_count: 6,
+        };
+        wave.warning = Some(WarningCoords {
+            first_x: 100,
+            first_y: 140,
+            second_x: 300,
+            second_y: 220,
+        });
+        wave.countdown = 1;
+        let mut draws = 0;
+        let mut ids = [71, 72].into_iter();
+        let events = wave.board_update(
+            || {
+                draws += 1;
+                if draws == 14 { 4 } else { 1 }
+            },
+            || ids.next().expect("ordinary then group IDs"),
+        );
+        assert_eq!(draws, 14); // Balrog2 + Bilaterus11 + one next choice.
+        assert_eq!(ids.next(), None);
+        assert_eq!(
+            events,
+            [
+                InvasionEvent::AlienSpawned {
+                    id: 71,
+                    x: 100,
+                    y: 140
+                },
+                InvasionEvent::BilaterusSpawned {
+                    id: 72,
+                    x: 300,
+                    y: 220
+                },
+            ]
+        );
+        assert_eq!(wave.actors[0].kind, SylvesterKind::Balrog);
+        assert_eq!(wave.plan.expected(), EncounterKind::BalrogBilaterusPair);
+        assert_eq!(wave.countdown, 3000);
+        wave.validate().unwrap();
+        let encoded = serde_json::to_vec(&wave).unwrap();
+        let restored: Invasion1_2 = serde_json::from_slice(&encoded).unwrap();
+        restored.validate().unwrap();
+        let mut invalid = restored.clone();
+        invalid.actors.push(WeakSylvester::spawn_kind(
+            SylvesterKind::Psychosquid,
+            73,
+            150,
+            150,
+            1,
+            1,
+        ));
+        assert!(invalid.validate().is_err());
+        let mut early = restored;
+        early.plan = WavePlan::CyclingTank4Finale {
+            next: EncounterKind::BalrogBilaterusPair,
+            wave_count: 5,
+        };
+        assert!(early.validate().is_err());
+
+        assert!(wave.finish_if_no_threats(false).is_empty());
+        let first = wave.remove_registered_alien(71);
+        assert_eq!(
+            first
+                .iter()
+                .filter(|event| matches!(event, InvasionEvent::DiamondDropped { alien_id: 71, .. }))
+                .count(),
+            1
+        );
+        assert!(wave.has_live_bilaterus());
+        assert!(wave.finish_if_no_threats(false).is_empty());
+        wave.validate().unwrap();
+        let mut group = wave.bilaterus.pop().unwrap();
+        group.first_head_lost = true;
+        group.heads[0] = None;
+        group.active_head = 1;
+        group.emergence_ticks = 0;
+        group.heads[1].as_mut().unwrap().health = 0.0;
+        wave.bilaterus.push(group);
+        let transition = wave.bilaterus[0].finish_update().unwrap();
+        let mut fragment_id = 100;
+        let second = wave.commit_bilaterus_transition(
+            72,
+            transition,
+            || 1,
+            || {
+                fragment_id += 1;
+                fragment_id
+            },
+        );
+        assert_eq!(
+            second
+                .iter()
+                .filter(|event| matches!(event, InvasionEvent::DiamondDropped { alien_id: 72, .. }))
+                .count(),
+            1
+        );
+        assert!(!wave.has_live_alien());
+        assert!(wave.finish_if_no_threats(true).is_empty());
+        assert_eq!(
+            wave.finish_if_no_threats(false),
+            [InvasionEvent::BattleEnded]
+        );
+        wave.validate().unwrap();
+    }
+
+    #[test]
+    fn tank4_finale_existing_pairs_keep_order_and_sample_after_both_constructors() {
+        for (current, first, second) in [
+            (
+                EncounterKind::PsychosquidBalrogPair,
+                SylvesterKind::Psychosquid,
+                SylvesterKind::Balrog,
+            ),
+            (
+                EncounterKind::DestructorUlyssesPair,
+                SylvesterKind::Destructor,
+                SylvesterKind::Ulysses,
+            ),
+        ] {
+            let mut wave = Invasion1_2::new_tank4_finale();
+            wave.plan = WavePlan::CyclingTank4Finale {
+                next: current,
+                wave_count: 2,
+            };
+            wave.warning = Some(WarningCoords {
+                first_x: 100,
+                first_y: 140,
+                second_x: 300,
+                second_y: 220,
+            });
+            wave.countdown = 1;
+            let mut draws = [1, 4, 2, 5, 3].into_iter();
+            let mut ids = [71, 72].into_iter();
+            let events = wave.board_update(
+                || {
+                    draws
+                        .next()
+                        .expect("two ordinary constructors then next choice")
+                },
+                || ids.next().expect("one ID per actor"),
+            );
+            assert_eq!(draws.next(), None);
+            assert_eq!(ids.next(), None);
+            assert!(matches!(
+                events.as_slice(),
+                [
+                    InvasionEvent::AlienSpawned { id: 71, x: 100, .. },
+                    InvasionEvent::AlienSpawned { id: 72, x: 300, .. }
+                ]
+            ));
+            assert_eq!(
+                wave.actors
+                    .iter()
+                    .map(|actor| actor.kind)
+                    .collect::<Vec<_>>(),
+                [first, second]
+            );
+            assert_eq!(wave.plan.expected(), EncounterKind::DestructorUlyssesPair);
+            assert!(matches!(
+                wave.plan,
+                WavePlan::CyclingTank4Finale { wave_count: 3, .. }
+            ));
+            wave.validate().unwrap();
+        }
     }
 
     #[test]

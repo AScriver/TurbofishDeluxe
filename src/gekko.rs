@@ -85,6 +85,8 @@ pub struct DeadGekko {
     pub opacity: f32,
     pub facing_right: bool,
     pub remaining_ticks: u16,
+    /// Angie changes the fresh corpse's 100 to a ten-update revival.
+    pub revival_ticks: i32,
     vx: f64,
     vy: f64,
     speed_mod: f64,
@@ -95,7 +97,34 @@ impl GekkoState {
     /// coin threshold is consumed before Gekko replaces it with 200..449.
     pub fn spawn_bought(id: u64, rand_range: &mut impl FnMut(u64) -> u64) -> Self {
         let x = rand_range(520) as i32 + 20;
-        let _constructor_y = rand_range(265) + 105;
+        let y = rand_range(265) as i32 + 105;
+        let mut actor = Self::spawn_at(id, x, y, None, rand_range);
+        actor.vy = rand_range(5) as f64 + 23.0;
+        actor.y = 40.0;
+        actor.widget_y = 40;
+        actor.bought_timer = rand_range(10) as u8 + 45;
+        actor
+    }
+
+    /// Fresh Gekko construction at the corpse pose; the old actor's hunger,
+    /// clock and identity are intentionally absent.
+    pub fn spawn_revived(
+        id: u64,
+        x: i32,
+        y: i32,
+        facing_right: bool,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
+        Self::spawn_at(id, x, y, Some(facing_right), rand_range)
+    }
+
+    fn spawn_at(
+        id: u64,
+        x: i32,
+        y: i32,
+        facing_right: Option<bool>,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
         let left = rand_range(2) != 0;
         let speed_mod = match rand_range(3) {
             0 => 2.0,
@@ -107,24 +136,25 @@ impl GekkoState {
         let movement_state = rand_range(10) as u8;
         let _inherited_coin_threshold = rand_range(200) + 150;
         let coin_threshold = rand_range(250) as u16 + 200;
-        let vy = rand_range(5) as f64 + 23.0;
-        let bought_timer = rand_range(10) as u8 + 45;
+        let vx = facing_right.map_or(if left { -0.1 } else { 0.0 }, |right| {
+            if right { 1.0 } else { -1.0 }
+        });
         Self {
             id,
             alive: true,
             x: f64::from(x),
-            y: 40.0,
+            y: f64::from(y),
             widget_x: x,
-            widget_y: 40,
-            vx: if left { -0.1 } else { 0.0 },
-            vy,
+            widget_y: y,
+            vx,
+            vy: -0.5,
             hunger,
             frame: 0,
             turn_ticks: 0,
             eating_ticks: 0,
             coin_timer: 0,
             coin_threshold,
-            bought_timer,
+            bought_timer: 0,
             speed_mod,
             movement_state,
             movement_timer: 0,
@@ -136,7 +166,7 @@ impl GekkoState {
             hunger_shown: false,
             hunger_animation_ticks: 0,
             scream_ticks: 0,
-            previous_vx: if left { -1.0 } else { 1.0 },
+            previous_vx: if vx < 0.0 { -1.0 } else { 1.0 },
             death_pose: None,
         }
     }
@@ -597,6 +627,7 @@ impl DeadGekko {
             opacity: 1.0,
             facing_right: pose.vx >= 0.0,
             remaining_ticks: 125,
+            revival_ticks: 100,
             vx: pose.vx,
             vy,
             speed_mod: pose.speed_mod,
@@ -622,6 +653,7 @@ impl DeadGekko {
             || ![1.6, 1.8, 2.0].contains(&self.speed_mod)
             || self.frame >= 10
             || self.remaining_ticks > 125
+            || !(self.revival_ticks == 100 || (0..=10).contains(&self.revival_ticks))
             || !self.opacity.is_finite()
             || !(0.0..=1.0).contains(&self.opacity)
         {
@@ -630,8 +662,8 @@ impl DeadGekko {
         Ok(())
     }
 
-    /// The ordinary non-Angel body waits at counter105 until it reaches the
-    /// bottom, then fades. A zero counter is removed on its next update.
+    /// The ordinary body waits at counter105 until it reaches the bottom,
+    /// then fades. Angie can separately trigger fresh reconstruction.
     pub fn tick(&mut self) -> bool {
         let remaining = self.remaining_ticks;
         self.frame = if remaining > 105 {
@@ -644,10 +676,17 @@ impl DeadGekko {
                 _ => 9,
             }
         };
+        if (1..=10).contains(&self.revival_ticks) {
+            self.revival_ticks -= 1;
+            self.frame = self.revival_ticks as u8;
+        }
         if remaining < 105 {
             self.opacity = (self.opacity - 0.02).max(0.0);
         }
         if remaining == 0 {
+            return true;
+        }
+        if self.revival_ticks == 0 {
             return true;
         }
         if remaining > 105 || self.y > 370.0 {
@@ -672,6 +711,25 @@ impl DeadGekko {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn revival_constructs_fresh_gekko_with_corpse_facing() {
+        let mut draws = Vec::new();
+        let actor = GekkoState::spawn_revived(8, 190, 180, false, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(draws, [2, 3, 200, 3, 10, 200, 250]);
+        assert_eq!(
+            (actor.widget_x, actor.widget_y, actor.vx, actor.vy),
+            (190, 180, -1.0, -0.5)
+        );
+        assert_eq!(
+            (actor.hunger, actor.coin_threshold, actor.bought_timer),
+            (400, 200, 0)
+        );
+        actor.validate().unwrap();
+    }
 
     fn actor() -> GekkoState {
         GekkoState::spawn_bought(7, &mut |_| 0)

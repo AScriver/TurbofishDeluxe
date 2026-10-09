@@ -141,7 +141,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 19;
+pub const SAVE_FORMAT_VERSION: u32 = 20;
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -248,7 +248,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=19) => {
+        Some(version @ 5..=20) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -308,6 +308,27 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                 .iter()
                                 .any(|field| !board.contains_key(*field)))
                         || (version >= 17 && incomplete_format_seventeen_board(board))
+                        || (version >= 20
+                            && [
+                                "dead_fish",
+                                "dead_oscars",
+                                "dead_ultras",
+                                "dead_breeders",
+                                "dead_starcatchers",
+                                "dead_grubbers",
+                                "dead_gekkos",
+                            ]
+                            .iter()
+                            .any(|field| {
+                                board
+                                    .get(*field)
+                                    .and_then(serde_json::Value::as_array)
+                                    .is_none_or(|corpses| {
+                                        corpses
+                                            .iter()
+                                            .any(|corpse| corpse.get("revival_ticks").is_none())
+                                    })
+                            }))
                         || (version >= 15
                             && board
                                 .get("missiles")
@@ -488,7 +509,8 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     16 => "sixteen",
                     17 => "seventeen",
                     18 => "eighteen",
-                    _ => "nineteen",
+                    19 => "nineteen",
+                    _ => "twenty",
                 };
                 return Err(format!(
                     "Incomplete format-{label} save; required state fields are missing"
