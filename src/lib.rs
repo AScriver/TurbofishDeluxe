@@ -1,4 +1,5 @@
 //! Standalone source-informed Insaniquarium runtime; no game binaries are embedded.
+pub mod adventure;
 pub mod app;
 pub mod assets;
 pub mod cli;

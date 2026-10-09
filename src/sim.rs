@@ -10,6 +10,16 @@ pub const BOARD_HEIGHT: f32 = 480.0;
 pub const FOOD_PRICE: i32 = 5;
 pub const GUPPY_PRICE: i32 = 100;
 pub const EGG_PRICE: i32 = 150;
+pub const SECOND_STAGE_EGG_PRICE: i32 = 500;
+
+const fn first_stage_egg_price() -> i32 {
+    EGG_PRICE
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PetKind {
+    Stinky,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FishSize {
@@ -176,6 +186,8 @@ pub enum Action {
     Click { x: f32, y: f32 },
     BuyGuppy,
     BuyEgg,
+    Continue,
+    HatchHold { down: bool },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,6 +197,7 @@ pub enum Rejection {
     InsufficientFunds,
     Locked,
     Completed,
+    UnsupportedStage,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -260,6 +273,34 @@ pub enum Event {
         next_tank: u8,
         next_level: u8,
     },
+    FirstTankRescueStarted {
+        tick: u64,
+    },
+    RescueGuppyGranted {
+        tick: u64,
+        fish_id: u64,
+    },
+    PetUnlocked {
+        tick: u64,
+        pet: PetKind,
+    },
+    HatchStarted {
+        tick: u64,
+        pet: PetKind,
+    },
+    HatchOpened {
+        tick: u64,
+        pet: PetKind,
+    },
+    HatchReady {
+        tick: u64,
+        pet: PetKind,
+    },
+    StageStarted {
+        tick: u64,
+        tank: u8,
+        level: u8,
+    },
 }
 
 /// Adventure tank 1, level 1. The PRNG is controlled for repeatable Rust runs,
@@ -274,6 +315,10 @@ pub struct AdventureState {
     pub victory: bool,
     pub guppy_unlocked: bool,
     pub egg_unlocked: bool,
+    #[serde(default = "first_stage_egg_price")]
+    pub egg_price: i32,
+    #[serde(default)]
+    pub pets: Vec<PetKind>,
     pub fish: Vec<Fish>,
     pub dead_fish: Vec<DeadFish>,
     pub food: Vec<Food>,
@@ -294,6 +339,8 @@ impl AdventureState {
             victory: false,
             guppy_unlocked: false,
             egg_unlocked: false,
+            egg_price: EGG_PRICE,
+            pets: Vec::new(),
             fish: Vec::new(),
             dead_fish: Vec::new(),
             food: Vec::new(),
@@ -314,6 +361,39 @@ impl AdventureState {
             state.fish.push(fish);
         }
         state
+    }
+
+    /// Stage 1-2 starts afresh from the progressed profile. Its pet roster is
+    /// recorded, but Stinky's ability and the alien/upgrade rules await M3.
+    pub fn new_second_stage(seed: u64) -> Self {
+        let mut state = Self::new_adventure(seed);
+        state.level = 2;
+        state.egg_price = SECOND_STAGE_EGG_PRICE;
+        state.pets.push(PetKind::Stinky);
+        for fish in &mut state.fish {
+            fish.beginner = false;
+        }
+        state
+    }
+
+    pub(crate) fn transition_seed(&self) -> u64 {
+        self.rng_state
+    }
+
+    pub(crate) fn has_live_fish(&self) -> bool {
+        self.fish.iter().any(|fish| fish.alive)
+    }
+
+    /// The first-level rescue uses the bought-fish entrance without a purchase.
+    pub(crate) fn spawn_bought_guppy(&mut self) -> u64 {
+        let x = self.rand_range(520) as f32 + 20.0;
+        let _target_y = self.rand_range(265) as f32 + 105.0;
+        let mut fish = self.make_fish(x, 30.0, self.level == 1, true);
+        fish.vy = self.rand_range(5) as f32 + 18.0;
+        fish.bought_timer = self.rand_range(10) as u8 + 45;
+        let id = fish.id;
+        self.fish.push(fish);
+        id
     }
 
     /// Apply an ordered input without advancing simulation time.
@@ -399,13 +479,7 @@ impl AdventureState {
                     });
                 } else {
                     self.balance -= GUPPY_PRICE;
-                    let x = self.rand_range(520) as f32 + 20.0;
-                    let _target_y = self.rand_range(265) as f32 + 105.0;
-                    let mut fish = self.make_fish(x, 30.0, true, true);
-                    fish.vy = self.rand_range(5) as f32 + 18.0;
-                    fish.bought_timer = self.rand_range(10) as u8 + 45;
-                    let id = fish.id;
-                    self.fish.push(fish);
+                    let id = self.spawn_bought_guppy();
                     self.tutorial.buy_fish_hint = false;
                     events.push(Event::GuppyBought {
                         tick: self.tick,
@@ -420,13 +494,18 @@ impl AdventureState {
                         tick: self.tick,
                         reason: Rejection::Locked,
                     });
-                } else if self.balance < EGG_PRICE {
+                } else if self.level != 1 {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::UnsupportedStage,
+                    });
+                } else if self.balance < self.egg_price {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::InsufficientFunds,
                     });
                 } else {
-                    self.balance -= EGG_PRICE;
+                    self.balance -= self.egg_price;
                     self.eggs += 1;
                     if self.eggs == 1 && self.tutorial.buy_egg_hint {
                         self.tutorial.buy_egg_hint = false;
@@ -449,6 +528,12 @@ impl AdventureState {
                         });
                     }
                 }
+            }
+            Action::Continue | Action::HatchHold { .. } => {
+                events.push(Event::Rejected {
+                    tick: self.tick,
+                    reason: Rejection::Locked,
+                });
             }
         }
         events

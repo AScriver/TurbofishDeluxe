@@ -42,7 +42,7 @@ That host helper requires PSScriptAnalyzer; it was available for setup. It is op
 
 ## Build and run
 
-Use the installed Rust1.95 MSVC toolchain from PowerShell7. Direct dependencies and transitives are pinned. Formatting, warnings-as-errors lint,26 regression tests and native build passed. The [controlled window report](docs/playtests/2026-10-08-m1-03.md) identifies the tested build and limits.
+Use the installed Rust1.95 MSVC toolchain from PowerShell7. Direct dependencies and transitives are pinned. Formatting, warnings-as-errors lint,35 regression tests and native build passed. Identified window reports cover the [first loop](docs/playtests/2026-10-08-m1-03.md) and [first-stage completion/persistence/rescue](docs/playtests/2026-10-08-m2-01.md); full retail fidelity remains open.
 
 ```powershell
 $cargoExecutable = (Get-Command cargo).Source
@@ -53,7 +53,9 @@ $runtimeArguments = @('--new-game', '--seed', '42')
 & $runtimeExecutable @runtimeArguments
 ```
 
-Steam discovery is automatic; pass `--game-dir <directory>` if needed. Project saves use `%LOCALAPPDATA%/TurbofishDeluxe`, separate from retail saves; use `--save-dir` for isolated checks. `--evidence-dir` records identity, normal-speed events/state, and requested screenshots. Escape pauses; S saves; Q while paused saves/exits. These commands currently support the first tank only.
+Steam discovery is automatic; pass `--game-dir <directory>` if needed. Project saves use `%LOCALAPPDATA%/TurbofishDeluxe`, separate from retail saves; use `--save-dir` for isolated checks. Escape pauses; S saves; Q while paused or closing the window saves/exits. Version1 project snapshots migrate to the progression save. Hatch/rescue Continue is clickable (Enter also works); holding the hatch background skips its intro. First-stage completion and fresh1-2 initialization were exercised. Later-stage systems remain incomplete.
+
+`--evidence-dir` writes identity/events/captures and optional complete state snapshots. Current snapshots include `state` (board or null), `phase`, `progress` and `session_tick`; board ticks reset on a fresh stage while session ticks remain monotonic. The event log includes both time scopes. These observation files are private, separate from authoritative project saves.
 
 ```powershell
 $validatorPath = Join-Path $env:USERPROFILE '.codex\tools\Invoke-CodexPowerShell.ps1'

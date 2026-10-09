@@ -1,4 +1,4 @@
-use crate::{install, sim::AdventureState};
+use crate::{adventure::AdventureSession, install, sim::AdventureState};
 use std::{
     env,
     error::Error,
@@ -86,31 +86,48 @@ impl Options {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ProjectSave {
     pub format_version: u32,
+    pub session: AdventureSession,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct LegacyProjectSave {
+    pub format_version: u32,
     pub state: AdventureState,
 }
 
-pub fn load_state(options: &Options) -> Result<AdventureState, Box<dyn Error>> {
-    let path = options.save_dir.join("adventure.json");
-    if options.new_game || !path.exists() {
-        return Ok(AdventureState::new_adventure(options.seed));
-    }
-    let save: ProjectSave = serde_json::from_slice(&std::fs::read(path)?)?;
-    if save.format_version != 1 {
-        return Err("Unsupported project save version; original saves are not imported".into());
-    }
-    if save.state.tank != 1 || save.state.level != 1 {
-        return Err("This build currently implements only Adventure 1-1".into());
-    }
-    Ok(save.state)
+pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)?;
+    let session = match value.get("format_version").and_then(|value| value.as_u64()) {
+        Some(1) => {
+            let legacy: LegacyProjectSave = serde_json::from_value(value)?;
+            AdventureSession::from_legacy_board(legacy.state)
+                .map_err(|failure| format!("Cannot migrate project save: {failure:?}"))?
+        }
+        Some(2) => serde_json::from_value::<ProjectSave>(value)?.session,
+        _ => {
+            return Err("Unsupported project save version; original saves are not imported".into());
+        }
+    };
+    session.validate()?;
+    Ok(session)
 }
 
-pub fn save_state(options: &Options, state: &AdventureState) -> Result<(), Box<dyn Error>> {
+pub fn load_session(options: &Options) -> Result<AdventureSession, Box<dyn Error>> {
+    let path = options.save_dir.join("adventure.json");
+    if options.new_game || !path.exists() {
+        return Ok(AdventureSession::new(options.seed));
+    }
+    decode_save(&std::fs::read(path)?)
+}
+
+pub fn save_session(options: &Options, session: &AdventureSession) -> Result<(), Box<dyn Error>> {
+    session.validate()?;
     std::fs::create_dir_all(&options.save_dir)?;
     write_json(
         &options.save_dir.join("adventure.json"),
         &ProjectSave {
-            format_version: 1,
-            state: state.clone(),
+            format_version: 2,
+            session: session.clone(),
         },
     )
 }

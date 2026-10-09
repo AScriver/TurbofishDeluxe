@@ -7,12 +7,12 @@ The full product scope is [requirements](requirements.md). The installed game bi
 | Install discovery/identity | Steam metadata, override, PE/hash/inventory implemented and exercised | Current installed files identified; no inferred gameplay compatibility |
 | Images/masks/resource manifest |246 entries decoded, synthetic edge regressions | Actual asset formats observed; binary renderer equivalence pending |
 | Bitmap fonts |15 scripts/atlases parsed; current HUD uses owned fonts | Actual Windows-1252 glyphs/metrics observed; visual matching pending |
-| Fixed tick/update order/RNG | Controllable28ms Rust ticks; ordered food/fish/coin path, regression cases |28ms remains secondary expectation. Main installed EXE base interval10ms; effective game tick/loaded payload unresolved |
+| Fixed tick/update order/RNG | Controllable28ms Rust ticks; ordered food/fish/coin path, regression cases | Embedded game constructor/window timer supports28ms default; live cadence/overrides and retail RNG unresolved |
 | Guppy movement/animation | Swim/eat/turn/growth/death projections implemented; corrected heading agrees with sampled motion in run03 | Exact retail movement/turn dynamics pending |
 | Feeding/hunger/growth/death | First-level functional rules/tests; live feeding/growth observed | Installed-game thresholds, timing, starvation/tutorial/game-over to confirm |
 | Currency | Silver/gold production, expiry/collection/balance; normal-run silver loop observed | Retail values/timers/geometry/order to confirm |
-| First-tank purchases/eggs | Guppy/egg locks and three-piece rule tested | Normal-time victory, hatch, advancement not yet exercised/implemented fully |
-| Project persistence | JSON board snapshot; normal save/reload observed; atomic-state tests and held-reader telemetry recovery passed | Autosave/progression robustness pending. Original-save compatibility not implemented |
+| First-tank purchases/eggs | Ordinary three earned eggs/hatch/advance observed; held hatch and next-update free rescue corrected/tested | Primary numeric/reward comparison, elapsed-score/settlement and full hatch presentation pending |
+| Project persistence | Atomic format2 session with format1 migration; save on hatch/advance/rescue/normal close. Close/reload and accepted-click boundary exercised | Original-save compatibility and broader profile/highscore semantics not implemented |
 | Window/input/pause | Real owned-window clicks, scaling, corrected projection observed | Retail UI layout, focus behavior and transitions pending |
 | Sound effects |65 effects decoded; initial event playback implemented | Audible output, exact event selection/rate/volume comparison pending |
 | Music | Not implemented | MO3 tracker order/loop semantics to recover from installed runtime |

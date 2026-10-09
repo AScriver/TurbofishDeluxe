@@ -85,7 +85,7 @@ fn prepare() -> Result<(), Box<dyn Error>> {
         }
         return Ok(());
     }
-    let state = cli::load_state(&options)?;
+    let session = cli::load_session(&options)?;
     macroquad::Window::from_config(
         macroquad::miniquad::conf::Conf {
             window_title: "Turbofish Deluxe".into(),
@@ -96,7 +96,7 @@ fn prepare() -> Result<(), Box<dyn Error>> {
             ..Default::default()
         },
         async move {
-            if let Err(error) = app::run(options, game_root, identity, assets, state).await {
+            if let Err(error) = app::run(options, game_root, identity, assets, session).await {
                 eprintln!("Runtime failed: {error}");
                 std::process::exit(1);
             }

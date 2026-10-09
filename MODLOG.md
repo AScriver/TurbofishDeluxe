@@ -2,6 +2,16 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-08 — Earn first victory and persist progression
+
+**Changed:** Added an Adventure session around the preserved board: one Stinky reward/hatch, fresh1-2 initialization, free first-level rescue, atomic format2 progression saves and format1 migration. Actual held-hatch input, immediate rescue checkpoint, normal-close saving and queued-input draining preserve accepted actions without adding time. Corrected source-path records and added the identified [M2 window report](docs/playtests/2026-10-08-m2-01.md).
+
+**Evidence/verification:** Maintained format/strict Clippy/35 tests/build passed. A clean158.713s normal run kept both starting fish alive, grew both to Large and purchased three eggs with earned coins. Hatch close/reload and fresh1-2 save/reload passed. Corrected-build hold/rescue/save-close counterexamples passed, installation digests matched and all owned processes exited. Primary static work reproduced the launcher-associated game payload and traced its28ms constructor timer and raw first-tank/food/egg branches; semantic/numeric limits remain recorded.
+
+**Failures/adjudication:** First helper launch was late and starters died; that run remained a valid rescue/completion observation, followed by the clean-roster scenario. A helper counted dead visuals as live and timed out; runtime still exited cleanly. First hold attempt missed the early window through setup latency; combined launch/input tested the actual hold. Targeted review found rescue one update early, malformed-rescue acceptance, omitted held shortcut and queued input discarded on save/close; all corrected with focused tests and actual window checks. An in-progress Cargo attempt hit temporary missing integration symbols, then the coherent gate passed.
+
+**Limits/next:** No original executable run, audible/human comparison or full fidelity claim. First-stage elapsed-score/collecting-coin settlement and full hatch effects remain missing.1-2 currently has only starting roster/state; Stinky ability, aliens/upgrades/later completion are next. Commit this verified outcome, then keep implementing the full runtime automatically.
+
 ## 2026-10-08 — Correct facing and validate the first Rust interaction loop
 
 **Changed:** Corrected vertical camera mapping and guppy/dead-fish mirror direction after actual visual findings. Optional state telemetry now retries Windows sharing failures without aborting gameplay; critical project saves still fail visibly. Added atomic persistence/resumed-state regressions, retained failed reports, and populated current coverage/provenance/handoff. Guide-based workflow checkpoint committed as `b50225b`; runtime source is the next coherent checkpoint.

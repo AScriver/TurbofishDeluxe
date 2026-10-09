@@ -1,4 +1,5 @@
 use crate::{
+    adventure::{AdventurePhase, AdventureSession},
     assets::{GameAssets, SoundData},
     cli::{self, Options},
     font::BitmapFont,
@@ -33,6 +34,14 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_MENUBTNU",
     "IMAGE_MENUBTNO",
     "IMAGE_OPTIONSBUTTON",
+    "IMAGE_HATCHSCREEN",
+    "IMAGE_HATCHREFLECTION",
+    "IMAGE_SCREENTITLE",
+    "IMAGE_MAINBUTTON",
+    "IMAGE_EGGCRACK1",
+    "IMAGE_EGGCRACK2",
+    "IMAGE_EGGSHARDS",
+    "IMAGE_STINKY",
 ];
 const SOUND_IDS: &[&str] = &[
     "SOUND_DROPFOOD",
@@ -41,6 +50,7 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_POINTS",
     "SOUND_BUY",
     "SOUND_BUTTONCLICK",
+    "SOUND_HATCH",
 ];
 
 pub struct Presentation {
@@ -144,6 +154,8 @@ impl Presentation {
         for name in [
             "JungleFever10outline",
             "JungleFever17outline",
+            "JungleFever15outline",
+            "JungleFever12outline",
             "ContinuumBold12",
             "Pix118",
         ] {
@@ -194,6 +206,10 @@ impl Presentation {
                 Event::FishGrew { .. } => "SOUND_GROW",
                 Event::CoinCredited { .. } => "SOUND_POINTS",
                 Event::GuppyBought { .. } | Event::EggBought { .. } => "SOUND_BUY",
+                Event::HatchOpened { .. } => "SOUND_HATCH",
+                Event::StageStarted { .. } | Event::RescueGuppyGranted { .. } => {
+                    "SOUND_BUTTONCLICK"
+                }
                 _ => continue,
             };
             if let Some(sound) = self.sounds.get(id) {
@@ -208,7 +224,7 @@ impl Presentation {
         }
     }
 
-    fn draw(&self, state: &AdventureState, paused: bool) {
+    fn draw_board(&self, state: &AdventureState) {
         self.sprite("IMAGE_AQUARIUM1", 0.0, 0.0, None, false, 1.0, 1.0);
         for food in &state.food {
             self.sprite(
@@ -339,7 +355,12 @@ impl Presentation {
                 1.0,
                 1.0,
             );
-            self.fonts["Pix118"].text("150", 458.0, 58.0, Color::from_rgba(110, 250, 110, 255));
+            self.fonts["Pix118"].text(
+                &state.egg_price.to_string(),
+                458.0,
+                58.0,
+                Color::from_rgba(110, 250, 110, 255),
+            );
         }
         let balance = format!("${}", state.balance);
         let balance_width = self.fonts["ContinuumBold12"]
@@ -358,6 +379,218 @@ impl Presentation {
             470.0,
             WHITE,
         );
+    }
+
+    fn centered_text(&self, font: &str, text: &str, baseline: f32, color: Color) {
+        let rendered = &self.fonts[font];
+        let width = rendered.metrics.measure_width(text).unwrap_or(0) as f32;
+        rendered.text(text, 320.0 - width / 2.0, baseline, color);
+    }
+
+    // Tile a source image's thirds so its corners keep their original size.
+    // The original widgets use this image-box convention, not uniform stretch.
+    fn image_box(&self, id: &str, source: Rect, destination: Rect) {
+        let texture = &self.images[id];
+        let edge_x = (source.w / 3.0).floor().min(destination.w / 2.0);
+        let edge_y = (source.h / 3.0).floor().min(destination.h / 2.0);
+        let source_x = [source.x, source.x + edge_x, source.x + source.w - edge_x];
+        let source_y = [source.y, source.y + edge_y, source.y + source.h - edge_y];
+        let source_w = [edge_x, source.w - 2.0 * edge_x, edge_x];
+        let source_h = [edge_y, source.h - 2.0 * edge_y, edge_y];
+        let dest_x = [
+            destination.x,
+            destination.x + edge_x,
+            destination.x + destination.w - edge_x,
+        ];
+        let dest_y = [
+            destination.y,
+            destination.y + edge_y,
+            destination.y + destination.h - edge_y,
+        ];
+        let dest_w = [edge_x, destination.w - 2.0 * edge_x, edge_x];
+        let dest_h = [edge_y, destination.h - 2.0 * edge_y, edge_y];
+        for row in 0..3 {
+            for column in 0..3 {
+                if source_w[column] <= 0.0 || source_h[row] <= 0.0 {
+                    continue;
+                }
+                let mut y = 0.0;
+                while y < dest_h[row] {
+                    let height = source_h[row].min(dest_h[row] - y);
+                    let mut x = 0.0;
+                    while x < dest_w[column] {
+                        let width = source_w[column].min(dest_w[column] - x);
+                        draw_texture_ex(
+                            texture,
+                            dest_x[column] + x,
+                            dest_y[row] + y,
+                            WHITE,
+                            DrawTextureParams {
+                                source: Some(Rect::new(
+                                    source_x[column],
+                                    source_y[row],
+                                    width,
+                                    height,
+                                )),
+                                ..Default::default()
+                            },
+                        );
+                        x += width;
+                    }
+                    y += height;
+                }
+            }
+        }
+    }
+
+    fn main_button(&self, destination: Rect, label: &str) {
+        let texture = &self.images["IMAGE_MAINBUTTON"];
+        self.image_box(
+            "IMAGE_MAINBUTTON",
+            Rect::new(0.0, 0.0, texture.width() / 3.0, texture.height()),
+            destination,
+        );
+        let rendered = &self.fonts["JungleFever12outline"];
+        let width = rendered.metrics.measure_width(label).unwrap_or(0) as f32;
+        rendered.text(
+            label,
+            destination.x + (destination.w - width) / 2.0,
+            destination.y + destination.h * 0.72,
+            Color::from_rgba(255, 240, 0, 255),
+        );
+    }
+
+    fn draw_hatch(&self, updates: u32) {
+        self.sprite("IMAGE_HATCHSCREEN", 0.0, 0.0, None, false, 1.0, 1.0);
+        let title = &self.images["IMAGE_SCREENTITLE"];
+        self.image_box(
+            "IMAGE_SCREENTITLE",
+            Rect::new(0.0, 0.0, title.width(), title.height()),
+            Rect::new(20.0, 0.0, 600.0, title.height()),
+        );
+        self.fonts["JungleFever17outline"].text(
+            "You have found:",
+            215.0,
+            25.0,
+            Color::from_rgba(255, 200, 0, 255),
+        );
+        if updates < 141 {
+            let (id, columns, frame) = if updates < 81 {
+                ("IMAGE_EGGCRACK1", 13.0, updates.saturating_sub(56) / 2)
+            } else {
+                ("IMAGE_EGGCRACK2", 10.0, updates.saturating_sub(120) / 2)
+            };
+            let image = &self.images[id];
+            let width = image.width() / columns;
+            self.sprite(
+                id,
+                258.0,
+                60.0,
+                Some(Rect::new(
+                    frame.min(columns as u32 - 1) as f32 * width,
+                    0.0,
+                    width,
+                    image.height(),
+                )),
+                false,
+                1.0,
+                1.0,
+            );
+        } else {
+            self.sprite(
+                "IMAGE_STINKY",
+                278.0,
+                100.0,
+                Some(Rect::new((updates % 20 / 2) as f32 * 80.0, 0.0, 80.0, 80.0)),
+                false,
+                1.0,
+                1.0,
+            );
+            self.centered_text(
+                "JungleFever15outline",
+                "STINKY the Snail",
+                260.0,
+                Color::from_rgba(255, 200, 0, 255),
+            );
+        }
+        self.sprite("IMAGE_HATCHREFLECTION", 240.0, 60.0, None, false, 1.0, 1.0);
+        if updates > 170 {
+            self.centered_text(
+                "JungleFever10outline",
+                "STINKY roams around the",
+                300.0,
+                WHITE,
+            );
+            self.centered_text(
+                "JungleFever10outline",
+                "bottom of your tank, catching",
+                320.0,
+                WHITE,
+            );
+            self.centered_text(
+                "JungleFever10outline",
+                "any coins you may have missed.",
+                340.0,
+                WHITE,
+            );
+            self.fonts["JungleFever10outline"].text(
+                "Your game has been saved.",
+                221.0,
+                390.0,
+                Color::from_rgba(255, 255, 100, 255),
+            );
+        }
+        let height = self.images["IMAGE_MAINBUTTON"].height();
+        self.main_button(
+            Rect::new(186.0, 445.0, 264.0, height),
+            if updates > 170 {
+                "Click Here to Continue"
+            } else {
+                "Please Wait..."
+            },
+        );
+        self.main_button(Rect::new(525.0, 4.0, 80.0, height), "Menu");
+    }
+
+    fn draw(&self, session: &AdventureSession, paused: bool) {
+        match session.phase {
+            AdventurePhase::Hatch { updates, .. } => self.draw_hatch(updates),
+            AdventurePhase::Playing | AdventurePhase::FirstTankRescue => {
+                if let Some(board) = &session.board {
+                    self.draw_board(board);
+                }
+            }
+        }
+        if session.phase == AdventurePhase::FirstTankRescue {
+            draw_rectangle(90.0, 150.0, 460.0, 200.0, Color::new(0.02, 0.1, 0.15, 0.96));
+            self.centered_text(
+                "JungleFever15outline",
+                "YOUR LAST FISH HAS DIED!",
+                186.0,
+                YELLOW,
+            );
+            self.centered_text(
+                "JungleFever10outline",
+                "We'll give you another fish to keep playing.",
+                225.0,
+                WHITE,
+            );
+            self.centered_text(
+                "JungleFever10outline",
+                "Make sure you keep it well fed!",
+                251.0,
+                WHITE,
+            );
+            self.main_button(
+                Rect::new(
+                    186.0,
+                    295.0,
+                    264.0,
+                    self.images["IMAGE_MAINBUTTON"].height(),
+                ),
+                "Click to Continue",
+            );
+        }
         if paused {
             draw_rectangle(
                 150.0,
@@ -369,24 +602,6 @@ impl Presentation {
             draw_text("Paused", 266.0, 207.0, 28.0, WHITE);
             draw_text("Esc: resume    S: save", 203.0, 247.0, 21.0, WHITE);
             draw_text("Q: save and exit", 235.0, 277.0, 21.0, WHITE);
-        }
-        if state.victory {
-            draw_rectangle(
-                100.0,
-                145.0,
-                440.0,
-                170.0,
-                Color::new(0.02, 0.1, 0.15, 0.96),
-            );
-            draw_text("Tank 1-1 complete", 192.0, 192.0, 28.0, WHITE);
-            draw_text("Three egg pieces purchased", 168.0, 234.0, 23.0, YELLOW);
-            draw_text(
-                "Progress saved — Esc opens the menu",
-                154.0,
-                274.0,
-                21.0,
-                WHITE,
-            );
         }
     }
 }
@@ -417,59 +632,63 @@ struct Evidence {
     events: BufWriter<File>,
     last_state_tick: u64,
     snapshot_deferred: bool,
+    last_paused: bool,
 }
 
 impl Evidence {
     fn open(
         root: &Path,
         identity: &InstallIdentity,
-        state: &AdventureState,
+        session: &AdventureSession,
         seed: u64,
     ) -> Result<Self, Box<dyn Error>> {
         fs::create_dir_all(root)?;
         cli::write_json(
             &root.join("identity.local.json"),
-            &serde_json::json!({"game": identity, "rust_executable_sha256": install::sha256(&fs::read(std::env::current_exe()?)?), "seed": seed, "tick_ms": TICK_MS, "retail_rng_equivalent": false, "start": state}),
+            &serde_json::json!({"game": identity, "rust_executable_sha256": install::sha256(&fs::read(std::env::current_exe()?)?), "seed": seed, "tick_ms": TICK_MS, "retail_rng_equivalent": false, "start": session}),
         )?;
         Ok(Self {
             root: root.into(),
             events: BufWriter::new(File::create(root.join("events.local.jsonl"))?),
             last_state_tick: u64::MAX,
             snapshot_deferred: false,
+            last_paused: false,
         })
     }
     fn record(
         &mut self,
         events: &[Event],
-        state: &AdventureState,
+        session: &AdventureSession,
         elapsed: f64,
         paused: bool,
     ) -> Result<(), Box<dyn Error>> {
         for event in events {
             serde_json::to_writer(
                 &mut self.events,
-                &serde_json::json!({"elapsed_seconds": elapsed,"event":event}),
+                &serde_json::json!({"elapsed_seconds": elapsed,"session_tick":session.ticks,"event":event}),
             )?;
             writeln!(&mut self.events)?;
         }
         self.events.flush()?;
-        if self.last_state_tick != state.tick {
+        if self.last_state_tick != session.ticks || self.last_paused != paused || !events.is_empty()
+        {
             let publication = cli::write_json(
                 &self.root.join("state.local.json"),
-                &serde_json::json!({"elapsed_seconds":elapsed, "paused":paused, "state":state}),
+                &serde_json::json!({"elapsed_seconds":elapsed, "paused":paused, "session_tick":session.ticks, "phase":session.phase, "progress":session.progress, "state":session.board}),
             );
             match publication {
                 Ok(()) => {
                     if self.snapshot_deferred {
                         serde_json::to_writer(
                             &mut self.events,
-                            &serde_json::json!({"diagnostic":"snapshot_publication_recovered","tick":state.tick,"elapsed_seconds":elapsed}),
+                            &serde_json::json!({"diagnostic":"snapshot_publication_recovered","tick":session.ticks,"elapsed_seconds":elapsed}),
                         )?;
                         writeln!(&mut self.events)?;
                         self.events.flush()?;
                     }
-                    self.last_state_tick = state.tick;
+                    self.last_state_tick = session.ticks;
                     self.snapshot_deferred = false;
+                    self.last_paused = paused;
                 }
                 Err(error)
                     if error
@@ -484,7 +703,7 @@ impl Evidence {
                     if !self.snapshot_deferred {
                         serde_json::to_writer(
                             &mut self.events,
-                            &serde_json::json!({"diagnostic":"snapshot_publication_deferred","tick":state.tick,"elapsed_seconds":elapsed,"error":error.to_string()}),
+                            &serde_json::json!({"diagnostic":"snapshot_publication_deferred","tick":session.ticks,"elapsed_seconds":elapsed,"error":error.to_string()}),
                         )?;
                         writeln!(&mut self.events)?;
                         self.events.flush()?;
@@ -507,18 +726,21 @@ pub async fn run(
     game_root: PathBuf,
     identity: InstallIdentity,
     assets: GameAssets,
-    mut state: AdventureState,
+    mut session: AdventureSession,
 ) -> Result<(), Box<dyn Error>> {
     let presentation = Presentation::load(&game_root, &assets, options.muted).await?;
     let mut evidence = options
         .evidence_dir
         .as_ref()
-        .map(|root| Evidence::open(root, &identity, &state, options.seed))
+        .map(|root| Evidence::open(root, &identity, &session, options.seed))
         .transpose()?;
     let started = get_time();
     let mut accumulator = 0.0_f64;
     let mut pending_actions = Vec::new();
     let mut paused = false;
+    let mut hatch_pointer_owned = false;
+    let mut hatch_background_down = false;
+    prevent_quit();
     loop {
         let elapsed = get_time() - started;
         let scale = (screen_width() / 640.0).min(screen_height() / 480.0);
@@ -532,56 +754,122 @@ pub async fn run(
             paused = !paused;
             accumulator = 0.0;
         }
+        let button_height = presentation.images["IMAGE_MAINBUTTON"].height();
+        let menu_rect = if matches!(session.phase, AdventurePhase::Hatch { .. }) {
+            Rect::new(525.0, 4.0, 80.0, button_height)
+        } else {
+            Rect::new(525.0, 3.0, 101.0, 29.0)
+        };
         if is_mouse_button_pressed(MouseButton::Left) {
-            if pointer.x >= 525.0 && pointer.x < 626.0 && pointer.y >= 3.0 && pointer.y < 32.0 {
+            if menu_rect.contains(pointer) {
                 paused = !paused;
                 accumulator = 0.0;
             } else if !paused {
-                let action = if pointer.x >= 18.0
-                    && pointer.x < 76.0
-                    && pointer.y >= 3.0
-                    && pointer.y < 63.0
-                {
-                    Action::BuyGuppy
-                } else if pointer.x >= 436.0
-                    && pointer.x < 494.0
-                    && pointer.y >= 3.0
-                    && pointer.y < 63.0
-                {
-                    Action::BuyEgg
-                } else {
-                    Action::Click {
+                let action = match session.phase {
+                    AdventurePhase::Hatch { updates, .. }
+                        if updates > 170
+                            && Rect::new(186.0, 445.0, 264.0, button_height).contains(pointer) =>
+                    {
+                        Action::Continue
+                    }
+                    AdventurePhase::Hatch { .. } => {
+                        hatch_pointer_owned = true;
+                        hatch_background_down = is_mouse_button_down(MouseButton::Left);
+                        Action::HatchHold {
+                            down: hatch_background_down,
+                        }
+                    }
+                    AdventurePhase::FirstTankRescue
+                        if Rect::new(186.0, 295.0, 264.0, button_height).contains(pointer) =>
+                    {
+                        Action::Continue
+                    }
+                    AdventurePhase::Playing
+                        if Rect::new(18.0, 3.0, 58.0, 60.0).contains(pointer) =>
+                    {
+                        Action::BuyGuppy
+                    }
+                    AdventurePhase::Playing
+                        if Rect::new(436.0, 3.0, 58.0, 60.0).contains(pointer) =>
+                    {
+                        Action::BuyEgg
+                    }
+                    _ => Action::Click {
                         x: pointer.x,
                         y: pointer.y,
-                    }
+                    },
                 };
                 pending_actions.push(action);
             }
         }
-        if is_key_pressed(KeyCode::S) {
-            cli::save_state(&options, &state)?;
+        if is_mouse_button_released(MouseButton::Left) {
+            hatch_pointer_owned = false;
         }
-        if (paused && is_key_pressed(KeyCode::Q))
-            || options.quit_after.is_some_and(|limit| elapsed >= limit)
+        if matches!(session.phase, AdventurePhase::Hatch { .. }) {
+            let held = hatch_pointer_owned && is_mouse_button_down(MouseButton::Left);
+            if held != hatch_background_down {
+                pending_actions.push(Action::HatchHold { down: held });
+                hatch_background_down = held;
+            }
+        } else {
+            hatch_pointer_owned = false;
+            hatch_background_down = false;
+        }
+        if !paused
+            && is_key_pressed(KeyCode::Enter)
+            && matches!(
+                session.phase,
+                AdventurePhase::FirstTankRescue | AdventurePhase::Hatch { .. }
+            )
         {
-            break;
+            pending_actions.push(Action::Continue);
         }
+        let save_requested = is_key_pressed(KeyCode::S);
+        let exit_requested = is_quit_requested()
+            || (paused && is_key_pressed(KeyCode::Q))
+            || options.quit_after.is_some_and(|limit| elapsed >= limit);
         let mut events = Vec::new();
-        if !paused {
+        if save_requested || exit_requested {
+            // Inputs already accepted by this window belong to the checkpoint.
+            // Apply them without inventing an extra simulation tick on save/exit.
+            events.extend(session.apply_actions(&pending_actions));
+            pending_actions.clear();
+        }
+        if !paused && !exit_requested {
             accumulator += f64::from(get_frame_time()).min(0.2);
             while accumulator >= f64::from(TICK_MS) / 1000.0 {
-                events.extend(state.step(&pending_actions));
+                events.extend(session.step(&pending_actions));
                 pending_actions.clear();
                 accumulator -= f64::from(TICK_MS) / 1000.0;
-                if state.victory {
+                if events
+                    .iter()
+                    .any(|event| matches!(event, Event::HatchStarted { .. }))
+                {
                     accumulator = 0.0;
                     break;
                 }
             }
         }
+        if save_requested
+            || exit_requested
+            || events.iter().any(|event| {
+                matches!(
+                    event,
+                    Event::FirstTankRescueStarted { .. }
+                        | Event::HatchStarted { .. }
+                        | Event::StageStarted { .. }
+                        | Event::RescueGuppyGranted { .. }
+                )
+            })
+        {
+            cli::save_session(&options, &session)?;
+        }
         presentation.play(&events);
         if let Some(evidence) = evidence.as_mut() {
-            evidence.record(&events, &state, elapsed, paused)?;
+            evidence.record(&events, &session, elapsed, paused)?;
+        }
+        if exit_requested {
+            break;
         }
         clear_background(BLACK);
         let mut camera = Camera2D::from_display_rect(Rect::new(0.0, 0.0, 640.0, 480.0));
@@ -595,12 +883,12 @@ pub async fn run(
             (480.0 * scale) as i32,
         ));
         set_camera(&camera);
-        presentation.draw(&state, paused);
+        presentation.draw(&session, paused);
         set_default_camera();
         if let Some(evidence) = evidence.as_ref() {
             let request = evidence.root.join("capture.request");
             if is_key_pressed(KeyCode::F12) || request.exists() {
-                evidence.capture(state.tick);
+                evidence.capture(session.ticks);
                 if request.exists() {
                     fs::remove_file(request)?;
                 }
@@ -608,16 +896,16 @@ pub async fn run(
         }
         next_frame().await;
     }
-    cli::save_state(&options, &state)?;
+    cli::save_session(&options, &session)?;
     let after = install::identify(&game_root)?;
     if after.inventory_sha256 != identity.inventory_sha256 {
         return Err("Owned installation changed during run; inspect before continuing".into());
     }
     if let Some(evidence) = evidence.as_mut() {
-        evidence.record(&[], &state, get_time() - started, paused)?;
+        evidence.record(&[], &session, get_time() - started, paused)?;
         cli::write_json(
             &evidence.root.join("final.local.json"),
-            &serde_json::json!({"state":state,"game_after":after,"elapsed_seconds":get_time()-started,"game_unchanged":true}),
+            &serde_json::json!({"session":session,"game_after":after,"elapsed_seconds":get_time()-started,"game_unchanged":true}),
         )?;
     }
     Ok(())
