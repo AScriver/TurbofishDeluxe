@@ -8,6 +8,7 @@ use crate::{
     font::BitmapFont,
     install::{self, InstallIdentity},
     invasion::{InvasionEvent, InvasionTip},
+    missile::MissileKind,
     music::{MusicOwner, MusicReport},
     oscar::OscarPose,
     sim::{Action, AdventureState, CoinKind, Event, FishPose, FishSize, PetKind, TICK_MS},
@@ -101,7 +102,12 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SHRAPNEL",
     "IMAGE_SCL_SHRAPNEL",
     "IMAGE_GUMBO",
+    "IMAGE_GUMBOLIGHT",
     "IMAGE_SCL_GUMBO",
+    "IMAGE_BLIP",
+    "IMAGE_SCL_BLIP",
+    "IMAGE_ULYSSES",
+    "IMAGE_ENERGYBALL",
     "IMAGE_ZZZ",
     "IMAGE_STARCATCHER",
     "IMAGE_SCL_STARCATCHER",
@@ -124,6 +130,7 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_ROAR",
     "SOUND_HIT",
     "SOUND_EXPLOSION1",
+    "SOUND_EXPLOSION4",
     "SOUND_EXPLODE",
     "SOUND_MISSLE",
     "SOUND_ZAP",
@@ -410,8 +417,30 @@ impl Presentation {
     }
 
     fn additive_sprite(&self, id: &str, x: f32, y: f32, source: Rect, flip: bool, alpha: f32) {
+        self.additive_tinted_sprite(id, x, y, source, flip, Color::new(1.0, 1.0, 1.0, alpha));
+    }
+
+    fn additive_tinted_sprite(
+        &self,
+        id: &str,
+        x: f32,
+        y: f32,
+        source: Rect,
+        flip: bool,
+        tint: Color,
+    ) {
         gl_use_material(&self.additive);
-        self.sprite(id, x, y, Some(source), flip, 1.0, alpha);
+        draw_texture_ex(
+            &self.images[id],
+            x,
+            y,
+            tint,
+            DrawTextureParams {
+                source: Some(source),
+                flip_x: flip,
+                ..Default::default()
+            },
+        );
         gl_use_default_material();
     }
 
@@ -485,6 +514,11 @@ impl Presentation {
                 Event::MissileLaunched { .. } => "SOUND_MISSLE",
                 Event::MissileRemoved { .. } => "SOUND_EXPLODE",
                 Event::MissileImpacted { .. } => "SOUND_DIE",
+                Event::EnergyBallLaunched { first: true, .. } => "SOUND_UNLEASH",
+                Event::EnergyBallLaunched { first: false, .. }
+                | Event::EnergyBallShot { .. }
+                | Event::EnergyBallAlienHit { .. } => continue,
+                Event::EnergyBallRemoved { .. } => "SOUND_EXPLOSION4",
                 Event::PregoBirth { .. } => "SOUND_BABY",
                 Event::MerylNoteDropped { .. } => "SOUND_SING",
                 Event::ShrapnelBombDropped { .. } => "SOUND_UNLEASH",
@@ -520,10 +554,14 @@ impl Presentation {
                 | Event::PetSelectionConfirmation { .. } => "SOUND_BUTTONCLICK",
                 _ => continue,
             };
-            if let (Some(sound), Some(music)) = (self.sounds.get(id), music)
-                && let Some(report) = music.play_effect(sound.clone())
+            for effect_id in std::iter::once(id)
+                .chain(matches!(event, Event::EnergyBallRemoved { .. }).then_some("SOUND_EXPLODE"))
             {
-                reports.push(report);
+                if let (Some(sound), Some(music)) = (self.sounds.get(effect_id), music)
+                    && let Some(report) = music.play_effect(sound.clone())
+                {
+                    reports.push(report);
+                }
             }
         }
         reports
@@ -755,6 +793,7 @@ impl Presentation {
                 FishPetKind::Wadsworth => "IMAGE_WADSWORTH",
                 FishPetKind::Seymour => "IMAGE_SEYMOUR",
                 FishPetKind::Shrapnel => "IMAGE_SHRAPNEL",
+                FishPetKind::Gumbo => "IMAGE_GUMBO",
             };
             let source = Rect::new(
                 f32::from(pet.sprite_frame()) * 80.0,
@@ -779,6 +818,16 @@ impl Presentation {
                     source,
                     pet.facing_right(),
                     f32::from(pet.shrapnel_flash_alpha()) / 255.0,
+                );
+            }
+            if pet.kind == FishPetKind::Gumbo && aliens_present && pet.gumbo_light_alpha() > 0 {
+                self.additive_tinted_sprite(
+                    "IMAGE_GUMBOLIGHT",
+                    pet.widget_x as f32,
+                    pet.widget_y as f32,
+                    source,
+                    pet.facing_right(),
+                    Color::from_rgba(255, 255, 0, pet.gumbo_light_alpha()),
                 );
             }
             if pet.kind == FishPetKind::Wadsworth
@@ -923,6 +972,7 @@ impl Presentation {
                         SylvesterKind::Balrog => "IMAGE_BALROG",
                         SylvesterKind::Gus => "IMAGE_GUS",
                         SylvesterKind::Destructor => "IMAGE_DESTRUCTOR",
+                        SylvesterKind::Ulysses => "IMAGE_ULYSSES",
                         SylvesterKind::Psychosquid => "IMAGE_PSYCHOSQUID",
                         SylvesterKind::Weak | SylvesterKind::Strong => "IMAGE_SYLV",
                     };
@@ -968,15 +1018,41 @@ impl Presentation {
                 }
             }
             for missile in &state.missiles {
-                self.sprite(
-                    "IMAGE_MISSILE",
-                    missile.widget_x as f32,
-                    missile.widget_y as f32,
-                    Some(Rect::new(f32::from(missile.frame) * 80.0, 0.0, 80.0, 80.0)),
-                    false,
-                    1.0,
-                    1.0,
-                );
+                match missile.kind {
+                    MissileKind::Classic => self.sprite(
+                        "IMAGE_MISSILE",
+                        missile.widget_x as f32,
+                        missile.widget_y as f32,
+                        Some(Rect::new(f32::from(missile.frame) * 80.0, 0.0, 80.0, 80.0)),
+                        false,
+                        1.0,
+                        1.0,
+                    ),
+                    MissileKind::EnergyBall => {
+                        let x = missile.widget_x as f32;
+                        let y = missile.widget_y as f32;
+                        self.additive_tinted_sprite(
+                            "IMAGE_ENERGYBALL",
+                            x,
+                            y,
+                            Rect::new(f32::from(missile.frame) * 80.0, 0.0, 80.0, 80.0),
+                            false,
+                            if missile.reflected {
+                                Color::from_rgba(175, 175, 50, 255)
+                            } else {
+                                Color::from_rgba(100, 100, 255, 55)
+                            },
+                        );
+                        self.additive_tinted_sprite(
+                            "IMAGE_ENERGYBALL",
+                            x,
+                            y,
+                            Rect::new(400.0, 0.0, 80.0, 80.0),
+                            false,
+                            Color::from_rgba(100, 100, 255, 255),
+                        );
+                    }
+                }
             }
             for laser in &wave.lasers {
                 let frame = laser.frame();
@@ -1008,6 +1084,7 @@ impl Presentation {
                     match body.kind {
                         SylvesterKind::Balrog => "IMAGE_BALROG",
                         SylvesterKind::Destructor => "IMAGE_DESTRUCTOR",
+                        SylvesterKind::Ulysses => "IMAGE_ULYSSES",
                         SylvesterKind::Psychosquid => "IMAGE_PSYCHOSQUID",
                         SylvesterKind::Weak | SylvesterKind::Strong | SylvesterKind::Gus => {
                             "IMAGE_SYLV"
@@ -1785,6 +1862,7 @@ impl Presentation {
                 PetKind::Seymour => ("IMAGE_SEYMOUR", 90.0, updates % 40 / 4),
                 PetKind::Shrapnel => ("IMAGE_SHRAPNEL", 90.0, updates % 40 / 4),
                 PetKind::Gumbo => ("IMAGE_GUMBO", 90.0, updates % 20 / 2),
+                PetKind::Blip => ("IMAGE_BLIP", 90.0, updates % 20 / 2),
             };
             self.sprite(
                 id,
@@ -1815,6 +1893,7 @@ impl Presentation {
                     PetKind::Seymour => "SEYMOUR the Turtle",
                     PetKind::Shrapnel => "SHRAPNEL the Robot Fish",
                     PetKind::Gumbo => "GUMBO the Angler",
+                    PetKind::Blip => "BLIP the Porpoise",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -1883,6 +1962,11 @@ impl Presentation {
                     "GUMBO attracts guppies using",
                     "the lantern on his head,",
                     "luring them away from aliens.",
+                ],
+                PetKind::Blip => [
+                    "BLIP provides you with info",
+                    "that helps you better combat",
+                    "aliens and keep your fish fed.",
                 ],
             };
             for (index, line) in description.iter().enumerate() {
@@ -1969,6 +2053,7 @@ impl Presentation {
                 PetKind::Seymour => "IMAGE_SCL_SEYMOUR",
                 PetKind::Shrapnel => "IMAGE_SCL_SHRAPNEL",
                 PetKind::Gumbo => "IMAGE_SCL_GUMBO",
+                PetKind::Blip => "IMAGE_SCL_BLIP",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
@@ -2129,6 +2214,16 @@ impl Presentation {
                         "GUMBO attracts guppies using",
                         "the lantern on his head,",
                         "luring them away from aliens.",
+                    ],
+                    90.0,
+                ),
+                PetKind::Blip => (
+                    "IMAGE_BLIP",
+                    "BLIP the Porpoise",
+                    [
+                        "BLIP provides you with info",
+                        "that helps you better combat",
+                        "aliens and keep your fish fed.",
                     ],
                     90.0,
                 ),
@@ -3170,6 +3265,35 @@ mod feed_input_tests {
         assert_eq!(
             pet_at_pointer(&unlocked, vec2(470.0, 165.0)),
             Some(PetKind::Shrapnel)
+        );
+    }
+
+    #[test]
+    fn blip_uses_fourth_right_hand_card_without_displacing_gumbo() {
+        let unlocked = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+            PetKind::Clyde,
+            PetKind::Vert,
+            PetKind::Rufus,
+            PetKind::Meryl,
+            PetKind::Wadsworth,
+            PetKind::Seymour,
+            PetKind::Shrapnel,
+            PetKind::Gumbo,
+            PetKind::Blip,
+        ];
+        assert_eq!(pet_card_rect(13), Rect::new(425.0, 290.0, 90.0, 83.0));
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(470.0, 331.0)),
+            Some(PetKind::Blip)
+        );
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(470.0, 248.0)),
+            Some(PetKind::Gumbo)
         );
     }
 

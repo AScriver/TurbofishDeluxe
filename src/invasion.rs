@@ -216,6 +216,10 @@ impl Invasion1_2 {
         Self::with_origin(InvasionOrigin::StageStart, SylvesterKind::Psychosquid)
     }
 
+    pub fn new_ulysses() -> Self {
+        Self::with_origin(InvasionOrigin::StageStart, SylvesterKind::Ulysses)
+    }
+
     pub fn new_tank1_finale() -> Self {
         let mut wave = Self::new_balrog();
         wave.plan = WavePlan::CyclingTank1Finale {
@@ -301,6 +305,21 @@ impl Invasion1_2 {
 
     pub fn actor_by_id_mut(&mut self, id: u64) -> Option<&mut WeakSylvester> {
         self.actors.iter_mut().find(|actor| actor.id == id)
+    }
+
+    /// Reflected raw1 projectile damage bypasses the ordinary click/weapon
+    /// branch, but transfers defeated membership through the same reward path.
+    pub fn reflected_energy_hit(&mut self, id: u64) -> Option<(f64, Vec<InvasionEvent>)> {
+        let actor = self.actor_by_id_mut(id)?;
+        actor.health -= 30.0;
+        actor.hit_ticks = 10;
+        let health = actor.health;
+        let events = if health <= 0.0 {
+            self.remove_registered_alien(id)
+        } else {
+            Vec::new()
+        };
+        Some((health, events))
     }
 
     /// Board::Update reduces food delay before its first pause return at
@@ -494,7 +513,7 @@ impl Invasion1_2 {
     ) -> Vec<InvasionEvent> {
         self.objects_update_with_runtime(prey, food, |request| match request {
             AlienRuntimeRequest::Random => next_random(),
-            AlienRuntimeRequest::Launch { .. } => 0,
+            AlienRuntimeRequest::Launch { .. } | AlienRuntimeRequest::ProbeTarget { .. } => 0,
         })
     }
 

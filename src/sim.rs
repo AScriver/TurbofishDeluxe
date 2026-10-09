@@ -11,6 +11,7 @@ use crate::{
     invasion::{Invasion1_2, InvasionEvent, WavePlan},
     larva::{LARVA_VALUE, LarvaState, LarvaUpdate},
     missile::{ClassicMissile, MissilePreyView},
+    missile::{MissileKind, MissileShot},
     niko::{NikoEvent, NikoPearl, NikoState, PEARL_VALUE, PearlPhase, PearlUpdate},
     oscar::{DeadOscar, OscarPrey, OscarState},
     rufus::{RufusAlienView, RufusState},
@@ -43,6 +44,7 @@ pub const GEKKO_PRICE: i32 = 2000;
 pub const TANK3_FIRST_EGG_PRICE: i32 = 1000;
 pub const TANK3_SECOND_EGG_PRICE: i32 = 5000;
 pub const TANK3_THIRD_EGG_PRICE: i32 = 7500;
+pub const TANK3_FOURTH_EGG_PRICE: i32 = 10_000;
 pub const POTION_PRICE: i32 = 250;
 pub const FOOD_QUALITY_PRICE: i32 = 200;
 pub const FOOD_QUANTITY_PRICE: i32 = 300;
@@ -74,6 +76,7 @@ pub enum PetKind {
     Seymour,
     Shrapnel,
     Gumbo,
+    Blip,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -355,7 +358,8 @@ pub struct Coin {
     pub penta_rising: bool,
 }
 
-/// Bomb contact's short-lived Shot types 3..5. These are visual effects,
+/// Board-owned finite Shot types 2..5. Type 2 has no Draw image; types 3..5
+/// are bomb contact fragments. These are visual effects,
 /// not collectible GameObjects and therefore do not consume Board entity IDs.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BombShot {
@@ -370,7 +374,8 @@ pub struct BombShot {
 
 impl BombShot {
     pub fn sprite_frame(&self) -> Option<u8> {
-        (self.delay_ticks == 0 && self.frame >= 0).then_some(self.frame.max(0) as u8)
+        (self.shot_type != 2 && self.delay_ticks == 0 && self.frame >= 0)
+            .then_some(self.frame.max(0) as u8)
     }
 
     fn tick(&mut self) -> bool {
@@ -378,15 +383,19 @@ impl BombShot {
             self.delay_ticks -= 1;
             return false;
         }
-        self.age_ticks += if self.alpha > 150 { 2 } else { 1 };
+        self.age_ticks += if self.shot_type != 2 && self.alpha > 150 {
+            2
+        } else {
+            1
+        };
         self.frame = (self.age_ticks / 2) as i8 - 1;
-        self.age_ticks > 19
+        self.age_ticks > if self.shot_type == 2 { 29 } else { 19 }
     }
 
     fn validate(&self) -> Result<(), String> {
-        if !(3..=5).contains(&self.shot_type)
-            || self.age_ticks > 19
-            || !(-1..=9).contains(&self.frame)
+        if !(2..=5).contains(&self.shot_type)
+            || self.age_ticks > (if self.shot_type == 2 { 29 } else { 19 })
+            || !(if self.shot_type == 2 { -1..=14 } else { -1..=9 }).contains(&self.frame)
             || self.delay_ticks > 2
             || !(50..=249).contains(&self.alpha)
         {
@@ -703,6 +712,27 @@ pub enum Event {
         tick: u64,
         missile_id: u64,
         target_id: u64,
+    },
+    EnergyBallLaunched {
+        tick: u64,
+        missile_id: u64,
+        target_id: u64,
+        first: bool,
+    },
+    EnergyBallShot {
+        tick: u64,
+        missile_id: u64,
+        redirected: bool,
+    },
+    EnergyBallAlienHit {
+        tick: u64,
+        missile_id: u64,
+        alien_id: u64,
+        health: f64,
+    },
+    EnergyBallRemoved {
+        tick: u64,
+        missile_id: u64,
     },
     MissileRemoved {
         tick: u64,
@@ -1078,7 +1108,8 @@ impl AdventureState {
                 | PetKind::Wadsworth
                 | PetKind::Seymour
                 | PetKind::Shrapnel
-                | PetKind::Gumbo => {
+                | PetKind::Gumbo
+                | PetKind::Blip => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1133,7 +1164,8 @@ impl AdventureState {
                 | PetKind::Wadsworth
                 | PetKind::Seymour
                 | PetKind::Shrapnel
-                | PetKind::Gumbo => {
+                | PetKind::Gumbo
+                | PetKind::Blip => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1194,7 +1226,8 @@ impl AdventureState {
                 | PetKind::Wadsworth
                 | PetKind::Seymour
                 | PetKind::Shrapnel
-                | PetKind::Gumbo => {
+                | PetKind::Gumbo
+                | PetKind::Blip => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1256,7 +1289,8 @@ impl AdventureState {
                 | PetKind::Wadsworth
                 | PetKind::Seymour
                 | PetKind::Shrapnel
-                | PetKind::Gumbo => {
+                | PetKind::Gumbo
+                | PetKind::Blip => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1326,7 +1360,8 @@ impl AdventureState {
                 | PetKind::Wadsworth
                 | PetKind::Seymour
                 | PetKind::Shrapnel
-                | PetKind::Gumbo => {
+                | PetKind::Gumbo
+                | PetKind::Blip => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1401,7 +1436,11 @@ impl AdventureState {
                     state.rng_state = rng_state;
                 }
                 PetKind::Meryl => state.spawn_fish_pet(FishPetKind::Meryl),
-                PetKind::Wadsworth | PetKind::Seymour | PetKind::Shrapnel | PetKind::Gumbo => {
+                PetKind::Wadsworth
+                | PetKind::Seymour
+                | PetKind::Shrapnel
+                | PetKind::Gumbo
+                | PetKind::Blip => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1414,7 +1453,7 @@ impl AdventureState {
     /// are constructed before the two starter guppies, preserving Board's
     /// actor-constructor RNG order; the Balrog countdown starts at 3000.
     pub fn new_tank3_first_stage(seed: u64, pets: &[PetKind]) -> Result<Self, String> {
-        Self::validate_tank3_selection(pets, false, false)?;
+        Self::validate_tank3_selection(pets, false, false, false)?;
         let mut state = Self::empty_board(seed);
         state.tank = 3;
         state.level = 1;
@@ -1428,7 +1467,7 @@ impl AdventureState {
     /// The first 3-2 expected alien draw precedes pet and starter-fish
     /// constructors. Later waves use one conditional toggle roll after spawn.
     pub fn new_tank3_second_stage(seed: u64, pets: &[PetKind]) -> Result<Self, String> {
-        Self::validate_tank3_selection(pets, true, false)?;
+        Self::validate_tank3_selection(pets, true, false, false)?;
         let mut state = Self::empty_board(seed);
         state.tank = 3;
         state.level = 2;
@@ -1445,7 +1484,7 @@ impl AdventureState {
     }
 
     pub fn new_tank3_third_stage(seed: u64, pets: &[PetKind]) -> Result<Self, String> {
-        Self::validate_tank3_selection(pets, true, true)?;
+        Self::validate_tank3_selection(pets, true, true, false)?;
         let mut state = Self::empty_board(seed);
         state.tank = 3;
         state.level = 3;
@@ -1456,10 +1495,23 @@ impl AdventureState {
         Ok(state)
     }
 
+    pub fn new_tank3_fourth_stage(seed: u64, pets: &[PetKind]) -> Result<Self, String> {
+        Self::validate_tank3_selection(pets, true, true, true)?;
+        let mut state = Self::empty_board(seed);
+        state.tank = 3;
+        state.level = 4;
+        state.egg_price = TANK3_FOURTH_EGG_PRICE;
+        state.invasion = Some(Invasion1_2::new_ulysses());
+        state.spawn_tank3_pets(pets);
+        state.spawn_starter_guppies(false);
+        Ok(state)
+    }
+
     fn validate_tank3_selection(
         pets: &[PetKind],
         allow_seymour: bool,
         allow_shrapnel: bool,
+        allow_gumbo: bool,
     ) -> Result<(), String> {
         let canonical = [
             PetKind::Stinky,
@@ -1474,12 +1526,14 @@ impl AdventureState {
             PetKind::Wadsworth,
             PetKind::Seymour,
             PetKind::Shrapnel,
+            PetKind::Gumbo,
         ];
         if pets.len() > 3
             || pets.iter().any(|pet| {
                 !canonical.contains(pet)
                     || *pet == PetKind::Seymour && !allow_seymour
                     || *pet == PetKind::Shrapnel && !allow_shrapnel
+                    || *pet == PetKind::Gumbo && !allow_gumbo
             })
             || pets.windows(2).any(|pair| {
                 canonical.iter().position(|pet| *pet == pair[0])
@@ -1526,7 +1580,8 @@ impl AdventureState {
                 PetKind::Wadsworth => self.spawn_fish_pet(FishPetKind::Wadsworth),
                 PetKind::Seymour => self.spawn_fish_pet(FishPetKind::Seymour),
                 PetKind::Shrapnel => self.spawn_fish_pet(FishPetKind::Shrapnel),
-                PetKind::Gumbo => unreachable!("roster checked before construction"),
+                PetKind::Gumbo => self.spawn_fish_pet(FishPetKind::Gumbo),
+                PetKind::Blip => unreachable!("roster checked before construction"),
             }
         }
     }
@@ -1692,7 +1747,7 @@ impl AdventureState {
     pub fn validate(&self) -> Result<(), String> {
         if !((self.tank == 1 && (1..=5).contains(&self.level))
             || (self.tank == 2 && (1..=5).contains(&self.level))
-            || (self.tank == 3 && (1..=3).contains(&self.level)))
+            || (self.tank == 3 && (1..=4).contains(&self.level)))
             || self.next_id == 0
             || self.next_id == u64::MAX
             || self.rng_state == 0
@@ -1723,9 +1778,11 @@ impl AdventureState {
             || !(2..=12).contains(&self.weapon_strength)
             || (!self.weapon_unlocked && self.weapon_strength > 2)
             || self.punch_sound_cooldown > 11
-            || self.pets.contains(&PetKind::Gumbo)
-            || ((self.tank, self.level) != (3, 3) && self.pets.contains(&PetKind::Shrapnel))
-            || !matches!((self.tank, self.level), (3, 2..=3))
+            || self.pets.contains(&PetKind::Blip)
+            || ((self.tank, self.level) != (3, 4) && self.pets.contains(&PetKind::Gumbo))
+            || !matches!((self.tank, self.level), (3, 3..=4))
+                && self.pets.contains(&PetKind::Shrapnel)
+            || !matches!((self.tank, self.level), (3, 2..=4))
                 && self.pets.contains(&PetKind::Seymour)
             || (self.tank != 3 && self.pets.contains(&PetKind::Wadsworth))
             || (self.tank != 3
@@ -1733,14 +1790,14 @@ impl AdventureState {
                     || !self.grubbers.is_empty()
                     || !self.dead_grubbers.is_empty()
                     || !self.larvae.is_empty()))
-            || !matches!((self.tank, self.level), (3, 2..=3))
+            || !matches!((self.tank, self.level), (3, 2..=4))
                 && (self.gekko_unlocked || !self.gekkos.is_empty() || !self.dead_gekkos.is_empty())
             || (self.tank != 2 || !(2..=5).contains(&self.level))
                 && (self.starcatcher_unlocked
                     || !self.starcatchers.is_empty()
                     || !self.dead_starcatchers.is_empty())
             || !((self.tank == 2 && (2..=5).contains(&self.level))
-                || (self.tank == 3 && (1..=3).contains(&self.level)))
+                || (self.tank == 3 && (1..=4).contains(&self.level)))
                 && self.clyde.is_some()
             || self.coins.iter().any(|coin| {
                 (coin.penta_rising && coin.kind != CoinKind::DiamondPenta)
@@ -1749,9 +1806,9 @@ impl AdventureState {
                     || !coin.x.is_finite()
                     || !coin.y.is_finite()
                     || (coin.kind == CoinKind::Pearl
-                        && !(self.tank == 3 && (2..=3).contains(&self.level)))
+                        && !(self.tank == 3 && (2..=4).contains(&self.level)))
                     || (coin.kind == CoinKind::ShrapnelBomb
-                        && ((self.tank, self.level) != (3, 3)
+                        && (!matches!((self.tank, self.level), (3, 3..=4))
                             || !self.pets.contains(&PetKind::Shrapnel)
                             || coin.fade_ticks != 0))
                     || (coin.kind != CoinKind::ShrapnelBomb && coin.hazard_age_ticks != 0)
@@ -1771,6 +1828,7 @@ impl AdventureState {
                 1 => TANK3_FIRST_EGG_PRICE,
                 2 => TANK3_SECOND_EGG_PRICE,
                 3 => TANK3_THIRD_EGG_PRICE,
+                4 => TANK3_FOURTH_EGG_PRICE,
                 _ => unreachable!(),
             }
         } else if self.tank == 2 {
@@ -1855,10 +1913,12 @@ impl AdventureState {
             {
                 return Err("third-tank roster or Grubber gates disagree".into());
             }
-            (3, 2..=3)
+            (3, 2..=4)
                 if self.invasion.as_ref().is_none_or(|wave| {
                     if self.level == 2 {
                         !matches!(wave.plan, WavePlan::CyclingTank3Second { .. })
+                    } else if self.level == 4 {
+                        wave.plan != WavePlan::Fixed(SylvesterKind::Ulysses)
                     } else {
                         wave.plan != WavePlan::Fixed(SylvesterKind::Psychosquid)
                     }
@@ -1877,6 +1937,7 @@ impl AdventureState {
                             PetKind::Wadsworth,
                             PetKind::Seymour,
                             PetKind::Shrapnel,
+                            PetKind::Gumbo,
                         ];
                         canonical.iter().position(|pet| *pet == pair[0])
                             >= canonical.iter().position(|pet| *pet == pair[1])
@@ -1902,6 +1963,7 @@ impl AdventureState {
                                 PetKind::Wadsworth => Some(FishPetKind::Wadsworth),
                                 PetKind::Seymour => Some(FishPetKind::Seymour),
                                 PetKind::Shrapnel => Some(FishPetKind::Shrapnel),
+                                PetKind::Gumbo => Some(FishPetKind::Gumbo),
                                 _ => None,
                             })
                             .collect::<Vec<_>>()
@@ -2161,7 +2223,7 @@ impl AdventureState {
         if !(self.notes.is_empty()
             || (self.tank, self.level) == (2, 5)
             || (self.tank == 3
-                && (1..=3).contains(&self.level)
+                && (1..=4).contains(&self.level)
                 && self.pets.contains(&PetKind::Meryl)))
             || self
                 .notes
@@ -2185,9 +2247,9 @@ impl AdventureState {
         if let Some(rufus) = &self.rufus {
             rufus.validate()?;
         }
-        let destructor_stage =
-            self.tank == 2 && (4..=5).contains(&self.level) || (self.tank, self.level) == (3, 2);
-        if !(self.missiles.is_empty() || destructor_stage)
+        let projectile_stage = self.tank == 2 && (4..=5).contains(&self.level)
+            || matches!((self.tank, self.level), (3, 2 | 4));
+        if !(self.missiles.is_empty() || projectile_stage)
             || (!(self.tank == 2 && (4..=5).contains(&self.level))
                 && self.tank != 3
                 && self.rufus.is_some())
@@ -2197,6 +2259,11 @@ impl AdventureState {
         let mut assigned = HashSet::new();
         for missile in &self.missiles {
             missile.validate()?;
+            if ((self.tank, self.level) == (3, 4))
+                != (missile.kind == crate::missile::MissileKind::EnergyBall)
+            {
+                return Err("missile kind disagrees with Adventure stage".into());
+            }
             if !assigned.insert(missile.target_id) || !self.live_prey_exists(missile.target_id) {
                 return Err("duplicate or missing classic missile target".into());
             }
@@ -2253,8 +2320,15 @@ impl AdventureState {
         for pet in &self.fish_pets {
             pet.validate()?;
         }
-        if (self.tank, self.level) != (3, 3) && !self.bomb_shots.is_empty() {
-            return Err("Shrapnel shots outside Adventure 3-3".into());
+        if self.bomb_shots.iter().any(|shot| {
+            if shot.shot_type == 2 {
+                (self.tank, self.level) != (3, 4)
+            } else {
+                !matches!((self.tank, self.level), (3, 3..=4))
+                    || !self.pets.contains(&PetKind::Shrapnel)
+            }
+        }) {
+            return Err("finite shot outside supported Adventure stage".into());
         }
         for shot in &self.bomb_shots {
             shot.validate()?;
@@ -2392,25 +2466,54 @@ impl AdventureState {
         let Some(index) = self.missiles.iter().position(|missile| missile.id == id) else {
             return false;
         };
-        self.missiles.remove(index);
-        events.push(Event::MissileRemoved {
-            tick: self.tick,
-            missile_id: id,
-        });
+        let missile = self.missiles.remove(index);
+        if missile.kind == MissileKind::EnergyBall {
+            events.push(Event::EnergyBallRemoved {
+                tick: self.tick,
+                missile_id: id,
+            });
+        } else {
+            events.push(Event::MissileRemoved {
+                tick: self.tick,
+                missile_id: id,
+            });
+        }
         true
     }
 
     fn shoot_first_missile(&mut self, x: i32, y: i32, events: &mut Vec<Event>) -> bool {
-        let Some(id) = self
-            .missiles
-            .iter()
-            .find(|missile| missile.shot(x, y))
-            .map(|missile| missile.id)
-        else {
+        let Some(index) = self.missiles.iter().position(|missile| missile.shot(x, y)) else {
             return false;
         };
-        self.remove_missile(id, events);
-        self.finish_destructor_battle(events);
+        let id = self.missiles[index].id;
+        let outcome = self.missiles[index].try_shot(x, y);
+        match outcome {
+            MissileShot::Miss => return false,
+            MissileShot::Destroyed => {
+                self.remove_missile(id, events);
+                self.finish_destructor_battle(events);
+            }
+            MissileShot::AcceptedImmune | MissileShot::Redirected => {
+                let redirected = outcome == MissileShot::Redirected;
+                // PB48/Shot.cpp: every accepted raw1 shot constructs a
+                // finite invisible Shot2, even during immunity.
+                let alpha = self.rand_range(200) as u8 + 50;
+                self.bomb_shots.push(BombShot {
+                    shot_type: 2,
+                    x: x - 40,
+                    y: y - 40,
+                    age_ticks: 0,
+                    frame: 0,
+                    delay_ticks: 0,
+                    alpha,
+                });
+                events.push(Event::EnergyBallShot {
+                    tick: self.tick,
+                    missile_id: id,
+                    redirected,
+                });
+            }
+        }
         true
     }
 
@@ -2507,9 +2610,40 @@ impl AdventureState {
     }
 
     fn update_missiles(&mut self, events: &mut Vec<Event>) {
-        let mut index = 0;
-        while index < self.missiles.len() {
-            let missile_id = self.missiles[index].id;
+        // The original Board may synchronously remove an earlier reservation
+        // while a later reflected ball's collision is still in progress.
+        // Schedule identities once, then reacquire each live actor after all
+        // preceding death/removal transactions; never reuse a stale index.
+        let scheduled_ids = self
+            .missiles
+            .iter()
+            .map(|missile| missile.id)
+            .collect::<Vec<_>>();
+        for missile_id in scheduled_ids {
+            let Some(mut index) = self
+                .missiles
+                .iter()
+                .position(|missile| missile.id == missile_id)
+            else {
+                continue;
+            };
+            if self.missiles[index].kind == MissileKind::EnergyBall
+                && self.missiles[index].reflected
+            {
+                self.reflected_energy_contact(missile_id, events);
+                // A retained fish dying can synchronously detach this ball.
+                // The already-started collision routine still committed its
+                // later category effects, but must never reinsert/update it.
+                if !self.missiles.iter().any(|missile| missile.id == missile_id) {
+                    self.finish_destructor_battle(events);
+                    continue;
+                }
+                index = self
+                    .missiles
+                    .iter()
+                    .position(|missile| missile.id == missile_id)
+                    .expect("live reflected missile identity was just checked");
+            }
             let view = self.missile_prey_view(self.missiles[index].target_id);
             let update = self.missiles[index].tick(view);
             if let Some(target_id) = update.impact_target {
@@ -2578,9 +2712,153 @@ impl AdventureState {
             } else if update.remove {
                 self.remove_missile(missile_id, events);
                 self.finish_destructor_battle(events);
-            } else {
-                index += 1;
             }
+        }
+    }
+
+    fn reflected_energy_contact(&mut self, missile_id: u64, events: &mut Vec<Event>) {
+        let Some(missile) = self
+            .missiles
+            .iter()
+            .find(|missile| missile.id == missile_id)
+        else {
+            return;
+        };
+        let (x, y) = (missile.x + 40.0, missile.y + 40.0);
+        let contact = |left: f64, top: f64, right: f64, bottom: f64| {
+            x > left && x < right && y > top && y < bottom
+        };
+        // W1 Missle::CheckCollision tests the alien list before each fish
+        // category; ordinary 3-4 has no Bilaterus or Cyrax membership.
+        let alien_id = self.invasion.as_ref().and_then(|wave| {
+            wave.actors
+                .iter()
+                .find(|actor| {
+                    !actor.healing
+                        && contact(
+                            f64::from(actor.widget_x + 30),
+                            f64::from(actor.widget_y + 10),
+                            f64::from(actor.widget_x + 140),
+                            f64::from(actor.widget_y + 150),
+                        )
+                })
+                .map(|actor| actor.id)
+        });
+        if let Some(alien_id) = alien_id {
+            if let Some((health, wave_events)) = self
+                .invasion
+                .as_mut()
+                .and_then(|wave| wave.reflected_energy_hit(alien_id))
+            {
+                events.push(Event::EnergyBallAlienHit {
+                    tick: self.tick,
+                    missile_id,
+                    alien_id,
+                    health,
+                });
+                self.record_invasion_events(wave_events, events);
+                self.remove_missile(missile_id, events);
+            }
+            return;
+        }
+        // Each lookup is made against current membership after the previous
+        // category's Die transaction. The old projectile position is retained
+        // locally even if its assigned prey removes it synchronously.
+        let warded = self.ward_snapshot().is_some();
+        if let Some(fish) = self.fish.iter_mut().find(|fish| {
+            fish.alive
+                && !(warded && matches!(fish.size, FishSize::Small | FishSize::Medium))
+                && contact(
+                    f64::from(fish.x as i32 + 10),
+                    f64::from(fish.y as i32 + 10),
+                    f64::from(fish.x as i32 + 70),
+                    f64::from(fish.y as i32 + 70),
+                )
+        }) {
+            let id = fish.id;
+            fish.alive = false;
+            self.dead_fish.push(DeadFish::from_live(fish));
+            events.push(Event::FishDied {
+                tick: self.tick,
+                fish_id: id,
+            });
+            self.detach_missile_target(id, events);
+        }
+        if let Some(pos) = self.oscars.iter().position(|actor| {
+            actor.alive
+                && contact(
+                    f64::from(actor.widget_x + 10),
+                    f64::from(actor.widget_y + 10),
+                    f64::from(actor.widget_x + 70),
+                    f64::from(actor.widget_y + 70),
+                )
+        }) {
+            let id = self.oscars[pos].id;
+            self.dead_oscars
+                .push(DeadOscar::from_impact(&self.oscars[pos]));
+            self.oscars.remove(pos);
+            events.push(Event::OscarDied {
+                tick: self.tick,
+                oscar_id: id,
+            });
+            self.detach_missile_target(id, events);
+        }
+        if let Some(pos) = self.starcatchers.iter().position(|actor| {
+            actor.alive
+                && contact(
+                    f64::from(actor.widget_x + 10),
+                    f64::from(actor.widget_y + 10),
+                    f64::from(actor.widget_x + 70),
+                    f64::from(actor.widget_y + 70),
+                )
+        }) {
+            let id = self.starcatchers[pos].id;
+            self.dead_starcatchers
+                .push(DeadStarcatcher::from_impact(&self.starcatchers[pos]));
+            self.starcatchers.remove(pos);
+            events.push(Event::StarcatcherDied {
+                tick: self.tick,
+                starcatcher_id: id,
+            });
+            self.detach_missile_target(id, events);
+        }
+        if let Some(pos) = self.grubbers.iter().position(|actor| {
+            actor.alive
+                && contact(
+                    f64::from(actor.widget_x + 10),
+                    f64::from(actor.widget_y + 10),
+                    f64::from(actor.widget_x + 70),
+                    f64::from(actor.widget_y + 70),
+                )
+        }) {
+            let id = self.grubbers[pos].id;
+            self.dead_grubbers
+                .push(DeadGrubber::from_impact(&self.grubbers[pos]));
+            self.grubbers.remove(pos);
+            events.push(Event::GrubberDied {
+                tick: self.tick,
+                grubber_id: id,
+            });
+            self.detach_missile_target(id, events);
+        }
+        if let Some(pos) = self.gekkos.iter().position(|actor| {
+            actor.alive
+                && contact(
+                    f64::from(actor.widget_x + 10),
+                    f64::from(actor.widget_y + 10),
+                    f64::from(actor.widget_x + 70),
+                    f64::from(actor.widget_y + 70),
+                )
+        }) {
+            let id = self.gekkos[pos].id;
+            self.dead_gekkos
+                .push(DeadGekko::from_impact(&self.gekkos[pos]));
+            self.gekkos.remove(pos);
+            events.push(Event::GekkoDied {
+                tick: self.tick,
+                gekko_id: id,
+            });
+            self.detach_missile_target(id, events);
         }
     }
 
@@ -2812,7 +3090,7 @@ impl AdventureState {
                 }
             }
             Action::BuyGrubber => {
-                if self.tank != 3 || !(1..=3).contains(&self.level) || !self.grubber_unlocked {
+                if self.tank != 3 || !(1..=4).contains(&self.level) || !self.grubber_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -2844,7 +3122,7 @@ impl AdventureState {
                 }
             }
             Action::BuyGekko => {
-                if self.tank != 3 || !(2..=3).contains(&self.level) || !self.gekko_unlocked {
+                if self.tank != 3 || !(2..=4).contains(&self.level) || !self.gekko_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -2876,7 +3154,7 @@ impl AdventureState {
                 let price = if self.tank == 3 { 2000 } else { WEAPON_PRICE };
                 if (self.tank != 1
                     && !(self.tank == 2 && (2..=5).contains(&self.level))
-                    && !(self.tank == 3 && (2..=3).contains(&self.level)))
+                    && !(self.tank == 3 && (2..=4).contains(&self.level)))
                     || !self.weapon_unlocked
                 {
                     events.push(Event::Rejected {
@@ -3494,6 +3772,14 @@ impl AdventureState {
             .invasion
             .as_ref()
             .is_some_and(Invasion1_2::has_live_alien);
+        let gumbo_widget = if alien_live {
+            self.fish_pets
+                .iter()
+                .find(|pet| pet.kind == FishPetKind::Gumbo)
+                .map(|pet| (pet.widget_x, pet.widget_y))
+        } else {
+            None
+        };
         for index in 0..self.fish.len() {
             if !self.fish[index].alive {
                 continue;
@@ -3643,8 +3929,12 @@ impl AdventureState {
                             }
                         }
                     }
-                    if nearest.is_none() && fish.bought_timer == 0 {
-                        Self::wander(fish);
+                    if nearest.is_none() {
+                        if let Some((gx, gy)) = gumbo_widget {
+                            Self::steer_to_gumbo(fish, gx, gy);
+                        } else if fish.bought_timer == 0 {
+                            Self::wander(fish);
+                        }
                     }
                     fish.special_timer = fish.special_timer.saturating_add(1);
                     fish.movement_timer += 1;
@@ -3930,6 +4220,42 @@ impl AdventureState {
                 FishSize::Crowned => CoinKind::Diamond,
             },
         ))
+    }
+
+    /// W1 Fish::Update follows the first live selected Gumbo's *widget*
+    /// coordinates while a registered alien is present. Hunger/warding have
+    /// already taken their earlier branches.
+    fn steer_to_gumbo(fish: &mut Fish, gx: i32, gy: i32) {
+        let cx = fish.x + 40.0;
+        let gx = gx as f32;
+        if cx > gx + 50.0 && fish.vx > -4.0 {
+            fish.vx -= 1.3;
+        } else if cx < gx + 30.0 && fish.vx < 4.0 {
+            fish.vx += 1.3;
+        } else if cx > gx + 45.0 && fish.vx > -4.0 {
+            fish.vx -= 0.2;
+        } else if cx < gx + 35.0 && fish.vx < 4.0 {
+            fish.vx += 0.2;
+        } else if cx > gx + 40.0 && fish.vx > -4.0 {
+            fish.vx -= 0.05;
+        } else if cx < gx + 40.0 && fish.vx < 4.0 {
+            fish.vx += 0.05;
+        }
+        let cy = fish.y + 40.0;
+        let gy = gy as f32;
+        if cy > gy + 25.0 && fish.vy > -3.0 {
+            fish.vy -= 1.0;
+        } else if cy < gy + 15.0 && fish.vy < 4.0 {
+            fish.vy += 1.3;
+        }
+        if cy > gy + 20.0 && fish.vy > -3.0 {
+            fish.vy -= 0.5;
+        } else if cy < gy + 20.0 && fish.vy < 4.0 {
+            fish.vy += 0.7;
+        }
+        if fish.y <= 95.0 && fish.vy < 0.0 {
+            fish.vy = 0.0;
+        }
     }
 
     fn steer_to_food(fish: &mut Fish, dx: f32, dy: f32) {
@@ -4615,22 +4941,57 @@ impl AdventureState {
                 let mut next_id = self.next_id;
                 let missiles = &mut self.missiles;
                 let mut launches = Vec::new();
+                let kind = if wave
+                    .actor_by_id(actor_id)
+                    .is_some_and(|actor| actor.kind == SylvesterKind::Ulysses)
+                {
+                    MissileKind::EnergyBall
+                } else {
+                    MissileKind::Classic
+                };
                 let wave_events = wave.update_actor_with_runtime(
                     actor_id,
                     &prey,
                     &food,
                     |request| match request {
                         AlienRuntimeRequest::Random => Self::advance_rng(&mut rng_state) as u32,
+                        AlienRuntimeRequest::ProbeTarget {
+                            center_x,
+                            center_y,
+                            excluded_prey,
+                        } => {
+                            let mut best = 0_i64;
+                            for candidate in prey.iter().filter(|candidate| {
+                                candidate.eligible && Some(candidate.id) != excluded_prey
+                            }) {
+                                if missiles
+                                    .iter()
+                                    .any(|missile| missile.target_id == candidate.id)
+                                {
+                                    continue;
+                                }
+                                let dx =
+                                    i64::from(center_x - candidate.widget_x - candidate.width / 2);
+                                let dy =
+                                    i64::from(center_y - candidate.widget_y - candidate.height / 2);
+                                best = best.max(dx * dx + dy * dy);
+                            }
+                            u32::from(best > 0)
+                        }
                         AlienRuntimeRequest::Launch {
+                            slot,
                             x,
                             y,
                             center_x,
                             center_y,
+                            excluded_prey,
                             ..
                         } => {
                             let mut farthest = None;
                             let mut best = 0_i64;
-                            for candidate in prey.iter().filter(|candidate| candidate.eligible) {
+                            for candidate in prey.iter().filter(|candidate| {
+                                candidate.eligible && Some(candidate.id) != excluded_prey
+                            }) {
                                 if missiles
                                     .iter()
                                     .any(|missile| missile.target_id == candidate.id)
@@ -4653,20 +5014,33 @@ impl AdventureState {
                             let id = next_id;
                             next_id += 1;
                             let visual_draw = Self::advance_rng(&mut rng_state) as u32;
-                            missiles.push(ClassicMissile::launch(id, target_id, x, y, visual_draw));
-                            launches.push((id, target_id));
+                            missiles.push(if kind == MissileKind::EnergyBall {
+                                ClassicMissile::launch_energy(id, target_id, x, y, visual_draw)
+                            } else {
+                                ClassicMissile::launch(id, target_id, x, y, visual_draw)
+                            });
+                            launches.push((id, target_id, slot));
                             1
                         }
                     },
                 );
                 self.rng_state = rng_state;
                 self.next_id = next_id;
-                for (missile_id, target_id) in launches {
-                    events.push(Event::MissileLaunched {
-                        tick: self.tick,
-                        missile_id,
-                        target_id,
-                    });
+                for (missile_id, target_id, slot) in launches {
+                    if kind == MissileKind::EnergyBall {
+                        events.push(Event::EnergyBallLaunched {
+                            tick: self.tick,
+                            missile_id,
+                            target_id,
+                            first: slot == 0,
+                        });
+                    } else {
+                        events.push(Event::MissileLaunched {
+                            tick: self.tick,
+                            missile_id,
+                            target_id,
+                        });
+                    }
                 }
                 self.record_invasion_events(wave_events, events);
             }
@@ -4693,7 +5067,7 @@ impl AdventureState {
                             id: actor.id,
                             widget_x: actor.widget_x,
                             widget_y: actor.widget_y,
-                            healing: false,
+                            healing: actor.healing,
                         })
                         .collect::<Vec<_>>()
                 })
@@ -5171,7 +5545,7 @@ impl AdventureState {
             (1, 1) => FIRST_STAGE_COIN_BOTTOM_TICKS,
             (1, 2..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             (2, 1..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
-            (3, 1..=3) => SECOND_STAGE_COIN_BOTTOM_TICKS,
+            (3, 1..=4) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             _ => unreachable!("coin lifetime for this Adventure stage is not implemented"),
         };
         let bottom_limit = if seymour_present { 200 } else { bottom_limit };
@@ -8868,5 +9242,277 @@ mod tests {
         board.missiles.pop();
         board.fish[0].alive = false;
         assert!(board.validate().is_err());
+    }
+
+    #[test]
+    fn ulysses_reserves_two_distinct_farthest_fish_before_reload() {
+        let mut board = AdventureState::new_tank3_fourth_stage(0x3401, &[PetKind::Gumbo]).unwrap();
+        board.fish[0].x = 100.0;
+        board.fish[0].y = 100.0;
+        board.fish[1].x = 400.0;
+        board.fish[1].y = 300.0;
+        for fish in &mut board.fish {
+            fish.cannot_be_eaten_ticks = 0;
+        }
+        // Ulysses occupies the fixed Y=280 lane: center (260,360).
+        // Fish centers (140,140) and (440,340) are 62_800 and 32_800
+        // squared units away, respectively.
+        let first_expected = board.fish[0].id;
+        let second_expected = board.fish[1].id;
+        let actor_id = board.id();
+        let mut actor = crate::alien::WeakSylvester::spawn_kind(
+            SylvesterKind::Ulysses,
+            actor_id,
+            180,
+            200,
+            1,
+            1,
+        );
+        actor.spawn_ticks = 0;
+        actor.launch_ticks = 75;
+        let wave = board.invasion.as_mut().unwrap();
+        wave.countdown = 3000;
+        wave.battle_active = true;
+        wave.actors.push(actor);
+        let mut events = Vec::new();
+        board.update_invasion_objects(&mut events);
+        assert_eq!(
+            board
+                .missiles
+                .iter()
+                .map(|missile| missile.target_id)
+                .collect::<Vec<_>>(),
+            [first_expected, second_expected]
+        );
+        assert!(
+            board
+                .missiles
+                .iter()
+                .all(|missile| missile.kind == MissileKind::EnergyBall && !missile.reflected)
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, Event::EnergyBallLaunched { first: true, .. }))
+                .count(),
+            1
+        );
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn immune_energy_click_persists_shot2_and_reflection_keeps_last_threat() {
+        let mut board = AdventureState::new_tank3_fourth_stage(0x3402, &[]).unwrap();
+        let target_id = board.fish[0].id;
+        let missile_id = board.id();
+        let mut ball = ClassicMissile::launch_energy(missile_id, target_id, 100, 100, 0);
+        ball.immunity_ticks = 1;
+        board.missiles.push(ball);
+        board.invasion.as_mut().unwrap().battle_active = true;
+        let mut events = Vec::new();
+        assert!(board.shoot_first_missile(140, 140, &mut events));
+        assert!(!board.missiles[0].reflected && board.bomb_shots.len() == 1);
+        board.missiles[0].immunity_ticks = 0;
+        assert!(board.shoot_first_missile(140, 140, &mut events));
+        assert!(board.missiles[0].reflected && board.missiles[0].target_id == target_id);
+        assert_eq!(board.bomb_shots.len(), 2);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Event::Invasion {
+                event: InvasionEvent::BattleEnded,
+                ..
+            }
+        )));
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn accepted_energy_effect_has_source_finite_clock_without_draw_projection() {
+        let mut shot = BombShot {
+            shot_type: 2,
+            x: 100,
+            y: 100,
+            age_ticks: 0,
+            frame: 0,
+            delay_ticks: 0,
+            alpha: 249,
+        };
+        for _ in 0..29 {
+            assert!(!shot.tick());
+            assert_eq!(shot.sprite_frame(), None);
+        }
+        assert_eq!(shot.age_ticks, 29); // high alpha does not double Shot2 time
+        shot.validate().unwrap();
+        assert!(shot.tick());
+    }
+
+    #[test]
+    fn retained_prey_death_detaches_reflected_ball_but_current_typed_scan_continues() {
+        let mut board = AdventureState::new_tank3_fourth_stage(0x3403, &[]).unwrap();
+        board.fish[0].x = 100.0;
+        board.fish[0].y = 100.0;
+        board.fish[1].x = 500.0;
+        board.fish[1].y = 300.0;
+        let target_id = board.fish[0].id;
+        let gekko_id = board.id();
+        let mut gekko = GekkoState::spawn_bought(gekko_id, &mut |_| 0);
+        gekko.x = 100.0;
+        gekko.y = 100.0;
+        gekko.widget_x = 100;
+        gekko.widget_y = 100;
+        board.gekkos.push(gekko);
+        let missile_id = board.id();
+        let mut ball = ClassicMissile::launch_energy(missile_id, target_id, 100, 100, 0);
+        ball.immunity_ticks = 0;
+        ball.try_shot(140, 140);
+        board.missiles.push(ball);
+        board.invasion.as_mut().unwrap().battle_active = true;
+        let mut events = Vec::new();
+        board.update_missiles(&mut events);
+        assert!(!board.fish[0].alive);
+        assert!(board.gekkos.is_empty());
+        assert!(board.missiles.is_empty());
+        assert_eq!(events.iter().filter(|event| matches!(event, Event::EnergyBallRemoved { missile_id: id, .. } if *id == missile_id)).count(), 1);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Invasion {
+                event: InvasionEvent::BattleEnded,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn reflected_ball_reacquires_identity_after_earlier_reservation_detaches() {
+        let mut board = AdventureState::new_tank3_fourth_stage(0x3404, &[]).unwrap();
+        board.fish[0].x = 100.0;
+        board.fish[0].y = 100.0;
+        board.fish[1].x = 500.0;
+        board.fish[1].y = 300.0;
+        let mut third = board.make_fish(450.0, 300.0, false, false);
+        third.cannot_be_eaten_ticks = 0;
+        let third_id = third.id;
+        board.fish.push(third);
+        let first_target = board.fish[0].id;
+        let second_target = board.fish[1].id;
+        let first_id = board.id();
+        let second_id = board.id();
+        let third_ball_id = board.id();
+        board.missiles.push(ClassicMissile::launch_energy(
+            first_id,
+            first_target,
+            400,
+            100,
+            0,
+        ));
+        let mut reflected = ClassicMissile::launch_energy(second_id, second_target, 100, 100, 0);
+        reflected.immunity_ticks = 0;
+        assert_eq!(reflected.try_shot(140, 140), MissileShot::Redirected);
+        board.missiles.push(reflected);
+        board.missiles.push(ClassicMissile::launch_energy(
+            third_ball_id,
+            third_id,
+            400,
+            100,
+            0,
+        ));
+        board.invasion.as_mut().unwrap().battle_active = true;
+        let mut events = Vec::new();
+        board.update_missiles(&mut events);
+        assert!(!board.fish[0].alive);
+        assert!(board.missiles.iter().all(|ball| ball.id != first_id));
+        assert_eq!(
+            board
+                .missiles
+                .iter()
+                .find(|ball| ball.id == second_id)
+                .unwrap()
+                .x,
+            102.5
+        );
+        assert_eq!(
+            board
+                .missiles
+                .iter()
+                .find(|ball| ball.id == third_ball_id)
+                .unwrap()
+                .x,
+            400.5
+        );
+        assert_eq!(events.iter().filter(|event| matches!(event, Event::EnergyBallRemoved { missile_id, .. } if *missile_id == first_id)).count(), 1);
+    }
+
+    #[test]
+    fn reflected_energy_contact_uses_integer_widget_edges_for_alien_and_guppy() {
+        let alien_case = |ball_x: f64, ball_y: f64| {
+            let mut board = AdventureState::new_tank3_fourth_stage(0x3410, &[]).unwrap();
+            for fish in &mut board.fish {
+                fish.x = 500.0;
+                fish.y = 300.0;
+            }
+            let alien_id = board.id();
+            let mut alien = crate::alien::WeakSylvester::spawn_kind(
+                SylvesterKind::Ulysses,
+                alien_id,
+                100,
+                100,
+                1,
+                1,
+            );
+            alien.x = 100.9; // published widget remains integer 100
+            alien.y = 280.9; // published widget remains integer 280
+            board.invasion.as_mut().unwrap().actors.push(alien);
+            board.invasion.as_mut().unwrap().battle_active = true;
+            let id = board.id();
+            let mut ball = ClassicMissile::launch_energy(
+                id,
+                board.fish[0].id,
+                ball_x as i32,
+                ball_y as i32,
+                0,
+            );
+            ball.x = ball_x;
+            ball.y = ball_y;
+            ball.reflected = true;
+            ball.immunity_ticks = 0;
+            ball.vx = 1.0;
+            ball.vy = 1.0;
+            board.missiles.push(ball);
+            board.reflected_energy_contact(id, &mut Vec::new());
+            (
+                board.invasion.as_ref().unwrap().actors[0].health,
+                board.missiles.len(),
+            )
+        };
+        assert_eq!(alien_case(90.5, 300.0), (190.0, 0)); // X center130.5 > widget100+30
+        assert_eq!(alien_case(200.0, 300.0), (220.0, 1)); // X center240 == widget100+140
+        assert_eq!(alien_case(90.5, 250.5), (190.0, 0)); // Y center290.5 > widget280+10
+        assert_eq!(alien_case(90.5, 390.0), (220.0, 1)); // Y center430 == widget280+150
+
+        let guppy_case = |ball_x: f64, ball_y: f64| {
+            let mut board = AdventureState::new_tank3_fourth_stage(0x3411, &[]).unwrap();
+            board.fish[0].x = 100.9;
+            board.fish[0].y = 100.0;
+            board.fish[1].x = 500.0;
+            board.fish[1].y = 300.0;
+            let target_id = board.fish[1].id;
+            let id = board.id();
+            let mut ball =
+                ClassicMissile::launch_energy(id, target_id, ball_x as i32, ball_y as i32, 0);
+            ball.x = ball_x;
+            ball.y = ball_y;
+            ball.reflected = true;
+            ball.immunity_ticks = 0;
+            ball.vx = 1.0;
+            ball.vy = 1.0;
+            board.missiles.push(ball);
+            board.invasion.as_mut().unwrap().battle_active = true;
+            board.reflected_energy_contact(id, &mut Vec::new());
+            board.fish[0].alive
+        };
+        assert!(!guppy_case(70.5, 90.0)); // X center110.5 > widget100+10
+        assert!(guppy_case(130.0, 90.0)); // X center170 == widget100+70
+        assert!(!guppy_case(70.5, 70.5)); // Y center110.5 > widget100+10
+        assert!(guppy_case(70.5, 130.0)); // Y center170 == widget100+70
     }
 }

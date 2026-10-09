@@ -2,6 +2,48 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-09 — Accept and audit A29 before the next increment
+
+[Report01](docs/playtests/2026-10-09-adventure-3-4-ulysses-blip-01.md) passed bounded native acceptance on the unchanged335-check gate03 build. Exact identities/limits are E70/E72. Root independently matched33inputs/two exes/five DLLs/eight notices/native/gate, all11final/event/save sets,10genuine+1controlled lineages and both inverse-byte fixture proofs; all11ownedPIDs absent/original inventories unchanged. Root read all three exact10000egg events and the controlled ordered removals, and viewed actual tank/Ulysses/balls/fourteen-card Blip pixels. Gumbo paired co-motion stays qualified; no retail/audible/human parity claim.
+
+Workflow passed20required/46documents/404local links/54anchors/30included29excluded path cases/84eligible files, with parser/automatic-variable validation. Commit the coherent source/report/records, then automatically implement A30. Bounded review survived the documented contract and specified independent draw/early reveal/live-versus-next missile/origin3/terminal settlement regressions. No additional product intake or legacy-save work is required; preserve prior source/tests/history/earned checkpoints.
+
+## 2026-10-09 — Prepare the next Tank3 finale without changing frozen inputs
+
+Read/hash-verified primary setup, opposite opening/subsequent6/7draws, normal Blip flag/counter/reveal, ordinary Rhubarb reward,25-second third bonus and4-1profile transition. PB51–53 and [A30](docs/adventure-3-5.md) retain exact evidence/source distinctions. Root verified hunger/bar numeric guards and preserved the unclosed crosshair caller/secondary width-ratio expression; the common counter is byte+28, correcting the rejected+0xA0 transcription. No3-5 runtime source or live evidence yet.
+
+Bounded adversarial review identified inherited consumers that must change together: Tank3-2 conditional toggle is not the finale's inverted independent draw, projectile kind must use the live launching actor and allow an energy-ball-only tail independently of the next expectation, and every bonus constructor/result/session guard must admit immutable origin3 even after profile4-1. Root records these ownership constraints before implementation. A29 frozen native run now earned three10000eggs/Blip and native fourteen-card selection/lock/reopen; final report/audit remains pending. Continue to accepted commit, then release3-5 implementation.
+
+## 2026-10-09 — Gate and exercise frozen A29
+
+Gate03 passed335checks(279library/5assets/4fonts/44persistence/3binding), formatting/strict workspace Clippy/locked native build/native staging after the recorded F01–05 and fixture corrections. E70 owns exact executable/gate/identity digests. Freeze all runtime/test/build inputs during acceptance; records and read-only A30 research can advance.
+
+Root independently audited33inputs/two exes/five DLLs/eight notices/native files and the one-field14→15 Gumbo-Hatch fixture: inverse replacement reproduces the preserved earned source bytes, board stays null. Five completed native entry/wave/immune-redirect/pause/reopen final/save sets match their identities, originals are unchanged and their owned PIDs are absent. Root viewed fresh3-4 and natural Ulysses/two additive balls/live Gumbo frames. Entry frame is tick0 and final tick1; preserve that distinction. Actual earning and final report are underway, not accepted yet.
+
+The native reload comparator initially omitted dead_fish's f32 fields, producing a false text-difference failure; reassessment uses IEEE754-bit equality for those twelve textual differences without save/runtime edits. Keep that failure. Existing codecs/tests/history/earned checkpoints remain preserved; no new legacy compatibility work. Continue earned acceptance, audit and commit before releasing3-5 runtime edits.
+
+## 2026-10-09 — Repair A29 and correct stale fixtures
+
+All four F01–03 red checks passed after stable ordered-ID traversal, integer victim widgets and reachable phase/clock validation were corrected. Green log SHA`AB233B4134101212AAC244AF6DE313FB2BB91691C6397A0EA74A1FD2AAD904EB`. PB50 then closed Ulysses constructorY280, raw5/6 no-prey-route guard, horizontal old-frame/old-timer pulse, damage and gated horizontal push. Root rejected the investigator's vertical-axis wording by reading pointer index+0x5c→byte+0x170 and X integration; zero VX remains unchanged. The initial wrong-program probe is retained/rejected privately; correct evidence targets the PB05 embedded program.
+
+Scoped actor fixes and independent regressions entered gate02. Formatting/strict Clippy passed;276library tests passed and3fixtures failed. Root reassessed against actual source: Hatch-to-selection clears the roster, so toggling only Gumbo cannot retain Shrapnel; correct UlyssesY280 makes guppy0 farther in the launch fixture and leaves the oldY90 collision projectile outside the alien. Correct expected selection/distance and place the collision projectile inside the actual constructor's vertical rectangle. Preserve the runtime corrections and all failed logs, then rerun a fresh gate. No A29 native/build acceptance yet.
+
+## 2026-10-09 — Falsify A29 before native release
+
+Initial A29 gate01 reached formatting and failed strict Clippy on a redundant Gumbo frame branch. Removed only that duplicate branch; finite Shot validation keeps the prior frame bounds for types3–5. No native build/run was accepted from that gate.
+
+Independent review then identified A29F01–03, and root read the affected source and primary integer-coordinate branch. Four explicitly named red regressions **executed and failed as predicted**: an earlier ball's removal leaves the reflected ball unticked while a later actor is updated under its index; fractional victim motion coordinates miss a primary integer-widget contact; reflected/immunity1 and Ulysses/reload100 saves are incorrectly accepted. Private log `probe-adventure29-challenges-red-01.log`, SHA`9DE5417C7B3C308217E5F51F5FC22FFE183545A168FCAEE387E3200479D0395C`, retains each actual assertion and exit101. The two-ball panic is a source-supported counterexample; the executed three-ball case proves the wrong update. These are controlled tests, not runtime earning or retail observations.
+
+Authorized the actor owner to fix stable identity traversal, integer victim geometry and reachable phase/clock validation while retaining all regressions. Separate A29F04–05 source contradictions in Ulysses prey/wander/pulse/shot damage/push await a narrow installed-payload adjudication. Full gate/native release stays held; no user input is needed. Preserve prior builds, failed checks and earned sources, then revalidate changed claims.
+
+## 2026-10-09 — Begin A29 integration after the accepted rendering commit
+
+Committed A28's scoped additive correction and eight records/report as`f22225284ccb8dd34ca46577813a19a5d90a47c8`. Repeated identity02 audit passed33inputs/32non-app unchanged/two exes/five DLLs/eight notices/four native receipts and checkpoints/absentPIDs; workflow passed20required/44documents/394links/53anchors/30include/29exclude/82eligible, and working/staged whitespace checks passed. No history, original install or earned source checkpoint changed.
+
+Released separate A29 actor/Board/projectile and app ownership. Root adds3-4 entry, canonical fourteen-card3-5/Blip reward and temporary3-5 lock, strict current15 kind/reflection requirements and controlled settlement/reload/invalid-state regressions. PB49 records independently read Gumbo steering; raw12/offset40on-equality/±2 steps/overshoot remain authoritative. Gate/native checks on these new inputs are **not yet run**. Existing save code/tests/history remain; no new migration/backfill.
+
+Tester initially claimed the earned Gumbo Hatch had a board without reading its actual field. Root actual source/hash readback proved board null; tester corrected the assumption before any native run and will prepare only the documented14→15 neutral fixture with source/inverse-byte proof. Keep the mistaken selection-derived preparation as rejected private evidence. Continue integration, targeted review, gate/freeze/real earning/pause/reload, commit and automatically proceed3-5.
+
 ## 2026-10-09 — Correct and verify A28 additive rendering
 
 A28 mechanics/earning/report01 committed`7e0dc6cbd883737926bb49b01eae77a9f24c7c2b` after the316-check gate and20-run audit. App-only correction adds one cached shader/material, source-alpha RGB addition with destination alpha preserved, and immediate default restoration. Use the checked source additive pass for SPARKS, Shrapnel flash and burst3/4; type5 remains normal. No texture-keying, decoded pixels, simulation, save or RNG change. Material creation failures surface explicitly.

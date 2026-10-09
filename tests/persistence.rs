@@ -128,6 +128,186 @@ fn tank_three_third_session(pets: &[PetKind]) -> AdventureSession {
     session
 }
 
+fn tank_three_fourth_session(pets: &[PetKind]) -> AdventureSession {
+    let mut session = tank_three_third_session(&[]);
+    session.progress.level = 4;
+    session.progress.unlocked_pets.push(PetKind::Gumbo);
+    session.progress.selected_pets = pets.to_vec();
+    session.board = Some(AdventureState::new_tank3_fourth_stage(42, pets).unwrap());
+    session
+}
+
+fn ulysses_energyball_session(immunity_ticks: u8) -> AdventureSession {
+    use turbofish_deluxe::{
+        alien::{SylvesterKind, WeakSylvester},
+        missile::ClassicMissile,
+    };
+    // Controlled current-format fixture, separate from earned progression.
+    // Both IDs come from the existing serialized Board allocator boundary.
+    let mut fixture = serde_json::to_value(tank_three_fourth_session(&[PetKind::Gumbo])).unwrap();
+    let alien_id = fixture["board"]["next_id"].as_u64().unwrap();
+    let missile_id = alien_id + 1;
+    fixture["board"]["next_id"] = (missile_id + 1).into();
+    let mut session: AdventureSession = serde_json::from_value(fixture).unwrap();
+    let board = session.board.as_mut().unwrap();
+    let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Ulysses, alien_id, 460, 210, 1, 1);
+    actor.spawn_ticks = 0;
+    actor.launch_ticks = 59;
+    let wave = board.invasion.as_mut().unwrap();
+    wave.actors = vec![actor];
+    wave.battle_active = true;
+    wave.countdown = 3000;
+    let mut missile = ClassicMissile::launch_energy(missile_id, board.fish[0].id, 100, 110, 3);
+    missile.immunity_ticks = immunity_ticks;
+    board.missiles.push(missile);
+    session.validate().unwrap();
+    session
+}
+
+#[test]
+fn current_fourth_tank_three_accepts_thirteen_rosters_but_rejects_unearned_blip() {
+    for pet in [
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Clyde,
+        PetKind::Vert,
+        PetKind::Rufus,
+        PetKind::Meryl,
+        PetKind::Wadsworth,
+        PetKind::Seymour,
+        PetKind::Shrapnel,
+        PetKind::Gumbo,
+    ] {
+        let session = tank_three_fourth_session(&[pet]);
+        session.validate().unwrap();
+        let bytes = serde_json::to_vec(&cli::ProjectSave {
+            format_version: cli::SAVE_FORMAT_VERSION,
+            session: session.clone(),
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(cli::decode_save(&bytes).unwrap()).unwrap(),
+            serde_json::to_value(session).unwrap()
+        );
+    }
+    assert!(AdventureState::new_tank3_fourth_stage(42, &[PetKind::Blip]).is_err());
+}
+
+#[test]
+fn current_energyball_requires_kind_reflection_and_rejects_invalid_reservations() {
+    let current = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: ulysses_energyball_session(0),
+    })
+    .unwrap();
+    for field in [
+        "kind",
+        "reflected",
+        "target_id",
+        "immunity_ticks",
+        "vx",
+        "vy",
+    ] {
+        let mut missing = current.clone();
+        missing
+            .pointer_mut("/session/board/missiles/0")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "accepted missing energyball {field}"
+        );
+    }
+    let mut dangling = current.clone();
+    dangling["session"]["board"]["missiles"][0]["target_id"] = 99999_u64.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&dangling).unwrap()).is_err());
+    let mut wrong_target_class = current.clone();
+    wrong_target_class["session"]["board"]["missiles"][0]["target_id"] =
+        wrong_target_class["session"]["board"]["invasion"]["actors"][0]["id"].clone();
+    assert!(cli::decode_save(&serde_json::to_vec(&wrong_target_class).unwrap()).is_err());
+    let mut classic_reflected = current.clone();
+    classic_reflected["session"]["board"]["missiles"][0]["kind"] = "Classic".into();
+    classic_reflected["session"]["board"]["missiles"][0]["reflected"] = true.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&classic_reflected).unwrap()).is_err());
+    let mut duplicate = current;
+    let next_id = duplicate["session"]["board"]["next_id"].as_u64().unwrap();
+    duplicate["session"]["board"]["next_id"] = (next_id + 1).into();
+    let mut second = duplicate["session"]["board"]["missiles"][0].clone();
+    second["id"] = next_id.into();
+    duplicate["session"]["board"]["missiles"]
+        .as_array_mut()
+        .unwrap()
+        .push(second);
+    assert!(cli::decode_save(&serde_json::to_vec(&duplicate).unwrap()).is_err());
+}
+
+#[test]
+fn current_immune_and_redirected_energyballs_resume_effects_and_actor_clocks() {
+    // PB48: an interior shot is accepted even with immunity1; immunity0
+    // reflects while retaining identity/target. The accepted Shot2 persists.
+    for immunity_ticks in [1, 0] {
+        let mut uninterrupted = ulysses_energyball_session(immunity_ticks);
+        let original = uninterrupted.board.as_ref().unwrap().missiles[0].clone();
+        uninterrupted.apply_actions(&[Action::Click { x: 140.0, y: 150.0 }]);
+        let board = uninterrupted.board.as_ref().unwrap();
+        assert_eq!(board.missiles[0].id, original.id);
+        assert_eq!(board.missiles[0].target_id, original.target_id);
+        assert_eq!(board.missiles[0].reflected, immunity_ticks == 0);
+        if immunity_ticks == 0 {
+            assert_eq!((board.missiles[0].vx, board.missiles[0].vy), (1.0, 1.0));
+        }
+        assert_eq!(board.bomb_shots.len(), 1);
+        assert_eq!(board.bomb_shots[0].shot_type, 2);
+        let bytes = serde_json::to_vec(&cli::ProjectSave {
+            format_version: cli::SAVE_FORMAT_VERSION,
+            session: uninterrupted.clone(),
+        })
+        .unwrap();
+        let mut resumed = cli::decode_save(&bytes).unwrap();
+        for _ in 0..90 {
+            assert_eq!(
+                serde_json::to_value(resumed.step(&[])).unwrap(),
+                serde_json::to_value(uninterrupted.step(&[])).unwrap()
+            );
+            assert_eq!(
+                serde_json::to_value(&resumed).unwrap(),
+                serde_json::to_value(&uninterrupted).unwrap()
+            );
+            resumed.validate().unwrap();
+        }
+    }
+}
+
+#[test]
+fn current_energyball_rejects_unreachable_reflection_phase() {
+    // PB48: reflection can be set only after immunity reaches zero, and
+    // the clock never re-arms. This contradictory state must not resume.
+    let mut invalid = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: ulysses_energyball_session(1),
+    })
+    .unwrap();
+    invalid["session"]["board"]["missiles"][0]["reflected"] = true.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&invalid).unwrap()).is_err());
+}
+
+#[test]
+fn current_ulysses_rejects_unreachable_reload_clock() {
+    // PB47: initial75 or subsequent150..199, never the gap between them.
+    let mut invalid = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: ulysses_energyball_session(0),
+    })
+    .unwrap();
+    invalid["session"]["board"]["invasion"]["actors"][0]["reload_ticks"] = 100.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&invalid).unwrap()).is_err());
+}
+
 fn psychosquid_and_bomb_session(divisor: f64) -> AdventureSession {
     use turbofish_deluxe::{
         alien::{SylvesterKind, WeakSylvester},

@@ -16,6 +16,7 @@ pub enum FishPetKind {
     Wadsworth,
     Seymour,
     Shrapnel,
+    Gumbo,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -222,7 +223,9 @@ impl FishPetState {
                 && (!(633..=652).contains(&self.bomb_threshold)
                     || self.coin_timer >= self.bomb_threshold
                     || !(-1.0..1.0).contains(&self.glint_phase)))
-            || (self.kind != FishPetKind::Shrapnel
+            || (self.kind == FishPetKind::Gumbo
+                && (self.bomb_threshold != 0 || !(-1.0..1.0).contains(&self.glint_phase)))
+            || (!matches!(self.kind, FishPetKind::Shrapnel | FishPetKind::Gumbo)
                 && (self.bomb_threshold != 0 || self.glint_phase != 0.0))
             || (!matches!(
                 self.kind,
@@ -307,6 +310,7 @@ impl FishPetState {
             }
             FishPetKind::Seymour => u8::from(self.turn_ticks != 0),
             FishPetKind::Shrapnel => u8::from(self.turn_ticks != 0),
+            FishPetKind::Gumbo => u8::from(self.turn_ticks != 0),
         }
     }
 
@@ -344,6 +348,14 @@ impl FishPetState {
 
     pub fn shrapnel_flash_alpha(&self) -> u8 {
         if self.kind == FishPetKind::Shrapnel && self.coin_timer + 50 > self.bomb_threshold {
+            (self.glint_phase.abs() * 255.0) as u8
+        } else {
+            0
+        }
+    }
+
+    pub fn gumbo_light_alpha(&self) -> u8 {
+        if self.kind == FishPetKind::Gumbo {
             (self.glint_phase.abs() * 255.0) as u8
         } else {
             0
@@ -427,7 +439,9 @@ impl FishPetState {
     ) -> FishPetUpdate {
         let mut update = FishPetUpdate::default();
         let hunting = self.kind == FishPetKind::Itchy && !aliens.is_empty();
-        if hunting {
+        if self.kind == FishPetKind::Gumbo && !aliens.is_empty() {
+            self.hunt_gumbo(aliens);
+        } else if hunting {
             self.hunt(aliens, &mut update);
         } else {
             self.wander();
@@ -518,6 +532,12 @@ impl FishPetState {
             self.vx += 0.1;
         }
         self.animate();
+        if self.kind == FishPetKind::Gumbo && !aliens.is_empty() && self.turn_ticks == 0 {
+            self.glint_phase += 0.1;
+            if self.glint_phase >= 1.0 {
+                self.glint_phase = -1.0;
+            }
+        }
         // FishTypePet::Animate performs this only in its ordinary swim
         // branch, after decrementing the turn counter. A turn ending 1→0
         // enters that branch; turn ±19→±18 can display frame zero but must
@@ -581,6 +601,38 @@ impl FishPetState {
         }) {
             update.damaged_alien = Some(alien.id);
             update.punch_sound = true;
+        }
+    }
+
+    /// W1 FishTypePet::HungryBehavior selects the nearest non-healing alien,
+    /// then flees its widget pose; this stage has no Bilaterus target.
+    fn hunt_gumbo(&mut self, aliens: &[PetAlienView]) {
+        let mut nearest = None;
+        let mut best = i32::MAX;
+        for alien in aliens.iter().filter(|alien| !alien.healing) {
+            let dx = (self.x + 40.0 - f64::from(alien.widget_x + 80)) as i32;
+            let dy = (self.y + 40.0 - f64::from(alien.widget_y + 80)) as i32;
+            let distance = ((f64::from(dx * dx + dy * dy)).sqrt()) as i32;
+            if distance < best {
+                best = distance;
+                nearest = Some(alien);
+            }
+        }
+        if let Some(alien) = nearest.filter(|_| self.special_timer >= 5) {
+            self.special_timer = 0;
+            // Raw target type 0x17 takes +40; ordinary raw6 takes +80.
+            let target_x = alien.widget_x + 80;
+            let target_y = alien.widget_y + 80;
+            if target_y > 260 && self.vy > -8.0 {
+                self.vy -= 2.0;
+            } else if target_y < 300 && self.vy < 8.0 {
+                self.vy += 2.0;
+            }
+            if target_x > 290 && self.vx > -8.0 {
+                self.vx -= 2.0;
+            } else if target_x < 330 && self.vx < 8.0 {
+                self.vx += 2.0;
+            }
         }
     }
 
@@ -1240,5 +1292,36 @@ mod tests {
         }
         assert!(pet.tick(&[], 0, &mut |_| 1).gold_at.is_some());
         assert_eq!(pet.coin_timer, 0);
+    }
+
+    #[test]
+    fn gumbo_flees_nearest_nonhealing_alien_with_source_overshoot() {
+        let mut pet = actor(FishPetKind::Gumbo);
+        pet.x = 200.0;
+        pet.y = 200.0;
+        pet.widget_x = 200;
+        pet.widget_y = 200;
+        pet.vx = -7.5;
+        pet.vy = -7.5;
+        pet.previous_vx = -1.0;
+        pet.special_timer = 5;
+        let aliens = [
+            PetAlienView {
+                id: 1,
+                widget_x: 200,
+                widget_y: 200,
+                healing: true,
+            },
+            PetAlienView {
+                id: 2,
+                widget_x: 300,
+                widget_y: 300,
+                healing: false,
+            },
+        ];
+        pet.tick(&aliens, 0, &mut |_| 1);
+        assert_eq!((pet.vx, pet.vy), (-9.5, -9.5)); // guard precedes ±2 step
+        assert!(pet.gumbo_light_alpha() > 0);
+        pet.validate().unwrap();
     }
 }

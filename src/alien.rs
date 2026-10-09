@@ -23,6 +23,7 @@ pub enum SylvesterKind {
     Gus,
     Destructor,
     Psychosquid,
+    Ulysses,
 }
 
 impl SylvesterKind {
@@ -34,6 +35,7 @@ impl SylvesterKind {
             Self::Gus => 1.6,
             Self::Destructor => 1.2,
             Self::Psychosquid => 0.5,
+            Self::Ulysses => 3.5,
         }
     }
 
@@ -45,6 +47,7 @@ impl SylvesterKind {
             Self::Gus => 100.0,
             Self::Destructor => 150.0,
             Self::Psychosquid => 260.0,
+            Self::Ulysses => 220.0,
         }
     }
 }
@@ -87,12 +90,19 @@ pub struct AlienUpdate {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AlienRuntimeRequest {
     Random,
+    /// Target search without construction at the prelaunch cue.
+    ProbeTarget {
+        center_x: i32,
+        center_y: i32,
+        excluded_prey: Option<u64>,
+    },
     Launch {
         slot: u8,
         x: i32,
         y: i32,
         center_x: i32,
         center_y: i32,
+        excluded_prey: Option<u64>,
     },
 }
 
@@ -174,9 +184,9 @@ impl WeakSylvester {
         movement_draw: u32,
     ) -> Self {
         let left = direction_draw.is_multiple_of(2);
-        // Ordinary Destructor placement fixes its vertical lane after the
-        // warning has chosen a location (W1 Alien constructor, lines 98-106).
-        let widget_y = if kind == SylvesterKind::Destructor {
+        // Ordinary Destructor and Ulysses fix their vertical lane after the
+        // warning has chosen a location (W1 Alien constructor, 98-116).
+        let widget_y = if matches!(kind, SylvesterKind::Destructor | SylvesterKind::Ulysses) {
             280
         } else {
             widget_y
@@ -204,7 +214,7 @@ impl WeakSylvester {
             frame: 1,
             alive: true,
             launch_ticks: 0,
-            reload_ticks: if kind == SylvesterKind::Destructor {
+            reload_ticks: if matches!(kind, SylvesterKind::Destructor | SylvesterKind::Ulysses) {
                 75
             } else {
                 0
@@ -242,7 +252,7 @@ impl WeakSylvester {
     ) -> AlienUpdate {
         self.update_with_runtime(prey, food, |request| match request {
             AlienRuntimeRequest::Random => next_random(),
-            AlienRuntimeRequest::Launch { .. } => 0,
+            AlienRuntimeRequest::Launch { .. } | AlienRuntimeRequest::ProbeTarget { .. } => 0,
         })
     }
 
@@ -284,8 +294,12 @@ impl WeakSylvester {
             } else {
                 self.wander(&mut || runtime(AlienRuntimeRequest::Random));
             }
-        } else if self.kind == SylvesterKind::Destructor || self.healing {
-            // AlienUnk01 never chases for Destructor, even with nearby fish.
+        } else if matches!(
+            self.kind,
+            SylvesterKind::Destructor | SylvesterKind::Ulysses
+        ) || self.healing
+        {
+            // AlienUnk01 never chases for either projectile species.
             self.wander(&mut || runtime(AlienRuntimeRequest::Random));
         } else if let Some(target) = self.nearest_eligible(prey) {
             self.chase(target);
@@ -307,30 +321,87 @@ impl WeakSylvester {
                 result.phase_changed = Some(self.healing);
             }
         }
+        if self.kind == SylvesterKind::Ulysses {
+            // PB05 raw6 pulse reads the *previous* animation frame and
+            // special timer before integrating position or animating.
+            if self.special_ticks == 0 {
+                match self.frame % 5 {
+                    0 | 4 if self.vx < -0.9 => self.vx += 0.8,
+                    0 | 4 if self.vx > 0.9 => self.vx -= 0.8,
+                    1 | 2 if self.vx < 0.0 => self.vx -= 0.55,
+                    1 | 2 if self.vx > 0.0 => self.vx += 0.55,
+                    _ => {}
+                }
+            } else {
+                self.vx = self.vx.clamp(-0.1, 0.1);
+            }
+        }
         self.x = self.x.clamp(-10.0, 490.0) + self.vx / self.movement_divisor + emergence_dx;
         self.y = self.y.clamp(85.0, 290.0) + self.vy / self.movement_divisor;
         self.hit_ticks = self.hit_ticks.saturating_sub(1);
         self.chase_ticks = self.chase_ticks.saturating_sub(1);
 
-        if self.kind == SylvesterKind::Destructor && !prey.is_empty() {
+        if matches!(
+            self.kind,
+            SylvesterKind::Destructor | SylvesterKind::Ulysses
+        ) && !prey.is_empty()
+        {
             self.launch_ticks += 1;
+            if self.kind == SylvesterKind::Ulysses
+                && self.launch_ticks == self.reload_ticks.saturating_sub(15)
+            {
+                if self.turn_ticks == 0 {
+                    if runtime(AlienRuntimeRequest::ProbeTarget {
+                        center_x: self.widget_x + 80,
+                        center_y: self.widget_y + 80,
+                        excluded_prey: result.prey_eaten,
+                    }) == 0
+                    {
+                        self.launch_ticks = 0;
+                    } else {
+                        self.special_ticks = 40;
+                    }
+                } else {
+                    self.launch_ticks = self.launch_ticks.saturating_sub(2);
+                }
+            }
             if self.launch_ticks > self.reload_ticks {
                 let right = self.vx >= 0.0;
                 let mut launched = false;
-                for slot in 0..3_u8 {
-                    let x = self.widget_x
-                        + if right {
-                            90 + i32::from(slot) * 15
-                        } else {
-                            -10 - i32::from(slot) * 15
-                        };
-                    let y = self.widget_y - 35 + i32::from(slot) * 5;
+                let count = if self.kind == SylvesterKind::Ulysses {
+                    2
+                } else {
+                    3
+                };
+                for slot in 0..count {
+                    let (x, y) = if self.kind == SylvesterKind::Ulysses {
+                        (
+                            self.widget_x
+                                + if right {
+                                    70 + i32::from(slot) * 8
+                                } else {
+                                    10 - i32::from(slot) * 8
+                                },
+                            self.widget_y - 24 + i32::from(slot) * 8,
+                        )
+                    } else {
+                        (
+                            self.widget_x
+                                + if right {
+                                    90 + i32::from(slot) * 15
+                                } else {
+                                    -10 - i32::from(slot) * 15
+                                },
+                            self.widget_y - 35 + i32::from(slot) * 5,
+                        )
+                    };
                     if runtime(AlienRuntimeRequest::Launch {
                         slot,
                         x,
                         y,
                         center_x: self.widget_x + 80,
                         center_y: self.widget_y + 80,
+                        excluded_prey: result.prey_eaten,
                     }) == 0
                     {
                         break;
@@ -339,7 +410,7 @@ impl WeakSylvester {
                 }
                 self.launch_ticks = 0;
                 self.reload_ticks = 150 + (runtime(AlienRuntimeRequest::Random) % 50) as u16;
-                if launched {
+                if launched && self.kind == SylvesterKind::Destructor {
                     self.special_ticks = 10;
                 }
             }
@@ -389,7 +460,10 @@ impl WeakSylvester {
         if self.kind == SylvesterKind::Psychosquid && self.healing {
             self.health += f64::from(weapon) * 3.0;
         } else {
-            self.health -= if self.kind == SylvesterKind::Destructor {
+            self.health -= if matches!(
+                self.kind,
+                SylvesterKind::Destructor | SylvesterKind::Ulysses
+            ) {
                 f64::from(weapon) * 2.0 + 2.0
             } else {
                 f64::from(weapon) * 3.0
@@ -458,7 +532,12 @@ impl WeakSylvester {
         .all(f64::is_finite)
             || !(-32.0..=512.0).contains(&self.x)
             || !(64.0..=312.0).contains(&self.y)
-            || self.vx.abs() > 7.0
+            || self.vx.abs()
+                > (if self.kind == SylvesterKind::Ulysses {
+                    12.0
+                } else {
+                    7.0
+                })
             || self.vy.abs() > 7.0
             || self.target_vx.abs() > 2.0
             || self.target_vy.abs() > 2.0
@@ -488,13 +567,16 @@ impl WeakSylvester {
             || self.hit_ticks > 10
             || self.movement_state > 9
             || self.movement_change_ticks > 20
-            || self.swim_ticks > 50
-            || !(-9..=9).contains(&self.turn_ticks)
+            || self.swim_ticks > (if self.kind == SylvesterKind::Ulysses { 79 } else { 50 })
+            || !(if self.kind == SylvesterKind::Ulysses { -19..=19 } else { -9..=9 }).contains(&self.turn_ticks)
             || self.frame > 9
-            || (self.kind == SylvesterKind::Destructor
+            || (matches!(self.kind, SylvesterKind::Destructor | SylvesterKind::Ulysses)
                 && (self.reload_ticks < 75 || self.reload_ticks > 199
-                    || self.launch_ticks > self.reload_ticks || self.special_ticks > 10))
-            || (self.kind != SylvesterKind::Destructor
+                    || (self.kind == SylvesterKind::Ulysses
+                        && self.reload_ticks != 75
+                        && !(150..=199).contains(&self.reload_ticks))
+                    || self.launch_ticks > self.reload_ticks || self.special_ticks > (if self.kind == SylvesterKind::Ulysses { 40 } else { 10 })))
+            || (!matches!(self.kind, SylvesterKind::Destructor | SylvesterKind::Ulysses)
                 && (self.launch_ticks != 0 || self.reload_ticks != 0
                     || (self.kind != SylvesterKind::Psychosquid && self.special_ticks != 0)))
             || (self.kind == SylvesterKind::Psychosquid && (self.phase_threshold != 400
@@ -511,7 +593,9 @@ impl WeakSylvester {
     }
 
     pub fn sprite_row(&self) -> u8 {
-        if self.kind == SylvesterKind::Psychosquid && self.special_ticks > 0 {
+        if self.kind == SylvesterKind::Ulysses && self.special_ticks > 0 {
+            2
+        } else if self.kind == SylvesterKind::Psychosquid && self.special_ticks > 0 {
             4
         } else if self.kind == SylvesterKind::Gus && self.hit_ticks > 0 {
             2
@@ -669,7 +753,10 @@ impl WeakSylvester {
     }
 
     fn wander(&mut self, next_random: &mut impl FnMut() -> u32) {
-        if self.kind == SylvesterKind::Destructor {
+        if matches!(
+            self.kind,
+            SylvesterKind::Destructor | SylvesterKind::Ulysses
+        ) {
             match self.movement_state {
                 0 | 2 => self.target_vx = -1.0,
                 1 | 3 => self.target_vx = 1.0,
@@ -711,9 +798,17 @@ impl WeakSylvester {
     fn animate(&mut self) {
         let speed_divisor = self.movement_divisor;
         if self.previous_vx < 0.0 && self.vx > 0.0 {
-            self.turn_ticks = -10;
+            self.turn_ticks = if self.kind == SylvesterKind::Ulysses {
+                -20
+            } else {
+                -10
+            };
         } else if self.previous_vx > 0.0 && self.vx < 0.0 {
-            self.turn_ticks = 10;
+            self.turn_ticks = if self.kind == SylvesterKind::Ulysses {
+                20
+            } else {
+                10
+            };
         }
         self.turn_ticks -= self.turn_ticks.signum();
 
@@ -739,12 +834,32 @@ impl WeakSylvester {
                 }
                 self.swim_ticks = 0;
             }
+            if self.kind == SylvesterKind::Ulysses {
+                self.frame = if self.special_ticks > 20 {
+                    9 - (self.special_ticks - 20) / 2
+                } else {
+                    self.special_ticks.saturating_sub(1) / 2
+                };
+                self.previous_vx = self.vx;
+                return;
+            }
         }
 
         if self.turn_ticks > 0 {
-            self.frame = (9 - self.turn_ticks) as u8;
+            self.frame = if self.kind == SylvesterKind::Ulysses {
+                (9 - self.turn_ticks / 2) as u8
+            } else {
+                (9 - self.turn_ticks) as u8
+            };
         } else if self.turn_ticks < 0 {
-            self.frame = (self.turn_ticks + 10) as u8;
+            self.frame = if self.kind == SylvesterKind::Ulysses {
+                (9 + self.turn_ticks / 2) as u8
+            } else {
+                (self.turn_ticks + 10) as u8
+            };
+        } else if self.kind == SylvesterKind::Ulysses {
+            self.swim_ticks = (self.swim_ticks + if self.vx.abs() > 8.0 { 2 } else { 1 }) % 80;
+            self.frame = self.swim_ticks / 8;
         } else if matches!(
             self.kind,
             SylvesterKind::Destructor | SylvesterKind::Psychosquid
@@ -791,7 +906,10 @@ impl WeakSylvester {
     }
 
     fn apply_shot_push(&mut self, sx: f64, sy: f64) {
-        if self.kind == SylvesterKind::Destructor {
+        if matches!(
+            self.kind,
+            SylvesterKind::Destructor | SylvesterKind::Ulysses
+        ) {
             if self.special_ticks == 0 {
                 if sx < self.x + 60.0 {
                     self.vx = self.movement_divisor * 3.0;
@@ -1369,6 +1487,7 @@ mod tests {
                 AlienRuntimeRequest::Launch { slot: 0, .. } => 1,
                 AlienRuntimeRequest::Launch { .. } => 0,
                 AlienRuntimeRequest::Random => 49,
+                AlienRuntimeRequest::ProbeTarget { .. } => 0,
             }
         });
         assert!(matches!(
@@ -1414,6 +1533,7 @@ mod tests {
             }
             AlienRuntimeRequest::Launch { .. } => 0,
             AlienRuntimeRequest::Random => 0,
+            AlienRuntimeRequest::ProbeTarget { .. } => 0,
         });
         assert!(launched && update.defeated);
     }
@@ -1467,5 +1587,115 @@ mod tests {
         assert!((actor.vx - 3.6).abs() < 1e-9 && actor.vy == 0.0);
         actor.health = 0.25;
         assert_eq!(actor.itchy_hit(), Some(0.0));
+    }
+
+    #[test]
+    fn ulysses_prelaunch_probe_and_two_launches_precede_reload_rng() {
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Ulysses, 7, 180, 200, 1, 1);
+        assert_eq!(
+            (actor.health, actor.movement_divisor, actor.reload_ticks),
+            (220.0, 3.5, 75)
+        );
+        actor.spawn_ticks = 0;
+        actor.launch_ticks = 59;
+        let prey = [PreyView {
+            id: 3,
+            widget_x: 400,
+            widget_y: 250,
+            width: 80,
+            height: 80,
+            eligible: true,
+        }];
+        let mut calls = Vec::new();
+        actor.update_with_runtime(&prey, &[], |request| {
+            calls.push(request);
+            match request {
+                AlienRuntimeRequest::ProbeTarget { .. } => 1,
+                _ => 0,
+            }
+        });
+        assert!(
+            calls
+                .iter()
+                .any(|call| matches!(call, AlienRuntimeRequest::ProbeTarget { .. }))
+        );
+        assert_eq!(actor.launch_ticks, 60);
+        assert_eq!(actor.special_ticks, 39); // Animate follows prelaunch cue.
+        actor.launch_ticks = 75;
+        actor.special_ticks = 0;
+        calls.clear();
+        actor.update_with_runtime(&prey, &[], |request| {
+            calls.push(request);
+            match request {
+                AlienRuntimeRequest::Launch { .. } => 1,
+                _ => 0,
+            }
+        });
+        let launch_slots: Vec<_> = calls
+            .iter()
+            .filter_map(|request| match request {
+                AlienRuntimeRequest::Launch { slot, .. } => Some(*slot),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(launch_slots, [0, 1]);
+        assert!(matches!(calls.last(), Some(AlienRuntimeRequest::Random)));
+        assert_eq!((actor.launch_ticks, actor.reload_ticks), (0, 150));
+    }
+
+    #[test]
+    fn ordinary_ulysses_lane_wander_and_weapon_damage_do_not_use_prey_chase() {
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Ulysses, 7, 100, 120, 1, 0);
+        assert_eq!((actor.widget_y, actor.y), (280, 280.0));
+        actor.spawn_ticks = 0;
+        actor.chase_ticks = 0;
+        let prey = [PreyView {
+            id: 2,
+            widget_x: 100,
+            widget_y: 280,
+            width: 80,
+            height: 80,
+            eligible: true,
+        }];
+        let update = actor.update(&prey, || 0);
+        assert_eq!(update.prey_eaten, None);
+        assert_eq!(
+            (actor.target_vx, actor.target_vy, actor.vy),
+            (-1.0, 0.0, 0.0)
+        );
+        actor.hit_ticks = 0;
+        assert_eq!(
+            actor.shot_with_weapon(110, 290, 1),
+            ShotResult::Hit { health: 216.0 }
+        );
+        assert_eq!((actor.vx, actor.vy), (10.5, 0.0));
+        actor.validate().unwrap();
+        let mut protected = WeakSylvester::spawn_kind(SylvesterKind::Ulysses, 8, 100, 200, 1, 0);
+        protected.special_ticks = 40;
+        assert_eq!(
+            protected.shot_with_weapon(110, 290, 12),
+            ShotResult::Hit { health: 194.0 }
+        );
+        assert_eq!((protected.vx, protected.vy), (3.0, 0.0));
+    }
+
+    #[test]
+    fn ulysses_pulse_uses_old_frame_and_special_timer_before_animation() {
+        let pulse = |frame: u8, vx: f64, special_ticks: u8| {
+            let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Ulysses, 7, 100, 200, 1, 4);
+            actor.spawn_ticks = 0;
+            actor.movement_change_ticks = 0;
+            actor.frame = frame;
+            actor.vx = vx;
+            actor.target_vx = vx;
+            actor.special_ticks = special_ticks;
+            actor.update(&[], || 0);
+            (actor.vx, actor.special_ticks)
+        };
+        assert!((pulse(0, -1.0, 0).0 + 0.2).abs() < 1e-9);
+        assert!((pulse(1, -1.0, 0).0 + 1.55).abs() < 1e-9);
+        assert_eq!(pulse(3, -1.0, 0).0, -1.0);
+        assert_eq!(pulse(1, 0.0, 0).0, 0.0);
+        assert_eq!(pulse(1, 5.0, 1), (0.1, 0));
     }
 }

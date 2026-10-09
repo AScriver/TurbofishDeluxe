@@ -19,9 +19,25 @@ pub struct MissileUpdate {
     pub remove: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MissileKind {
+    Classic,
+    EnergyBall,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MissileShot {
+    Miss,
+    Destroyed,
+    AcceptedImmune,
+    Redirected,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClassicMissile {
     pub id: u64,
+    pub kind: MissileKind,
+    pub reflected: bool,
     pub target_id: u64,
     pub x: f64,
     pub y: f64,
@@ -38,6 +54,8 @@ impl ClassicMissile {
     pub fn launch(id: u64, target_id: u64, x: i32, y: i32, visual_draw: u32) -> Self {
         Self {
             id,
+            kind: MissileKind::Classic,
+            reflected: false,
             target_id,
             x: f64::from(x),
             y: f64::from(y),
@@ -51,7 +69,19 @@ impl ClassicMissile {
         }
     }
 
+    pub fn launch_energy(id: u64, target_id: u64, x: i32, y: i32, visual_draw: u32) -> Self {
+        let mut missile = Self::launch(id, target_id, x, y, visual_draw);
+        missile.kind = MissileKind::EnergyBall;
+        missile
+    }
+
     pub fn shot(&self, x: i32, y: i32) -> bool {
+        if self.kind == MissileKind::EnergyBall {
+            return f64::from(x) > self.x + 10.0
+                && f64::from(x) < self.x + 70.0
+                && f64::from(y) > self.y + 10.0
+                && f64::from(y) < self.y + 70.0;
+        }
         let cx = self.x + 40.0;
         let cy = self.y + 40.0;
         self.immunity_ticks == 0
@@ -59,6 +89,30 @@ impl ClassicMissile {
             && f64::from(x) < cx + 30.0
             && f64::from(y) > cy - 30.0
             && f64::from(y) < cy + 30.0
+    }
+
+    /// PB48: accepted energy-ball shots do not dissolve its target relation.
+    pub fn try_shot(&mut self, x: i32, y: i32) -> MissileShot {
+        if !self.shot(x, y) {
+            return MissileShot::Miss;
+        }
+        if self.kind == MissileKind::Classic {
+            return MissileShot::Destroyed;
+        }
+        if self.immunity_ticks != 0 {
+            return MissileShot::AcceptedImmune;
+        }
+        self.vx = (f64::from(x) - self.x - 40.0) / -5.0;
+        self.vy = (f64::from(y) - self.y - 40.0) / -5.0;
+        for speed in [&mut self.vx, &mut self.vy] {
+            if *speed >= 0.0 && *speed < 1.0 {
+                *speed = 1.0;
+            } else if *speed <= 0.0 && *speed > -1.0 {
+                *speed = -1.0;
+            }
+        }
+        self.reflected = true;
+        MissileShot::Redirected
     }
 
     /// Checks contact at the old double position, then integrates and syncs.
@@ -73,6 +127,21 @@ impl ClassicMissile {
                 ..MissileUpdate::default()
             };
         };
+        if self.kind == MissileKind::EnergyBall && self.reflected {
+            if self.x > 580.0 || self.x < -20.0 || self.y > 380.0 || self.y < 45.0 {
+                return MissileUpdate {
+                    remove: true,
+                    ..MissileUpdate::default()
+                };
+            }
+            self.x += self.vx / 0.4;
+            self.y += self.vy / 0.4;
+            self.immunity_ticks = self.immunity_ticks.saturating_sub(1);
+            self.widget_x = self.x as i32;
+            self.widget_y = self.y as i32;
+            self.frame = (self.frame + 1) % 5;
+            return MissileUpdate::default();
+        }
         let cx = self.x + 40.0;
         let cy = self.y + 40.0;
         let tx = f64::from(target.widget_x);
@@ -109,11 +178,20 @@ impl ClassicMissile {
         } else if ty + 40.0 < cy && self.vy > -0.2 {
             self.vy -= 0.1;
         }
-        self.x = self.x.clamp(10.0, 550.0) + self.vx / 0.8;
-        self.y = self.y.clamp(95.0, 370.0) + self.vy / 0.8;
+        let divisor = if self.kind == MissileKind::EnergyBall {
+            0.4
+        } else {
+            0.8
+        };
+        self.x = self.x.clamp(10.0, 550.0) + self.vx / divisor;
+        self.y = self.y.clamp(95.0, 370.0) + self.vy / divisor;
         self.immunity_ticks = self.immunity_ticks.saturating_sub(1);
         self.widget_x = self.x as i32;
         self.widget_y = self.y as i32;
+        if self.kind == MissileKind::EnergyBall {
+            self.frame = (self.frame + 1) % 5;
+            return MissileUpdate::default();
+        }
         self.frame = if self.vx > -0.8 && self.vx < 0.8 {
             if self.vy <= 0.0 { 4 } else { 12 }
         } else if self.vx <= 0.0 {
@@ -169,11 +247,28 @@ impl ClassicMissile {
             || !(0.0..=450.0).contains(&self.y)
             || self.widget_x != self.x as i32
             || self.widget_y != self.y as i32
-            || self.vx.abs() > 3.0
-            || self.vy.abs() > 3.0
+            || self.vx.abs()
+                > (if self.kind == MissileKind::EnergyBall {
+                    10.0
+                } else {
+                    3.0
+                })
+            || self.vy.abs()
+                > (if self.kind == MissileKind::EnergyBall {
+                    10.0
+                } else {
+                    3.0
+                })
             || self.immunity_ticks > 15
-            || self.frame > 15
+            || self.frame
+                > (if self.kind == MissileKind::EnergyBall {
+                    4
+                } else {
+                    15
+                })
             || self.visual_variant > 3
+            || (self.kind == MissileKind::Classic && self.reflected)
+            || (self.reflected && self.immunity_ticks > 0)
         {
             return Err("invalid classic missile state".into());
         }
@@ -233,5 +328,38 @@ mod tests {
             }
         );
         assert_eq!((missile.x, missile.y), (100.0, 100.0));
+    }
+
+    #[test]
+    fn energy_ball_accepts_immune_shot_then_redirects_without_losing_reservation() {
+        let mut ball = ClassicMissile::launch_energy(9, 4, 100, 100, 2);
+        assert_eq!(ball.try_shot(110, 140), MissileShot::Miss); // strict edge
+        ball.immunity_ticks = 1;
+        assert_eq!(ball.try_shot(140, 140), MissileShot::AcceptedImmune);
+        assert_eq!((ball.target_id, ball.reflected, ball.vx), (4, false, 0.0));
+        ball.immunity_ticks = 0;
+        assert_eq!(ball.try_shot(140, 140), MissileShot::Redirected);
+        assert_eq!(
+            (ball.target_id, ball.reflected, ball.vx, ball.vy),
+            (4, true, 1.0, 1.0)
+        );
+        ball.validate().unwrap();
+    }
+
+    #[test]
+    fn reflected_energy_ball_moves_independently_but_still_requires_its_target() {
+        let mut ball = ClassicMissile::launch_energy(9, 4, 100, 100, 0);
+        ball.immunity_ticks = 0;
+        ball.try_shot(140, 140);
+        assert_eq!(
+            ball.tick(Some(MissilePreyView {
+                id: 4,
+                widget_x: 500,
+                widget_y: 250
+            })),
+            MissileUpdate::default()
+        );
+        assert_eq!((ball.x, ball.y, ball.frame), (102.5, 102.5, 2));
+        assert!(ball.tick(None).remove);
     }
 }
