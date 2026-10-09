@@ -8,8 +8,8 @@ use crate::{
     breeder::{BreederFoodView, BreederSize, BreederState, DeadBreeder},
     clyde::{ClydeCoinView, ClydeState},
     fish_pet::{
-        FishPetKind, FishPetState, NimbusCoinView, NimbusFoodView, PetAlienView, WardFishView,
-        ZorfHungryView,
+        AmpTap, FishPetKind, FishPetState, NimbusCoinView, NimbusFoodView, PetAlienView,
+        WardFishView, ZorfHungryView,
     },
     gekko::{DeadGekko, GekkoPrey, GekkoPreyKind, GekkoState},
     grubber::{DeadGrubber, GrubberPrey, GrubberState},
@@ -56,6 +56,7 @@ pub const TANK3_FOURTH_EGG_PRICE: i32 = 10_000;
 pub const TANK3_FIFTH_EGG_PRICE: i32 = 15_000;
 pub const TANK4_FIRST_EGG_PRICE: i32 = 3000;
 pub const TANK4_SECOND_EGG_PRICE: i32 = 25_000;
+pub const TANK4_THIRD_EGG_PRICE: i32 = 50_000;
 pub const ULTRA_PRICE: i32 = 10_000;
 pub const TANK4_WEAPON_PRICE: i32 = 5000;
 pub const POTION_PRICE: i32 = 250;
@@ -65,6 +66,15 @@ pub const OSCAR_PRICE: i32 = 1000;
 pub const WEAPON_PRICE: i32 = 1000;
 const FIRST_STAGE_COIN_BOTTOM_TICKS: u16 = 150;
 const SECOND_STAGE_COIN_BOTTOM_TICKS: u16 = 20;
+
+/// PB66 signed truncation: max(20, (n - 20) / 2 + 20), capped by victims.
+fn amp_reward_limit(victims: usize) -> usize {
+    if victims <= 20 {
+        victims
+    } else {
+        20 + (victims - 20) / 2
+    }
+}
 
 const fn first_stage_egg_price() -> i32 {
     EGG_PRICE
@@ -93,6 +103,7 @@ pub enum PetKind {
     Rhubarb,
     Nimbus,
     Amp,
+    Gash,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -822,6 +833,23 @@ pub enum Event {
         health: f64,
         sound: bool,
     },
+    AmpReady {
+        tick: u64,
+        pet_id: u64,
+    },
+    AmpCharged {
+        tick: u64,
+        pet_id: u64,
+        charge: u8,
+    },
+    AmpDischarged {
+        tick: u64,
+        pet_id: u64,
+        victim_ids: Vec<u64>,
+        coin_ids: Vec<u64>,
+        effects: usize,
+        replacement_id: Option<u64>,
+    },
     GusInitialFeedAttempt {
         tick: u64,
         x: i32,
@@ -1263,7 +1291,8 @@ impl AdventureState {
                 | PetKind::Blip
                 | PetKind::Rhubarb
                 | PetKind::Nimbus
-                | PetKind::Amp => {
+                | PetKind::Amp
+                | PetKind::Gash => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1322,7 +1351,8 @@ impl AdventureState {
                 | PetKind::Blip
                 | PetKind::Rhubarb
                 | PetKind::Nimbus
-                | PetKind::Amp => {
+                | PetKind::Amp
+                | PetKind::Gash => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1387,7 +1417,8 @@ impl AdventureState {
                 | PetKind::Blip
                 | PetKind::Rhubarb
                 | PetKind::Nimbus
-                | PetKind::Amp => {
+                | PetKind::Amp
+                | PetKind::Gash => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1453,7 +1484,8 @@ impl AdventureState {
                 | PetKind::Blip
                 | PetKind::Rhubarb
                 | PetKind::Nimbus
-                | PetKind::Amp => {
+                | PetKind::Amp
+                | PetKind::Gash => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1527,7 +1559,8 @@ impl AdventureState {
                 | PetKind::Blip
                 | PetKind::Rhubarb
                 | PetKind::Nimbus
-                | PetKind::Amp => {
+                | PetKind::Amp
+                | PetKind::Gash => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1609,7 +1642,8 @@ impl AdventureState {
                 | PetKind::Blip
                 | PetKind::Rhubarb
                 | PetKind::Nimbus
-                | PetKind::Amp => {
+                | PetKind::Amp
+                | PetKind::Gash => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1703,6 +1737,10 @@ impl AdventureState {
         Self::new_tank4_stage(seed, pets, 2)
     }
 
+    pub fn new_tank4_third_stage(seed: u64, pets: &[PetKind]) -> Result<Self, String> {
+        Self::new_tank4_stage(seed, pets, 3)
+    }
+
     fn new_tank4_stage(seed: u64, pets: &[PetKind], level: u8) -> Result<Self, String> {
         let canonical = [
             PetKind::Stinky,
@@ -1721,11 +1759,14 @@ impl AdventureState {
             PetKind::Blip,
             PetKind::Rhubarb,
             PetKind::Nimbus,
+            PetKind::Amp,
         ];
         if pets.len() > 3
-            || pets
-                .iter()
-                .any(|pet| !canonical.contains(pet) || (level == 1 && *pet == PetKind::Nimbus))
+            || pets.iter().any(|pet| {
+                !canonical.contains(pet)
+                    || (level == 1 && *pet == PetKind::Nimbus)
+                    || (level < 3 && *pet == PetKind::Amp)
+            })
             || pets.windows(2).any(|pair| {
                 canonical.iter().position(|pet| *pet == pair[0])
                     >= canonical.iter().position(|pet| *pet == pair[1])
@@ -1736,15 +1777,17 @@ impl AdventureState {
         let mut state = Self::empty_board(seed);
         state.tank = 4;
         state.level = level;
-        state.egg_price = if level == 1 {
-            TANK4_FIRST_EGG_PRICE
-        } else {
-            TANK4_SECOND_EGG_PRICE
+        state.egg_price = match level {
+            1 => TANK4_FIRST_EGG_PRICE,
+            2 => TANK4_SECOND_EGG_PRICE,
+            3 => TANK4_THIRD_EGG_PRICE,
+            _ => unreachable!("unsupported Tank 4 stage"),
         };
-        state.invasion = Some(if level == 1 {
-            Invasion1_2::new_balrog()
-        } else {
-            Invasion1_2::new_bilaterus()
+        state.invasion = Some(match level {
+            1 => Invasion1_2::new_balrog(),
+            2 => Invasion1_2::new_bilaterus(),
+            3 => Invasion1_2::new_tank4_third_stage(),
+            _ => unreachable!(),
         });
         state.spawn_tank4_pets(pets);
         // Board::StartGame creates selected pets before the one Breeder, and
@@ -1809,7 +1852,8 @@ impl AdventureState {
                     self.rng_state = rng_state;
                 }
                 PetKind::Nimbus => self.spawn_fish_pet(FishPetKind::Nimbus),
-                PetKind::Amp => unreachable!("Amp is unlocked after stage 4-2"),
+                PetKind::Amp => self.spawn_fish_pet(FishPetKind::Amp),
+                PetKind::Gash => unreachable!("Gash is unlocked after stage 4-3"),
             }
         }
     }
@@ -1892,7 +1936,7 @@ impl AdventureState {
                 PetKind::Shrapnel => self.spawn_fish_pet(FishPetKind::Shrapnel),
                 PetKind::Gumbo => self.spawn_fish_pet(FishPetKind::Gumbo),
                 PetKind::Blip => self.spawn_fish_pet(FishPetKind::Blip),
-                PetKind::Rhubarb | PetKind::Nimbus | PetKind::Amp => {
+                PetKind::Rhubarb | PetKind::Nimbus | PetKind::Amp | PetKind::Gash => {
                     unreachable!("pet unlock follows stage 3-5")
                 }
             }
@@ -2111,7 +2155,7 @@ impl AdventureState {
         if !((self.tank == 1 && (1..=5).contains(&self.level))
             || (self.tank == 2 && (1..=5).contains(&self.level))
             || (self.tank == 3 && (1..=5).contains(&self.level))
-            || matches!((self.tank, self.level), (4, 1..=2)))
+            || matches!((self.tank, self.level), (4, 1..=3)))
             || self.next_id == 0
             || self.next_id == u64::MAX
             || self.rng_state == 0
@@ -2138,7 +2182,7 @@ impl AdventureState {
                             || food.direction == 0))
                     || (!food.free_from_zorf && food.direction != 0)
                     || (food.nimbus_rising
-                        && ((self.tank, self.level) != (4, 2)
+                        && (!matches!((self.tank, self.level), (4, 2..=3))
                             || food.direction != 0
                             || food.free_from_zorf))
                     || (food.quality == 3 && (self.tank != 2 || !self.potion_unlocked))
@@ -2146,22 +2190,24 @@ impl AdventureState {
             || !(2..=12).contains(&self.weapon_strength)
             || (!self.weapon_unlocked && self.weapon_strength > 2)
             || self.punch_sound_cooldown > 11
-            || self.pets.contains(&PetKind::Amp)
-            || ((self.tank, self.level) != (4, 2) && self.pets.contains(&PetKind::Nimbus))
-            || ((self.tank, self.level) != (4, 2)
+            || ((self.tank, self.level) != (4, 3) && self.pets.contains(&PetKind::Amp))
+            || self.pets.contains(&PetKind::Gash)
+            || (!matches!((self.tank, self.level), (4, 2..=3))
+                && self.pets.contains(&PetKind::Nimbus))
+            || (!matches!((self.tank, self.level), (4, 2..=3))
                 && (self.ultra_unlocked || !self.ultras.is_empty() || !self.dead_ultras.is_empty()))
-            || (!matches!((self.tank, self.level), (4, 1..=2))
+            || (!matches!((self.tank, self.level), (4, 1..=3))
                 && self.pets.contains(&PetKind::Rhubarb))
-            || !matches!((self.tank, self.level), (3, 5) | (4, 1..=2))
+            || !matches!((self.tank, self.level), (3, 5) | (4, 1..=3))
                 && self.pets.contains(&PetKind::Blip)
-            || !matches!((self.tank, self.level), (3, 4..=5) | (4, 1..=2))
+            || !matches!((self.tank, self.level), (3, 4..=5) | (4, 1..=3))
                 && self.pets.contains(&PetKind::Gumbo)
-            || !matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=2))
+            || !matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=3))
                 && self.pets.contains(&PetKind::Shrapnel)
-            || !matches!((self.tank, self.level), (3, 2..=5) | (4, 1..=2))
+            || !matches!((self.tank, self.level), (3, 2..=5) | (4, 1..=3))
                 && self.pets.contains(&PetKind::Seymour)
             || !matches!(self.tank, 3 | 4) && self.pets.contains(&PetKind::Wadsworth)
-            || (!matches!((self.tank, self.level), (4, 1..=2))
+            || (!matches!((self.tank, self.level), (4, 1..=3))
                 && (self.breeder_unlocked
                     || !self.breeders.is_empty()
                     || !self.dead_breeders.is_empty()
@@ -2179,7 +2225,7 @@ impl AdventureState {
                     || !self.dead_starcatchers.is_empty())
             || !((self.tank == 2 && (2..=5).contains(&self.level))
                 || (self.tank == 3 && (1..=5).contains(&self.level))
-                || matches!((self.tank, self.level), (4, 1..=2)))
+                || matches!((self.tank, self.level), (4, 1..=3)))
                 && self.clyde.is_some()
             || self.coins.iter().any(|coin| {
                 (coin.penta_rising && coin.kind != CoinKind::DiamondPenta && !coin.kind.is_shell())
@@ -2190,11 +2236,12 @@ impl AdventureState {
                     || (coin.kind == CoinKind::Pearl
                         && !(self.tank == 3 && (2..=5).contains(&self.level)))
                     || (coin.kind == CoinKind::ShrapnelBomb
-                        && (!matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=2))
+                        && (!matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=3))
                             || !self.pets.contains(&PetKind::Shrapnel)
                             || coin.fade_ticks != 0))
-                    || (coin.kind.is_shell() && (self.tank, self.level) != (4, 2))
-                    || (coin.kind == CoinKind::Treasure && (self.tank, self.level) != (4, 2))
+                    || (coin.kind.is_shell() && !matches!((self.tank, self.level), (4, 2..=3)))
+                    || (coin.kind == CoinKind::Treasure
+                        && !matches!((self.tank, self.level), (4, 2..=3)))
                     || (coin.kind == CoinKind::DiamondPenta
                         && !(self.tank == 2 && (2..=5).contains(&self.level)))
             })
@@ -2207,10 +2254,11 @@ impl AdventureState {
             return Err("invalid Adventure board counters or upgrades".into());
         }
         let expected_price = if self.tank == 4 {
-            if self.level == 1 {
-                TANK4_FIRST_EGG_PRICE
-            } else {
-                TANK4_SECOND_EGG_PRICE
+            match self.level {
+                1 => TANK4_FIRST_EGG_PRICE,
+                2 => TANK4_SECOND_EGG_PRICE,
+                3 => TANK4_THIRD_EGG_PRICE,
+                _ => unreachable!(),
             }
         } else if self.tank == 3 {
             match self.level {
@@ -2244,14 +2292,14 @@ impl AdventureState {
             return Err("wrong egg price for Adventure stage".into());
         }
         match (self.tank, self.level) {
-            (4, 1..=2)
+            (4, 1..=3)
                 if self.invasion.as_ref().is_none_or(|wave| {
-                    wave.plan
-                        != if self.level == 1 {
-                            WavePlan::Fixed(SylvesterKind::Balrog)
-                        } else {
-                            WavePlan::FixedBilaterus
-                        }
+                    !matches!(
+                        (self.level, wave.plan),
+                        (1, WavePlan::Fixed(SylvesterKind::Balrog))
+                            | (2, WavePlan::FixedBilaterus)
+                            | (3, WavePlan::CyclingTank4Third { .. })
+                    )
                 }) || self.pets.len() > 3
                     || self.pets.windows(2).any(|pair| {
                         let canonical = [
@@ -2271,6 +2319,7 @@ impl AdventureState {
                             PetKind::Blip,
                             PetKind::Rhubarb,
                             PetKind::Nimbus,
+                            PetKind::Amp,
                         ];
                         canonical.iter().position(|pet| *pet == pair[0])
                             >= canonical.iter().position(|pet| *pet == pair[1])
@@ -2300,6 +2349,7 @@ impl AdventureState {
                                 PetKind::Gumbo => Some(FishPetKind::Gumbo),
                                 PetKind::Blip => Some(FishPetKind::Blip),
                                 PetKind::Nimbus => Some(FishPetKind::Nimbus),
+                                PetKind::Amp => Some(FishPetKind::Amp),
                                 _ => None,
                             })
                             .collect::<Vec<_>>()
@@ -2308,7 +2358,7 @@ impl AdventureState {
                         && (self.weapon_unlocked
                             || self.weapon_strength != 2
                             || self.ultra_unlocked))
-                    || (self.level == 2
+                    || (self.level >= 2
                         && (self.weapon_unlocked != self.ultra_unlocked
                             || self.ultra_unlocked != self.egg_unlocked))
                     || self.starcatcher_unlocked
@@ -2706,7 +2756,7 @@ impl AdventureState {
             || (self.tank == 3
                 && (1..=5).contains(&self.level)
                 && self.pets.contains(&PetKind::Meryl))
-            || (matches!((self.tank, self.level), (4, 1..=2))
+            || (matches!((self.tank, self.level), (4, 1..=3))
                 && self.pets.contains(&PetKind::Meryl)))
             || self
                 .notes
@@ -2833,8 +2883,9 @@ impl AdventureState {
             if shot.shot_type == 2 {
                 !matches!((self.tank, self.level), (3, 4 | 5))
             } else {
-                !matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=2))
-                    || !self.pets.contains(&PetKind::Shrapnel)
+                !matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=3))
+                    || !(self.pets.contains(&PetKind::Shrapnel)
+                        || ((self.tank, self.level) == (4, 3) && self.pets.contains(&PetKind::Amp)))
             }
         }) {
             return Err("finite shot outside supported Adventure stage".into());
@@ -3697,7 +3748,7 @@ impl AdventureState {
                 }
             }
             Action::BuyUltra => {
-                if (self.tank, self.level) != (4, 2) || !self.ultra_unlocked {
+                if !matches!((self.tank, self.level), (4, 2..=3)) || !self.ultra_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -3819,10 +3870,10 @@ impl AdventureState {
                     4 => TANK4_WEAPON_PRICE,
                     _ => WEAPON_PRICE,
                 };
-                if (self.tank != 1
-                    && !(self.tank == 2 && (2..=5).contains(&self.level))
-                    && !(self.tank == 3 && (2..=5).contains(&self.level))
-                    && (self.tank, self.level) != (4, 2))
+                if !(self.tank == 1
+                    || (self.tank == 2 && (2..=5).contains(&self.level))
+                    || (self.tank == 3 && (2..=5).contains(&self.level))
+                    || matches!((self.tank, self.level), (4, 2..=3)))
                     || !self.weapon_unlocked
                 {
                     events.push(Event::Rejected {
@@ -3926,6 +3977,33 @@ impl AdventureState {
         };
 
         let on_collectible = pearl_id.is_some() || coin_id.is_some();
+        // PB66 separates Amp's clock from normal widget mouse availability.
+        // Existing raised collectibles retain their input precedence; exact
+        // installed overlap/modal routing remains qualified in the contract.
+        let threats_registered = !self.missiles.is_empty()
+            || self
+                .invasion
+                .as_ref()
+                .is_some_and(Invasion1_2::has_live_alien);
+        if !on_collectible
+            && !threats_registered
+            && let Some(index) = self
+                .fish_pets
+                .iter()
+                .rposition(|pet| pet.amp_ready() && pet.amp_hitbox_contains(world_x, world_y))
+        {
+            let pet_id = self.fish_pets[index].id;
+            match self.fish_pets[index].tap_amp(self.tank == 5) {
+                AmpTap::Charged(charge) => events.push(Event::AmpCharged {
+                    tick: self.tick,
+                    pet_id,
+                    charge,
+                }),
+                AmpTap::Discharged => self.discharge_amp(pet_id, events),
+                AmpTap::NotReady => unreachable!("ready Amp was selected"),
+            }
+            return;
+        }
         let on_alien_widget = self.invasion.as_ref().is_some_and(|wave| {
             wave.actors.iter().any(|alien| {
                 world_x >= alien.widget_x
@@ -6242,7 +6320,13 @@ impl AdventureState {
             let guppy_count = self.fish.iter().filter(|fish| fish.alive).count();
             let pet_id = self.fish_pets[index].id;
             let mut rng_state = self.rng_state;
-            let update = if self.fish_pets[index].kind == FishPetKind::Nimbus {
+            let update = if self.fish_pets[index].kind == FishPetKind::Amp {
+                // The installed charge predicate excludes registered aliens
+                // and Bilaterus, independently of missile-only mouse blocking.
+                self.fish_pets[index].tick_amp(self.tank != 5 && aliens.is_empty(), &mut |upper| {
+                    Self::advance_rng(&mut rng_state) % upper
+                })
+            } else if self.fish_pets[index].kind == FishPetKind::Nimbus {
                 let penta = self.starcatchers.iter().any(|actor| actor.alive);
                 let coins = self
                     .coins
@@ -6318,6 +6402,12 @@ impl AdventureState {
                 })
             };
             self.rng_state = rng_state;
+            if update.amp_became_ready {
+                events.push(Event::AmpReady {
+                    tick: self.tick,
+                    pet_id,
+                });
+            }
             if let Some(request) = update.nimbus_coin
                 && let Some(position) = self
                     .coins
@@ -6868,7 +6958,7 @@ impl AdventureState {
             (1, 2..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             (2, 1..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             (3, 1..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
-            (4, 1..=2) => SECOND_STAGE_COIN_BOTTOM_TICKS,
+            (4, 1..=3) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             _ => unreachable!("coin lifetime for this Adventure stage is not implemented"),
         };
         let bottom_limit = if seymour_present { 200 } else { bottom_limit };
@@ -6959,6 +7049,83 @@ impl AdventureState {
                 coin_id: id,
             });
         }
+    }
+
+    fn discharge_amp(&mut self, pet_id: u64, events: &mut Vec<Event>) {
+        // PB62/PB66: this list models ordinary Fish class identity -1. Take
+        // the live victim snapshot before any removal; other species survive.
+        let victims = self
+            .fish
+            .iter()
+            .filter(|fish| fish.alive)
+            .cloned()
+            .collect::<Vec<_>>();
+        let reward_limit = amp_reward_limit(victims.len());
+        let mut coin_ids = Vec::new();
+        let mut effects = 0;
+        let mut detached = false;
+        for (index, fish) in victims.iter().enumerate() {
+            self.fish.retain(|current| current.id != fish.id);
+            self.dead_fish.push(DeadFish::from_live(fish));
+            detached |= self.detach_missile_target(fish.id, events);
+            events.push(Event::FishDied {
+                tick: self.tick,
+                fish_id: fish.id,
+            });
+            if index < reward_limit {
+                let coin_id = self.id();
+                self.coins.push(Coin {
+                    id: coin_id,
+                    x: f64::from(fish.x as i32 + 15),
+                    y: f64::from(fish.y as i32 + 10),
+                    kind: CoinKind::Diamond,
+                    frame: 0,
+                    animation_ticks: 0,
+                    hazard_age_ticks: 0,
+                    collecting: false,
+                    bottom_ticks: 0,
+                    fade_ticks: 0,
+                    penta_rising: false,
+                });
+                coin_ids.push(coin_id);
+                events.push(Event::CoinDropped {
+                    tick: self.tick,
+                    coin_id,
+                    fish_id: fish.id,
+                    kind: CoinKind::Diamond,
+                });
+            }
+            // The requested type draw is before SpawnShot's shared cap. The
+            // safe existing constructor draws alpha only for an actual shot.
+            let shot_type = self.rand_range(3) as u8 + 3;
+            let laser_count = self.invasion.as_ref().map_or(0, |wave| wave.lasers.len());
+            if self.bomb_shots.len() + laser_count < 20 {
+                let alpha = self.rand_range(200) as u8 + 50;
+                self.bomb_shots.push(BombShot {
+                    shot_type,
+                    x: fish.x as i32,
+                    y: fish.y as i32,
+                    age_ticks: 0,
+                    frame: 0,
+                    delay_ticks: 0,
+                    alpha,
+                });
+                effects += 1;
+            }
+        }
+        if detached {
+            self.finish_destructor_battle(events);
+        }
+        let replacement_id =
+            (!self.has_live_fish() && self.tank != 5).then(|| self.spawn_bought_guppy());
+        events.push(Event::AmpDischarged {
+            tick: self.tick,
+            pet_id,
+            victim_ids: victims.iter().map(|fish| fish.id).collect(),
+            coin_ids,
+            effects,
+            replacement_id,
+        });
     }
 
     fn bomb_contact(&mut self, x: f64, y: f64, events: &mut Vec<Event>) -> Option<u64> {
@@ -7174,6 +7341,200 @@ impl AdventureState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn a33_ready_amp(guppies: usize) -> AdventureState {
+        let mut board = AdventureState::new_tank4_third_stage(0x4301, &[PetKind::Amp]).unwrap();
+        let amp = &mut board.fish_pets[0];
+        amp.x = 100.0;
+        amp.y = 100.0;
+        amp.widget_x = 100;
+        amp.widget_y = 100;
+        amp.published_x = 100;
+        amp.published_y = 100;
+        amp.amp_timer = 3000;
+        for _ in 0..guppies {
+            let fish = board.make_fish(300.0, 240.0, false, false);
+            board.fish.push(fish);
+        }
+        board
+    }
+
+    fn a33_tap(board: &mut AdventureState) -> Vec<Event> {
+        board.apply(Action::Click { x: 120.0, y: 120.0 })
+    }
+
+    #[test]
+    fn a33_amp_third_routed_tap_uses_primary_snapshot_cap_and_real_coin_entities() {
+        // PB66 disagrees with W1's n-5 formula. These fixed independently
+        // recovered boundaries also check every victim dies despite the cap.
+        for (count, rewards) in [(0, 0), (20, 20), (21, 20), (22, 21), (40, 30)] {
+            let mut board = a33_ready_amp(count);
+            let victim_ids = board.fish.iter().map(|fish| fish.id).collect::<Vec<_>>();
+            let breeder_id = board.breeders[0].id;
+            let initial_cash = board.balance;
+            assert!(
+                a33_tap(&mut board)
+                    .iter()
+                    .any(|event| matches!(event, Event::AmpCharged { charge: 1, .. }))
+            );
+            assert!(
+                a33_tap(&mut board)
+                    .iter()
+                    .any(|event| matches!(event, Event::AmpCharged { charge: 2, .. }))
+            );
+            assert_eq!(board.fish.len(), count);
+            let events = a33_tap(&mut board);
+            assert!(board.fish.is_empty());
+            assert_eq!(
+                board
+                    .dead_fish
+                    .iter()
+                    .map(|fish| fish.id)
+                    .collect::<Vec<_>>(),
+                victim_ids
+            );
+            assert_eq!(board.breeders[0].id, breeder_id);
+            assert_eq!(
+                board.balance, initial_cash,
+                "discharge creates entities, not cash"
+            );
+            assert_eq!(board.coins.len(), rewards);
+            assert!(board.coins.iter().all(|coin| coin.kind == CoinKind::Diamond
+                && coin.kind.value() == 200
+                && !coin.collecting));
+            assert_eq!(board.bomb_shots.len(), count.min(20));
+            assert!(
+                board
+                    .bomb_shots
+                    .iter()
+                    .all(|shot| (3..=5).contains(&shot.shot_type))
+            );
+            assert!(events.iter().any(|event| matches!(event, Event::AmpDischarged { victim_ids: killed, coin_ids, replacement_id: None, .. } if killed == &victim_ids && coin_ids.len() == rewards)));
+            assert_eq!(
+                (
+                    board.fish_pets[0].amp_timer,
+                    board.fish_pets[0].amp_threshold,
+                    board.fish_pets[0].amp_charge
+                ),
+                (-20, 3200, 0)
+            );
+            board.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn a33_amp_fallback_requires_all_seven_live_species_lists_empty() {
+        let mut board = a33_ready_amp(1);
+        board.breeders.clear();
+        a33_tap(&mut board);
+        a33_tap(&mut board);
+        let old_id = board.fish[0].id;
+        let events = a33_tap(&mut board);
+        assert_eq!(board.fish.len(), 1);
+        assert_ne!(board.fish[0].id, old_id);
+        assert!(board.fish[0].alive);
+        assert!(events.iter().any(|event| matches!(event, Event::AmpDischarged { replacement_id: Some(id), .. } if *id == board.fish[0].id)));
+
+        let mut board = a33_ready_amp(1);
+        board.breeders.clear();
+        let oscar_id = board.id();
+        let mut rng_state = board.rng_state;
+        board
+            .oscars
+            .push(OscarState::spawn_bought(oscar_id, &mut |upper| {
+                AdventureState::advance_rng(&mut rng_state) % upper
+            }));
+        board.rng_state = rng_state;
+        a33_tap(&mut board);
+        a33_tap(&mut board);
+        a33_tap(&mut board);
+        assert!(board.fish.is_empty());
+        assert_eq!(board.oscars[0].id, oscar_id);
+    }
+
+    #[test]
+    fn a33_amp_reward_collection_credits_once_and_shots_expire() {
+        let mut board = a33_ready_amp(1);
+        a33_tap(&mut board);
+        a33_tap(&mut board);
+        a33_tap(&mut board);
+        let coin_id = board.coins[0].id;
+        let (x, y) = (
+            board.coins[0].x as f32 + 20.0,
+            board.coins[0].y as f32 + 20.0,
+        );
+        board.apply(Action::Click { x, y });
+        let events = (0..80).flat_map(|_| board.step(&[])).collect::<Vec<_>>();
+        assert_eq!(events.iter().filter(|event| matches!(event, Event::CoinCredited { coin_id: id, amount: 200, .. } if *id == coin_id)).count(), 1);
+        assert!(!board.coins.iter().any(|coin| coin.id == coin_id));
+        assert!(board.bomb_shots.is_empty());
+    }
+
+    #[test]
+    fn a33_amp_shared_shot_occupancy_preserves_type_draw_before_cap() {
+        // PB66 caller draws each type before the shared20 admission test.
+        // Safe constructor alpha is drawn only for an admitted effect.
+        for (bombs, lasers, admitted) in [(19, 0, 1), (18, 1, 1), (19, 1, 0), (0, 20, 0)] {
+            let mut board = a33_ready_amp(3);
+            board.bomb_shots = vec![
+                BombShot {
+                    shot_type: 3,
+                    x: 400,
+                    y: 300,
+                    age_ticks: 0,
+                    frame: 0,
+                    delay_ticks: 0,
+                    alpha: 50
+                };
+                bombs
+            ];
+            board.invasion.as_mut().unwrap().lasers = vec![
+                crate::invasion::LaserEffect {
+                    x: 400,
+                    y: 300,
+                    age_ticks: 0
+                };
+                lasers
+            ];
+            let mut expected_rng = board.rng_state;
+            for index in 0..3 {
+                AdventureState::advance_rng(&mut expected_rng);
+                if index < admitted {
+                    AdventureState::advance_rng(&mut expected_rng);
+                }
+            }
+            a33_tap(&mut board);
+            a33_tap(&mut board);
+            let events = a33_tap(&mut board);
+            assert_eq!(board.bomb_shots.len() + lasers, 20);
+            assert_eq!(board.rng_state, expected_rng);
+            assert!(events.iter().any(|event| matches!(event,
+                Event::AmpDischarged { effects, .. } if *effects == admitted)));
+        }
+    }
+
+    #[test]
+    fn a33_amp_routed_combat_click_cannot_discharge_or_consume_a_tap() {
+        let mut board = a33_ready_amp(1);
+        let alien_id = board.id();
+        let wave = board.invasion.as_mut().unwrap();
+        wave.actors.push(crate::alien::WeakSylvester::spawn_kind(
+            SylvesterKind::Gus,
+            alien_id,
+            400,
+            200,
+            1,
+            1,
+        ));
+        wave.battle_active = true;
+        let events = a33_tap(&mut board);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Event::AmpCharged { .. } | Event::AmpDischarged { .. }
+        )));
+        assert_eq!(board.fish_pets[0].amp_charge, 0);
+        assert_eq!(board.fish.len(), 1);
+    }
 
     fn a32_group(board: &mut AdventureState) -> u64 {
         let id = board.id();

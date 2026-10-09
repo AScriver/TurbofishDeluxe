@@ -50,6 +50,7 @@ pub struct WarningCoords {
 pub enum EncounterKind {
     Single(SylvesterKind),
     WeakBalrogPair,
+    PsychosquidBalrogPair,
     Bilaterus,
 }
 
@@ -61,6 +62,7 @@ pub enum WavePlan {
     CyclingTank2Finale { next: EncounterKind },
     CyclingTank3Second { next: SylvesterKind },
     CyclingTank3Finale { next: SylvesterKind },
+    CyclingTank4Third { next: EncounterKind },
 }
 
 impl WavePlan {
@@ -68,7 +70,9 @@ impl WavePlan {
         match self {
             Self::Fixed(kind) => EncounterKind::Single(kind),
             Self::FixedBilaterus => EncounterKind::Bilaterus,
-            Self::CyclingTank1Finale { next } | Self::CyclingTank2Finale { next } => next,
+            Self::CyclingTank1Finale { next }
+            | Self::CyclingTank2Finale { next }
+            | Self::CyclingTank4Third { next } => next,
             Self::CyclingTank3Second { next } | Self::CyclingTank3Finale { next } => {
                 EncounterKind::Single(next)
             }
@@ -312,6 +316,14 @@ impl Invasion1_2 {
         ));
         let mut wave = Self::with_origin(InvasionOrigin::StageStart, first);
         wave.plan = WavePlan::CyclingTank3Finale { next: first };
+        wave
+    }
+
+    pub fn new_tank4_third_stage() -> Self {
+        let mut wave = Self::new_gus();
+        wave.plan = WavePlan::CyclingTank4Third {
+            next: EncounterKind::Single(SylvesterKind::Gus),
+        };
         wave
     }
 
@@ -673,6 +685,10 @@ impl Invasion1_2 {
                                 spawn(SylvesterKind::Weak, coords.first_x, coords.first_y);
                                 spawn(SylvesterKind::Balrog, coords.second_x, coords.second_y);
                             }
+                            EncounterKind::PsychosquidBalrogPair => {
+                                spawn(SylvesterKind::Psychosquid, coords.first_x, coords.first_y);
+                                spawn(SylvesterKind::Balrog, coords.second_x, coords.second_y);
+                            }
                             EncounterKind::Bilaterus => unreachable!(),
                         }
                     }
@@ -734,6 +750,15 @@ impl Invasion1_2 {
                             SylvesterKind::Psychosquid
                         } else {
                             SylvesterKind::Ulysses
+                        },
+                    },
+                    WavePlan::CyclingTank4Third { .. } => WavePlan::CyclingTank4Third {
+                        // PB68 samples the next raw 4/10 only after the
+                        // current actor constructors have consumed their RNG.
+                        next: if next_random().is_multiple_of(2) {
+                            EncounterKind::PsychosquidBalrogPair
+                        } else {
+                            EncounterKind::Single(SylvesterKind::Gus)
                         },
                     },
                 };
@@ -1140,6 +1165,33 @@ impl Invasion1_2 {
                         )
                     })
             }
+            WavePlan::CyclingTank4Third { next } => {
+                self.bilaterus.is_empty()
+                    && self.fragments.is_empty()
+                    && matches!(
+                        next,
+                        EncounterKind::Single(SylvesterKind::Gus)
+                            | EncounterKind::PsychosquidBalrogPair
+                    )
+                    && matches!(
+                        self.actors.as_slice(),
+                        [] | [WeakSylvester {
+                            kind: SylvesterKind::Gus
+                                | SylvesterKind::Psychosquid
+                                | SylvesterKind::Balrog,
+                            ..
+                        }] | [
+                            WeakSylvester {
+                                kind: SylvesterKind::Psychosquid,
+                                ..
+                            },
+                            WeakSylvester {
+                                kind: SylvesterKind::Balrog,
+                                ..
+                            }
+                        ]
+                    )
+            }
         };
         if !(0..=3000).contains(&self.countdown)
             || self.food_delay > 36
@@ -1366,6 +1418,111 @@ mod tests {
             assert_eq!(wave.countdown, 3000);
             wave.validate().unwrap();
         }
+    }
+
+    #[test]
+    fn tank4_third_samples_next_only_after_current_gus_constructor() {
+        for (bit, expected_next) in [
+            (0, EncounterKind::PsychosquidBalrogPair),
+            (1, EncounterKind::Single(SylvesterKind::Gus)),
+        ] {
+            let mut wave = Invasion1_2::new_tank4_third_stage();
+            assert_eq!(
+                wave.plan.expected(),
+                EncounterKind::Single(SylvesterKind::Gus)
+            );
+            wave.warning = Some(WarningCoords {
+                first_x: 100,
+                first_y: 140,
+                second_x: 300,
+                second_y: 220,
+            });
+            wave.countdown = 1;
+            let mut draws = [1, 4, bit].into_iter();
+            let events = wave.board_update(|| draws.next().expect("three draws"), || 70);
+            assert_eq!(draws.next(), None);
+            assert!(matches!(
+                events.as_slice(),
+                [InvasionEvent::AlienSpawned { id: 70, .. }]
+            ));
+            assert_eq!(wave.actors[0].kind, SylvesterKind::Gus);
+            assert_eq!(wave.plan.expected(), expected_next);
+            assert_eq!(wave.countdown, 3000);
+            wave.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn tank4_third_pair_registers_source_order_and_retains_battle_until_both_leave() {
+        let mut wave = Invasion1_2::new_tank4_third_stage();
+        wave.plan = WavePlan::CyclingTank4Third {
+            next: EncounterKind::PsychosquidBalrogPair,
+        };
+        wave.warning = Some(WarningCoords {
+            first_x: 100,
+            first_y: 140,
+            second_x: 300,
+            second_y: 220,
+        });
+        wave.countdown = 1;
+        let mut draws = [1, 4, 2, 5, 1].into_iter();
+        let mut ids = [71, 72].into_iter();
+        let events = wave.board_update(
+            || draws.next().expect("both constructors then one choice"),
+            || ids.next().expect("one ID per actor"),
+        );
+        assert_eq!(draws.next(), None);
+        assert_eq!(ids.next(), None);
+        assert_eq!(
+            wave.plan.expected(),
+            EncounterKind::Single(SylvesterKind::Gus)
+        );
+        assert!(matches!(
+            events.as_slice(),
+            [
+                InvasionEvent::AlienSpawned { id: 71, .. },
+                InvasionEvent::AlienSpawned { id: 72, .. }
+            ]
+        ));
+        assert_eq!(
+            wave.actors
+                .iter()
+                .map(|actor| actor.kind)
+                .collect::<Vec<_>>(),
+            [SylvesterKind::Psychosquid, SylvesterKind::Balrog]
+        );
+        assert_eq!(wave.actors[0].widget_x, 100);
+        assert_eq!(wave.actors[1].widget_x, 300);
+        let encoded = serde_json::to_vec(&wave).unwrap();
+        let restored: Invasion1_2 = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(restored.plan, wave.plan);
+        restored.validate().unwrap();
+        let mut reversed = restored.clone();
+        reversed.actors.swap(0, 1);
+        assert!(reversed.validate().is_err());
+        assert!(wave.finish_if_no_threats(false).is_empty());
+        let first = wave.remove_registered_alien(71);
+        assert!(
+            first
+                .iter()
+                .any(|event| matches!(event, InvasionEvent::DiamondDropped { alien_id: 71, .. }))
+        );
+        assert_eq!(wave.actors[0].id, 72);
+        assert!(wave.finish_if_no_threats(false).is_empty());
+        wave.validate().unwrap();
+        let second = wave.remove_registered_alien(72);
+        assert!(
+            second
+                .iter()
+                .any(|event| matches!(event, InvasionEvent::DiamondDropped { alien_id: 72, .. }))
+        );
+        assert_eq!(wave.dead_aliens.len(), 2);
+        assert_eq!(
+            wave.finish_if_no_threats(false),
+            [InvasionEvent::BattleEnded]
+        );
+        assert!(wave.finish_if_no_threats(false).is_empty());
+        wave.validate().unwrap();
     }
 
     #[test]

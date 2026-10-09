@@ -1,14 +1,18 @@
 # Current handoff
 
-Updated: 2026-10-09, America/Phoenix. **Active: resumed A32 native acceptance at the user's request.** Continue automatically after verified milestones toward the full [requirements](docs/requirements.md).
+Updated: 2026-10-09, America/Phoenix. **Active: reversing and runtime implementation.** The user deferred detailed native/manual acceptance; A32 is safely stopped at its earned checkpoint. Continue automatically toward the full [requirements](docs/requirements.md), retaining unperformed acceptance explicitly pending.
 
 ## Current increment
 
-[A32: Tank 4-2, live Nimbus, Bilaterus and Ultravore](docs/adventure-4-2.md) is implemented with required current-save format 17. Source checkpoint: `4b2d53fd6c6711ad615d083b11f9d41f745ad22f`. Build/regression checks passed; entry, natural conversions and Bilaterus combat are observed, while full native acceptance remains pending.
+[A33: Tank4-3, live Amp and mixed encounters](docs/adventure-4-3.md) is integrated from adjudicated PB64–68. The complete433-check code gate passed; native behavior is unverified. Installed-binary investigation now targets Tank4-4/Gash. No user blocker is known.
+
+[A32: Tank4-2, live Nimbus, Bilaterus and Ultravore](docs/adventure-4-2.md) is implemented at source checkpoint`4b2d53fd6c6711ad615d083b11f9d41f745ad22f`/format17. E80 preserves its executable/source identity; the [partial native report](docs/playtests/2026-10-09-adventure-4-2-native-a32-01.md) owns observed entry/conversions/combat/Ultra/save-pause/two paid eggs and deferred outcomes.
 
 [A31: Tank 4-1](docs/adventure-4-1.md) is the latest native-accepted stage, committed `38c65be9ad439a727b2e7e1b1401db928b8e55f6` (E76/E78). Its frozen bundle, reports and genuine earned saves remain preserved.
 
 ## Current build verification
+
+**E85 — observed A33 code gate, native deferred:** Current18 passed433maintained checks, formatting/strictlint/build/staging. Counts, retained failure and executable/gate/launcher identities are in [MODLOG](MODLOG.md#2026-10-09--implement-tank4-3-and-defer-native-acceptance-to-continue-reversing). Source/artifact readback passed65/65, SHA`3622436E31F1283FD844B1A08D9E19B02114214BDB0B2C4FFE10E86BC78F8536`. No A33 native process or genuine earned-Amp endpoint was created. Two owned-music checks were skipped; retail/audio/human fidelity remains pending. Earlier E79–E84 retain their historical frozen-build scope.
 
 **E79 — observed build gate:** A32 gate 04 passed formatting, strict workspace Clippy, locked native build/staging and 407 checks: 335 library, 5 assets, 4 fonts, 60 persistence and 3 binding, including 2 owned-music checks. Current17 continuation, required-field and pause regressions passed. Tank 4-2 native gameplay acceptance remains **not tested**.
 
@@ -35,7 +39,9 @@ Separate accelerated-test work changed maintained source/tooling during run04. I
 
 **E83 — observed Ultra, first paid egg and full current17 continuation:** [A32 report](docs/playtests/2026-10-09-adventure-4-2-native-a32-01.md) owns the natural Ultra/Oscar/2000treasure, real predation/hunger losses, first25000egg and exact game-written checkpoint findings. A guarded live-save copy retained Ultra/Oscar/activeBilaterus at Board52555, SHA`0E6395FC1E70C4E9C649FA7AC622076E3330D8A4467E6CCC533052439A08B2F6`. Reopen matched the complete session; pause held all tested live actors/group children/countdown/economy/RNG/IDs while session time advanced. Root inspected its pause frame and independently passed start/final/save/full-pause and64+44artifact checks; audit05 SHA`9582456AD8ABDE86A8A67A98056EFF7CEB4F6C968B5C9E877C2914F141210D92`. Both owned games exited0 without force; oldPID19400 was later reused by a newer unrelated PowerShell process, not left alive. Bare numeric PID absence is insufficient. Current earning06 uses actual05final SHA`5CD39690CA451BB2406CBD7CB3C00D75DF62034D20DC9E36C69BF01573168510`; eggs2/3 and Amp/selector/reload remain pending.
 
-The separate timing change provides [explicit accelerated tests](README.md#accelerated-gameplay-tests) with isolated saves, muted audio and labelled timing. Its new build/suite/native evidence belongs to that change; E80 acceptance continues at1x.
+**E84 — observed safe stop at the user's direction:** E80 earning06 ended gracefully at20:30:10UTC, retained handle exit0/forcedfalse, unchanged installation receipt. Complete source/start and final/save comparisons matched. The earned current17 Playing save is `.scratch/playtests/a32-earned-06/save/adventure.json`, SHA`65527921C74FA4AF7CDF1929DAC0A32BC9BEDDC9C37F1E9685EF54FF1782492D`, Board103209/two eggs/21765funds. Manifest artifact readback passed75/75. Third egg/Amp/seventeen-card Locked4-3/reload is deferred; no selector test was launched. The report owns exact receipts and the close-helper's post-close null-exit diagnostic. Earlier E79–E83 entries are historical snapshots.
+
+The separate timing change provides [explicit accelerated tests](README.md#accelerated-gameplay-tests) with isolated saves, muted audio and labelled timing. Its new build/suite/native evidence belongs to that change; E80's stopped lineage is preserved at1x.
 
 - [Maintained playtest helpers](docs/playtest-helpers.md): 26 regressions and four identified Tank 1 tooling runs; owned processes exited and installation inventories matched. [Report](docs/playtests/2026-10-09-playtest-helpers-01.md).
 - [Evidence commands](docs/evidence-tooling.md): 47 contracts, prepared-build/source/artifact readback, and a verified adapter for recorded helper telemetry. Report drafts keep behavioral verdicts **not tested**.
@@ -46,13 +52,13 @@ These maintenance checks retain historical records; they do not establish Tank4-
 ## Gaps and blockers
 
 - No missing access or information currently requires user input. The user resumed work; full completion is unproved.
-- A32 still needs eggs2/3, one Amp unlock, seventeen-card Locked4-3/reload and final cleanup/lineage acceptance. E80 freezes the resumed bundle; E81–E83 establish only the paths actually observed.
-- Tank 4-3 is temporarily gated; live Amp is unimplemented. Bounded primary study is underway under the registered [provenance](docs/provenance.md). Remaining stages, fish/pets, modes, menus/profiles/highscores and effects remain open in [coverage](docs/compatibility.md).
+- A32's third egg, one Amp unlock and seventeen-card Locked4-3/reload are deferred. E80–E84 establish only observed paths; preserve the actual game-written checkpoint without editing earned progression.
+- Tank4-3 code integration passed the complete gate from adjudicated primary study under [provenance](docs/provenance.md); native acceptance is deferred. Tank4-4/Gash primary study is underway. Remaining stages, fish/pets, modes, menus/profiles/highscores and effects remain open in [coverage](docs/compatibility.md).
 - Retail comparison and human feel remain untested. [Original-game isolation](docs/original-observation.md) is unproved; startup can force fullscreen despite ScreenMode0. [Music](docs/audio.md) has native-load/queue evidence, while audible fidelity, loops/fades/mixing remain untested. Distribution/runtime-code licensing is undecided.
 
 ## Ownership
 
-The primary session owns synthesis and final decisions. Retain the [A32 file/resource contract](docs/adventure-4-2.md#ownership-and-durable-state) when resuming:
+The primary session owns synthesis and final decisions. Current file/resource ownership follows the [A33 contract](docs/adventure-4-3.md#implementation-and-ownership); the table below retains historical A32 ownership:
 
 | Owner | Responsibility |
 |---|---|
@@ -61,7 +67,7 @@ The primary session owns synthesis and final decisions. Retain the [A32 file/res
 | Presentation/Nimbus owner | `fish_pet.rs`, `app.rs` |
 | Tester | `tests/persistence.rs`, isolated native evidence and owned-process cleanup |
 
-Serialize shared Cargo/fmt/process/database work. The A33 investigator owns the private Ghidra database; the separate timing chat owns Cargo/fmt/staging until its gate finishes. Tester alone owns A32 runtime processes. Preserve unrelated work and A31 artifacts; keep original installation read-only and project saves separate. Add no new legacy migration, backfill or import.
+Serialize shared Cargo/fmt/process/database work. Root owns Cargo/fmt/build/Git; investigator owns read-only Ghidra for the next contract. No A32 native process remains; its tester completed graceful cleanup. Preserve unrelated work and frozen artifacts; keep original installation read-only and project saves separate. Add no new legacy migration, backfill or import.
 
 ## Evidence ledger
 
@@ -76,10 +82,10 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 
 Current next action:
 
-1. Continue identified native A32 acceptance on E80 bundle02 using maintained playtest/evidence tools. Root owns build/source/Git; tester owns isolated run data and PIDs. Coordinate any observed defect before changing frozen inputs, and revalidate affected checks.
-2. Preserve the completed genuine source chain from `.scratch/playtests/a31-nimbus-locked-reload-01/adventure.json`, SHA`048319F4E63A9BB3BACC090D21FFBAE8E2ACA1D6C19CADDA7264FDBEA563C38A`. Continue actual05final through earning06; keep the guarded live checkpoint/pause sidebranch separate. Do not convert or edit gameplay state.
-3. Execute [A32 acceptance](docs/adventure-4-2.md#acceptance): genuine entry, natural Nimbus conversion/Bilaterus lifecycle/Ultra income, current17 reopen/pause, three paid 25000 eggs/Amp once and seventeen-card Locked 4-3/reload. Inspect events/pixels and audit build, save lineage, original-install integrity and owned-PID cleanup.
-4. After acceptance, commit results and automatically implement4-3 from the registered primary study and adjudicated contract. Full requirements remain the goal.
+1. Commit verified A33 code progress and the deferred-native handoff. Preserve identified build evidence and the completed433-check gate; do not claim native playability.
+2. Continue Tank4-4/Gash installed-binary investigation, resolve material encounter/damage/prey side effects and implement the next adjudicated contract automatically.
+3. Preserve E80 and the genuine current17 earning06 save for later testing. Do not synthesize Amp's earned selector or alter the retail installation. Defer native/manual acceptance unless a material reversing/implementation discrepancy requires it or the user requests it.
+4. Keep coverage, provenance and evidence current through remaining requirements. Build/unit results do not establish playable behavior, retail fidelity, audible output or human feel.
 
 ## Environment and reference build
 

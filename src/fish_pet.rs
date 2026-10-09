@@ -19,6 +19,15 @@ pub enum FishPetKind {
     Gumbo,
     Blip,
     Nimbus,
+    Amp,
+}
+
+/// A direct Amp handler result. The Board owns whether normal input reaches it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AmpTap {
+    NotReady,
+    Charged(u8),
+    Discharged,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,6 +103,8 @@ pub struct FishPetUpdate {
     pub ward_bubbles: Option<[(i32, i32); 2]>,
     pub nimbus_coin: Option<NimbusCoinRequest>,
     pub nimbus_food: Option<NimbusFoodRequest>,
+    /// The Board may play the ready sound after this source clock transition.
+    pub amp_became_ready: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -142,6 +153,10 @@ pub struct FishPetState {
     #[serde(default)]
     pub food_timer: i32,
     pub coin_timer: u16,
+    /// PB65 uses signed DWORDs. These are independent of other pets' clocks.
+    pub amp_timer: i32,
+    pub amp_threshold: i32,
+    pub amp_charge: u8,
     pub bomb_threshold: u16,
     pub glint_phase: f64,
     pub meryl_blink: bool,
@@ -197,6 +212,9 @@ impl FishPetState {
             birth_threshold: 930,
             food_timer: 0,
             coin_timer: 0,
+            amp_timer: if kind == FishPetKind::Amp { 300 } else { 0 },
+            amp_threshold: if kind == FishPetKind::Amp { 3000 } else { 0 },
+            amp_charge: 0,
             bomb_threshold: if kind == FishPetKind::Shrapnel {
                 rand_range(20) as u16 + 633
             } else {
@@ -212,7 +230,7 @@ impl FishPetState {
                 4.0
             } else if kind == FishPetKind::Zorf {
                 3.0
-            } else if kind == FishPetKind::Nimbus {
+            } else if matches!(kind, FishPetKind::Nimbus | FishPetKind::Amp) {
                 0.5
             } else {
                 speed_mod
@@ -250,6 +268,8 @@ impl FishPetState {
                 self.speed_mod == 3.0
             } else if self.kind == FishPetKind::Nimbus {
                 matches!(self.speed_mod, 0.5 | 1.8)
+            } else if self.kind == FishPetKind::Amp {
+                self.speed_mod == 0.5
             } else {
                 [1.6, 1.8, 2.0].contains(&self.speed_mod)
             })
@@ -281,10 +301,17 @@ impl FishPetState {
                 && (!(633..=652).contains(&self.bomb_threshold)
                     || self.coin_timer >= self.bomb_threshold
                     || !(-1.0..1.0).contains(&self.glint_phase)))
+            || (self.kind == FishPetKind::Amp && self.amp_charge > 2)
+            || (self.kind != FishPetKind::Amp
+                && (self.amp_timer != 0 || self.amp_threshold != 0 || self.amp_charge != 0))
             || (self.kind == FishPetKind::Gumbo
                 && (self.bomb_threshold != 0 || !(-1.0..1.0).contains(&self.glint_phase)))
-            || (!matches!(self.kind, FishPetKind::Shrapnel | FishPetKind::Gumbo)
-                && (self.bomb_threshold != 0 || self.glint_phase != 0.0))
+            || (self.kind == FishPetKind::Amp && !(-1.0..1.0).contains(&self.glint_phase))
+            || (!matches!(
+                self.kind,
+                FishPetKind::Shrapnel | FishPetKind::Gumbo | FishPetKind::Amp
+            ) && (self.bomb_threshold != 0 || self.glint_phase != 0.0))
+            || (self.kind == FishPetKind::Amp && self.bomb_threshold != 0)
             || (!matches!(
                 self.kind,
                 FishPetKind::Vert | FishPetKind::Meryl | FishPetKind::Shrapnel
@@ -371,6 +398,7 @@ impl FishPetState {
             FishPetKind::Gumbo => u8::from(self.turn_ticks != 0),
             FishPetKind::Blip => u8::from(self.turn_ticks != 0),
             FishPetKind::Nimbus => u8::from(self.turn_ticks != 0),
+            FishPetKind::Amp => u8::from(self.turn_ticks != 0),
         }
     }
 
@@ -422,6 +450,49 @@ impl FishPetState {
         }
     }
 
+    pub fn amp_ready(&self) -> bool {
+        self.kind == FishPetKind::Amp && self.amp_timer >= self.amp_threshold
+    }
+
+    /// W1's 160x80 widget excludes 25 pixels at its bottom. Visibility,
+    /// overlaps, combat and modal routing remain Board/input responsibilities.
+    pub fn amp_hitbox_contains(&self, x: i32, y: i32) -> bool {
+        self.kind == FishPetKind::Amp
+            && (self.widget_x..self.widget_x + 160).contains(&x)
+            && (self.widget_y..self.widget_y + 55).contains(&y)
+    }
+
+    /// PB66 accepts two ready taps and discharges on the third. This method
+    /// handles state only; the Board performs victims, coins, shots and input.
+    pub fn tap_amp(&mut self, virtual_tank: bool) -> AmpTap {
+        if !self.amp_ready() {
+            return AmpTap::NotReady;
+        }
+        if self.amp_charge < 2 {
+            self.amp_charge += 1;
+            return AmpTap::Charged(self.amp_charge);
+        }
+        self.amp_timer = -20;
+        self.amp_charge = 0;
+        self.glint_phase = 0.0;
+        if !virtual_tank {
+            self.amp_threshold = self.amp_threshold.wrapping_add(200);
+        }
+        AmpTap::Discharged
+    }
+
+    /// The Board supplies the PB65 clock predicate separately from normal
+    /// mouse availability: pause/Tank5/registered alien or Bilaterus suppress
+    /// charging, while movement and animation continue on an active update.
+    pub fn tick_amp(
+        &mut self,
+        charge_clock_allowed: bool,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> FishPetUpdate {
+        assert_eq!(self.kind, FishPetKind::Amp);
+        self.tick_inner(&[], 0, &[], None, charge_clock_allowed, rand_range)
+    }
+
     pub fn tick(
         &mut self,
         aliens: &[PetAlienView],
@@ -429,10 +500,13 @@ impl FishPetState {
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> FishPetUpdate {
         assert!(
-            !matches!(self.kind, FishPetKind::Zorf | FishPetKind::Nimbus),
-            "Zorf and Nimbus need their ordered target views"
+            !matches!(
+                self.kind,
+                FishPetKind::Zorf | FishPetKind::Nimbus | FishPetKind::Amp
+            ),
+            "Zorf, Nimbus and Amp need their subtype updates"
         );
-        self.tick_inner(aliens, guppy_count, &[], None, rand_range)
+        self.tick_inner(aliens, guppy_count, &[], None, false, rand_range)
     }
 
     pub fn tick_zorf(
@@ -442,7 +516,7 @@ impl FishPetState {
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> FishPetUpdate {
         assert_eq!(self.kind, FishPetKind::Zorf, "tick_zorf requires Zorf");
-        self.tick_inner(aliens, 0, hungry, None, rand_range)
+        self.tick_inner(aliens, 0, hungry, None, false, rand_range)
     }
 
     pub fn tick_nimbus(
@@ -462,6 +536,7 @@ impl FishPetState {
                 foods,
                 enemies_registered,
             }),
+            false,
             rand_range,
         )
     }
@@ -506,7 +581,7 @@ impl FishPetState {
                 (self.widget_x + 4, self.widget_y + 2),
             ]);
         }
-        let _motion = self.tick_inner(&[], 0, &[], None, rand_range);
+        let _motion = self.tick_inner(&[], 0, &[], None, false, rand_range);
         ward
     }
 
@@ -516,6 +591,7 @@ impl FishPetState {
         guppy_count: usize,
         hungry: &[ZorfHungryView],
         nimbus: Option<NimbusViews<'_>>,
+        amp_charge_clock_allowed: bool,
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> FishPetUpdate {
         let mut update = FishPetUpdate::default();
@@ -592,14 +668,29 @@ impl FishPetState {
                 update.bomb_at = Some((self.widget_x + 15, self.widget_y + 10));
             }
         }
-        match self.vx {
-            0.0 => self.y += 1.0 / self.speed_mod,
-            1.0 => self.y += 0.75 / self.speed_mod,
-            2.0 => self.y += 0.5 / self.speed_mod,
-            3.0 => self.y += 0.25 / self.speed_mod,
-            _ => {}
+        if self.kind == FishPetKind::Amp && amp_charge_clock_allowed {
+            self.amp_timer = self.amp_timer.wrapping_add(1);
+            update.amp_became_ready = self.amp_timer == self.amp_threshold;
         }
-        self.x = self.x.clamp(10.0, 540.0);
+        if self.kind == FishPetKind::Amp {
+            self.vy = self.vy.clamp(-0.5, 0.5);
+        } else {
+            match self.vx {
+                0.0 => self.y += 1.0 / self.speed_mod,
+                1.0 => self.y += 0.75 / self.speed_mod,
+                2.0 => self.y += 0.5 / self.speed_mod,
+                3.0 => self.y += 0.25 / self.speed_mod,
+                _ => {}
+            }
+        }
+        self.x = self.x.clamp(
+            10.0,
+            if self.kind == FishPetKind::Amp {
+                460.0
+            } else {
+                540.0
+            },
+        );
         self.y = self.y.clamp(
             if self.kind == FishPetKind::Nimbus {
                 320.0
@@ -621,6 +712,12 @@ impl FishPetState {
             self.vx += 0.1;
         }
         self.animate();
+        if self.kind == FishPetKind::Amp && self.turn_ticks == 0 {
+            self.glint_phase += if self.amp_ready() { 0.1 } else { 0.5 };
+            if self.glint_phase >= 1.0 {
+                self.glint_phase = -1.0;
+            }
+        }
         if self.kind == FishPetKind::Gumbo && !aliens.is_empty() && self.turn_ticks == 0 {
             self.glint_phase += 0.1;
             if self.glint_phase >= 1.0 {
@@ -920,7 +1017,7 @@ impl FishPetState {
                 (9 + self.turn_ticks / 2) as u8
             };
         } else {
-            self.swim_counter += if self.kind == FishPetKind::Zorf
+            self.swim_counter += if matches!(self.kind, FishPetKind::Zorf | FishPetKind::Amp)
                 || self.kind == FishPetKind::Shrapnel && self.vx_abs < 3
                 || self.vx_abs <= 1
             {
@@ -973,6 +1070,90 @@ impl FishPetState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn amp_factory_charge_clock_and_three_taps_follow_primary_boundaries() {
+        let mut pet = actor(FishPetKind::Amp);
+        assert_eq!(
+            (pet.amp_timer, pet.amp_threshold, pet.amp_charge),
+            (300, 3000, 0)
+        );
+        assert_eq!(pet.speed_mod, 0.5);
+        assert_eq!(pet.tap_amp(false), AmpTap::NotReady);
+        pet.amp_timer = 2999;
+        assert!(!pet.tick_amp(false, &mut |_| 1).amp_became_ready);
+        assert_eq!(pet.amp_timer, 2999);
+        assert!(pet.tick_amp(true, &mut |_| 1).amp_became_ready);
+        assert!(pet.amp_ready());
+        assert!(!pet.tick_amp(true, &mut |_| 1).amp_became_ready);
+        assert_eq!(pet.tap_amp(false), AmpTap::Charged(1));
+        assert_eq!(pet.tap_amp(false), AmpTap::Charged(2));
+        assert_eq!(pet.tap_amp(false), AmpTap::Discharged);
+        assert_eq!(
+            (pet.amp_timer, pet.amp_threshold, pet.amp_charge),
+            (-20, 3200, 0)
+        );
+        assert_eq!(pet.glint_phase, 0.0);
+        assert_eq!(pet.tap_amp(false), AmpTap::NotReady);
+        pet.validate().unwrap();
+    }
+
+    #[test]
+    fn amp_signed_clock_and_threshold_use_wrapping_dword_arithmetic() {
+        let mut pet = actor(FishPetKind::Amp);
+        pet.amp_timer = i32::MAX;
+        pet.amp_threshold = i32::MAX;
+        assert!(pet.amp_ready());
+        pet.amp_charge = 2;
+        assert_eq!(pet.tap_amp(false), AmpTap::Discharged);
+        assert_eq!(pet.amp_threshold, i32::MIN + 199);
+        pet.amp_timer = i32::MAX;
+        pet.amp_threshold = 3000;
+        assert!(!pet.tick_amp(true, &mut |_| 1).amp_became_ready);
+        assert_eq!(pet.amp_timer, i32::MIN);
+        assert!(!pet.amp_ready());
+        pet.amp_timer = 3000;
+        pet.amp_charge = 2;
+        assert_eq!(pet.tap_amp(true), AmpTap::Discharged);
+        assert_eq!(pet.amp_threshold, 3000);
+    }
+
+    #[test]
+    fn amp_motion_and_hitbox_preserve_secondary_geometry() {
+        let mut pet = actor(FishPetKind::Amp);
+        pet.x = 500.0;
+        pet.y = 200.0;
+        pet.widget_x = 500;
+        pet.widget_y = 200;
+        pet.published_x = 500;
+        pet.published_y = 200;
+        pet.vx = 0.0;
+        pet.vy = 3.0;
+        pet.movement_state = 3;
+        pet.special_timer = 0;
+        pet.tick_amp(false, &mut |_| 1);
+        assert_eq!(pet.vy, 0.5);
+        assert_eq!(pet.x, 460.0);
+        assert!(pet.amp_hitbox_contains(pet.widget_x, pet.widget_y));
+        assert!(pet.amp_hitbox_contains(pet.widget_x + 159, pet.widget_y + 54));
+        assert!(!pet.amp_hitbox_contains(pet.widget_x + 160, pet.widget_y));
+        assert!(!pet.amp_hitbox_contains(pet.widget_x, pet.widget_y + 55));
+        pet.validate().unwrap();
+    }
+
+    #[test]
+    fn amp_save_rejects_wrong_subtype_fields_and_excess_taps() {
+        let mut pet = actor(FishPetKind::Amp);
+        pet.validate().unwrap();
+        pet.amp_charge = 3;
+        assert!(pet.validate().is_err());
+        pet.amp_charge = 0;
+        pet.speed_mod = 1.8;
+        assert!(pet.validate().is_err());
+        let mut other = actor(FishPetKind::Itchy);
+        other.amp_threshold = 3000;
+        assert!(other.validate().is_err());
+    }
 
     #[test]
     fn meryl_note_clock_freezes_on_registration_and_song_ends_at_1400() {

@@ -114,7 +114,10 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_NIMBUS",
     "IMAGE_SCL_NIMBUS",
     "IMAGE_AMP",
+    "IMAGE_AMPCHARGE",
     "IMAGE_SCL_AMP",
+    "IMAGE_GASH",
+    "IMAGE_SCL_GASH",
     "IMAGE_ULTRA",
     "IMAGE_SCL_ULTRA",
     "IMAGE_BILATERUS",
@@ -170,6 +173,9 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_RATTLE",
     "SOUND_SPLASHBIG",
     "SOUND_SONAR",
+    "SOUND_EEL1",
+    "SOUND_EEL2",
+    "SOUND_EEL3",
 ];
 
 const ADDITIVE_VERTEX: &str = r#"#version 100
@@ -475,7 +481,20 @@ impl Presentation {
     fn play(&self, events: &[Event], music: Option<&MusicOwner>) -> Vec<MusicReport> {
         let mut reports = Vec::new();
         for event in events {
+            // Amp calls Die(false) for each victim, followed by one death
+            // sound for the entire discharge (PB66/W1 HandleMouseDown).
+            if let Event::FishDied { fish_id, .. } = event
+                && events.iter().any(|other| {
+                    matches!(other,
+                    Event::AmpDischarged { victim_ids, .. } if victim_ids.contains(fish_id))
+                })
+            {
+                continue;
+            }
             let id = match event {
+                Event::AmpReady { .. } => "SOUND_EEL2",
+                Event::AmpCharged { .. } => "SOUND_EEL3",
+                Event::AmpDischarged { .. } => "SOUND_EEL1",
                 Event::FoodDropped { potion: false, .. } => "SOUND_DROPFOOD",
                 Event::PotionExploded { .. } => "SOUND_EXPLOSION1",
                 Event::FoodEaten { .. }
@@ -640,6 +659,11 @@ impl Presentation {
             for effect_id in std::iter::once(id)
                 .chain(matches!(event, Event::EnergyBallRemoved { .. }).then_some("SOUND_EXPLODE"))
                 .chain(matches!(event, Event::UltraBought { .. }).then_some("SOUND_SPLASHBIG"))
+                .chain(
+                    matches!(event, Event::AmpDischarged { victim_ids, .. }
+                    if !victim_ids.is_empty())
+                    .then_some("SOUND_DIE"),
+                )
                 .chain(
                     matches!(
                         event,
@@ -1012,12 +1036,18 @@ impl Presentation {
                 FishPetKind::Gumbo => "IMAGE_GUMBO",
                 FishPetKind::Blip => "IMAGE_BLIP",
                 FishPetKind::Nimbus => "IMAGE_NIMBUS",
+                FishPetKind::Amp => "IMAGE_AMP",
+            };
+            let (cell_width, cell_height) = if pet.kind == FishPetKind::Amp {
+                (160.0, 60.0)
+            } else {
+                (80.0, 80.0)
             };
             let source = Rect::new(
-                f32::from(pet.sprite_frame()) * 80.0,
-                f32::from(pet.sprite_row(aliens_present)) * 80.0,
-                80.0,
-                80.0,
+                f32::from(pet.sprite_frame()) * cell_width,
+                f32::from(pet.sprite_row(aliens_present)) * cell_height,
+                cell_width,
+                cell_height,
             );
             self.sprite(
                 image,
@@ -1028,6 +1058,24 @@ impl Presentation {
                 1.0,
                 1.0,
             );
+            if pet.kind == FishPetKind::Amp
+                && (pet.amp_ready() || (pet.amp_timer < 0 && !aliens_present))
+            {
+                let (green, blue) = match pet.amp_charge {
+                    0 => (255, 200),
+                    1 => (200, 100),
+                    _ => (100, 100),
+                };
+                let alpha = (pet.glint_phase.abs() * 2.0 * 255.0).min(255.0) as u8;
+                self.additive_tinted_sprite(
+                    "IMAGE_AMPCHARGE",
+                    pet.widget_x as f32,
+                    pet.widget_y as f32,
+                    source,
+                    pet.facing_right(),
+                    Color::from_rgba(255, green, blue, alpha),
+                );
+            }
             if pet.kind == FishPetKind::Shrapnel && pet.shrapnel_flash_alpha() > 0 {
                 self.additive_sprite(
                     image,
@@ -2374,6 +2422,7 @@ impl Presentation {
                 PetKind::Rhubarb => ("IMAGE_RHUBARB", 90.0, updates % 40 / 4),
                 PetKind::Nimbus => ("IMAGE_NIMBUS", 90.0, updates % 20 / 2),
                 PetKind::Amp => ("IMAGE_AMP", 100.0, updates % 20 / 2),
+                PetKind::Gash => ("IMAGE_GASH", 90.0, updates % 20 / 2),
             };
             let (preview_x, preview_width, preview_height) = if pet == PetKind::Amp {
                 (236.0, 160.0, 60.0)
@@ -2421,6 +2470,7 @@ impl Presentation {
                     PetKind::Rhubarb => "RHUBARB the Hermit Crab",
                     PetKind::Nimbus => "NIMBUS the Manta Ray",
                     PetKind::Amp => "AMP the Electric Eel",
+                    PetKind::Gash => "GASH the Shark",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -2509,6 +2559,11 @@ impl Presentation {
                     "AMP can electrocute your",
                     "entire tank, killing your fish",
                     "and turning them into diamonds.",
+                ],
+                PetKind::Gash => [
+                    "GASH helps fight aliens.",
+                    "He occasionally eats a guppy",
+                    "while the tank is peaceful.",
                 ],
             };
             for (index, line) in description.iter().enumerate() {
@@ -2599,6 +2654,7 @@ impl Presentation {
                 PetKind::Rhubarb => "IMAGE_SCL_RHUBARB",
                 PetKind::Nimbus => "IMAGE_SCL_NIMBUS",
                 PetKind::Amp => "IMAGE_SCL_AMP",
+                PetKind::Gash => "IMAGE_SCL_GASH",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
@@ -2802,6 +2858,16 @@ impl Presentation {
                         "AMP can electrocute your",
                         "entire tank, killing your fish",
                         "and turning them into diamonds.",
+                    ],
+                    90.0,
+                ),
+                PetKind::Gash => (
+                    "IMAGE_GASH",
+                    "GASH the Shark",
+                    [
+                        "GASH helps fight aliens.",
+                        "He occasionally eats a guppy",
+                        "while the tank is peaceful.",
                     ],
                     90.0,
                 ),
