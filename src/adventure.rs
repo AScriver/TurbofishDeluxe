@@ -5,7 +5,9 @@
 use serde::{Deserialize, Serialize};
 
 pub use crate::sim::PetKind;
-use crate::sim::{Action, AdventureState, EGG_PRICE, Event, Rejection, SECOND_STAGE_EGG_PRICE};
+use crate::sim::{
+    Action, AdventureState, EGG_PRICE, Event, Rejection, SECOND_STAGE_EGG_PRICE, TICK_MS,
+};
 
 const HATCH_OPEN_CHECK: u32 = 141;
 const HATCH_READY_CHECK: u32 = 170;
@@ -15,11 +17,23 @@ pub struct AdventureProgress {
     pub tank: u8,
     pub level: u8,
     pub unlocked_pets: Vec<PetKind>,
+    /// Missing on old format-two saves: their completed board was discarded,
+    /// so its active time cannot be reconstructed from the session clock.
+    #[serde(default)]
+    pub first_stage_best_seconds: Option<u64>,
 }
 
 impl AdventureProgress {
     pub fn has_pet(&self, pet: PetKind) -> bool {
         self.unlocked_pets.contains(&pet)
+    }
+
+    fn record_first_stage_time(&mut self, seconds: u64) -> u64 {
+        let best = self
+            .first_stage_best_seconds
+            .map_or(seconds, |previous| previous.min(seconds));
+        self.first_stage_best_seconds = Some(best);
+        best
     }
 }
 
@@ -59,6 +73,7 @@ impl AdventureSession {
                 tank: 1,
                 level: 1,
                 unlocked_pets: Vec::new(),
+                first_stage_best_seconds: None,
             },
             board: Some(board),
             phase: AdventurePhase::Playing,
@@ -70,21 +85,29 @@ impl AdventureSession {
 
     /// Upgrade a version-one save containing only the first board. A completed
     /// board is converted to durable progress and a pending Stinky hatch.
-    pub fn from_legacy_board(board: AdventureState) -> Result<Self, MigrationError> {
+    pub fn from_legacy_board(mut board: AdventureState) -> Result<Self, MigrationError> {
         if (board.tank, board.level) != (1, 1) {
             return Err(MigrationError::UnsupportedBoard);
         }
         if board.eggs > 3 || board.victory != (board.eggs == 3) {
             return Err(MigrationError::InconsistentEggs);
         }
+        if board.egg_price != EGG_PRICE || !board.pets.is_empty() || board.stinky.is_some() {
+            return Err(MigrationError::InvalidBoard);
+        }
         let next_seed = board.transition_seed();
         let ticks = board.tick;
         if board.victory {
+            let seconds = elapsed_seconds(&board);
+            // Terminal settlement is not carried into the next tank. Retire
+            // this board once, just as for an ordinary first-stage completion.
+            settle_collecting_coins(&mut board);
             let session = Self {
                 progress: AdventureProgress {
                     tank: 1,
                     level: 2,
                     unlocked_pets: vec![PetKind::Stinky],
+                    first_stage_best_seconds: Some(seconds),
                 },
                 board: None,
                 phase: AdventurePhase::Hatch {
@@ -105,6 +128,7 @@ impl AdventureSession {
                 tank: 1,
                 level: 1,
                 unlocked_pets: Vec::new(),
+                first_stage_best_seconds: None,
             },
             board: Some(board),
             phase: AdventurePhase::Playing,
@@ -141,7 +165,7 @@ impl AdventureSession {
                 {
                     return Err("playing board disagrees with Adventure progress".into());
                 }
-                if board.level == 1 && !board.pets.is_empty() {
+                if board.level == 1 && (!board.pets.is_empty() || board.stinky.is_some()) {
                     return Err("invalid first-stage board".into());
                 }
                 let expected_egg_price = if board.level == 1 {
@@ -152,8 +176,13 @@ impl AdventureSession {
                 if board.egg_price != expected_egg_price {
                     return Err("wrong egg price for Adventure stage".into());
                 }
-                if board.level == 2 && !board.pets.contains(&PetKind::Stinky) {
-                    return Err("Stinky missing from second-stage roster".into());
+                if board.level == 2
+                    && (board.pets.as_slice() != [PetKind::Stinky] || board.stinky.is_none())
+                {
+                    return Err("second-stage roster and live Stinky disagree".into());
+                }
+                if let Some(stinky) = &board.stinky {
+                    stinky.validate()?;
                 }
                 Ok(())
             }
@@ -166,6 +195,7 @@ impl AdventureSession {
                     || board.egg_price != EGG_PRICE
                     || board.eggs >= 3
                     || !board.pets.is_empty()
+                    || board.stinky.is_some()
                 {
                     return Err("rescue board disagrees with Adventure progress".into());
                 }
@@ -211,7 +241,6 @@ impl AdventureSession {
                     if *action == Action::Continue {
                         let fish_id = board.spawn_bought_guppy();
                         self.phase = AdventurePhase::Playing;
-                        entered_playing = true;
                         events.push(Event::RescueGuppyGranted {
                             tick: self.ticks,
                             fish_id,
@@ -263,6 +292,9 @@ impl AdventureSession {
             AdventurePhase::Playing if !entered_playing => {
                 if let Some(board) = &mut self.board {
                     if board.level == 1 && !board.has_live_fish() {
+                        // Board::Update increments the active clock before it
+                        // discovers the empty live list and pauses the widgets.
+                        board.advance_board_clock();
                         self.phase = AdventurePhase::FirstTankRescue;
                         events.push(Event::FirstTankRescueStarted { tick: self.ticks });
                     } else {
@@ -298,7 +330,20 @@ impl AdventureSession {
     }
 
     fn finish_first_stage(&mut self, events: &mut Vec<Event>) {
-        let board = self.board.take().expect("completion retains its board");
+        let mut board = self.board.take().expect("completion retains its board");
+        let seconds = elapsed_seconds(&board);
+        let (settled_coin_ids, settled_amount) = settle_collecting_coins(&mut board);
+        let personal_best_seconds = self.progress.record_first_stage_time(seconds);
+        events.push(Event::StageResultRecorded {
+            tick: self.ticks,
+            tank: board.tank,
+            level: board.level,
+            seconds,
+            settled_coin_ids,
+            settled_amount,
+            final_balance: board.balance,
+            personal_best_seconds,
+        });
         self.next_seed = board.transition_seed();
         self.progress.level = 2;
         self.progress.unlocked_pets.push(PetKind::Stinky);
@@ -318,10 +363,171 @@ impl AdventureSession {
     }
 }
 
+fn elapsed_seconds(board: &AdventureState) -> u64 {
+    board.tick.saturating_mul(u64::from(TICK_MS)) / 1000
+}
+
+/// W1 Unk04/Unk10 settle only player-claimed objects before retiring the board.
+/// Remove those coins in Rust as well, so the helper cannot credit them twice.
+/// Ordinary coin values are positive; cap money exactly as the source does.
+fn settle_collecting_coins(board: &mut AdventureState) -> (Vec<u64>, i32) {
+    let mut ids = Vec::new();
+    let mut amount = 0;
+    board.coins.retain(|coin| {
+        if coin.collecting {
+            ids.push(coin.id);
+            amount += coin.kind.value();
+            false
+        } else {
+            true
+        }
+    });
+    board.balance = (board.balance + amount).clamp(0, 9_999_999);
+    (ids, amount)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sim::SECOND_STAGE_EGG_PRICE;
+    use crate::sim::{Coin, CoinKind, SECOND_STAGE_EGG_PRICE};
+
+    #[test]
+    fn first_stage_score_uses_active_board_ticks_and_retains_strict_best() {
+        for (ticks, expected) in [(35, 0), (36, 1), (250, 7)] {
+            let mut board = AdventureState::new_adventure(42);
+            board.tick = ticks;
+            assert_eq!(elapsed_seconds(&board), expected);
+        }
+        let mut progress = AdventureSession::new(42).progress;
+        assert_eq!(progress.record_first_stage_time(12), 12);
+        assert_eq!(progress.record_first_stage_time(10), 10);
+        assert_eq!(progress.record_first_stage_time(10), 10);
+        assert_eq!(progress.record_first_stage_time(11), 10);
+        assert_eq!(progress.record_first_stage_time(0), 0);
+        assert_eq!(progress.first_stage_best_seconds, Some(0));
+    }
+
+    #[test]
+    fn completion_silently_settles_only_claimed_coins_and_records_once() {
+        let mut session = AdventureSession::new(42);
+        for _ in 0..250 {
+            session.step(&[]);
+        }
+        let board = session.board.as_mut().unwrap();
+        board.egg_unlocked = true;
+        board.eggs = 2;
+        board.coins = [
+            (41, CoinKind::Silver, true),
+            (42, CoinKind::Gold, true),
+            (43, CoinKind::Gold, false),
+        ]
+        .into_iter()
+        .map(|(id, kind, collecting)| Coin {
+            id,
+            kind,
+            collecting,
+            x: 200.0,
+            y: 200.0,
+            frame: 0,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+        })
+        .collect();
+        let events = session.apply_actions(&[Action::BuyEgg, Action::BuyEgg]);
+        let results: Vec<_> = events
+            .iter()
+            .filter(|event| matches!(event, Event::StageResultRecorded { .. }))
+            .collect();
+        assert_eq!(results.len(), 1);
+        assert!(matches!(results[0], Event::StageResultRecorded {
+            tank: 1, level: 1, seconds: 7, settled_coin_ids, settled_amount: 50,
+            final_balance: 100, personal_best_seconds: 7, ..
+        } if settled_coin_ids == &[41, 42]));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::CoinCredited { .. }))
+        );
+        assert_eq!(session.progress.first_stage_best_seconds, Some(7));
+        assert!(session.board.is_none());
+        for _ in 0..200 {
+            assert!(
+                !session
+                    .step(&[])
+                    .iter()
+                    .any(|event| matches!(event, Event::StageResultRecorded { .. }))
+            );
+        }
+        assert_eq!(session.progress.first_stage_best_seconds, Some(7));
+    }
+
+    #[test]
+    fn third_egg_can_use_claimed_in_flight_funds_before_silent_settlement() {
+        let mut session = AdventureSession::new(42);
+        let board = session.board.as_mut().unwrap();
+        board.balance = 135;
+        board.eggs = 2;
+        board.egg_unlocked = true;
+        board.coins.push(Coin {
+            id: 41,
+            x: 200.0,
+            y: 200.0,
+            kind: CoinKind::Silver,
+            frame: 0,
+            collecting: true,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+        });
+        let events = session.apply_actions(&[Action::BuyEgg]);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::EggBought {
+                pieces: 3,
+                balance: -15,
+                ..
+            }
+        )));
+        assert!(events.iter().any(|event| matches!(event,
+            Event::StageResultRecorded {
+                settled_coin_ids, settled_amount: 15, final_balance: 0, ..
+            } if settled_coin_ids == &[41])));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::CoinCredited { .. }))
+        );
+        assert!(session.board.is_none());
+        assert_eq!(
+            session.phase,
+            AdventurePhase::Hatch {
+                pet: PetKind::Stinky,
+                updates: 0
+            }
+        );
+    }
+
+    #[test]
+    fn rescue_detection_counts_then_pause_and_no_time_input_preserve_score_clock() {
+        let mut session = AdventureSession::new(42);
+        session.ticks = 35;
+        let board = session.board.as_mut().unwrap();
+        board.tick = 35;
+        board.fish.clear();
+        session.step(&[]);
+        assert_eq!(session.phase, AdventurePhase::FirstTankRescue);
+        assert_eq!(session.board.as_ref().unwrap().tick, 36);
+        assert_eq!(elapsed_seconds(session.board.as_ref().unwrap()), 1);
+        for _ in 0..100 {
+            session.step(&[]);
+        }
+        assert_eq!(session.board.as_ref().unwrap().tick, 36);
+        session.apply_actions(&[Action::Continue]);
+        assert_eq!(session.board.as_ref().unwrap().tick, 36);
+        assert_eq!(session.phase, AdventurePhase::Playing);
+        session.step(&[]);
+        assert_eq!(session.board.as_ref().unwrap().tick, 37);
+        assert!(session.validate().is_ok());
+    }
 
     fn buy_three_eggs() -> AdventureSession {
         let mut session = AdventureSession::new(0x45a1);
@@ -478,7 +684,7 @@ mod tests {
         );
         assert_eq!(session.phase, AdventurePhase::Playing);
         assert!(session.validate().is_ok());
-        let paused_tick = session.board.as_ref().unwrap().tick;
+        let death_tick = session.board.as_ref().unwrap().tick;
         assert_eq!(session.board.as_ref().unwrap().dead_fish.len(), 2);
         let rescue = session.step(&[]);
         assert!(
@@ -487,6 +693,7 @@ mod tests {
                 .any(|event| matches!(event, Event::FirstTankRescueStarted { .. }))
         );
         assert_eq!(session.phase, AdventurePhase::FirstTankRescue);
+        let paused_tick = death_tick + 1;
         assert_eq!(session.board.as_ref().unwrap().tick, paused_tick);
         assert!(
             session
@@ -512,7 +719,7 @@ mod tests {
         let board = session.board.as_ref().unwrap();
         assert_eq!(
             (board.balance, board.eggs, board.tick),
-            (35, 1, paused_tick)
+            (35, 1, paused_tick + 1)
         );
         assert_eq!(board.fish.iter().filter(|fish| fish.alive).count(), 1);
         assert!(board.fish.iter().find(|fish| fish.alive).unwrap().beginner);

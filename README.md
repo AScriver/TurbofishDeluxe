@@ -2,9 +2,9 @@
 
 An intended standalone Rust reimplementation of Insaniquarium Deluxe, targeting Windows first and reading assets from each user's owned installation. This is an unofficial fan project, unaffiliated with the game's developers or publisher.
 
-The workflow is installed and the first-tank Rust feeding/growth/coin loop passed a normal-speed window run. Fish facing was corrected and visually checked. Full gameplay fidelity remains unverified. The installed game binaries are authoritative and WinFish is secondary. See [STATUS.md](STATUS.md) for current evidence and gaps.
+The workflow is installed. Normal-speed Rust runs cover feeding/growth/coins, earned first-stage completion, Stinky collection and save/reload. Fish facing was corrected and visually checked. Full gameplay fidelity remains unverified. The installed game binaries are authoritative and WinFish is secondary. See [STATUS.md](STATUS.md) for current evidence and gaps.
 
-The complete runtime goal remains in [requirements](docs/requirements.md). The [coverage checklist](docs/compatibility.md) records missing systems; the next integrated task is [first Adventure completion](docs/DESIGN.md#m2-next-integrated-outcome).
+The complete runtime goal remains in [requirements](docs/requirements.md). The [coverage checklist](docs/compatibility.md) records missing systems; the next integrated task is [Adventure1-2 upgrades, combat and Niko](docs/adventure-1-2.md).
 
 ## Start here
 
@@ -42,7 +42,7 @@ That host helper requires PSScriptAnalyzer; it was available for setup. It is op
 
 ## Build and run
 
-Use the installed Rust1.95 MSVC toolchain from PowerShell7. Direct dependencies and transitives are pinned. Formatting, warnings-as-errors lint,35 regression tests and native build passed. Identified window reports cover the [first loop](docs/playtests/2026-10-08-m1-03.md) and [first-stage completion/persistence/rescue](docs/playtests/2026-10-08-m2-01.md); full retail fidelity remains open.
+Use the installed Rust1.95 MSVC toolchain from PowerShell7. Direct dependencies and transitives are pinned. Formatting, warnings-as-errors lint,50 regression tests and native build passed. Identified window reports cover the [first loop](docs/playtests/2026-10-08-m1-03.md), [first-stage completion/persistence/rescue](docs/playtests/2026-10-08-m2-01.md) and [Stinky/score/save checks](docs/playtests/2026-10-08-stinky-score-01.md); full retail fidelity remains open.
 
 ```powershell
 $cargoExecutable = (Get-Command cargo).Source
@@ -53,7 +53,7 @@ $runtimeArguments = @('--new-game', '--seed', '42')
 & $runtimeExecutable @runtimeArguments
 ```
 
-Steam discovery is automatic; pass `--game-dir <directory>` if needed. Project saves use `%LOCALAPPDATA%/TurbofishDeluxe`, separate from retail saves; use `--save-dir` for isolated checks. Escape pauses; S saves; Q while paused or closing the window saves/exits. Version1 project snapshots migrate to the progression save. Hatch/rescue Continue is clickable (Enter also works); holding the hatch background skips its intro. First-stage completion and fresh1-2 initialization were exercised. Later-stage systems remain incomplete.
+Steam discovery is automatic; pass `--game-dir <directory>` if needed. Project saves use `%LOCALAPPDATA%/TurbofishDeluxe`, separate from retail saves; use `--save-dir` for isolated checks. Escape pauses; S saves; Q while paused or closing the window saves/exits. Version1/2 project saves migrate atomically to format3; old missing Stinky motion is initialized explicitly, and unknown old scores stay unknown. Hatch/rescue Continue is clickable (Enter also works); holding the hatch background skips its intro. First-stage completion and Stinky's1-2 collection were exercised. Later-stage systems remain incomplete.
 
 `--evidence-dir` writes identity/events/captures and optional complete state snapshots. Current snapshots include `state` (board or null), `phase`, `progress` and `session_tick`; board ticks reset on a fresh stage while session ticks remain monotonic. The event log includes both time scopes. These observation files are private, separate from authoritative project saves.
 

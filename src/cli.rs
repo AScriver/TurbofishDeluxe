@@ -95,21 +95,56 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
+pub const SAVE_FORMAT_VERSION: u32 = 3;
+
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
+    Ok(decode_save_with_migration(bytes)?.0)
+}
+
+fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), Box<dyn Error>> {
     let value: serde_json::Value = serde_json::from_slice(bytes)?;
-    let session = match value.get("format_version").and_then(|value| value.as_u64()) {
+    let (session, migrated) = match value.get("format_version").and_then(|value| value.as_u64()) {
         Some(1) => {
             let legacy: LegacyProjectSave = serde_json::from_value(value)?;
-            AdventureSession::from_legacy_board(legacy.state)
-                .map_err(|failure| format!("Cannot migrate project save: {failure:?}"))?
+            (
+                AdventureSession::from_legacy_board(legacy.state)
+                    .map_err(|failure| format!("Cannot migrate project save: {failure:?}"))?,
+                true,
+            )
         }
-        Some(2) => serde_json::from_value::<ProjectSave>(value)?.session,
+        Some(2) => {
+            let missing_pet_state = value
+                .pointer("/session/board")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|board| !board.contains_key("stinky"));
+            let mut session = serde_json::from_value::<ProjectSave>(value)?.session;
+            if missing_pet_state && let Some(board) = &mut session.board {
+                board.initialize_missing_stinky();
+            }
+            (session, true)
+        }
+        Some(3) => {
+            let has_score_field = value
+                .pointer("/session/progress")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|progress| progress.contains_key("first_stage_best_seconds"));
+            let missing_pet_field = value
+                .pointer("/session/board")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|board| !board.contains_key("stinky"));
+            if !has_score_field || missing_pet_field {
+                return Err(
+                    "Incomplete format-three save; required state fields are missing".into(),
+                );
+            }
+            (serde_json::from_value::<ProjectSave>(value)?.session, false)
+        }
         _ => {
             return Err("Unsupported project save version; original saves are not imported".into());
         }
     };
     session.validate()?;
-    Ok(session)
+    Ok((session, migrated))
 }
 
 pub fn load_session(options: &Options) -> Result<AdventureSession, Box<dyn Error>> {
@@ -117,7 +152,11 @@ pub fn load_session(options: &Options) -> Result<AdventureSession, Box<dyn Error
     if options.new_game || !path.exists() {
         return Ok(AdventureSession::new(options.seed));
     }
-    decode_save(&std::fs::read(path)?)
+    let (session, migrated) = decode_save_with_migration(&std::fs::read(path)?)?;
+    if migrated {
+        save_session(options, &session)?;
+    }
+    Ok(session)
 }
 
 pub fn save_session(options: &Options, session: &AdventureSession) -> Result<(), Box<dyn Error>> {
@@ -126,7 +165,7 @@ pub fn save_session(options: &Options, session: &AdventureSession) -> Result<(),
     write_json(
         &options.save_dir.join("adventure.json"),
         &ProjectSave {
-            format_version: 2,
+            format_version: SAVE_FORMAT_VERSION,
             session: session.clone(),
         },
     )

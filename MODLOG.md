@@ -2,6 +2,16 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-08 — Implement Stinky and first-stage score bookkeeping
+
+**Changed:** Added serializable live Stinky motion/animation/collection, first-stage active-clock personal best, silent collecting-coin retirement settlement, aggregate claimed-value purchasing and atomic format3 saves/migrations. Corrected rescue clock boundaries while retaining prior execution records. Added the [identified execution report](docs/playtests/2026-10-08-stinky-score-01.md) and next [Adventure1-2 contract](docs/adventure-1-2.md); coverage/handoff/provenance remain current.
+
+**Evidence/verification:** Installed payload PB09–PB12 confirms20/150 ordinary bottom thresholds, Stinky's40-center nearest metric and strict16..56 contact, and aggregate payment/raw subtraction. The nearest metric deliberately corrects W1's suspicious offset. Format/strict Clippy/50 tests/native build passed. Actual earned1-2 migration/feeding-only play produced silver14; Stinky caught it once at board582 and credited15. Paired frames showed appropriate headings/turn. Motion/RNG survived reload. A fresh no-rescue run earned three eggs and recorded126 active seconds at4508 ticks; score/hatch reload passed. Installation digests unchanged; four owned processes exited. Workflow links/anchors,49 ignore cases, whitespace and PowerShell validation passed on18 documents.
+
+**Failures/adjudication:** Review exposed omitted pending value, malformed legacy completion and ambiguous modern-state repair; corrected with primary support and strict format3 validation. Whole-JSON reload comparison initially failed on six f32 decimal representations; bit comparison proved unchanged typed state, with the initial failed check retained. Restore existing DESIGN heading anchors after the workflow checker caught renamed targets. One private analysis log was overwritten during narrowing; rerun into a distinct retained log before relying on that claim.
+
+**Limits/next:** Terminal pending-coin settlement has regression evidence, not an actual window example. Score caller, exact pet movement/cross-list order and retail fidelity remain partly secondary; full hatch effects, audible/music and original/human comparisons are untested. Commit this checkpoint (excluding the new unregistered alien module), then continue1-2 upgrades/combat/Niko automatically. The isolated new alien work does not inherit this checkpoint's gate.
+
 ## 2026-10-08 — Earn first victory and persist progression
 
 **Changed:** Added an Adventure session around the preserved board: one Stinky reward/hatch, fresh1-2 initialization, free first-level rescue, atomic format2 progression saves and format1 migration. Actual held-hatch input, immediate rescue checkpoint, normal-close saving and queued-input draining preserve accepted actions without adding time. Corrected source-path records and added the identified [M2 window report](docs/playtests/2026-10-08-m2-01.md).

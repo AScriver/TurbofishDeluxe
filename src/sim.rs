@@ -11,6 +11,8 @@ pub const FOOD_PRICE: i32 = 5;
 pub const GUPPY_PRICE: i32 = 100;
 pub const EGG_PRICE: i32 = 150;
 pub const SECOND_STAGE_EGG_PRICE: i32 = 500;
+const FIRST_STAGE_COIN_BOTTOM_TICKS: u16 = 150;
+const SECOND_STAGE_COIN_BOTTOM_TICKS: u16 = 20;
 
 const fn first_stage_egg_price() -> i32 {
     EGG_PRICE
@@ -19,6 +21,87 @@ const fn first_stage_egg_price() -> i32 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PetKind {
     Stinky,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StinkyOrigin {
+    StageStart,
+    LegacyV2Resume,
+}
+
+/// Live first Adventure pet. The source stores motion and animation on the
+/// pet object, separately from the profile's unlocked-pet roster.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StinkyState {
+    pub x: f64,
+    pub y: f64,
+    pub vx: f64,
+    pub vy: f64,
+    pub target_vx: f64,
+    pub previous_vx: f64,
+    pub frame: u8,
+    pub movement_state: u8,
+    pub movement_state_change_timer: u16,
+    pub chase_timer: u16,
+    pub movement_animation_timer: u8,
+    pub turn_animation_timer: i8,
+    pub specialty_timer: u8,
+    pub angry_timer: u16,
+    pub random_timer: u16,
+    pub origin: StinkyOrigin,
+}
+
+impl StinkyState {
+    /// Validate a saved first-tank pet without rejecting the small position
+    /// overshoot possible after the source clamps before integrating velocity.
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.x.is_finite()
+            || !self.y.is_finite()
+            || !self.vx.is_finite()
+            || !self.vy.is_finite()
+            || !self.target_vx.is_finite()
+            || !self.previous_vx.is_finite()
+            || !(0.0..=560.0).contains(&self.x)
+            || !(0.0..=480.0).contains(&self.y)
+            || self.vx.abs() > 10.0
+            || self.vy.abs() > 10.0
+            || self.target_vx.abs() > 10.0
+            || self.previous_vx.abs() > 10.0
+        {
+            return Err("invalid Stinky motion".into());
+        }
+        if self.frame >= 10
+            || !(-20..=20).contains(&self.turn_animation_timer)
+            || self.specialty_timer > 9
+            || self.movement_state > 9
+            || self.movement_animation_timer >= 40
+            || self.movement_state_change_timer > 20
+            || !(250..500).contains(&self.random_timer)
+        {
+            return Err("invalid Stinky animation or movement counter".into());
+        }
+        Ok(())
+    }
+
+    pub fn sprite_row(&self) -> u8 {
+        if self.specialty_timer > 0 {
+            2
+        } else if self.turn_animation_timer != 0 {
+            1
+        } else {
+            0
+        }
+    }
+
+    pub fn facing_right(&self) -> bool {
+        if self.turn_animation_timer != 0 {
+            self.turn_animation_timer > 0
+        } else if self.vx.abs() >= 1.0 {
+            self.vx >= 0.0
+        } else {
+            self.previous_vx >= 0.0
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -263,6 +346,13 @@ pub enum Event {
         amount: i32,
         balance: i32,
     },
+    PetCollectedCoin {
+        tick: u64,
+        pet: PetKind,
+        coin_id: u64,
+        amount: i32,
+        balance: i32,
+    },
     EggBought {
         tick: u64,
         pieces: u8,
@@ -272,6 +362,16 @@ pub enum Event {
         tick: u64,
         next_tank: u8,
         next_level: u8,
+    },
+    StageResultRecorded {
+        tick: u64,
+        tank: u8,
+        level: u8,
+        seconds: u64,
+        settled_coin_ids: Vec<u64>,
+        settled_amount: i32,
+        final_balance: i32,
+        personal_best_seconds: u64,
     },
     FirstTankRescueStarted {
         tick: u64,
@@ -319,6 +419,8 @@ pub struct AdventureState {
     pub egg_price: i32,
     #[serde(default)]
     pub pets: Vec<PetKind>,
+    #[serde(default)]
+    pub stinky: Option<StinkyState>,
     pub fish: Vec<Fish>,
     pub dead_fish: Vec<DeadFish>,
     pub food: Vec<Food>,
@@ -330,7 +432,13 @@ pub struct AdventureState {
 
 impl AdventureState {
     pub fn new_adventure(seed: u64) -> Self {
-        let mut state = Self {
+        let mut state = Self::empty_board(seed);
+        state.spawn_starter_guppies(true);
+        state
+    }
+
+    fn empty_board(seed: u64) -> Self {
+        Self {
             tick: 0,
             tank: 1,
             level: 1,
@@ -341,6 +449,7 @@ impl AdventureState {
             egg_unlocked: false,
             egg_price: EGG_PRICE,
             pets: Vec::new(),
+            stinky: None,
             fish: Vec::new(),
             dead_fish: Vec::new(),
             food: Vec::new(),
@@ -352,28 +461,66 @@ impl AdventureState {
             } else {
                 seed
             },
-        };
-        for _ in 0..2 {
-            let x = state.rand_range(520) as f32 + 20.0;
-            let y = state.rand_range(265) as f32 + 105.0;
-            let mut fish = state.make_fish(x, y, true, false);
-            fish.food_ate = 2;
-            state.fish.push(fish);
         }
-        state
     }
 
-    /// Stage 1-2 starts afresh from the progressed profile. Its pet roster is
-    /// recorded, but Stinky's ability and the alien/upgrade rules await M3.
+    fn spawn_starter_guppies(&mut self, beginner: bool) {
+        for _ in 0..2 {
+            let x = self.rand_range(520) as f32 + 20.0;
+            let y = self.rand_range(265) as f32 + 105.0;
+            let mut fish = self.make_fish(x, y, beginner, false);
+            fish.food_ate = 2;
+            self.fish.push(fish);
+        }
+    }
+
+    /// Stage 1-2 starts afresh from the progressed profile. The unlocked pet
+    /// spawns before the two guppies, as in Board::StartGame.
     pub fn new_second_stage(seed: u64) -> Self {
-        let mut state = Self::new_adventure(seed);
+        let mut state = Self::empty_board(seed);
         state.level = 2;
         state.egg_price = SECOND_STAGE_EGG_PRICE;
         state.pets.push(PetKind::Stinky);
-        for fish in &mut state.fish {
-            fish.beginner = false;
-        }
+        state.stinky = Some(state.spawn_stinky(StinkyOrigin::StageStart));
+        state.spawn_starter_guppies(false);
         state
+    }
+
+    /// Old v2 project saves stored the roster but no live pet object. This
+    /// creates a fresh deterministic state at the load boundary; it cannot
+    /// recover where Stinky historically was in that save.
+    pub fn initialize_missing_stinky(&mut self) -> bool {
+        if (self.tank, self.level) != (1, 2)
+            || !self.pets.contains(&PetKind::Stinky)
+            || self.stinky.is_some()
+        {
+            return false;
+        }
+        self.stinky = Some(self.spawn_stinky(StinkyOrigin::LegacyV2Resume));
+        true
+    }
+
+    fn spawn_stinky(&mut self, origin: StinkyOrigin) -> StinkyState {
+        let x = self.rand_range(265) as f64 + 105.0;
+        let _unused_y = self.rand_range(520) + 20;
+        StinkyState {
+            x,
+            y: 360.0,
+            vx: 0.0,
+            vy: 0.0,
+            target_vx: 0.0,
+            previous_vx: 1.0,
+            frame: 0,
+            movement_state: self.rand_range(10) as u8,
+            movement_state_change_timer: 0,
+            chase_timer: 40,
+            movement_animation_timer: 0,
+            turn_animation_timer: 0,
+            specialty_timer: 0,
+            angry_timer: 0,
+            random_timer: self.rand_range(250) as u16 + 250,
+            origin,
+        }
     }
 
     pub(crate) fn transition_seed(&self) -> u64 {
@@ -382,6 +529,18 @@ impl AdventureState {
 
     pub(crate) fn has_live_fish(&self) -> bool {
         self.fish.iter().any(|fish| fish.alive)
+    }
+
+    /// Board::Buy counts coins already flying to the money display as
+    /// available, while the purchase still subtracts from raw balance.
+    /// Confirmed by W1 Board::Buy and payload FUN_00540b30/FUN_0053a0b0.
+    pub fn available_funds(&self) -> i32 {
+        self.coins
+            .iter()
+            .filter(|coin| coin.collecting)
+            .fold(self.balance, |funds, coin| {
+                funds.saturating_add(coin.kind.value())
+            })
     }
 
     /// The first-level rescue uses the bought-fish entrance without a purchase.
@@ -429,7 +588,7 @@ impl AdventureState {
                         coin_id: coin.id,
                     });
                 } else if x > 30.0 && x < 587.0 && y > 60.0 && y < 400.0 {
-                    if self.balance < FOOD_PRICE {
+                    if self.available_funds() < FOOD_PRICE {
                         events.push(Event::Rejected {
                             tick: self.tick,
                             reason: Rejection::InsufficientFunds,
@@ -472,7 +631,7 @@ impl AdventureState {
                         tick: self.tick,
                         reason: Rejection::Locked,
                     });
-                } else if self.balance < GUPPY_PRICE {
+                } else if self.available_funds() < GUPPY_PRICE {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::InsufficientFunds,
@@ -499,7 +658,7 @@ impl AdventureState {
                         tick: self.tick,
                         reason: Rejection::UnsupportedStage,
                     });
-                } else if self.balance < self.egg_price {
+                } else if self.available_funds() < self.egg_price {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::InsufficientFunds,
@@ -546,13 +705,20 @@ impl AdventureState {
         if self.victory {
             return Vec::new();
         }
-        self.tick += 1;
+        self.advance_board_clock();
         let mut events = Vec::new();
         self.update_dead_fish();
         self.update_food(&mut events);
         self.update_fish(&mut events);
+        self.update_stinky(&mut events);
         self.update_coins(&mut events);
         events
+    }
+
+    /// Board::Update can advance its clock and open the first-level rescue
+    /// dialog before the paused object widgets receive another update.
+    pub(crate) fn advance_board_clock(&mut self) {
+        self.tick += 1;
     }
 
     pub fn step(&mut self, actions: &[Action]) -> Vec<Event> {
@@ -1026,7 +1192,163 @@ impl AdventureState {
         }
     }
 
+    fn update_stinky(&mut self, events: &mut Vec<Event>) {
+        let Some(mut stinky) = self.stinky.take() else {
+            return;
+        };
+
+        // The installed payload ranks integer coin centers by squared distance
+        // from Stinky's double center. W1's recovered source expression differs;
+        // equal-distance candidates retain their original coin-list order.
+        if !self.coins.is_empty() {
+            let center_x = stinky.x + 40.0;
+            let center_y = stinky.y + 40.0;
+            if let Some(target_index) = Self::stinky_target_index(&stinky, &self.coins) {
+                if stinky.chase_timer > 4 {
+                    stinky.chase_timer = 0;
+                    let target_x = f64::from(self.coins[target_index].x.trunc());
+                    if center_x > target_x + 48.0 {
+                        if stinky.vx > -2.3 {
+                            stinky.vx -= 1.0;
+                        }
+                    } else if center_x > target_x + 40.0 {
+                        if stinky.vx > -1.3 {
+                            stinky.vx -= 0.5;
+                        }
+                    } else if center_x > target_x + 36.0 {
+                        if stinky.vx > -0.3 {
+                            stinky.vx = 0.0;
+                        }
+                    } else if center_x < target_x + 24.0 {
+                        if stinky.vx < 2.3 {
+                            stinky.vx += 1.0;
+                        }
+                    } else if center_x < target_x + 32.0 {
+                        if stinky.vx < 1.3 {
+                            stinky.vx += 0.5;
+                        }
+                    } else if center_x < target_x + 36.0 && stinky.vx < 0.3 {
+                        stinky.vx = 0.0;
+                    }
+                }
+
+                // ChaseEntity calls overlap on every update with a target,
+                // even when its five-update steering gate has not elapsed.
+                if let Some(index) = self.coins.iter().position(|coin| {
+                    if coin.collecting {
+                        return false;
+                    }
+                    let x = f64::from(coin.x.trunc());
+                    let y = f64::from(coin.y.trunc());
+                    center_x > x + 16.0
+                        && center_x < x + 56.0
+                        && center_y > y + 16.0
+                        && center_y < y + 56.0
+                }) {
+                    let coin = self.coins.remove(index);
+                    let amount = coin.kind.value();
+                    self.balance = (self.balance + amount).min(9_999_999);
+                    stinky.angry_timer = 0;
+                    events.push(Event::PetCollectedCoin {
+                        tick: self.tick,
+                        pet: PetKind::Stinky,
+                        coin_id: coin.id,
+                        amount,
+                        balance: self.balance,
+                    });
+                    events.push(Event::CoinCredited {
+                        tick: self.tick,
+                        coin_id: coin.id,
+                        amount,
+                        balance: self.balance,
+                    });
+                }
+            }
+        } else {
+            stinky.target_vx = match stinky.movement_state {
+                0 => 0.0,
+                1 => -0.5,
+                2 => 0.5,
+                _ => stinky.target_vx,
+            };
+            if stinky.vx < stinky.target_vx {
+                stinky.vx = (stinky.vx + 0.1).min(stinky.target_vx);
+            } else if stinky.vx > stinky.target_vx {
+                stinky.vx = (stinky.vx - 0.1).max(stinky.target_vx);
+            }
+        }
+
+        stinky.movement_state_change_timer += 1;
+        stinky.chase_timer = stinky.chase_timer.saturating_add(1);
+        if stinky.movement_state_change_timer > 20
+            || (stinky.x <= 10.0 && stinky.target_vx <= 0.0)
+            || stinky.x >= 540.0
+        {
+            stinky.movement_state_change_timer = 0;
+            if self.rand_range(10) == 0 {
+                stinky.movement_state = self.rand_range(3) as u8;
+            }
+        }
+
+        stinky.x = stinky.x.clamp(10.0, 550.0);
+        stinky.y = stinky.y.clamp(95.0, 370.0);
+        if stinky.x > 535.0 && stinky.vx > 0.1 {
+            stinky.movement_state = 1;
+        }
+        if stinky.x < 15.0 && stinky.vx < -0.1 {
+            stinky.movement_state = 2;
+        }
+        if stinky.previous_vx < 0.0 && stinky.vx > 0.0 {
+            stinky.turn_animation_timer = -20;
+        } else if stinky.previous_vx > 0.0 && stinky.vx < 0.0 {
+            stinky.turn_animation_timer = 20;
+        }
+        stinky.turn_animation_timer -= stinky.turn_animation_timer.signum();
+        if stinky.turn_animation_timer == 0 {
+            if stinky.vx.abs() >= 0.3 {
+                stinky.movement_animation_timer = (stinky.movement_animation_timer + 1) % 20;
+                stinky.frame = stinky.movement_animation_timer / 2;
+            } else {
+                stinky.movement_animation_timer = (stinky.movement_animation_timer + 1) % 40;
+                stinky.frame = stinky.movement_animation_timer / 4;
+            }
+        } else if stinky.turn_animation_timer > 0 {
+            stinky.frame = (9 - stinky.turn_animation_timer / 2) as u8;
+        } else {
+            stinky.frame = (9 + stinky.turn_animation_timer / 2) as u8;
+        }
+        if stinky.vx != stinky.previous_vx && stinky.vx != 0.0 && stinky.previous_vx != 0.0 {
+            stinky.previous_vx = stinky.vx;
+        }
+        stinky.x += stinky.vx / 1.2;
+        stinky.y += stinky.vy / 1.2;
+        self.stinky = Some(stinky);
+    }
+
+    fn stinky_target_index(stinky: &StinkyState, coins: &[Coin]) -> Option<usize> {
+        let mut best_distance = 100_000_000_i64;
+        let mut best_index = None;
+        for (index, coin) in coins.iter().enumerate() {
+            if coin.collecting {
+                continue;
+            }
+            let dx = ((stinky.x + 40.0) - (f64::from(coin.x.trunc()) + 40.0)) as i64;
+            let dy = ((stinky.y + 40.0) - (f64::from(coin.y.trunc()) + 40.0)) as i64;
+            let distance = dx * dx + dy * dy;
+            if distance < best_distance {
+                best_distance = distance;
+                best_index = Some(index);
+            }
+        }
+        best_index
+    }
+
     fn update_coins(&mut self, events: &mut Vec<Event>) {
+        let bottom_limit = match (self.tank, self.level) {
+            (1, 1) => FIRST_STAGE_COIN_BOTTOM_TICKS,
+            (1, 2) => SECOND_STAGE_COIN_BOTTOM_TICKS,
+            _ => unreachable!("coin lifetime for this Adventure stage is not implemented"),
+        };
         let mut credited = Vec::new();
         let mut expired = Vec::new();
         for coin in &mut self.coins {
@@ -1052,7 +1374,7 @@ impl AdventureState {
             coin.y = (coin.y + 1.5).min(370.0);
             if coin.y >= 370.0 {
                 coin.bottom_ticks += 1;
-                if coin.bottom_ticks >= 150 {
+                if coin.bottom_ticks >= bottom_limit {
                     coin.fade_ticks = 5;
                 }
             }
@@ -1452,5 +1774,412 @@ mod tests {
         state.tick();
         assert!(state.dead_fish.is_empty());
         assert!(!state.fish.iter().any(|fish| fish.id == id));
+    }
+
+    #[test]
+    fn second_stage_stinky_has_live_spawn_state_and_persisted_origin() {
+        let mut state = AdventureState::new_second_stage(0x7788);
+        let pet = state.stinky.as_ref().unwrap();
+        assert!((105.0..370.0).contains(&pet.x));
+        assert_eq!(
+            (pet.y, pet.vx, pet.vy, pet.previous_vx),
+            (360.0, 0.0, 0.0, 1.0)
+        );
+        assert_eq!(pet.chase_timer, 40);
+        assert!(pet.movement_state < 10);
+        assert!((250..500).contains(&pet.random_timer));
+        assert_eq!(pet.origin, StinkyOrigin::StageStart);
+        assert_eq!(state.fish.len(), 2);
+        assert!(
+            state
+                .fish
+                .iter()
+                .all(|fish| !fish.beginner && fish.food_ate == 2)
+        );
+        assert!(!state.initialize_missing_stinky());
+
+        state.stinky = None; // The previous v2 project-save shape.
+        assert!(state.initialize_missing_stinky());
+        assert_eq!(
+            state.stinky.as_ref().unwrap().origin,
+            StinkyOrigin::LegacyV2Resume
+        );
+        let restored: AdventureState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(
+            restored.stinky.as_ref().unwrap().origin,
+            StinkyOrigin::LegacyV2Resume
+        );
+        assert!(!state.initialize_missing_stinky());
+        let mut first_stage = AdventureState::new_adventure(0x7788);
+        first_stage.pets.push(PetKind::Stinky);
+        assert!(!first_stage.initialize_missing_stinky());
+    }
+
+    #[test]
+    fn stinky_idle_motion_and_animation_advance_from_source_counters() {
+        let mut state = AdventureState::new_second_stage(0x55cc);
+        let pet = state.stinky.as_mut().unwrap();
+        pet.x = 200.0;
+        pet.movement_state = 2;
+        let initial_x = pet.x;
+        state.tick();
+        let pet = state.stinky.as_ref().unwrap();
+        assert!((pet.vx - 0.1).abs() < 1e-10);
+        assert!((pet.x - (initial_x + 0.1 / 1.2)).abs() < 1e-10);
+        assert_eq!(pet.movement_animation_timer, 1);
+        assert_eq!(pet.sprite_row(), 0);
+        assert!(pet.facing_right());
+        assert_eq!(pet.chase_timer, 41);
+    }
+
+    #[test]
+    fn stinky_collects_first_unclaimed_overlap_before_coin_update_once() {
+        let mut state = AdventureState::new_second_stage(0x8844);
+        let pet = state.stinky.as_mut().unwrap();
+        pet.x = 100.0;
+        pet.y = 360.0;
+        pet.vx = 0.0;
+        state.coins.extend([
+            Coin {
+                id: 90,
+                x: 100.0,
+                y: 360.0,
+                kind: CoinKind::Gold,
+                frame: 0,
+                collecting: true,
+                bottom_ticks: 0,
+                fade_ticks: 0,
+            },
+            Coin {
+                id: 91,
+                x: 100.0,
+                y: 360.0,
+                kind: CoinKind::Silver,
+                frame: 0,
+                collecting: false,
+                bottom_ticks: 0,
+                fade_ticks: 1,
+            },
+            Coin {
+                id: 92,
+                x: 100.0,
+                y: 360.0,
+                kind: CoinKind::Gold,
+                frame: 0,
+                collecting: false,
+                bottom_ticks: 0,
+                fade_ticks: 0,
+            },
+        ]);
+        let events = state.tick();
+        assert_eq!(state.balance, 215);
+        assert!(!state.coins.iter().any(|coin| coin.id == 91));
+        assert!(state.coins.iter().any(|coin| coin.id == 92));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::PetCollectedCoin {
+                        coin_id: 91,
+                        amount: 15,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::CoinCredited {
+                        coin_id: 91,
+                        amount: 15,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Event::CoinCredited {
+                coin_id: 90 | 92,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn stinky_overlap_edges_are_strict_and_board_clock_can_advance_alone() {
+        let mut state = AdventureState::new_second_stage(0x9977);
+        let pet = state.stinky.as_mut().unwrap();
+        pet.x = 76.0; // Center equals coin.x + 16: no collision.
+        pet.y = 360.0;
+        pet.vx = 0.0;
+        state.coins.push(Coin {
+            id: 10,
+            x: 100.0,
+            y: 360.0,
+            kind: CoinKind::Silver,
+            frame: 0,
+            collecting: false,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+        });
+        let initial_hunger = state.fish[0].hunger;
+        state.advance_board_clock();
+        assert_eq!(state.tick, 1);
+        assert_eq!(state.fish[0].hunger, initial_hunger);
+        assert!(
+            !state
+                .tick()
+                .iter()
+                .any(|event| matches!(event, Event::PetCollectedCoin { coin_id: 10, .. }))
+        );
+        state.stinky.as_mut().unwrap().x = 76.01;
+        state.coins[0].y = 360.0;
+        assert!(
+            state
+                .tick()
+                .iter()
+                .any(|event| matches!(event, Event::PetCollectedCoin { coin_id: 10, .. }))
+        );
+    }
+
+    #[test]
+    fn saved_stinky_validation_allows_post_clamp_overshoot_but_rejects_bad_state() {
+        let state = AdventureState::new_second_stage(0x3120);
+        let mut pet = state.stinky.unwrap();
+        pet.x = 552.0; // The last integration can move beyond the 550 clamp.
+        assert!(pet.validate().is_ok());
+        pet.x = f64::NAN;
+        assert!(pet.validate().is_err());
+        pet.x = 100.0;
+        pet.frame = 10;
+        assert!(pet.validate().is_err());
+        pet.frame = 0;
+        pet.turn_animation_timer = 21;
+        assert!(pet.validate().is_err());
+        pet.turn_animation_timer = 0;
+        pet.specialty_timer = 10;
+        assert!(pet.validate().is_err());
+        pet.specialty_timer = 0;
+        pet.movement_state = 10;
+        assert!(pet.validate().is_err());
+        pet.movement_state = 0;
+        pet.movement_animation_timer = 40;
+        assert!(pet.validate().is_err());
+    }
+
+    #[test]
+    fn installed_payload_nearest_center_differs_from_recovered_source_offset() {
+        let mut state = AdventureState::new_second_stage(0xa45c);
+        let pet = state.stinky.as_mut().unwrap();
+        pet.x = 100.0;
+        pet.y = 360.0;
+        pet.vx = 0.0;
+        pet.chase_timer = 40;
+        for (id, x) in [(1, 100.0), (2, 136.0)] {
+            state.coins.push(Coin {
+                id,
+                x,
+                y: 100.0,
+                kind: CoinKind::Silver,
+                frame: 0,
+                collecting: false,
+                bottom_ticks: 0,
+                fade_ticks: 0,
+            });
+        }
+        state.tick();
+        // The installed center metric selects x=100 and brakes at its center;
+        // W1's left-associative +36 term would select x=136 and accelerate.
+        assert_eq!(state.stinky.as_ref().unwrap().vx, 0.0);
+        assert_eq!(state.stinky.as_ref().unwrap().chase_timer, 1);
+    }
+
+    #[test]
+    fn stinky_target_ties_keep_first_coin_and_steering_waits_past_four() {
+        let mut tied = AdventureState::new_second_stage(0xa45d);
+        let pet = tied.stinky.as_mut().unwrap();
+        pet.x = 100.0;
+        pet.y = 360.0;
+        pet.vx = 0.0;
+        pet.chase_timer = 40;
+        for (id, x) in [(1, 80.0), (2, 120.0)] {
+            tied.coins.push(Coin {
+                id,
+                x,
+                y: 100.0,
+                kind: CoinKind::Silver,
+                frame: 0,
+                collecting: false,
+                bottom_ticks: 0,
+                fade_ticks: 0,
+            });
+        }
+        tied.tick();
+        assert_eq!(tied.stinky.as_ref().unwrap().vx, -1.0);
+
+        let mut gated = AdventureState::new_second_stage(0xa45e);
+        let pet = gated.stinky.as_mut().unwrap();
+        pet.x = 300.0;
+        pet.y = 360.0;
+        pet.vx = 0.0;
+        pet.chase_timer = 4;
+        gated.coins.push(Coin {
+            id: 3,
+            x: 100.0,
+            y: 100.0,
+            kind: CoinKind::Silver,
+            frame: 0,
+            collecting: false,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+        });
+        gated.tick();
+        assert_eq!(
+            (
+                gated.stinky.as_ref().unwrap().vx,
+                gated.stinky.as_ref().unwrap().chase_timer
+            ),
+            (0.0, 5)
+        );
+        gated.tick();
+        assert_eq!(
+            (
+                gated.stinky.as_ref().unwrap().vx,
+                gated.stinky.as_ref().unwrap().chase_timer
+            ),
+            (-1.0, 1)
+        );
+    }
+
+    #[test]
+    fn ordinary_coin_bottom_threshold_is_150_only_in_fresh_first_stage() {
+        let mut first = AdventureState::new_adventure(0x56);
+        first.coins.push(Coin {
+            id: 81,
+            x: 500.0,
+            y: 370.0,
+            kind: CoinKind::Silver,
+            frame: 0,
+            collecting: false,
+            bottom_ticks: 148,
+            fade_ticks: 0,
+        });
+        first.tick();
+        assert_eq!(
+            (first.coins[0].bottom_ticks, first.coins[0].fade_ticks),
+            (149, 0)
+        );
+        first.tick();
+        assert_eq!(
+            (first.coins[0].bottom_ticks, first.coins[0].fade_ticks),
+            (150, 5)
+        );
+
+        let mut second = AdventureState::new_second_stage(0x56);
+        second.coins.push(Coin {
+            id: 82,
+            x: 500.0,
+            y: 370.0,
+            kind: CoinKind::Gold,
+            frame: 0,
+            collecting: false,
+            bottom_ticks: 18,
+            fade_ticks: 0,
+        });
+        second.tick();
+        assert_eq!(
+            (second.coins[0].bottom_ticks, second.coins[0].fade_ticks),
+            (19, 0)
+        );
+        second.tick();
+        assert_eq!(
+            (second.coins[0].bottom_ticks, second.coins[0].fade_ticks),
+            (20, 5)
+        );
+    }
+
+    #[test]
+    fn claimed_coin_can_fund_purchase_once_before_arrival_without_early_credit() {
+        let mut state = AdventureState::new_adventure(0xc19);
+        state.guppy_unlocked = true;
+        state.balance = 90;
+        state.coins.push(Coin {
+            id: 44,
+            x: 500.0,
+            y: 39.0,
+            kind: CoinKind::Silver,
+            frame: 0,
+            collecting: true,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+        });
+        assert_eq!(state.available_funds(), 105);
+        assert!(
+            state
+                .apply(Action::BuyGuppy)
+                .iter()
+                .any(|event| matches!(event, Event::GuppyBought { balance: -10, .. }))
+        );
+        assert_eq!((state.balance, state.available_funds()), (-10, 5));
+        assert!(state.apply(Action::BuyGuppy).iter().any(|event| matches!(
+            event,
+            Event::Rejected {
+                reason: Rejection::InsufficientFunds,
+                ..
+            }
+        )));
+        assert!(
+            state
+                .apply(Action::Click { x: 320.0, y: 200.0 })
+                .iter()
+                .any(|event| matches!(event, Event::FoodDropped { balance: -15, .. }))
+        );
+        assert_eq!(state.available_funds(), 0);
+        let saved = serde_json::to_vec(&state).unwrap();
+        let mut resumed: AdventureState = serde_json::from_slice(&saved).unwrap();
+        assert_eq!((resumed.balance, resumed.available_funds()), (-15, 0));
+        assert!(
+            resumed
+                .apply(Action::Click { x: 400.0, y: 200.0 })
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::InsufficientFunds,
+                        ..
+                    }
+                ))
+        );
+        let credited = resumed.tick();
+        assert_eq!(
+            credited
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::CoinCredited {
+                        coin_id: 44,
+                        amount: 15,
+                        balance: 0,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!((resumed.balance, resumed.available_funds()), (0, 0));
+        assert!(
+            !resumed
+                .tick()
+                .iter()
+                .any(|event| matches!(event, Event::CoinCredited { coin_id: 44, .. }))
+        );
     }
 }

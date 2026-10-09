@@ -6,7 +6,7 @@ use std::{
 use turbofish_deluxe::{
     adventure::{AdventurePhase, AdventureSession, PetKind},
     cli,
-    sim::AdventureState,
+    sim::{Action, AdventureState, StinkyOrigin},
 };
 
 fn temporary_root(name: &str) -> PathBuf {
@@ -30,7 +30,7 @@ fn atomic_save_replaces_complete_snapshot_and_retains_seeded_state() {
     cli::write_json(
         &path,
         &cli::ProjectSave {
-            format_version: 2,
+            format_version: cli::SAVE_FORMAT_VERSION,
             session: session.clone(),
         },
     )
@@ -41,13 +41,13 @@ fn atomic_save_replaces_complete_snapshot_and_retains_seeded_state() {
     cli::write_json(
         &path,
         &cli::ProjectSave {
-            format_version: 2,
+            format_version: cli::SAVE_FORMAT_VERSION,
             session: session.clone(),
         },
     )
     .unwrap();
     let loaded: cli::ProjectSave = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    assert_eq!(loaded.format_version, 2);
+    assert_eq!(loaded.format_version, 3);
     let board = loaded.session.board.as_ref().unwrap();
     assert_eq!(board.tick, 20);
     assert_eq!(board.balance, 200);
@@ -89,6 +89,7 @@ fn completed_legacy_board_becomes_one_pending_reward() {
     let mut board = AdventureState::new_adventure(42);
     board.victory = true;
     board.eggs = 3;
+    board.tick = 250;
     let bytes = serde_json::to_vec(&cli::LegacyProjectSave {
         format_version: 1,
         state: board,
@@ -98,6 +99,7 @@ fn completed_legacy_board_becomes_one_pending_reward() {
     assert_eq!((session.progress.tank, session.progress.level), (1, 2));
     assert_eq!(session.progress.unlocked_pets, vec![PetKind::Stinky]);
     assert!(session.board.is_none());
+    assert_eq!(session.progress.first_stage_best_seconds, Some(7));
     assert_eq!(
         session.phase,
         AdventurePhase::Hatch {
@@ -107,7 +109,7 @@ fn completed_legacy_board_becomes_one_pending_reward() {
     );
     let resumed = cli::decode_save(
         &serde_json::to_vec(&cli::ProjectSave {
-            format_version: 2,
+            format_version: cli::SAVE_FORMAT_VERSION,
             session,
         })
         .unwrap(),
@@ -115,6 +117,116 @@ fn completed_legacy_board_becomes_one_pending_reward() {
     .unwrap();
     assert_eq!(resumed.progress.unlocked_pets, vec![PetKind::Stinky]);
     assert!(resumed.board.is_none());
+    assert_eq!(resumed.progress.first_stage_best_seconds, Some(7));
+}
+
+#[test]
+fn old_v2_hatch_retains_unknown_score_and_level_two_gets_one_explicit_pet_migration() {
+    let mut session = AdventureSession::new(42);
+    let board = session.board.as_mut().unwrap();
+    board.egg_unlocked = true;
+    board.balance = 450;
+    session.apply_actions(&[Action::BuyEgg, Action::BuyEgg, Action::BuyEgg]);
+    let mut old_hatch = serde_json::to_value(cli::ProjectSave {
+        format_version: 2,
+        session: session.clone(),
+    })
+    .unwrap();
+    old_hatch["session"]["progress"]
+        .as_object_mut()
+        .unwrap()
+        .remove("first_stage_best_seconds");
+    let mut resumed = cli::decode_save(&serde_json::to_vec(&old_hatch).unwrap()).unwrap();
+    assert_eq!(resumed.progress.first_stage_best_seconds, None);
+    for _ in 0..171 {
+        resumed.step(&[]);
+    }
+    resumed.apply_actions(&[Action::Continue]);
+    let mut old_board = serde_json::to_value(cli::ProjectSave {
+        format_version: 2,
+        session: resumed,
+    })
+    .unwrap();
+    old_board["session"]["board"]
+        .as_object_mut()
+        .unwrap()
+        .remove("stinky");
+    let migrated = cli::decode_save(&serde_json::to_vec(&old_board).unwrap()).unwrap();
+    assert_eq!(
+        migrated
+            .board
+            .as_ref()
+            .unwrap()
+            .stinky
+            .as_ref()
+            .unwrap()
+            .origin,
+        StinkyOrigin::LegacyV2Resume
+    );
+    let mut round_trip = cli::decode_save(
+        &serde_json::to_vec(&cli::ProjectSave {
+            format_version: cli::SAVE_FORMAT_VERSION,
+            session: migrated.clone(),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let mut uninterrupted = migrated;
+    assert_eq!(round_trip.step(&[]), uninterrupted.step(&[]));
+    assert_eq!(
+        serde_json::to_value(round_trip).unwrap(),
+        serde_json::to_value(uninterrupted).unwrap()
+    );
+    old_board["session"]["board"]["stinky"] = serde_json::Value::Null;
+    assert!(cli::decode_save(&serde_json::to_vec(&old_board).unwrap()).is_err());
+}
+
+#[test]
+fn modern_missing_state_and_contradictory_completed_legacy_board_are_rejected() {
+    let mut completed = AdventureState::new_adventure(42);
+    completed.victory = true;
+    completed.eggs = 3;
+    for invalid in [
+        {
+            let mut board = completed.clone();
+            board.egg_price = 500;
+            board
+        },
+        {
+            let mut board = completed.clone();
+            board.pets.push(PetKind::Stinky);
+            board
+        },
+    ] {
+        let bytes = serde_json::to_vec(&cli::LegacyProjectSave {
+            format_version: 1,
+            state: invalid,
+        })
+        .unwrap();
+        assert!(cli::decode_save(&bytes).is_err());
+    }
+    let mut session = AdventureSession::from_legacy_board(completed).unwrap();
+    for _ in 0..171 {
+        session.step(&[]);
+    }
+    session.apply_actions(&[Action::Continue]);
+    let modern = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    let mut missing_pet = modern.clone();
+    missing_pet["session"]["board"]
+        .as_object_mut()
+        .unwrap()
+        .remove("stinky");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing_pet).unwrap()).is_err());
+    let mut missing_score = modern;
+    missing_score["session"]["progress"]
+        .as_object_mut()
+        .unwrap()
+        .remove("first_stage_best_seconds");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing_score).unwrap()).is_err());
 }
 
 #[cfg(windows)]

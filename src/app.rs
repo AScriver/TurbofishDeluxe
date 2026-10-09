@@ -292,6 +292,22 @@ impl Presentation {
                 fish.opacity,
             );
         }
+        if let Some(stinky) = &state.stinky {
+            self.sprite(
+                "IMAGE_STINKY",
+                stinky.x as f32,
+                stinky.y as f32,
+                Some(Rect::new(
+                    f32::from(stinky.frame) * 80.0,
+                    f32::from(stinky.sprite_row()) * 80.0,
+                    80.0,
+                    80.0,
+                )),
+                stinky.facing_right(),
+                1.0,
+                1.0,
+            );
+        }
         for coin in &state.coins {
             let row = if coin.kind == CoinKind::Silver {
                 0.0
