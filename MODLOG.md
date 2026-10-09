@@ -2,6 +2,22 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-08 — Integrate1-5 completion, shell bonus and early2-1
+
+**Changed:** Enabled earned1-5 completion/Zorf hatch/empty shell bonus/results/five-pet selection, tank-specific2-1 setup, Zorf free-food motion/capacity, armed potion/Star/Crowned behavior, new presentation and strict atomic format7 migrations.2-1's third egg remains temporarily gated until the next Clyde increment. [Contract](docs/adventure-1-5-bonus-2-1.md) owns exact rules/limits; prior1-4 checkpoint is29b43d7.
+
+**Checks/results:** Formatting/strict Clippy/155tests(129library+5assets+4fonts+17persistence)/native build passed. Frozen executable `3c7142d9d9fa5ccb7db59a6a9c9ea645c809988c7b5d5ce2b82c0931b3088950`;20source/tests/Cargo hashes based on29b43d7 plus dirty increment. [Actual report](docs/playtests/2026-10-08-adventure-1-5-bonus-2-1-01.md) verifies earned1-5/sevenBalrogs/three5000eggs/Zorf, in-flight Bonus reload/one539award/results display, selected2-1/Zorf food/Strong fight and eligible Potion→Star/natural40coin/reload. All ten PIDs absent/install unchanged; root inspected pixels/reproduced exact bonus-state comparison. Full retail/audio/human acceptance remains open.
+
+**Failures/reassessment:** Independent bonus review falsified increment-before-Board timing, premature sorting, fading-shell expiry after claim, birth-order Coin updates, unsafe malformed-origin arithmetic and weak saved-order validation. Corrected against PB25/PB26/W1 and added counterexamples before the passing gate. First gate stopped on four lint errors; a parent lint repair had an incorrect parenthesis, then a test used a private helper API. Those narrow authoring errors were repaired without weakening lint. Two executed fixtures were inconsistent with their intended post-timeout/stable-heading states; corrected with source timing/turn evidence, preserving game rules. Star/additive count-down rendering still uses normal-alpha approximation; original/music/audible/human comparisons remain unperformed.
+
+**Runtime failures/reassessment:** First1-5 guard policy lost the tank; larger ordinary roster/earlier Oscar succeeded on the same build.2-1 attempts retained missed selection input, Small-potion death/off-target combat and a potion above the feeding threshold. Source-backed eligibility/capacity and a retained live Large save made continuation succeed; no rule changes/forced outcomes. Whole-session text comparison failed on key order, then recursive JSON passed; Star decimal spelling differences resolve to identical f32 bits. Exact conditions/builds/receipts are in the report.
+
+**Primary correction:** A new Clyde probe initially contradicted PB10. Full disassembly showed a missed candidate-side ADD40 and a misidentified later type7 branch; the partial inference is withdrawn. PB28 retains the mistake, exact chain and unresolved decompiler+36 discrepancy. This confirms the existing runtime metric without a code change.
+
+**Next:** Commit the coherent increment, then implement [Clyde/Starcatcher](docs/adventure-2-2.md) with adjudicated PB29 feeding/removal/special-coin evidence and independent counterexamples. AppContainer research refines possible mixer/display effects without claiming containment or launching retail. Full goal remains active.
+
+**Workflow:**27documents/223local links/37anchors/all49ignore cases/51eligible maintained files passed; PowerShell parser/automatic-variable validation passed. Runtime verification is identified separately above.
+
 ## 2026-10-08 — Verify Adventure1-4 Itchy, Balrog, Prego and selection
 
 **Changed:** Added live Itchy/Prego movement and abilities, Balrog combat/body identity, source-ordered pet updates, earned Prego hatch, capacity-three selection/confirmation and selected early1-5. Atomic format6 migrations preserve existing sessions and explicitly initialize unknown legacy1-4 support. Stage5's third egg remains gated pending Zorf/bonus. [Execution report](docs/playtests/2026-10-08-adventure-1-4-01.md) records identified builds and real outcomes.

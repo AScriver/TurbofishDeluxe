@@ -64,6 +64,152 @@ fn atomic_save_replaces_complete_snapshot_and_retains_seeded_state() {
 }
 
 #[test]
+fn format_six_migrates_fifth_board_without_losing_earned_state() {
+    let roster = vec![PetKind::Stinky, PetKind::Itchy, PetKind::Prego];
+    let mut session = AdventureSession::new(42);
+    session.progress.level = 5;
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+    ];
+    session.progress.selected_pets = roster.clone();
+    session.board = Some(AdventureState::new_fifth_stage(42, &roster).unwrap());
+    session.apply_actions(&[Action::Click { x: 300.0, y: 200.0 }]);
+    let original = session.board.as_ref().unwrap().clone();
+    let mut value = serde_json::to_value(cli::ProjectSave {
+        format_version: 6,
+        session,
+    })
+    .unwrap();
+    value["session"]["progress"]
+        .as_object_mut()
+        .unwrap()
+        .remove("shell_balance");
+    let board = value["session"]["board"].as_object_mut().unwrap();
+    for field in ["potion_unlocked", "potion_armed"] {
+        board.remove(field);
+    }
+    for food in board["food"].as_array_mut().unwrap() {
+        for field in [
+            "direction",
+            "vx",
+            "vy",
+            "animation_period",
+            "free_from_zorf",
+        ] {
+            food.as_object_mut().unwrap().remove(field);
+        }
+    }
+    let migrated = cli::decode_save(&serde_json::to_vec(&value).unwrap()).unwrap();
+    assert_eq!(migrated.progress.shell_balance, 0);
+    assert_eq!(migrated.progress.selected_pets, roster);
+    let board = migrated.board.as_ref().unwrap();
+    assert_eq!(
+        (board.tick, board.balance, board.eggs),
+        (original.tick, original.balance, original.eggs)
+    );
+    assert_eq!(
+        serde_json::to_value(board).unwrap()["rng_state"],
+        serde_json::to_value(&original).unwrap()["rng_state"]
+    );
+    assert_eq!(board.food[0].x, original.food[0].x);
+    assert_eq!(board.food[0].y, original.food[0].y);
+    assert!(!board.potion_armed);
+    assert_eq!(board.food[0].direction, 0);
+    let mut unsupported = value;
+    unsupported["session"]["progress"]["tank"] = 2.into();
+    unsupported["session"]["progress"]["level"] = 1.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&unsupported).unwrap()).is_err());
+}
+
+#[test]
+fn format_seven_requires_new_board_food_and_profile_fields() {
+    let mut session = AdventureSession::new(42);
+    session.apply_actions(&[Action::Click { x: 300.0, y: 200.0 }]);
+    let modern = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    for field in ["potion_unlocked", "potion_armed"] {
+        let mut incomplete = modern.clone();
+        incomplete["session"]["board"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(cli::decode_save(&serde_json::to_vec(&incomplete).unwrap()).is_err());
+    }
+    for field in [
+        "direction",
+        "vx",
+        "vy",
+        "animation_period",
+        "free_from_zorf",
+    ] {
+        let mut incomplete = modern.clone();
+        incomplete["session"]["board"]["food"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(cli::decode_save(&serde_json::to_vec(&incomplete).unwrap()).is_err());
+    }
+    let mut incomplete = modern.clone();
+    incomplete["session"]["progress"]
+        .as_object_mut()
+        .unwrap()
+        .remove("shell_balance");
+    assert!(cli::decode_save(&serde_json::to_vec(&incomplete).unwrap()).is_err());
+    assert!(cli::decode_save(&serde_json::to_vec(&modern).unwrap()).is_ok());
+}
+
+#[test]
+fn bonus_results_reload_does_not_repeat_profile_credit() {
+    use turbofish_deluxe::bonus::BonusResult;
+    let mut session = AdventureSession::new(42);
+    session.progress.tank = 2;
+    session.progress.level = 1;
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+    ];
+    session.progress.shell_balance = 317;
+    session.board = None;
+    session.phase = AdventurePhase::BonusResults {
+        result: BonusResult {
+            earned: 217,
+            previous_balance: 100,
+            updates: 8,
+        },
+    };
+    let modern = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    let mut loaded = cli::decode_save(&serde_json::to_vec(&modern).unwrap()).unwrap();
+    for _ in 0..40 {
+        loaded.step(&[]);
+    }
+    assert_eq!(loaded.progress.shell_balance, 317);
+    loaded.apply_actions(&[Action::Continue]);
+    assert_eq!(
+        loaded.phase,
+        AdventurePhase::PetSelection {
+            selected: Vec::new()
+        }
+    );
+    loaded.validate().unwrap();
+    let mut legacy = modern;
+    legacy["format_version"] = 6.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&legacy).unwrap()).is_err());
+}
+
+#[test]
 fn legacy_board_save_migrates_without_losing_next_tick() {
     let mut board = AdventureState::new_adventure(42);
     for _ in 0..20 {
@@ -559,7 +705,7 @@ fn format_five_fourth_board_gets_explicit_new_support_without_rewriting_earned_s
     assert_eq!(wave.countdown, 3000);
     let saved: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join("adventure.json")).unwrap()).unwrap();
-    assert_eq!(saved["format_version"], 6);
+    assert_eq!(saved["format_version"], cli::SAVE_FORMAT_VERSION);
     let loaded = cli::load_session(&options).unwrap();
     assert_eq!(
         serde_json::to_value(loaded).unwrap(),

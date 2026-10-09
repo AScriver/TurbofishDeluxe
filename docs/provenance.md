@@ -56,9 +56,15 @@ All four runtime checkouts were pinned and checked clean on 2026-10-08. Exact fu
 
 FishTypePet functional expectations now inform `src/fish_pet.rs`; reviewed PetsScreen/PetButtonWidget selection rules inform `src/adventure.rs`/`src/app.rs`. BonusScreen/Board bonus callers were studied for [the next contract](adventure-1-5-bonus-2-1.md); no bonus implementation is claimed at the1-4 checkpoint. BubbleMgr remains study-only for missing effects/RNG. Installed PB23–PB25 corrected the Food direction omission and bonus interpolation uncertainty before those future changes.
 
+W1 `source/WinFish/Penta.cpp` and `Penta.h` are being studied for Starcatcher purchase, feeding, production and presentation in the next2-2 contract. Pinned W1 license/study boundaries above apply; no Penta implementation is included in the current increment.
+
+Bonus expectations now map to `src/bonus.rs` and session/profile accounting in `src/adventure.rs`. Zorf/Star/potion expectations extend the existing actor/simulation/presentation files. Installed Food constructor and Coin/Board timing findings correct secondary defects/uncertainty. No recovered C++ or framework implementation is copied. The bonus uses the project's controlled PRNG, not the original's separate random streams.
+
 ## Original-run isolation study
 
 W1 `source/SexyAppFramework/{SexyAppBase,Common,D3DTester,BassMusicInterface,DSoundManager,FModMusicInterface}.cpp` and `source/WinFish/{SexyApp,WinFishApp,ProfileMgr,HighScoreMgr,Board}.cpp` were studied read-only for registry, known-folder, save, mixer/display and screensaver side effects. Installed `partner.xml` metadata was read. No launch/isolation code was incorporated; findings and the unperformed comparison boundary are in [original observation](original-observation.md). Official Microsoft SHGetFolderPath/RegOverridePredefKey documentation was consulted for the relevant API scope, not as proof of retail execution.
+
+W1 `source/SexyAppFramework/DDInterface.cpp` was additionally studied for exclusive DirectDraw mode changes. Official Microsoft AppContainer legacy-app/profile/token, job UI/child-lifetime, DirectDraw SetDisplayMode and legacy audio-mixer documentation was checked on2026-10-08(local)/2026-10-09UTC for a candidate isolation design; exact source URLs are in [original observation](original-observation.md#appcontainer-candidate-unperformed). These are unpinned online API documents, not game behavior/code sources; no sample source or controller was incorporated. Root retrieved the legacy-app, job UI and mixer pages; their displayed update dates are2023-07-25,2021-04-02 and2023-06-20. API documentation is not proof of this game's containment or compatibility.
 
 ## Rust dependencies
 

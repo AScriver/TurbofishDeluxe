@@ -2,7 +2,11 @@
 //! and rescue rules follow WinFish f919b3c (secondary source evidence); their
 //! timing and presentation have not been checked against the installed build.
 
-use crate::{invasion::InvasionTip, niko::PearlPhase};
+use crate::{
+    bonus::{BonusResult, BonusState, MAX_SHELL_BALANCE},
+    invasion::InvasionTip,
+    niko::PearlPhase,
+};
 use serde::{Deserialize, Serialize};
 
 pub use crate::sim::PetKind;
@@ -22,6 +26,8 @@ pub struct AdventureProgress {
     /// Continue copies them here, before any fewer-pet confirmation.
     #[serde(default)]
     pub selected_pets: Vec<PetKind>,
+    #[serde(default)]
+    pub shell_balance: u32,
     /// Missing on old format-two saves: their completed board was discarded,
     /// so its active time cannot be reconstructed from the session clock.
     #[serde(default)]
@@ -91,7 +97,7 @@ impl AdventureProgress {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum AdventurePhase {
     Playing,
     FirstTankRescue,
@@ -102,6 +108,8 @@ pub enum AdventurePhase {
     Hatch { pet: PetKind, updates: u32 },
     PetSelection { selected: Vec<PetKind> },
     PetSelectionConfirmation { selected: Vec<PetKind> },
+    Bonus { state: BonusState },
+    BonusResults { result: BonusResult },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,6 +143,7 @@ impl AdventureSession {
                 unlocked_pets: Vec::new(),
                 pet_capacity: default_pet_capacity(),
                 selected_pets: Vec::new(),
+                shell_balance: 0,
                 first_stage_best_seconds: None,
                 later_stage_best_seconds: Vec::new(),
             },
@@ -173,6 +182,7 @@ impl AdventureSession {
                     unlocked_pets: vec![PetKind::Stinky],
                     pet_capacity: default_pet_capacity(),
                     selected_pets: Vec::new(),
+                    shell_balance: 0,
                     first_stage_best_seconds: Some(seconds),
                     later_stage_best_seconds: Vec::new(),
                 },
@@ -197,6 +207,7 @@ impl AdventureSession {
                 unlocked_pets: Vec::new(),
                 pet_capacity: default_pet_capacity(),
                 selected_pets: Vec::new(),
+                shell_balance: 0,
                 first_stage_best_seconds: None,
                 later_stage_best_seconds: Vec::new(),
             },
@@ -214,19 +225,30 @@ impl AdventureSession {
 
     /// Reject a decoded session whose board, profile, and screen disagree.
     pub fn validate(&self) -> Result<(), String> {
-        if self.progress.tank != 1 || !(1..=5).contains(&self.progress.level) {
+        if !matches!(
+            (self.progress.tank, self.progress.level),
+            (1, 1..=6) | (2, 1)
+        ) || self.progress.shell_balance > MAX_SHELL_BALANCE
+        {
             return Err("unsupported Adventure progress".into());
         }
-        let expected_pets: &[PetKind] = match self.progress.level {
-            1 => &[],
-            2 => &[PetKind::Stinky],
-            3 => &[PetKind::Stinky, PetKind::Niko],
-            4 => &[PetKind::Stinky, PetKind::Niko, PetKind::Itchy],
-            5 => &[
+        let expected_pets: &[PetKind] = match (self.progress.tank, self.progress.level) {
+            (1, 1) => &[],
+            (1, 2) => &[PetKind::Stinky],
+            (1, 3) => &[PetKind::Stinky, PetKind::Niko],
+            (1, 4) => &[PetKind::Stinky, PetKind::Niko, PetKind::Itchy],
+            (1, 5) => &[
                 PetKind::Stinky,
                 PetKind::Niko,
                 PetKind::Itchy,
                 PetKind::Prego,
+            ],
+            (1, 6) | (2, 1) => &[
+                PetKind::Stinky,
+                PetKind::Niko,
+                PetKind::Itchy,
+                PetKind::Prego,
+                PetKind::Zorf,
             ],
             _ => unreachable!("progress checked above"),
         };
@@ -248,8 +270,8 @@ impl AdventureSession {
         let mut recorded_stages = Vec::new();
         for result in &self.progress.later_stage_best_seconds {
             if result.tank != 1
-                || !(2..=4).contains(&result.level)
-                || self.progress.level <= result.level
+                || !(2..=5).contains(&result.level)
+                || (self.progress.tank, self.progress.level) <= (result.tank, result.level)
                 || recorded_stages.contains(&(result.tank, result.level))
             {
                 return Err("invalid or duplicate completed-stage time".into());
@@ -301,7 +323,7 @@ impl AdventureSession {
                 board.validate()
             }
             (AdventurePhase::GameOver { .. }, Some(board)) => {
-                if board.level == 1
+                if (board.tank, board.level) == (1, 1)
                     || (board.tank, board.level) != (self.progress.tank, self.progress.level)
                     || board.has_live_fish()
                     || board.victory
@@ -326,14 +348,38 @@ impl AdventureSession {
                 },
                 None,
             ) if self.progress.level == 5 => Ok(()),
+            (
+                AdventurePhase::Hatch {
+                    pet: PetKind::Zorf, ..
+                },
+                None,
+            ) if (self.progress.tank, self.progress.level) == (1, 6) => Ok(()),
+            (AdventurePhase::Bonus { state }, None)
+                if (self.progress.tank, self.progress.level) == (1, 6)
+                    && state.tick <= self.ticks =>
+            {
+                state.validate()
+            }
+            (AdventurePhase::BonusResults { result }, None)
+                if (self.progress.tank, self.progress.level) == (2, 1)
+                    && self.progress.shell_balance
+                        == result
+                            .previous_balance
+                            .saturating_add(result.earned)
+                            .min(MAX_SHELL_BALANCE) =>
+            {
+                result.validate()
+            }
             (AdventurePhase::PetSelection { selected }, None)
                 if self.progress.unlocked_pets.len() >= 4
+                    && (self.progress.tank, self.progress.level) != (1, 6)
                     && self.progress.valid_selection(selected) =>
             {
                 Ok(())
             }
             (AdventurePhase::PetSelectionConfirmation { selected }, None)
                 if self.progress.unlocked_pets.len() >= 4
+                    && (self.progress.tank, self.progress.level) != (1, 6)
                     && self.progress.valid_selection(selected)
                     && selected.len() < self.progress.selection_capacity()
                     && *selected == self.progress.selected_pets =>
@@ -477,6 +523,43 @@ impl AdventureSession {
                         });
                     }
                 }
+                AdventurePhase::Bonus { .. } => {
+                    let AdventurePhase::Bonus { state } = &mut self.phase else {
+                        unreachable!()
+                    };
+                    events.push(Event::Action {
+                        tick: state.tick,
+                        action: action.clone(),
+                    });
+                    if let Action::Click { x, y } = action {
+                        let tick = state.tick;
+                        events.extend(
+                            state
+                                .click(*x, *y)
+                                .into_iter()
+                                .map(|event| Event::Bonus { tick, event }),
+                        );
+                    } else {
+                        events.push(Event::Rejected {
+                            tick: state.tick,
+                            reason: Rejection::Locked,
+                        });
+                    }
+                }
+                AdventurePhase::BonusResults { result } => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    if *action == Action::Continue && result.updates >= 30 {
+                        entered_playing = self.start_current_stage(&mut events);
+                    } else {
+                        events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        });
+                    }
+                }
                 AdventurePhase::PetSelection { mut selected } => {
                     events.push(Event::Action {
                         tick: self.ticks,
@@ -575,7 +658,7 @@ impl AdventureSession {
                     if !board.has_live_fish() {
                         // Board::Update increments the active clock before it
                         // discovers the empty live list and pauses the widgets.
-                        if board.level == 1 {
+                        if (board.tank, board.level) == (1, 1) {
                             self.phase = AdventurePhase::FirstTankRescue;
                             events.push(Event::FirstTankRescueStarted { tick: self.ticks });
                         } else {
@@ -591,6 +674,42 @@ impl AdventureSession {
                         events.extend(board.update_objects());
                     }
                 }
+            }
+            AdventurePhase::Bonus { state } if !entered_playing => {
+                let tick = state.tick;
+                let update = state.update();
+                events.extend(
+                    update
+                        .events
+                        .into_iter()
+                        .map(|event| Event::Bonus { tick, event }),
+                );
+                if update.completed {
+                    let earned = state.shells_earned;
+                    self.next_seed = state.transition_seed();
+                    let previous_balance = self.progress.shell_balance;
+                    self.progress.shell_balance = previous_balance
+                        .saturating_add(earned)
+                        .min(MAX_SHELL_BALANCE);
+                    self.progress.tank = 2;
+                    self.progress.level = 1;
+                    self.phase = AdventurePhase::BonusResults {
+                        result: BonusResult {
+                            earned,
+                            previous_balance,
+                            updates: 0,
+                        },
+                    };
+                    events.push(Event::BonusResultsCommitted {
+                        tick: self.ticks,
+                        earned,
+                        previous_balance,
+                        shell_balance: self.progress.shell_balance,
+                    });
+                }
+            }
+            AdventurePhase::BonusResults { result } => {
+                result.updates = result.updates.saturating_add(1);
             }
             AdventurePhase::GameOver { updates } => {
                 if let Some(board) = &mut self.board {
@@ -624,6 +743,7 @@ impl AdventureSession {
             | AdventurePhase::GameSelector
             | AdventurePhase::HelpScreen
             | AdventurePhase::Hatch { .. }
+            | AdventurePhase::Bonus { .. }
             | AdventurePhase::PetSelection { .. }
             | AdventurePhase::PetSelectionConfirmation { .. } => {}
         }
@@ -658,6 +778,18 @@ impl AdventureSession {
     }
 
     fn start_current_stage(&mut self, events: &mut Vec<Event>) -> bool {
+        if (self.progress.tank, self.progress.level) == (1, 6) {
+            self.board = None;
+            self.phase = AdventurePhase::Bonus {
+                state: BonusState::new(self.next_seed),
+            };
+            events.push(Event::StageStarted {
+                tick: self.ticks,
+                tank: 1,
+                level: 6,
+            });
+            return true;
+        }
         if self.progress.unlocked_pets.len() >= 4 {
             self.progress.selected_pets.clear();
             self.board = None;
@@ -675,13 +807,17 @@ impl AdventureSession {
     }
 
     fn start_board(&mut self, events: &mut Vec<Event>) {
-        let board = match self.progress.level {
-            1 => AdventureState::new_adventure(self.next_seed),
-            2 => AdventureState::new_second_stage(self.next_seed),
-            3 => AdventureState::new_third_stage(self.next_seed),
-            4 => AdventureState::new_fourth_stage(self.next_seed),
-            5 => AdventureState::new_fifth_stage(self.next_seed, &self.progress.selected_pets)
+        let board = match (self.progress.tank, self.progress.level) {
+            (1, 1) => AdventureState::new_adventure(self.next_seed),
+            (1, 2) => AdventureState::new_second_stage(self.next_seed),
+            (1, 3) => AdventureState::new_third_stage(self.next_seed),
+            (1, 4) => AdventureState::new_fourth_stage(self.next_seed),
+            (1, 5) => AdventureState::new_fifth_stage(self.next_seed, &self.progress.selected_pets)
                 .expect("session selection is validated before starting a board"),
+            (2, 1) => {
+                AdventureState::new_tank2_first_stage(self.next_seed, &self.progress.selected_pets)
+                    .expect("session selection is validated before starting a board")
+            }
             _ => unreachable!("supported progress validated at load"),
         };
         self.next_seed = board.transition_seed();
@@ -712,11 +848,12 @@ impl AdventureSession {
             personal_best_seconds,
         });
         self.next_seed = board.transition_seed();
-        let pet = match board.level {
-            1 => PetKind::Stinky,
-            2 => PetKind::Niko,
-            3 => PetKind::Itchy,
-            4 => PetKind::Prego,
+        let pet = match (board.tank, board.level) {
+            (1, 1) => PetKind::Stinky,
+            (1, 2) => PetKind::Niko,
+            (1, 3) => PetKind::Itchy,
+            (1, 4) => PetKind::Prego,
+            (1, 5) => PetKind::Zorf,
             _ => unreachable!("stage not yet completable"),
         };
         self.progress.level = board.level + 1;
@@ -787,6 +924,132 @@ mod tests {
             selected: Vec::new(),
         };
         session
+    }
+
+    fn bonus_session() -> AdventureSession {
+        let mut session = selection_session();
+        session.progress.level = 6;
+        session.progress.unlocked_pets.push(PetKind::Zorf);
+        session.phase = AdventurePhase::Bonus {
+            state: BonusState::new(42),
+        };
+        session.ticks = 1000;
+        session
+    }
+
+    #[test]
+    fn fifth_victory_rewards_zorf_then_enters_empty_bonus_without_selection() {
+        let mut session = selection_session();
+        session.apply_actions(&[
+            Action::Continue,
+            Action::ConfirmPetSelection { accept: true },
+        ]);
+        let board = session.board.as_mut().unwrap();
+        board.eggs = 2;
+        board.egg_unlocked = true;
+        board.balance = 5000;
+        board.tick = 1000;
+        session.ticks = 1000;
+        session.apply_actions(&[Action::BuyEgg]);
+        assert_eq!((session.progress.tank, session.progress.level), (1, 6));
+        assert_eq!(
+            session.phase,
+            AdventurePhase::Hatch {
+                pet: PetKind::Zorf,
+                updates: 0
+            }
+        );
+        assert_eq!(
+            session
+                .progress
+                .later_stage_best_seconds
+                .last()
+                .unwrap()
+                .seconds,
+            28
+        );
+        session.validate().unwrap();
+        session.phase = AdventurePhase::Hatch {
+            pet: PetKind::Zorf,
+            updates: 171,
+        };
+        let events = session.apply_actions(&[Action::Continue]);
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::PetSelectionOpened { .. }))
+        );
+        assert!(session.board.is_none());
+        let AdventurePhase::Bonus { state } = &session.phase else {
+            panic!("bonus expected")
+        };
+        assert!(state.shells.is_empty());
+        assert_eq!(state.tick, 0);
+        assert!(state.started_at.is_none());
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn bonus_results_award_once_before_presentation_and_next_tank_selection() {
+        let mut session = bonus_session();
+        session.progress.shell_balance = MAX_SHELL_BALANCE - 10;
+        let AdventurePhase::Bonus { state } = &mut session.phase else {
+            unreachable!()
+        };
+        // 101 empty timeout checks at old counts572..672 have completed.
+        state.tick = 673;
+        state.started_at = Some(0);
+        state.timed_out = true;
+        state.empty_updates = 101;
+        state.shells_earned = 17;
+        session.validate().unwrap();
+        let events = session.step(&[]);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, Event::BonusResultsCommitted { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(session.progress.shell_balance, MAX_SHELL_BALANCE);
+        assert_eq!((session.progress.tank, session.progress.level), (2, 1));
+        assert!(session.board.is_none());
+        session.validate().unwrap();
+        assert!(
+            session
+                .apply_actions(&[Action::Continue])
+                .iter()
+                .any(|event| matches!(event, Event::Rejected { .. }))
+        );
+        let saved = serde_json::to_vec(&session).unwrap();
+        let mut restored: AdventureSession = serde_json::from_slice(&saved).unwrap();
+        for _ in 0..30 {
+            restored.step(&[]);
+        }
+        assert_eq!(restored.progress.shell_balance, MAX_SHELL_BALANCE);
+        restored.apply_actions(&[Action::Continue]);
+        assert_eq!(
+            restored.phase,
+            AdventurePhase::PetSelection {
+                selected: Vec::new()
+            }
+        );
+        restored.apply_actions(&[
+            Action::TogglePet { pet: PetKind::Zorf },
+            Action::Continue,
+            Action::ConfirmPetSelection { accept: true },
+        ]);
+        let board = restored.board.as_ref().unwrap();
+        assert_eq!(
+            (board.tank, board.level, board.balance, board.egg_price),
+            (2, 1, 200, 750)
+        );
+        assert_eq!(board.pets, vec![PetKind::Zorf]);
+        restored.validate().unwrap();
+        restored.board.as_mut().unwrap().fish.clear();
+        restored.step(&[]);
+        assert_eq!(restored.phase, AdventurePhase::GameOver { updates: 0 });
+        restored.validate().unwrap();
     }
 
     #[test]

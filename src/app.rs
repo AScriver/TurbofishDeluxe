@@ -2,6 +2,7 @@ use crate::{
     adventure::{AdventurePhase, AdventureSession},
     alien::SylvesterKind,
     assets::{GameAssets, SoundData},
+    bonus::{BonusResult, BonusState, ShellKind, ShellState},
     cli::{self, Options},
     fish_pet::FishPetKind,
     font::BitmapFont,
@@ -24,6 +25,7 @@ use std::{
 
 const IMAGE_IDS: &[&str] = &[
     "IMAGE_AQUARIUM1",
+    "IMAGE_AQUARIUM2",
     "IMAGE_MENUBAR",
     "IMAGE_SMALLSWIM",
     "IMAGE_SMALLEAT",
@@ -68,6 +70,14 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_NIKO",
     "IMAGE_SCL_ITCHY",
     "IMAGE_SCL_PREGO",
+    "IMAGE_ZORF",
+    "IMAGE_SCL_ZORF",
+    "IMAGE_BONUSBUCKET",
+    "IMAGE_SHELLS",
+    "IMAGE_MONEYBAG",
+    "IMAGE_BONUS1",
+    "IMAGE_BONUS2",
+    "IMAGE_BONUS3",
 ];
 const SOUND_IDS: &[&str] = &[
     "SOUND_DROPFOOD",
@@ -89,6 +99,8 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_DIE",
     "SOUND_PUNCH",
     "SOUND_BABY",
+    "SOUND_BONUSCOLLECT",
+    "SOUND_BONUSCOUNT",
 ];
 
 pub struct Presentation {
@@ -195,6 +207,8 @@ impl Presentation {
             "JungleFever15outline",
             "JungleFever12outline",
             "ContinuumBold12",
+            "ContinuumBold14",
+            "ContinuumBold14outback",
             "Pix118",
         ] {
             fonts.insert(name.into(), RenderedFont::load(game_root, assets, name)?);
@@ -239,7 +253,8 @@ impl Presentation {
     fn play(&self, events: &[Event]) {
         for event in events {
             let id = match event {
-                Event::FoodDropped { .. } => "SOUND_DROPFOOD",
+                Event::FoodDropped { potion: false, .. } => "SOUND_DROPFOOD",
+                Event::PotionExploded { .. } => "SOUND_EXPLOSION1",
                 Event::FoodEaten { .. } => "SOUND_SLURP",
                 Event::FishGrew { .. } => "SOUND_GROW",
                 Event::CoinCredited { .. } => "SOUND_POINTS",
@@ -247,6 +262,7 @@ impl Presentation {
                 | Event::EggBought { .. }
                 | Event::FoodQualityBought { .. }
                 | Event::FoodQuantityBought { .. }
+                | Event::PotionBought { .. }
                 | Event::WeaponBought { .. } => "SOUND_BUY",
                 Event::OscarBought { .. } => "SOUND_GROW",
                 Event::OscarAteGuppy { .. } => "SOUND_CHOMP",
@@ -268,6 +284,11 @@ impl Presentation {
                     _ => continue,
                 },
                 Event::PearlCollectionStarted { .. } => "SOUND_PEARL",
+                Event::Bonus {
+                    event: crate::bonus::BonusEvent::Claimed { .. },
+                    ..
+                } => "SOUND_BONUSCOLLECT",
+                Event::BonusResultsCommitted { .. } => "SOUND_BONUSCOUNT",
                 Event::StageStarted { .. }
                 | Event::RescueGuppyGranted { .. }
                 | Event::PetSelectionChanged { .. }
@@ -287,14 +308,26 @@ impl Presentation {
     }
 
     fn draw_board(&self, state: &AdventureState) {
-        self.sprite("IMAGE_AQUARIUM1", 0.0, 0.0, None, false, 1.0, 1.0);
+        self.sprite(
+            if state.tank == 2 {
+                "IMAGE_AQUARIUM2"
+            } else {
+                "IMAGE_AQUARIUM1"
+            },
+            0.0,
+            0.0,
+            None,
+            false,
+            1.0,
+            1.0,
+        );
         for food in &state.food {
             self.sprite(
                 "IMAGE_FOOD",
                 food.x - 5.0,
                 food.y - 4.0,
                 Some(Rect::new(
-                    (food.frame / 3 % 10) as f32 * 40.0,
+                    (food.frame / food.animation_period % 10) as f32 * 40.0,
                     f32::from(food.quality) * 40.0,
                     40.0,
                     40.0,
@@ -316,7 +349,8 @@ impl Presentation {
             let row = match fish.size {
                 FishSize::Small => 0.0,
                 FishSize::Medium => 1.0,
-                FishSize::Large => 2.0,
+                FishSize::Large | FishSize::Star => 2.0,
+                FishSize::Crowned => 3.0,
             };
             self.sprite(
                 id,
@@ -330,8 +364,30 @@ impl Presentation {
                 )),
                 fish.facing_right,
                 fish.growth_scale(),
-                1.0,
+                if fish.size == FishSize::Star {
+                    155.0 / 255.0
+                } else {
+                    1.0
+                },
             );
+            if fish.size == FishSize::Star {
+                // W1 adds a bright pass over a translucent large-fish pose.
+                // Macroquad's standard blend is a visual approximation.
+                self.sprite(
+                    id,
+                    fish.x,
+                    fish.y,
+                    Some(Rect::new(
+                        (fish.frame % 10) as f32 * 80.0,
+                        160.0,
+                        80.0,
+                        80.0,
+                    )),
+                    fish.facing_right,
+                    1.0,
+                    200.0 / 255.0,
+                );
+            }
         }
         for oscar in state.oscars.iter().filter(|oscar| oscar.alive) {
             let id = match (oscar.sprite_pose(), oscar.hunger_visible()) {
@@ -376,6 +432,7 @@ impl Presentation {
             let image = match pet.kind {
                 FishPetKind::Itchy => "IMAGE_ITCHY",
                 FishPetKind::Prego => "IMAGE_PREGO",
+                FishPetKind::Zorf => "IMAGE_ZORF",
             };
             self.sprite(
                 image,
@@ -396,7 +453,8 @@ impl Presentation {
             let row = match fish.size {
                 FishSize::Small => 0.0,
                 FishSize::Medium => 1.0,
-                FishSize::Large => 2.0,
+                FishSize::Large | FishSize::Star => 2.0,
+                FishSize::Crowned => 3.0,
             };
             self.sprite(
                 "IMAGE_SMALLDIE",
@@ -554,8 +612,8 @@ impl Presentation {
             let (column, row) = niko.frame();
             self.sprite(
                 "IMAGE_NIKO",
-                crate::niko::NIKO_X as f32,
-                crate::niko::NIKO_Y as f32,
+                niko.anchor_x as f32,
+                niko.anchor_y as f32,
                 Some(Rect::new(
                     f32::from(column) * 80.0,
                     f32::from(row) * 80.0,
@@ -585,6 +643,7 @@ impl Presentation {
                 CoinKind::Silver => 0.0,
                 CoinKind::Gold => 1.0,
                 CoinKind::Diamond => 3.0,
+                CoinKind::Star => 2.0,
             };
             let alpha = if coin.fade_ticks > 0 {
                 f32::from(coin.fade_ticks) / 5.0
@@ -683,6 +742,24 @@ impl Presentation {
                 1.0,
             );
             self.fonts["Pix118"].text("1000", 229.0, 58.0, Color::from_rgba(110, 250, 110, 255));
+        }
+        if state.potion_unlocked {
+            self.sprite("IMAGE_MENUBTNU", 217.0, 3.0, None, false, 1.0, 1.0);
+            self.sprite(
+                "IMAGE_FOOD",
+                227.0,
+                4.0,
+                Some(Rect::new(0.0, 120.0, 40.0, 40.0)),
+                false,
+                1.0,
+                1.0,
+            );
+            self.fonts["Pix118"].text(
+                if state.potion_armed { "READY" } else { "250" },
+                227.0,
+                58.0,
+                Color::from_rgba(110, 250, 110, 255),
+            );
         }
         if state.weapon_unlocked {
             self.sprite("IMAGE_MENUBTNU", 363.0, 3.0, None, false, 1.0, 1.0);
@@ -834,6 +911,211 @@ impl Presentation {
         );
     }
 
+    fn draw_bonus_shell(&self, shell: &ShellState) {
+        let x = shell.x as f32;
+        let y = shell.y as f32;
+        if shell.kind == ShellKind::Treasure {
+            self.sprite(
+                "IMAGE_MONEYBAG",
+                x + 18.0,
+                y + 18.0,
+                None,
+                false,
+                1.0,
+                shell.alpha(),
+            );
+        } else {
+            let row = match shell.kind {
+                ShellKind::Silver => 0.0,
+                ShellKind::Gold => 1.0,
+                ShellKind::Diamond => 2.0,
+                ShellKind::Pearl => 3.0,
+                ShellKind::Treasure => unreachable!(),
+            };
+            let image = &self.images["IMAGE_SHELLS"];
+            self.sprite(
+                "IMAGE_SHELLS",
+                x + 20.0,
+                y + 20.0,
+                Some(Rect::new(
+                    f32::from(shell.sprite_frame()) * image.width() / 20.0,
+                    row * image.height() / 4.0,
+                    image.width() / 20.0,
+                    image.height() / 4.0,
+                )),
+                false,
+                1.0,
+                shell.alpha(),
+            );
+        }
+    }
+
+    fn draw_bonus(&self, bonus: &BonusState) {
+        self.sprite("IMAGE_AQUARIUM1", 0.0, 0.0, None, false, 1.0, 1.0);
+        let timer = bonus.tick.saturating_sub(bonus.initial_count);
+        let bucket_y = if bonus.started_at.is_some() {
+            Some(265.0)
+        } else if timer > 129 {
+            if timer < 150 {
+                let progress = (timer.saturating_sub(130) as f32 / 20.0).clamp(0.0, 1.0);
+                Some(270.0 * progress * progress)
+            } else if timer < 152 {
+                Some(270.0 - (timer.saturating_sub(150) as f32 * 2.5))
+            } else {
+                Some(265.0)
+            }
+        } else {
+            None
+        };
+        if let Some(y) = bucket_y {
+            self.sprite("IMAGE_BONUSBUCKET", 260.0, y, None, false, 1.0, 1.0);
+            if bonus.started_at.is_some() {
+                self.centered_text(
+                    "ContinuumBold14",
+                    &bonus.shells_earned.to_string(),
+                    y + 151.0,
+                    Color::from_rgba(240, 163, 59, 255),
+                );
+            }
+        }
+        if bonus.draw_order.is_empty() {
+            for shell in &bonus.shells {
+                self.draw_bonus_shell(shell);
+            }
+        } else {
+            for id in &bonus.draw_order {
+                if let Some(shell) = bonus.shells.iter().find(|shell| shell.id == *id) {
+                    self.draw_bonus_shell(shell);
+                }
+            }
+        }
+        if bonus.started_at.is_none() {
+            self.centered_text("JungleFever17outline", "BONUS ROUND", 235.0, YELLOW);
+            self.centered_text(
+                "ContinuumBold14",
+                "Collect as many shells as you can!",
+                260.0,
+                Color::from_rgba(180, 250, 90, 255),
+            );
+            let examples = [
+                (ShellKind::Silver, "1"),
+                (ShellKind::Gold, "2"),
+                (ShellKind::Diamond, "5"),
+                (ShellKind::Pearl, "10"),
+                (ShellKind::Treasure, "20"),
+            ];
+            for (index, (kind, value)) in examples.iter().enumerate() {
+                let x = 180.0 + index as f32 * 60.0;
+                if *kind == ShellKind::Treasure {
+                    self.sprite("IMAGE_MONEYBAG", x, 268.0, None, false, 1.0, 1.0);
+                } else {
+                    let row = match kind {
+                        ShellKind::Silver => 0.0,
+                        ShellKind::Gold => 1.0,
+                        ShellKind::Diamond => 2.0,
+                        ShellKind::Pearl => 3.0,
+                        ShellKind::Treasure => unreachable!(),
+                    };
+                    let image = &self.images["IMAGE_SHELLS"];
+                    self.sprite(
+                        "IMAGE_SHELLS",
+                        x,
+                        280.0,
+                        Some(Rect::new(
+                            0.0,
+                            row * image.height() / 4.0,
+                            image.width() / 20.0,
+                            image.height() / 4.0,
+                        )),
+                        false,
+                        1.0,
+                        1.0,
+                    );
+                }
+                self.fonts["ContinuumBold12"].text(value, x + 11.0, 330.0, WHITE);
+            }
+            self.centered_text("JungleFever10outline", "Click to start", 365.0, WHITE);
+            if timer < 148 {
+                let frame = (148 - timer) / 36;
+                if frame < 3 {
+                    let id = ["IMAGE_BONUS1", "IMAGE_BONUS2", "IMAGE_BONUS3"][frame as usize];
+                    let within_frame = (148 - timer) % 36;
+                    let scale = ((36 - within_frame).min(5) as f32 * 0.8 / 5.0) + 0.2;
+                    let image = &self.images[id];
+                    let width = image.width() * scale;
+                    self.sprite(
+                        id,
+                        (640.0 - width) / 2.0,
+                        90.0 - (scale - 1.0) * image.height() * 0.5,
+                        None,
+                        false,
+                        scale,
+                        ((within_frame.min(20) as f32) / 20.0).clamp(0.0, 1.0),
+                    );
+                }
+            }
+        }
+        let seconds = bonus.remaining_seconds();
+        self.fonts["ContinuumBold12"].text(
+            &format!("Time Remaining: {}:{:02}", seconds / 60, seconds % 60),
+            465.0,
+            470.0,
+            WHITE,
+        );
+    }
+
+    fn draw_bonus_results(&self, result: &BonusResult) {
+        self.sprite("IMAGE_HATCHSCREEN", 0.0, 0.0, None, false, 1.0, 1.0);
+        let title = &self.images["IMAGE_SCREENTITLE"];
+        self.image_box(
+            "IMAGE_SCREENTITLE",
+            Rect::new(0.0, 0.0, title.width(), title.height()),
+            Rect::new(20.0, 0.0, 600.0, title.height()),
+        );
+        self.centered_text(
+            "JungleFever17outline",
+            "BONUS RESULTS",
+            25.0,
+            Color::from_rgba(255, 200, 0, 255),
+        );
+        draw_rectangle(
+            175.0,
+            230.0,
+            300.0,
+            225.0,
+            Color::new(0.03, 0.12, 0.2, 0.72),
+        );
+        self.fonts["JungleFever12outline"].text("Shells", 205.0, 286.0, YELLOW);
+        draw_line(205.0, 295.0, 445.0, 295.0, 1.0, WHITE);
+        self.fonts["JungleFever10outline"].text("Bonus Reward", 205.0, 324.0, WHITE);
+        self.fonts["JungleFever10outline"].text(
+            &result
+                .presented_balance()
+                .saturating_sub(result.previous_balance)
+                .to_string(),
+            398.0,
+            324.0,
+            YELLOW,
+        );
+        self.fonts["JungleFever10outline"].text("New Balance", 205.0, 364.0, WHITE);
+        self.fonts["JungleFever10outline"].text(
+            &result.presented_balance().to_string(),
+            398.0,
+            364.0,
+            YELLOW,
+        );
+        self.sprite("IMAGE_HATCHREFLECTION", 240.0, 60.0, None, false, 1.0, 1.0);
+        let height = self.images["IMAGE_MAINBUTTON"].height();
+        self.main_button(
+            Rect::new(186.0, 445.0, 264.0, height),
+            if result.updates >= 30 {
+                "Click Here To Continue"
+            } else {
+                "Please Wait..."
+            },
+        );
+    }
+
     fn draw_hatch(&self, pet: PetKind, updates: u32) {
         self.sprite("IMAGE_HATCHSCREEN", 0.0, 0.0, None, false, 1.0, 1.0);
         let title = &self.images["IMAGE_SCREENTITLE"];
@@ -883,6 +1165,7 @@ impl Presentation {
                 }
                 PetKind::Itchy => ("IMAGE_ITCHY", 90.0, updates % 20 / 2),
                 PetKind::Prego => ("IMAGE_PREGO", 90.0, updates % 20 / 2),
+                PetKind::Zorf => ("IMAGE_ZORF", 90.0, updates % 20 / 2),
             };
             self.sprite(
                 id,
@@ -900,6 +1183,7 @@ impl Presentation {
                     PetKind::Niko => "NIKO the Oyster",
                     PetKind::Itchy => "ITCHY the Swordfish",
                     PetKind::Prego => "PREGO the Momma Fish",
+                    PetKind::Zorf => "ZORF the Sea Horse",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -928,6 +1212,7 @@ impl Presentation {
                     "tank by giving birth to a new",
                     "baby guppy every so often.",
                 ],
+                PetKind::Zorf => ["ZORF gives you a hand in", "keeping your fish fed.", ""],
             };
             for (index, line) in description.iter().enumerate() {
                 self.centered_text(
@@ -978,8 +1263,8 @@ impl Presentation {
             Color::from_rgba(255, 200, 0, 255),
         );
         let mut hovered = None;
-        for (index, pet) in session.progress.unlocked_pets.iter().take(4).enumerate() {
-            // The first four W1 PetsScreen buttons occupy one 90x83 column.
+        for (index, pet) in session.progress.unlocked_pets.iter().take(5).enumerate() {
+            // The first five W1 PetsScreen buttons occupy one 90x83 column.
             let card = Rect::new(25.0, 41.0 + index as f32 * 83.0, 90.0, 83.0);
             if card.contains(pointer) {
                 hovered = Some(*pet);
@@ -1005,6 +1290,7 @@ impl Presentation {
                 PetKind::Niko => "IMAGE_SCL_NIKO",
                 PetKind::Itchy => "IMAGE_SCL_ITCHY",
                 PetKind::Prego => "IMAGE_SCL_PREGO",
+                PetKind::Zorf => "IMAGE_SCL_ZORF",
             };
             let image = &self.images[icon];
             let column = if *pet == PetKind::Niko {
@@ -1080,6 +1366,12 @@ impl Presentation {
                     ],
                     90.0,
                 ),
+                PetKind::Zorf => (
+                    "IMAGE_ZORF",
+                    "ZORF the Sea Horse",
+                    ["ZORF gives you a hand in", "keeping your fish fed.", ""],
+                    90.0,
+                ),
             };
             let column = if pet == PetKind::Niko {
                 let phase = session.ticks % 18;
@@ -1140,6 +1432,8 @@ impl Presentation {
     fn draw(&self, session: &AdventureSession, paused: bool, pointer: Vec2) {
         match session.phase {
             AdventurePhase::Hatch { pet, updates } => self.draw_hatch(pet, updates),
+            AdventurePhase::Bonus { ref state } => self.draw_bonus(state),
+            AdventurePhase::BonusResults { ref result } => self.draw_bonus_results(result),
             AdventurePhase::PetSelection { ref selected }
             | AdventurePhase::PetSelectionConfirmation { ref selected } => {
                 self.draw_pet_selection(session, selected, pointer);
@@ -1491,12 +1785,18 @@ pub async fn run(
                 held_fire_at = None;
             } else if !paused {
                 let action = match session.phase {
+                    AdventurePhase::BonusResults { ref result }
+                        if result.updates >= 30
+                            && Rect::new(186.0, 445.0, 264.0, button_height).contains(pointer) =>
+                    {
+                        Action::Continue
+                    }
                     AdventurePhase::PetSelection { .. } => {
                         let pet_at_pointer = session
                             .progress
                             .unlocked_pets
                             .iter()
-                            .take(4)
+                            .take(5)
                             .enumerate()
                             .find(|(index, _)| {
                                 Rect::new(25.0, 41.0 + *index as f32 * 83.0, 90.0, 83.0)
@@ -1567,6 +1867,15 @@ pub async fn run(
                         if Rect::new(18.0, 3.0, 58.0, 60.0).contains(pointer) =>
                     {
                         Action::BuyGuppy
+                    }
+                    AdventurePhase::Playing
+                        if session
+                            .board
+                            .as_ref()
+                            .is_some_and(|board| board.potion_unlocked)
+                            && Rect::new(217.0, 3.0, 58.0, 60.0).contains(pointer) =>
+                    {
+                        Action::BuyPotion
                     }
                     AdventurePhase::Playing
                         if session
@@ -1659,7 +1968,8 @@ pub async fn run(
                 | AdventurePhase::HelpScreen
                 | AdventurePhase::Hatch { .. }
                 | AdventurePhase::PetSelection { .. }
-        ) || matches!(session.phase, AdventurePhase::GameOver { updates } if updates > 30);
+        ) || matches!(session.phase, AdventurePhase::GameOver { updates } if updates > 30)
+            || matches!(session.phase, AdventurePhase::BonusResults { ref result } if result.updates >= 30);
         if !paused && is_key_pressed(KeyCode::Enter) && enter_continues {
             pending_actions.push(Action::Continue);
         }
@@ -1680,6 +1990,7 @@ pub async fn run(
             || (paused && is_key_pressed(KeyCode::Q))
             || options.quit_after.is_some_and(|limit| elapsed >= limit);
         let mut events = Vec::new();
+        let mut phase_transitioned = false;
         if save_requested || exit_requested {
             // Inputs already accepted by this window belong to the checkpoint.
             // Apply them without inventing an extra simulation tick on save/exit.
@@ -1730,7 +2041,9 @@ pub async fn run(
                             elapsed_ms: ((get_time() - press_at) * 1000.0).max(0.0) as u32,
                         });
                     }
+                    let previous_phase = std::mem::discriminant(&session.phase);
                     let step_events = session.step(&step_actions);
+                    phase_transitioned |= previous_phase != std::mem::discriminant(&session.phase);
                     if feed_press_at.is_some()
                         && step_events
                             .iter()
@@ -1760,16 +2073,18 @@ pub async fn run(
                     events.extend(step_events);
                 }
                 accumulator -= f64::from(TICK_MS) / 1000.0;
-                if events
-                    .iter()
-                    .any(|event| matches!(event, Event::HatchStarted { .. }))
+                if phase_transitioned
+                    || events
+                        .iter()
+                        .any(|event| matches!(event, Event::HatchStarted { .. }))
                 {
                     accumulator = 0.0;
                     break;
                 }
             }
         }
-        if save_requested
+        if phase_transitioned
+            || save_requested
             || exit_requested
             || events.iter().any(|event| {
                 matches!(
@@ -1784,6 +2099,13 @@ pub async fn run(
                         | Event::HatchStarted { .. }
                         | Event::StageStarted { .. }
                         | Event::RescueGuppyGranted { .. }
+                        | Event::BonusResultsCommitted { .. }
+                        | Event::Bonus {
+                            event: crate::bonus::BonusEvent::Started { .. }
+                                | crate::bonus::BonusEvent::Claimed { .. }
+                                | crate::bonus::BonusEvent::Credited { .. },
+                            ..
+                        }
                 )
             })
         {

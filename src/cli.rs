@@ -95,7 +95,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 6;
+pub const SAVE_FORMAT_VERSION: u32 = 7;
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -103,6 +103,12 @@ pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
 
 fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), Box<dyn Error>> {
     let value: serde_json::Value = serde_json::from_slice(bytes)?;
+    let version_number = value
+        .get("format_version")
+        .and_then(serde_json::Value::as_u64);
+    if let Some(version @ 1..=6) = version_number {
+        validate_legacy_boundary(&value, version)?;
+    }
     let (session, migrated) = match value.get("format_version").and_then(|value| value.as_u64()) {
         Some(1) => {
             let legacy: LegacyProjectSave = serde_json::from_value(value)?;
@@ -196,7 +202,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ (5 | 6)) => {
+        Some(version @ 5..=7) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -208,6 +214,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                             || ["pet_capacity", "selected_pets"]
                                 .iter()
                                 .all(|field| progress.contains_key(*field)))
+                        && (version != 7 || progress.contains_key("shell_balance"))
                 });
             let incomplete_board = value
                 .pointer("/session/board")
@@ -227,15 +234,31 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     ]
                     .iter()
                     .any(|field| !board.contains_key(*field))
-                        || (version == 6
+                        || (version >= 6
                             && ["fish_pets", "punch_sound_cooldown"]
+                                .iter()
+                                .any(|field| !board.contains_key(*field)))
+                        || (version == 7
+                            && ["potion_unlocked", "potion_armed"]
                                 .iter()
                                 .any(|field| !board.contains_key(*field)))
                         || board
                             .get("food")
                             .and_then(serde_json::Value::as_array)
                             .is_some_and(|food| {
-                                food.iter().any(|pellet| pellet.get("quality").is_none())
+                                food.iter().any(|pellet| {
+                                    pellet.get("quality").is_none()
+                                        || (version == 7
+                                            && [
+                                                "direction",
+                                                "vx",
+                                                "vy",
+                                                "animation_period",
+                                                "free_from_zorf",
+                                            ]
+                                            .iter()
+                                            .any(|field| pellet.get(*field).is_none()))
+                                })
                             })
                         || board
                             .get("fish")
@@ -253,15 +276,28 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                         .get("alien")
                                         .and_then(serde_json::Value::as_object)
                                         .is_some_and(|alien| !alien.contains_key("kind"))
-                                    || (version == 6
+                                    || (version >= 6
                                         && wave
                                             .get("dead_alien")
                                             .and_then(serde_json::Value::as_object)
                                             .is_some_and(|body| !body.contains_key("kind")))
                             })
+                        || (version == 7
+                            && board
+                                .get("niko")
+                                .and_then(serde_json::Value::as_object)
+                                .is_some_and(|niko| {
+                                    ["anchor_x", "anchor_y"]
+                                        .iter()
+                                        .any(|field| !niko.contains_key(*field))
+                                }))
                 });
             if !complete_progress || incomplete_board {
-                let label = if version == 5 { "five" } else { "six" };
+                let label = match version {
+                    5 => "five",
+                    6 => "six",
+                    _ => "seven",
+                };
                 return Err(format!(
                     "Incomplete format-{label} save; required state fields are missing"
                 )
@@ -277,7 +313,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     board.initialize_legacy_stage14_support();
                 }
             }
-            (session, version == 5)
+            (session, version < 7)
         }
         _ => {
             return Err("Unsupported project save version; original saves are not imported".into());
@@ -285,6 +321,85 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     };
     session.validate()?;
     Ok((session, migrated))
+}
+
+fn validate_legacy_boundary(value: &serde_json::Value, version: u64) -> Result<(), Box<dyn Error>> {
+    let max_level = match version {
+        1 => 1,
+        2 | 3 => 2,
+        4 => 3,
+        5 => 4,
+        _ => 5,
+    };
+    if let Some(progress) = value.pointer("/session/progress")
+        && (progress.get("tank").and_then(serde_json::Value::as_u64) != Some(1)
+            || progress
+                .get("level")
+                .and_then(serde_json::Value::as_u64)
+                .is_none_or(|level| !(1..=max_level).contains(&level))
+            || progress
+                .get("shell_balance")
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|balance| balance != 0)
+            || progress
+                .get("unlocked_pets")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|pets| pets.iter().any(|pet| pet.as_str() == Some("Zorf"))))
+    {
+        return Err("Legacy save claims progress or shells its format never supported".into());
+    }
+    if value
+        .pointer("/session/phase")
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|phase| phase.contains_key("Bonus") || phase.contains_key("BonusResults"))
+    {
+        return Err("Legacy save claims an unsupported bonus phase".into());
+    }
+    let board = value
+        .pointer("/session/board")
+        .or_else(|| value.get("state"));
+    if let Some(board) = board.filter(|board| !board.is_null())
+        && (["potion_unlocked", "potion_armed"]
+            .iter()
+            .any(|field| board.get(*field).and_then(serde_json::Value::as_bool) == Some(true))
+            || board
+                .get("pets")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|pets| pets.iter().any(|pet| pet.as_str() == Some("Zorf")))
+            || board
+                .get("fish")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|fish| {
+                    fish.iter().any(|fish| {
+                        matches!(
+                            fish.get("size").and_then(serde_json::Value::as_str),
+                            Some("Star" | "Crowned")
+                        )
+                    })
+                })
+            || board
+                .get("food")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|food| {
+                    food.iter().any(|pellet| {
+                        pellet
+                            .get("quality")
+                            .and_then(serde_json::Value::as_u64)
+                            .is_some_and(|quality| quality > 2)
+                            || pellet
+                                .get("direction")
+                                .and_then(serde_json::Value::as_u64)
+                                .is_some_and(|direction| direction != 0)
+                            || pellet
+                                .get("free_from_zorf")
+                                .and_then(serde_json::Value::as_bool)
+                                == Some(true)
+                    })
+                }))
+    {
+        return Err("Legacy save claims new potion, Star or Zorf state".into());
+    }
+    Ok(())
 }
 
 pub fn load_session(options: &Options) -> Result<AdventureSession, Box<dyn Error>> {

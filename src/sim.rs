@@ -4,7 +4,7 @@
 
 use crate::{
     alien::{PreyView, SylvesterKind},
-    fish_pet::{FishPetKind, FishPetState, PetAlienView},
+    fish_pet::{FishPetKind, FishPetState, PetAlienView, ZorfHungryView},
     invasion::{Invasion1_2, InvasionEvent},
     niko::{NikoEvent, NikoPearl, NikoState, PEARL_VALUE, PearlPhase, PearlUpdate},
     oscar::{DeadOscar, OscarPrey, OscarState},
@@ -21,6 +21,8 @@ pub const SECOND_STAGE_EGG_PRICE: i32 = 500;
 pub const THIRD_STAGE_EGG_PRICE: i32 = 2000;
 pub const FOURTH_STAGE_EGG_PRICE: i32 = 3000;
 pub const FIFTH_STAGE_EGG_PRICE: i32 = 5000;
+pub const TANK2_FIRST_EGG_PRICE: i32 = 750;
+pub const POTION_PRICE: i32 = 250;
 pub const FOOD_QUALITY_PRICE: i32 = 200;
 pub const FOOD_QUANTITY_PRICE: i32 = 300;
 pub const OSCAR_PRICE: i32 = 1000;
@@ -42,6 +44,7 @@ pub enum PetKind {
     Niko,
     Itchy,
     Prego,
+    Zorf,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,6 +135,8 @@ pub enum FishSize {
     Small,
     Medium,
     Large,
+    Star,
+    Crowned,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,6 +151,7 @@ pub enum CoinKind {
     Silver,
     Gold,
     Diamond,
+    Star,
 }
 
 impl CoinKind {
@@ -154,6 +160,7 @@ impl CoinKind {
             Self::Silver => 15,
             Self::Gold => 35,
             Self::Diamond => 200,
+            Self::Star => 40,
         }
     }
 }
@@ -282,6 +289,20 @@ pub struct Food {
     pub removal_ticks: u8,
     #[serde(default)]
     pub quality: u8,
+    #[serde(default)]
+    pub direction: u8,
+    #[serde(default)]
+    pub vx: f32,
+    #[serde(default)]
+    pub vy: f32,
+    #[serde(default = "initial_food_animation_period")]
+    pub animation_period: u8,
+    #[serde(default)]
+    pub free_from_zorf: bool,
+}
+
+const fn initial_food_animation_period() -> u8 {
+    3
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -305,6 +326,7 @@ pub enum Action {
     BuyFoodQuantity,
     BuyOscar,
     BuyWeapon,
+    BuyPotion,
     HoldFeed { x: f32, y: f32, elapsed_ms: u32 },
     HoldFire { x: f32, y: f32, elapsed_ms: u32 },
     TogglePet { pet: PetKind },
@@ -370,6 +392,8 @@ pub enum Event {
         tick: u64,
         food_id: u64,
         balance: i32,
+        #[serde(default)]
+        potion: bool,
     },
     FoodEaten {
         tick: u64,
@@ -380,6 +404,30 @@ pub enum Event {
     FoodExpired {
         tick: u64,
         food_id: u64,
+    },
+    PotionExploded {
+        tick: u64,
+        food_id: u64,
+        fish_id: Option<u64>,
+    },
+    PotionBought {
+        tick: u64,
+        balance: i32,
+    },
+    ZorfFoodDropped {
+        tick: u64,
+        pet_id: u64,
+        food_id: u64,
+    },
+    Bonus {
+        tick: u64,
+        event: crate::bonus::BonusEvent,
+    },
+    BonusResultsCommitted {
+        tick: u64,
+        earned: u32,
+        previous_balance: u32,
+        shell_balance: u32,
     },
     FishGrew {
         tick: u64,
@@ -558,6 +606,10 @@ pub struct AdventureState {
     pub weapon_unlocked: bool,
     #[serde(default = "initial_weapon_strength")]
     pub weapon_strength: u8,
+    #[serde(default)]
+    pub potion_unlocked: bool,
+    #[serde(default)]
+    pub potion_armed: bool,
     #[serde(default = "first_stage_egg_price")]
     pub egg_price: i32,
     #[serde(default)]
@@ -632,6 +684,8 @@ impl AdventureState {
             oscar_unlocked: false,
             weapon_unlocked: false,
             weapon_strength: 2,
+            potion_unlocked: false,
+            potion_armed: false,
             egg_price: EGG_PRICE,
             pets: Vec::new(),
             stinky: None,
@@ -649,11 +703,7 @@ impl AdventureState {
             niko: None,
             pearls: Vec::new(),
             next_id: 1,
-            rng_state: if seed == 0 {
-                0x9e37_79b9_7f4a_7c15
-            } else {
-                seed
-            },
+            rng_state: Self::initial_rng(seed),
             held_feed: None,
             held_fire: None,
         }
@@ -751,6 +801,52 @@ impl AdventureState {
                 }
                 PetKind::Itchy => state.spawn_fish_pet(FishPetKind::Itchy),
                 PetKind::Prego => state.spawn_fish_pet(FishPetKind::Prego),
+                PetKind::Zorf => unreachable!("roster checked before construction"),
+            }
+        }
+        state.spawn_starter_guppies(false);
+        Ok(state)
+    }
+
+    /// A fresh second-tank board preserves the selected roster order and
+    /// constructs the pets before either ordinary starter guppy.
+    pub fn new_tank2_first_stage(seed: u64, pets: &[PetKind]) -> Result<Self, String> {
+        let canonical = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+        ];
+        if pets.len() > 3
+            || pets.iter().any(|pet| !canonical.contains(pet))
+            || pets.windows(2).any(|pair| {
+                canonical.iter().position(|pet| *pet == pair[0])
+                    >= canonical.iter().position(|pet| *pet == pair[1])
+            })
+        {
+            return Err("invalid second-tank pet selection".into());
+        }
+        let mut state = Self::empty_board(seed);
+        state.tank = 2;
+        state.level = 1;
+        state.egg_price = TANK2_FIRST_EGG_PRICE;
+        state.invasion = Some(Invasion1_2::new_strong());
+        state.pets = pets.to_vec();
+        for pet in pets {
+            match pet {
+                PetKind::Stinky => {
+                    state.stinky = Some(state.spawn_stinky(StinkyOrigin::StageStart))
+                }
+                PetKind::Niko => {
+                    let owner_id = state.id();
+                    state.niko = Some(NikoState::spawn_tank2(owner_id, &mut |upper| {
+                        state.rand_range(upper)
+                    }));
+                }
+                PetKind::Itchy => state.spawn_fish_pet(FishPetKind::Itchy),
+                PetKind::Prego => state.spawn_fish_pet(FishPetKind::Prego),
+                PetKind::Zorf => state.spawn_fish_pet(FishPetKind::Zorf),
             }
         }
         state.spawn_starter_guppies(false);
@@ -811,7 +907,7 @@ impl AdventureState {
     }
 
     pub fn initialize_legacy_invasion(&mut self) {
-        if self.level == 2 {
+        if (self.tank, self.level) == (1, 2) {
             self.upgrades.quality_unlocked = self.egg_unlocked
                 || self.fish.iter().any(|fish| fish.size == FishSize::Large)
                 || self
@@ -888,8 +984,7 @@ impl AdventureState {
     /// Validate durable board relationships before accepting a project save.
     /// The profile and screen phase are checked by AdventureSession separately.
     pub fn validate(&self) -> Result<(), String> {
-        if self.tank != 1
-            || !(1..=5).contains(&self.level)
+        if !((self.tank == 1 && (1..=5).contains(&self.level)) || (self.tank, self.level) == (2, 1))
             || self.next_id == 0
             || self.rng_state == 0
             || self.eggs > 3
@@ -898,122 +993,203 @@ impl AdventureState {
             || !(1..=9).contains(&self.upgrades.quantity)
             || (!self.upgrades.quality_unlocked && self.upgrades.quality > 0)
             || (!self.upgrades.quantity_unlocked && self.upgrades.quantity > 1)
-            || self.food.len() > usize::from(self.upgrades.quantity)
-            || self.food.iter().any(|food| food.quality > 2)
+            || (self.tank == 1 && self.food.len() > usize::from(self.upgrades.quantity))
+            || (self.tank == 2
+                && self.food.iter().filter(|food| !food.free_from_zorf).count()
+                    > usize::from(self.upgrades.quantity))
+            || self.food.iter().any(|food| {
+                food.quality > 3
+                    || food.direction > 2
+                    || !(3..=4).contains(&food.animation_period)
+                    || !food.x.is_finite()
+                    || !food.y.is_finite()
+                    || !food.vx.is_finite()
+                    || !food.vy.is_finite()
+                    || (food.free_from_zorf
+                        && (self.tank != 2
+                            || !self.pets.contains(&PetKind::Zorf)
+                            || food.quality != 1
+                            || food.direction == 0))
+                    || (!food.free_from_zorf && food.direction != 0)
+                    || (food.quality == 3 && (self.tank != 2 || !self.potion_unlocked))
+            })
             || !(2..=12).contains(&self.weapon_strength)
             || (!self.weapon_unlocked && self.weapon_strength > 2)
             || self.punch_sound_cooldown > 11
+            || (self.potion_armed && !self.potion_unlocked)
+            || (self.tank == 1
+                && (self.potion_unlocked
+                    || self.potion_armed
+                    || self.food.iter().any(|food| food.quality == 3)))
         {
             return Err("invalid Adventure board counters or upgrades".into());
         }
-        let expected_price = match self.level {
-            1 => EGG_PRICE,
-            2 => SECOND_STAGE_EGG_PRICE,
-            3 => THIRD_STAGE_EGG_PRICE,
-            4 => FOURTH_STAGE_EGG_PRICE,
-            5 => FIFTH_STAGE_EGG_PRICE,
-            _ => unreachable!(),
+        let expected_price = if self.tank == 2 {
+            TANK2_FIRST_EGG_PRICE
+        } else {
+            match self.level {
+                1 => EGG_PRICE,
+                2 => SECOND_STAGE_EGG_PRICE,
+                3 => THIRD_STAGE_EGG_PRICE,
+                4 => FOURTH_STAGE_EGG_PRICE,
+                5 => FIFTH_STAGE_EGG_PRICE,
+                _ => unreachable!(),
+            }
         };
         if self.egg_price != expected_price {
             return Err("wrong egg price for Adventure stage".into());
         }
-        match self.level {
-            1 if !self.pets.is_empty()
-                || self.stinky.is_some()
-                || self.niko.is_some()
-                || self.invasion.is_some()
-                || !self.pearls.is_empty()
-                || self.upgrades.quality_unlocked
-                || self.upgrades.quantity_unlocked
-                || self.oscar_unlocked
-                || self.weapon_unlocked
-                || self.weapon_strength != 2
-                || !self.oscars.is_empty()
-                || !self.dead_oscars.is_empty()
-                || !self.fish_pets.is_empty() =>
+        match (self.tank, self.level) {
+            (1, 1)
+                if !self.pets.is_empty()
+                    || self.stinky.is_some()
+                    || self.niko.is_some()
+                    || self.invasion.is_some()
+                    || !self.pearls.is_empty()
+                    || self.upgrades.quality_unlocked
+                    || self.upgrades.quantity_unlocked
+                    || self.oscar_unlocked
+                    || self.weapon_unlocked
+                    || self.weapon_strength != 2
+                    || !self.oscars.is_empty()
+                    || !self.dead_oscars.is_empty()
+                    || !self.fish_pets.is_empty() =>
             {
                 return Err("first-stage roster or upgrades disagree".into());
             }
-            2 if self.pets.as_slice() != [PetKind::Stinky]
-                || self.stinky.is_none()
-                || self.invasion.is_none()
-                || self.niko.is_some()
-                || !self.pearls.is_empty()
-                || self.oscar_unlocked
-                || self.weapon_unlocked
-                || self.weapon_strength != 2
-                || !self.oscars.is_empty()
-                || !self.dead_oscars.is_empty()
-                || !self.fish_pets.is_empty() =>
+            (1, 2)
+                if self.pets.as_slice() != [PetKind::Stinky]
+                    || self.stinky.is_none()
+                    || self.invasion.is_none()
+                    || self.niko.is_some()
+                    || !self.pearls.is_empty()
+                    || self.oscar_unlocked
+                    || self.weapon_unlocked
+                    || self.weapon_strength != 2
+                    || !self.oscars.is_empty()
+                    || !self.dead_oscars.is_empty()
+                    || !self.fish_pets.is_empty() =>
             {
                 return Err("second-stage roster or wave disagree".into());
             }
-            3 if self.pets.as_slice() != [PetKind::Stinky, PetKind::Niko]
-                || self.stinky.is_none()
-                || self.niko.is_none()
-                || self
-                    .invasion
-                    .as_ref()
-                    .is_none_or(|wave| wave.kind != SylvesterKind::Strong)
-                || !self.fish_pets.is_empty() =>
+            (1, 3)
+                if self.pets.as_slice() != [PetKind::Stinky, PetKind::Niko]
+                    || self.stinky.is_none()
+                    || self.niko.is_none()
+                    || self
+                        .invasion
+                        .as_ref()
+                        .is_none_or(|wave| wave.kind != SylvesterKind::Strong)
+                    || !self.fish_pets.is_empty() =>
             {
                 return Err("third-stage roster disagrees".into());
             }
-            4 if self.pets.as_slice() != [PetKind::Stinky, PetKind::Niko, PetKind::Itchy]
-                || self.stinky.is_none()
-                || self.niko.is_none()
-                || self
-                    .invasion
-                    .as_ref()
-                    .is_none_or(|wave| wave.kind != SylvesterKind::Balrog)
-                || self.fish_pets.len() != 1
-                || self.fish_pets[0].kind != FishPetKind::Itchy =>
+            (1, 4)
+                if self.pets.as_slice() != [PetKind::Stinky, PetKind::Niko, PetKind::Itchy]
+                    || self.stinky.is_none()
+                    || self.niko.is_none()
+                    || self
+                        .invasion
+                        .as_ref()
+                        .is_none_or(|wave| wave.kind != SylvesterKind::Balrog)
+                    || self.fish_pets.len() != 1
+                    || self.fish_pets[0].kind != FishPetKind::Itchy =>
             {
                 return Err("fourth-stage roster or Balrog wave disagrees".into());
             }
-            5 if self
-                .invasion
-                .as_ref()
-                .is_none_or(|wave| wave.kind != SylvesterKind::Balrog)
-                || self.pets.len() > 3
-                || self.pets.windows(2).any(|pair| {
-                    let canonical = [
-                        PetKind::Stinky,
-                        PetKind::Niko,
-                        PetKind::Itchy,
-                        PetKind::Prego,
-                    ];
-                    canonical.iter().position(|pet| *pet == pair[0])
-                        >= canonical.iter().position(|pet| *pet == pair[1])
-                })
-                || self.stinky.is_some() != self.pets.contains(&PetKind::Stinky)
-                || self.niko.is_some() != self.pets.contains(&PetKind::Niko)
-                || self
-                    .fish_pets
-                    .iter()
-                    .map(|pet| pet.kind)
-                    .collect::<Vec<_>>()
-                    != self
-                        .pets
+            (1, 5)
+                if self
+                    .invasion
+                    .as_ref()
+                    .is_none_or(|wave| wave.kind != SylvesterKind::Balrog)
+                    || self.pets.len() > 3
+                    || self.pets.contains(&PetKind::Zorf)
+                    || self.pets.windows(2).any(|pair| {
+                        let canonical = [
+                            PetKind::Stinky,
+                            PetKind::Niko,
+                            PetKind::Itchy,
+                            PetKind::Prego,
+                        ];
+                        canonical.iter().position(|pet| *pet == pair[0])
+                            >= canonical.iter().position(|pet| *pet == pair[1])
+                    })
+                    || self.stinky.is_some() != self.pets.contains(&PetKind::Stinky)
+                    || self.niko.is_some() != self.pets.contains(&PetKind::Niko)
+                    || self
+                        .fish_pets
                         .iter()
-                        .filter_map(|pet| match pet {
-                            PetKind::Itchy => Some(FishPetKind::Itchy),
-                            PetKind::Prego => Some(FishPetKind::Prego),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>() =>
+                        .map(|pet| pet.kind)
+                        .collect::<Vec<_>>()
+                        != self
+                            .pets
+                            .iter()
+                            .filter_map(|pet| match pet {
+                                PetKind::Itchy => Some(FishPetKind::Itchy),
+                                PetKind::Prego => Some(FishPetKind::Prego),
+                                PetKind::Zorf => None,
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>() =>
             {
                 return Err("fifth-stage selected pet roster disagrees".into());
             }
+            (2, 1)
+                if self
+                    .invasion
+                    .as_ref()
+                    .is_none_or(|wave| wave.kind != SylvesterKind::Strong)
+                    || self.pets.len() > 3
+                    || self.pets.windows(2).any(|pair| {
+                        let canonical = [
+                            PetKind::Stinky,
+                            PetKind::Niko,
+                            PetKind::Itchy,
+                            PetKind::Prego,
+                            PetKind::Zorf,
+                        ];
+                        canonical.iter().position(|pet| *pet == pair[0])
+                            >= canonical.iter().position(|pet| *pet == pair[1])
+                    })
+                    || self.stinky.is_some() != self.pets.contains(&PetKind::Stinky)
+                    || self.niko.is_some() != self.pets.contains(&PetKind::Niko)
+                    || self
+                        .fish_pets
+                        .iter()
+                        .map(|pet| pet.kind)
+                        .collect::<Vec<_>>()
+                        != self
+                            .pets
+                            .iter()
+                            .filter_map(|pet| match pet {
+                                PetKind::Itchy => Some(FishPetKind::Itchy),
+                                PetKind::Prego => Some(FishPetKind::Prego),
+                                PetKind::Zorf => Some(FishPetKind::Zorf),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                    || self.oscar_unlocked
+                    || self.weapon_unlocked
+                    || self.weapon_strength != 2
+                    || !self.oscars.is_empty()
+                    || !self.dead_oscars.is_empty()
+                    || (self.egg_unlocked && !self.upgrades.quality_unlocked)
+                    || (self.upgrades.quality_unlocked != self.upgrades.quantity_unlocked)
+                    || (self.upgrades.quality_unlocked != self.potion_unlocked)
+                    || (self.upgrades.quality_unlocked != self.egg_unlocked) =>
+            {
+                return Err("second-tank roster or upgrade gates disagree".into());
+            }
             _ => {}
         }
-        if self.level == 2
+        if (self.tank, self.level) == (1, 2)
             && ((self.upgrades.quantity_unlocked || self.egg_unlocked)
                 && self.upgrades.quality == 0)
         {
             return Err("upgrade unlock order disagrees".into());
         }
-        if self.level >= 3
+        if self.tank == 1
+            && self.level >= 3
             && ((!self.upgrades.quality_unlocked && self.upgrades.quantity_unlocked)
                 || (self.oscar_unlocked && !self.upgrades.quantity_unlocked)
                 || (self.weapon_unlocked && !self.oscar_unlocked)
@@ -1027,7 +1203,7 @@ impl AdventureState {
         }
         if let Some(wave) = &self.invasion {
             wave.validate()?;
-            if self.level == 2 && wave.kind != SylvesterKind::Weak {
+            if (self.tank, self.level) == (1, 2) && wave.kind != SylvesterKind::Weak {
                 return Err("second-stage wave must be weak".into());
             }
         }
@@ -1042,6 +1218,14 @@ impl AdventureState {
         }
         if let Some(niko) = &self.niko {
             niko.validate()?;
+            if (self.tank == 1
+                && (niko.anchor_x, niko.anchor_y) != (crate::niko::NIKO_X, crate::niko::NIKO_Y))
+                || (self.tank == 2
+                    && (niko.anchor_x, niko.anchor_y)
+                        != (crate::niko::NIKO_TANK2_X, crate::niko::NIKO_TANK2_Y))
+            {
+                return Err("Niko anchor disagrees with tank".into());
+            }
             for pearl in &self.pearls {
                 pearl.validate()?;
                 if pearl.owner_id != niko.owner_id || pearl.phase == PearlPhase::Finished {
@@ -1119,14 +1303,14 @@ impl AdventureState {
                         tick: self.tick,
                         reason: Rejection::Locked,
                     });
-                } else if self.level > 5 {
+                } else if self.tank == 1 && self.level > 5 {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::UnsupportedStage,
                     });
-                } else if self.level == 5 && self.eggs >= 2 {
-                    // 1-5 completion requires the Zorf/1-6 shell bonus
-                    // progression, which is the next bounded integration.
+                } else if (self.tank, self.level) == (2, 1) && self.eggs >= 2 {
+                    // The 2-2 Clyde stage is the next integration. Do not
+                    // finish into a board the session cannot construct yet.
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -1155,7 +1339,7 @@ impl AdventureState {
                         self.victory = true;
                         events.push(Event::LevelCompleted {
                             tick: self.tick,
-                            next_tank: 1,
+                            next_tank: self.tank,
                             next_level: self.level + 1,
                         });
                     }
@@ -1163,8 +1347,30 @@ impl AdventureState {
             }
             Action::BuyFoodQuality => self.buy_food_upgrade(true, &mut events),
             Action::BuyFoodQuantity => self.buy_food_upgrade(false, &mut events),
+            Action::BuyPotion => {
+                if !self.potion_unlocked {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::Locked,
+                    });
+                } else if !self.potion_armed {
+                    if self.available_funds() < POTION_PRICE {
+                        events.push(Event::Rejected {
+                            tick: self.tick,
+                            reason: Rejection::InsufficientFunds,
+                        });
+                    } else {
+                        self.balance -= POTION_PRICE;
+                        self.potion_armed = true;
+                        events.push(Event::PotionBought {
+                            tick: self.tick,
+                            balance: self.balance,
+                        });
+                    }
+                }
+            }
             Action::BuyOscar => {
-                if !self.oscar_unlocked {
+                if self.tank != 1 || !self.oscar_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -1193,7 +1399,7 @@ impl AdventureState {
                 }
             }
             Action::BuyWeapon => {
-                if !self.weapon_unlocked {
+                if self.tank != 1 || !self.weapon_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -1343,7 +1549,8 @@ impl AdventureState {
     }
 
     fn drop_food(&mut self, x: f32, y: f32, ineligible_ticks: u8, events: &mut Vec<Event>) {
-        let rejection = if self.available_funds() < FOOD_PRICE {
+        let price = if self.potion_armed { 0 } else { FOOD_PRICE };
+        let rejection = if self.available_funds() < price {
             Some(Rejection::InsufficientFunds)
         } else if self.food.len() >= usize::from(self.upgrades.quantity) {
             // The original DropFood refunds the charge at capacity.
@@ -1358,8 +1565,15 @@ impl AdventureState {
             });
             return;
         }
-        self.balance -= FOOD_PRICE;
+        self.balance -= price;
+        let quality = if self.potion_armed {
+            3
+        } else {
+            self.upgrades.quality
+        };
+        self.potion_armed = false;
         let id = self.id();
+        let animation_period = self.rand_range(2) as u8 + 3;
         self.food.push(Food {
             id,
             x: x - 10.0,
@@ -1367,12 +1581,18 @@ impl AdventureState {
             frame: 0,
             ineligible_ticks,
             removal_ticks: 0,
-            quality: self.upgrades.quality,
+            quality,
+            direction: 0,
+            vx: 0.0,
+            vy: 0.0,
+            animation_period,
+            free_from_zorf: false,
         });
         events.push(Event::FoodDropped {
             tick: self.tick,
             food_id: id,
             balance: self.balance,
+            potion: quality == 3,
         });
     }
 
@@ -1411,7 +1631,7 @@ impl AdventureState {
         self.balance -= price;
         if quality {
             self.upgrades.quality += 1;
-            if self.level == 2 && !self.upgrades.quantity_unlocked {
+            if (self.tank, self.level) == (1, 2) && !self.upgrades.quantity_unlocked {
                 self.upgrades.quantity_unlocked = true;
                 self.egg_unlocked = true;
                 events.push(Event::Tutorial {
@@ -1586,7 +1806,15 @@ impl AdventureState {
         Self::advance_rng(&mut self.rng_state)
     }
 
-    fn advance_rng(rng_state: &mut u64) -> u64 {
+    pub(crate) fn initial_rng(seed: u64) -> u64 {
+        if seed == 0 {
+            0x9e37_79b9_7f4a_7c15
+        } else {
+            seed
+        }
+    }
+
+    pub(crate) fn advance_rng(rng_state: &mut u64) -> u64 {
         let mut value = *rng_state;
         value ^= value >> 12;
         value ^= value << 25;
@@ -1663,6 +1891,7 @@ impl AdventureState {
             let mut eaten_food = None;
             let mut grew = None;
             let mut died = false;
+            let mut poisoned_corpse = None;
             let mut hunger_cue = None;
             {
                 let fish = &mut self.fish[index];
@@ -1715,28 +1944,61 @@ impl AdventureState {
                             && fish_cy < food.y + 35.0
                         {
                             eaten_food = Some(food.id);
-                            let (nutrition, cap, growth_units) = match food.quality {
-                                0 => (if fish.beginner { 700 } else { 500 }, 800, 1),
-                                1 => (700, 1000, 2),
-                                2 => (1100, 1400, 3),
-                                _ => unreachable!("ordinary pellet quality validated at load"),
-                            };
-                            fish.hunger = (fish.hunger + nutrition).min(cap);
-                            fish.food_ate = fish.food_ate.saturating_add(growth_units);
+                            if food.quality == 3 {
+                                // Fish::Hungry may kill here, but its caller
+                                // still performs the meal and this update's
+                                // coin, animation and movement work.
+                                match fish.size {
+                                    FishSize::Small | FishSize::Medium => {
+                                        poisoned_corpse = Some(DeadFish::from_live(fish));
+                                        fish.alive = false;
+                                        died = true;
+                                    }
+                                    FishSize::Large => {
+                                        fish.hunger = (fish.hunger + 1100).min(1400);
+                                        fish.size = FishSize::Star;
+                                        grew = Some(FishSize::Star);
+                                    }
+                                    FishSize::Star | FishSize::Crowned => {
+                                        fish.hunger = (fish.hunger + 1100).min(1400);
+                                    }
+                                }
+                            } else {
+                                let (nutrition, cap, growth_units) = match food.quality {
+                                    0 => (if fish.beginner { 700 } else { 500 }, 800, 1),
+                                    1 => (700, 1000, 2),
+                                    2 => (1100, 1400, 3),
+                                    _ => unreachable!("food quality validated at load"),
+                                };
+                                fish.hunger = (fish.hunger + nutrition).min(cap);
+                                fish.food_ate = fish.food_ate.saturating_add(growth_units);
+                                if fish.food_ate >= fish.food_needed_to_grow {
+                                    match fish.size {
+                                        FishSize::Small => {
+                                            fish.size = FishSize::Medium;
+                                            fish.food_ate = 0;
+                                            fish.growth_ticks = 10;
+                                            grew = Some(fish.size);
+                                        }
+                                        FishSize::Medium => {
+                                            fish.size = FishSize::Large;
+                                            fish.food_ate = 0;
+                                            fish.growth_ticks = 10;
+                                            grew = Some(fish.size);
+                                        }
+                                        FishSize::Large | FishSize::Star
+                                            if u16::from(fish.food_ate)
+                                                >= u16::from(fish.food_needed_to_grow) * 15 =>
+                                        {
+                                            fish.size = FishSize::Crowned;
+                                            grew = Some(fish.size);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
                             if fish.eating_ticks == 0 {
                                 fish.eating_ticks = 8;
-                            }
-                            if fish.food_ate >= fish.food_needed_to_grow
-                                && fish.size != FishSize::Large
-                            {
-                                fish.size = match fish.size {
-                                    FishSize::Small => FishSize::Medium,
-                                    FishSize::Medium => FishSize::Large,
-                                    FishSize::Large => unreachable!(),
-                                };
-                                fish.food_ate = 0;
-                                fish.growth_ticks = 10;
-                                grew = Some(fish.size);
                             }
                         } else {
                             let dx = food.x + 20.0 - fish_cx;
@@ -1791,11 +2053,21 @@ impl AdventureState {
                 }
             }
             if died {
-                self.dead_fish.push(DeadFish::from_live(&self.fish[index]));
+                let poison_death = poisoned_corpse.is_some();
+                self.dead_fish.push(
+                    poisoned_corpse.unwrap_or_else(|| DeadFish::from_live(&self.fish[index])),
+                );
                 events.push(Event::FishDied {
                     tick: self.tick,
                     fish_id: self.fish[index].id,
                 });
+                if poison_death {
+                    events.push(Event::PotionExploded {
+                        tick: self.tick,
+                        food_id: eaten_food.expect("poison death follows pellet contact"),
+                        fish_id: Some(self.fish[index].id),
+                    });
+                }
             }
             if let Some(cue) = hunger_cue {
                 let cue_index = match cue {
@@ -1831,7 +2103,7 @@ impl AdventureState {
                     });
                 }
                 if size == FishSize::Large {
-                    if self.level == 1 && !self.egg_unlocked {
+                    if (self.tank, self.level) == (1, 1) && !self.egg_unlocked {
                         self.egg_unlocked = true;
                         self.tutorial.buy_fish_hint = false;
                         self.tutorial.buy_egg_hint = true;
@@ -1839,18 +2111,24 @@ impl AdventureState {
                             tick: self.tick,
                             cue: TutorialCue::BuyEgg,
                         });
-                    } else if self.level == 2 && !self.upgrades.quality_unlocked {
+                    } else if (self.tank, self.level) == (1, 2) && !self.upgrades.quality_unlocked {
                         self.upgrades.quality_unlocked = true;
                         events.push(Event::Tutorial {
                             tick: self.tick,
                             cue: TutorialCue::BuyFoodQuality,
                         });
-                    } else if self.level >= 3 {
+                    } else if self.tank == 1 && self.level >= 3 {
                         // Fish::FishOnGrow unlocks quality, quantity and Oscar
                         // together at 1-3. Oscar purchase later unlocks Egg;
                         self.upgrades.quality_unlocked = true;
                         self.upgrades.quantity_unlocked = true;
                         self.oscar_unlocked = true;
+                    }
+                    if self.tank == 2 {
+                        self.upgrades.quality_unlocked = true;
+                        self.upgrades.quantity_unlocked = true;
+                        self.potion_unlocked = true;
+                        self.egg_unlocked = true;
                     }
                 }
                 events.push(Event::FishGrew {
@@ -1903,10 +2181,14 @@ impl AdventureState {
             fish.id,
             fish.x.trunc() + 5.0,
             fish.y.trunc() + 10.0,
-            if fish.size == FishSize::Medium {
-                CoinKind::Silver
-            } else {
-                CoinKind::Gold
+            match fish.size {
+                FishSize::Small => unreachable!(),
+                FishSize::Medium => CoinKind::Silver,
+                FishSize::Large => CoinKind::Gold,
+                FishSize::Star => CoinKind::Star,
+                // Fish::DropCoin passes the crowned size ordinal through as
+                // ordinary coin type four, the diamond row/value.
+                FishSize::Crowned => CoinKind::Diamond,
             },
         ))
     }
@@ -2055,7 +2337,7 @@ impl AdventureState {
             if food.ineligible_ticks > 0 {
                 food.ineligible_ticks -= 1;
             }
-            food.frame = (food.frame + 1) % 30;
+            food.frame = (food.frame + 1) % (food.animation_period * 10);
             if food.removal_ticks > 0 {
                 food.removal_ticks -= 1;
                 if food.removal_ticks == 0 {
@@ -2064,11 +2346,40 @@ impl AdventureState {
                 continue;
             }
             food.y += 1.5;
+            if food.direction != 0 {
+                if food.vy < 0.0 {
+                    food.vy += 0.5;
+                    food.y += food.vy;
+                }
+                if food.direction == 2 && food.vx > 0.0 {
+                    food.vx -= 0.05;
+                    food.x += food.vx;
+                } else if food.direction == 1 && food.vx < 0.0 {
+                    food.vx += 0.05;
+                    food.x += food.vx;
+                }
+                food.x = food.x.clamp(20.0, 550.0);
+            }
+            if food.quality == 3 && food.y > 400.0 {
+                expired.push(food.id);
+                continue;
+            }
             if food.y > 410.0 {
                 food.removal_ticks = 15;
             }
         }
         for id in expired {
+            if self
+                .food
+                .iter()
+                .any(|food| food.id == id && food.quality == 3)
+            {
+                events.push(Event::PotionExploded {
+                    tick: self.tick,
+                    food_id: id,
+                    fish_id: None,
+                });
+            }
             self.food.retain(|food| food.id != id);
             events.push(Event::FoodExpired {
                 tick: self.tick,
@@ -2242,9 +2553,25 @@ impl AdventureState {
             let guppy_count = self.fish.iter().filter(|fish| fish.alive).count();
             let pet_id = self.fish_pets[index].id;
             let mut rng_state = self.rng_state;
-            let update = self.fish_pets[index].tick(&aliens, guppy_count, &mut |upper| {
-                Self::advance_rng(&mut rng_state) % upper
-            });
+            let update = if self.fish_pets[index].kind == FishPetKind::Zorf {
+                let hungry = self
+                    .fish
+                    .iter()
+                    .filter(|fish| fish.alive)
+                    .map(|fish| ZorfHungryView {
+                        id: fish.id,
+                        hunger: fish.hunger,
+                        ordinary_diet: true,
+                    })
+                    .collect::<Vec<_>>();
+                self.fish_pets[index].tick_zorf(&aliens, &hungry, &mut |upper| {
+                    Self::advance_rng(&mut rng_state) % upper
+                })
+            } else {
+                self.fish_pets[index].tick(&aliens, guppy_count, &mut |upper| {
+                    Self::advance_rng(&mut rng_state) % upper
+                })
+            };
             self.rng_state = rng_state;
             if let Some(alien_id) = update.damaged_alien
                 && let Some(actor) = self
@@ -2276,6 +2603,29 @@ impl AdventureState {
                     fish_id,
                     x,
                     y,
+                });
+            }
+            if let Some(drop) = update.free_food {
+                let food_id = self.id();
+                let animation_period = self.rand_range(2) as u8 + 3;
+                self.food.push(Food {
+                    id: food_id,
+                    x: drop.x as f32,
+                    y: drop.y as f32,
+                    frame: 0,
+                    ineligible_ticks: 0,
+                    removal_ticks: 0,
+                    quality: 1,
+                    direction: drop.direction,
+                    vx: if drop.direction == 1 { -3.0 } else { 3.0 },
+                    vy: -2.0,
+                    animation_period,
+                    free_from_zorf: true,
+                });
+                events.push(Event::ZorfFoodDropped {
+                    tick: self.tick,
+                    pet_id,
+                    food_id,
                 });
             }
         }
@@ -2505,6 +2855,7 @@ impl AdventureState {
         let bottom_limit = match (self.tank, self.level) {
             (1, 1) => FIRST_STAGE_COIN_BOTTOM_TICKS,
             (1, 2..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
+            (2, 1) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             _ => unreachable!("coin lifetime for this Adventure stage is not implemented"),
         };
         let mut credited = Vec::new();
@@ -2744,6 +3095,11 @@ mod tests {
             ineligible_ticks: 0,
             removal_ticks: 0,
             quality: 0,
+            direction: 0,
+            vx: 0.0,
+            vy: 0.0,
+            animation_period: 3,
+            free_from_zorf: false,
         });
         state.coins.push(Coin {
             id: 51,
@@ -4049,5 +4405,254 @@ mod tests {
         assert_eq!(resumed.invasion.as_ref().unwrap().countdown, 276);
         assert_eq!(resumed.invasion.as_ref().unwrap().food_delay, 1);
         assert_eq!(resumed.invasion.as_ref().unwrap().post_spawn_flash_ticks, 3);
+    }
+
+    #[test]
+    fn fifth_stage_third_egg_opens_bonus_stage_without_direct_second_tank_jump() {
+        let mut board = AdventureState::new_fifth_stage(0x1501, &[]).unwrap();
+        board.egg_unlocked = true;
+        board.weapon_unlocked = true;
+        board.oscar_unlocked = true;
+        board.upgrades.quality_unlocked = true;
+        board.upgrades.quantity_unlocked = true;
+        board.eggs = 2;
+        board.balance = FIFTH_STAGE_EGG_PRICE;
+        let events = board.apply(Action::BuyEgg);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::LevelCompleted {
+                next_tank: 1,
+                next_level: 6,
+                ..
+            }
+        )));
+        assert!(board.victory);
+        assert_eq!(board.balance, 0);
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn selected_second_tank_roster_and_locked_slot_chain() {
+        let pets = [PetKind::Niko, PetKind::Zorf];
+        let mut board = AdventureState::new_tank2_first_stage(0x2101, &pets).unwrap();
+        board.validate().unwrap();
+        assert_eq!(board.pets, pets);
+        assert_eq!(
+            (
+                board.niko.as_ref().unwrap().anchor_x,
+                board.niko.as_ref().unwrap().anchor_y
+            ),
+            (175, 163)
+        );
+        assert_eq!(board.egg_price, 750);
+        assert_eq!(board.balance, 200);
+        assert_eq!(board.fish.len(), 2);
+        assert!(
+            board
+                .fish
+                .iter()
+                .all(|fish| fish.food_ate == 2 && !fish.beginner)
+        );
+        assert_eq!(board.invasion.as_ref().unwrap().countdown, 3000);
+        assert!(board.apply(Action::BuyOscar).iter().any(|event| matches!(
+            event,
+            Event::Rejected {
+                reason: Rejection::Locked,
+                ..
+            }
+        )));
+        assert!(board.apply(Action::BuyWeapon).iter().any(|event| matches!(
+            event,
+            Event::Rejected {
+                reason: Rejection::Locked,
+                ..
+            }
+        )));
+        board.egg_unlocked = true;
+        board.eggs = 2;
+        board.balance = 750;
+        assert!(board.apply(Action::BuyEgg).iter().any(|event| matches!(
+            event,
+            Event::Rejected {
+                reason: Rejection::Locked,
+                ..
+            }
+        )));
+        assert!(!board.victory);
+        assert!(AdventureState::new_tank2_first_stage(1, &[PetKind::Zorf, PetKind::Niko]).is_err());
+    }
+
+    #[test]
+    fn armed_potion_survives_capacity_rejection_and_only_accepted_manual_drop_consumes_it() {
+        let mut board = AdventureState::new_tank2_first_stage(0x2102, &[]).unwrap();
+        board.upgrades.quality_unlocked = true;
+        board.upgrades.quantity_unlocked = true;
+        board.potion_unlocked = true;
+        board.egg_unlocked = true;
+        board.balance = 300;
+        board.apply(Action::Click { x: 200.0, y: 200.0 });
+        assert_eq!(board.balance, 295);
+        board.apply(Action::BuyPotion);
+        assert_eq!(board.balance, 45);
+        assert!(board.potion_armed);
+        board.apply(Action::BuyPotion);
+        assert_eq!(board.balance, 45);
+        assert!(
+            board
+                .apply(Action::Click { x: 300.0, y: 200.0 })
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::FoodCapacity,
+                        ..
+                    }
+                ))
+        );
+        assert!(board.potion_armed);
+        board.food.clear();
+        assert!(
+            board
+                .apply(Action::Click { x: 300.0, y: 200.0 })
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::FoodDropped {
+                        potion: true,
+                        balance: 45,
+                        ..
+                    }
+                ))
+        );
+        assert_eq!(board.food[0].quality, 3);
+        assert!(!board.potion_armed);
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn potion_kills_medium_but_finishes_meal_and_due_silver_coin() {
+        let mut board = AdventureState::new_tank2_first_stage(0x2103, &[]).unwrap();
+        let fish = &mut board.fish[0];
+        fish.x = 100.0;
+        fish.y = 100.0;
+        fish.size = FishSize::Medium;
+        fish.hunger = 400;
+        fish.coin_timer = fish.coin_threshold - 1;
+        let fish_id = fish.id;
+        board.food.push(Food {
+            id: 90,
+            x: 120.0,
+            y: 120.0,
+            frame: 0,
+            ineligible_ticks: 0,
+            removal_ticks: 0,
+            quality: 3,
+            direction: 0,
+            vx: 0.0,
+            vy: 0.0,
+            animation_period: 3,
+            free_from_zorf: false,
+        });
+        let events = board.tick();
+        assert!(events.iter().any(|event| matches!(event, Event::PotionExploded { fish_id: Some(id), food_id: 90, .. } if *id == fish_id)));
+        assert!(events.iter().any(|event| matches!(event, Event::FoodEaten { fish_id: id, food_id: 90, .. } if *id == fish_id)));
+        assert!(events.iter().any(|event| matches!(event, Event::CoinDropped { fish_id: id, kind: CoinKind::Silver, .. } if *id == fish_id)));
+        assert_eq!(board.dead_fish[0].x, 100.0);
+        assert!(!board.fish[0].alive);
+        assert!(board.food.is_empty());
+    }
+
+    #[test]
+    fn large_potion_keeps_growth_points_and_star_can_crown_later() {
+        let mut board = AdventureState::new_tank2_first_stage(0x2104, &[]).unwrap();
+        let fish = &mut board.fish[0];
+        fish.x = 100.0;
+        fish.y = 100.0;
+        fish.size = FishSize::Large;
+        fish.hunger = 400;
+        fish.food_ate = fish.food_needed_to_grow * 15 - 1;
+        fish.coin_timer = fish.coin_threshold - 1;
+        let old_points = fish.food_ate;
+        board.food.push(Food {
+            id: 91,
+            x: 120.0,
+            y: 120.0,
+            frame: 0,
+            ineligible_ticks: 0,
+            removal_ticks: 0,
+            quality: 3,
+            direction: 0,
+            vx: 0.0,
+            vy: 0.0,
+            animation_period: 3,
+            free_from_zorf: false,
+        });
+        let events = board.tick();
+        assert_eq!(board.fish[0].size, FishSize::Star);
+        assert_eq!(board.fish[0].food_ate, old_points);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::CoinDropped {
+                kind: CoinKind::Star,
+                ..
+            }
+        )));
+        board.fish[0].hunger = 400;
+        let x = board.fish[0].x + 20.0;
+        let y = board.fish[0].y + 20.0;
+        board.food.push(Food {
+            id: 92,
+            x,
+            y,
+            frame: 0,
+            ineligible_ticks: 0,
+            removal_ticks: 0,
+            quality: 0,
+            direction: 0,
+            vx: 0.0,
+            vy: 0.0,
+            animation_period: 3,
+            free_from_zorf: false,
+        });
+        board.tick();
+        assert_eq!(board.fish[0].size, FishSize::Crowned);
+        assert_eq!(board.fish[0].food_ate, old_points + 1);
+    }
+
+    #[test]
+    fn overdue_zorf_drops_free_food_only_after_hunger_crosses_below_300() {
+        let mut board = AdventureState::new_tank2_first_stage(0x2105, &[PetKind::Zorf]).unwrap();
+        board.fish[0].hunger = 301;
+        board.fish[1].hunger = 301;
+        board.fish_pets[0].food_timer = 64;
+        board.tick();
+        assert_eq!(board.fish[0].hunger, 300);
+        assert_eq!(board.fish_pets[0].food_timer, 65);
+        assert!(board.food.is_empty());
+        let events = board.tick();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::ZorfFoodDropped { .. }))
+        );
+        assert_eq!(board.food.len(), 1);
+        assert_eq!(board.food[0].quality, 1);
+        assert_eq!(board.food[0].ineligible_ticks, 0);
+        assert!(board.food[0].free_from_zorf);
+        board.potion_unlocked = true;
+        board.potion_armed = true;
+        assert!(
+            board
+                .apply(Action::Click { x: 300.0, y: 200.0 })
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::FoodCapacity,
+                        ..
+                    }
+                ))
+        );
+        assert!(board.potion_armed);
     }
 }

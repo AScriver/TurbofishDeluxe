@@ -1,4 +1,4 @@
-//! Ordinary tank-one Niko and his separately owned pearl.
+//! Ordinary Adventure Niko and his separately owned pearl.
 //! Rules here are secondary-source-derived from pinned WinFish W1
 //! `OtherTypePet.cpp` and `Coin.cpp`; installed-binary parity is unverified.
 
@@ -6,6 +6,14 @@ use serde::{Deserialize, Serialize};
 
 pub const NIKO_X: i32 = 95;
 pub const NIKO_Y: i32 = 253;
+pub const NIKO_TANK2_X: i32 = 175;
+pub const NIKO_TANK2_Y: i32 = 163;
+const fn tank1_x() -> i32 {
+    NIKO_X
+}
+const fn tank1_y() -> i32 {
+    NIKO_Y
+}
 pub const PEARL_VALUE: i32 = 250;
 pub const PEARL_SIZE: i32 = 72;
 
@@ -18,10 +26,14 @@ pub enum NikoEvent {
 }
 
 /// Stable owner identity, cycle, and the counters needed to resume the source
-/// RNG-call schedule after a project save. Niko is fixed at `(95,253)` in tank 1.
+/// RNG-call schedule after a project save. The selected tank fixes the anchor.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NikoState {
     pub owner_id: u64,
+    #[serde(default = "tank1_x")]
+    pub anchor_x: i32,
+    #[serde(default = "tank1_y")]
+    pub anchor_y: i32,
     pub cycle: u16,
     pub pearl_taken: bool,
     pub movement_animation_timer: u8,
@@ -31,14 +43,29 @@ pub struct NikoState {
 impl NikoState {
     /// Board::SpawnPet(-1,-1) draws `%265`, `%520`; the common pet constructor
     /// then draws `%10`, `%250`. The chosen spawn position and constructor fields
-    /// do not move ordinary Niko in tank 1, but the four draws affect later RNG.
+    /// do not move ordinary Niko, but the four draws affect later RNG.
     pub fn spawn_tank1(owner_id: u64, rand_range: &mut impl FnMut(u64) -> u64) -> Self {
+        Self::spawn_at(owner_id, NIKO_X, NIKO_Y, rand_range)
+    }
+
+    pub fn spawn_tank2(owner_id: u64, rand_range: &mut impl FnMut(u64) -> u64) -> Self {
+        Self::spawn_at(owner_id, NIKO_TANK2_X, NIKO_TANK2_Y, rand_range)
+    }
+
+    fn spawn_at(
+        owner_id: u64,
+        anchor_x: i32,
+        anchor_y: i32,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
         let _spawn_x = rand_range(265);
         let _spawn_y = rand_range(520);
         let _movement_state = rand_range(10);
         let _random_timer = rand_range(250);
         Self {
             owner_id,
+            anchor_x,
+            anchor_y,
             cycle: 0,
             pearl_taken: false,
             movement_animation_timer: 0,
@@ -51,6 +78,10 @@ impl NikoState {
             || self.cycle >= 1450
             || self.movement_animation_timer >= 19
             || self.movement_change_timer > 20
+            || !matches!(
+                (self.anchor_x, self.anchor_y),
+                (NIKO_X, NIKO_Y) | (NIKO_TANK2_X, NIKO_TANK2_Y)
+            )
         {
             return Err("invalid ordinary Niko save state".into());
         }
@@ -76,16 +107,16 @@ impl NikoState {
                 vec![
                     NikoEvent::PearlSpawn {
                         owner_id: self.owner_id,
-                        x: NIKO_X + 1,
-                        y: NIKO_Y - 2,
+                        x: self.anchor_x + 1,
+                        y: self.anchor_y - 2,
                     },
                     NikoEvent::Bubble {
-                        x: NIKO_X + 11,
-                        y: NIKO_Y + 5,
+                        x: self.anchor_x + 11,
+                        y: self.anchor_y + 5,
                     },
                     NikoEvent::Bubble {
-                        x: NIKO_X + 7,
-                        y: NIKO_Y + 3,
+                        x: self.anchor_x + 7,
+                        y: self.anchor_y + 3,
                     },
                 ]
             }

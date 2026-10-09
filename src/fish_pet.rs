@@ -1,4 +1,4 @@
-//! Ordinary Adventure fish-shaped pets, limited to Itchy and Prego.
+//! Ordinary Adventure fish-shaped pets, limited to Itchy, Prego, and Zorf.
 //! Behavioral rules are derived from pinned WinFish W1 `FishTypePet.cpp`,
 //! `Fish.cpp`, and `Board.cpp` (revision f919b3c). Installed-binary coverage
 //! for their full movement and animation remains partial. Board membership,
@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub enum FishPetKind {
     Itchy,
     Prego,
+    Zorf,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,8 +25,24 @@ pub struct PetAlienView {
 pub struct FishPetUpdate {
     pub damaged_alien: Option<u64>,
     pub born_at: Option<(i32, i32)>,
+    pub free_food: Option<ZorfFoodRequest>,
     /// The board applies its shared eleven-update punch sound delay.
     pub punch_sound: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ZorfHungryView {
+    pub id: u64,
+    pub hunger: i32,
+    pub ordinary_diet: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ZorfFoodRequest {
+    pub x: i32,
+    pub y: i32,
+    /// Source direction: 1 travels left, 2 right.
+    pub direction: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +66,8 @@ pub struct FishPetState {
     pub turn_ticks: i8,
     pub birth_timer: u16,
     pub birth_threshold: u16,
+    #[serde(default)]
+    pub food_timer: i32,
     speed_mod: f64,
     previous_vx: f64,
     movement_state: u8,
@@ -62,7 +81,7 @@ pub struct FishPetState {
 impl FishPetState {
     /// Board's two spawn coordinates precede six unused/common Fish draws.
     /// In particular, a spawn Y up to 539 survives until the first update's
-    /// pre-integration clamp. This only models these two ordinary pet types.
+    /// pre-integration clamp. Zorf overwrites the drawn speed divisor with 3.
     pub fn spawn_tank1(
         id: u64,
         kind: FishPetKind,
@@ -93,7 +112,12 @@ impl FishPetState {
             turn_ticks: 0,
             birth_timer: 0,
             birth_threshold: 930,
-            speed_mod,
+            food_timer: 0,
+            speed_mod: if kind == FishPetKind::Zorf {
+                3.0
+            } else {
+                speed_mod
+            },
             previous_vx: if left { -1.0 } else { 1.0 },
             movement_state,
             movement_timer: 0,
@@ -120,7 +144,11 @@ impl FishPetState {
             || !(0.0..=550.0).contains(&self.y)
             || self.widget_x != self.x as i32
             || self.widget_y != self.y as i32
-            || ![1.6, 1.8, 2.0].contains(&self.speed_mod)
+            || !(if self.kind == FishPetKind::Zorf {
+                self.speed_mod == 3.0
+            } else {
+                [1.6, 1.8, 2.0].contains(&self.speed_mod)
+            })
             || self.movement_state > 9
             || self.movement_timer > 20
             || !matches!(self.x_direction, -1 | 1)
@@ -131,7 +159,9 @@ impl FishPetState {
             || (self.kind == FishPetKind::Prego
                 && (!matches!(self.birth_threshold, 930 | 1230 | 2000)
                     || self.birth_timer >= self.birth_threshold))
-            || (self.kind == FishPetKind::Itchy && self.birth_timer != 0)
+            || (self.kind != FishPetKind::Prego && self.birth_timer != 0)
+            || (self.kind == FishPetKind::Zorf && self.food_timer < -10)
+            || (self.kind != FishPetKind::Zorf && self.food_timer != 0)
         {
             return Err("invalid ordinary fish pet save state".into());
         }
@@ -171,11 +201,22 @@ impl FishPetState {
                 }
                 FishPetPose::Birth => 1,
             },
+            FishPetKind::Zorf => {
+                if self.turn_ticks != 0 {
+                    1
+                } else if self.food_timer < 0 {
+                    2
+                } else {
+                    0
+                }
+            }
         }
     }
 
     pub fn sprite_frame(&self) -> u8 {
-        if self.kind == FishPetKind::Prego && self.sprite_row(false) == 3 {
+        if self.kind == FishPetKind::Zorf && self.sprite_row(false) == 2 {
+            (self.food_timer + 10) as u8
+        } else if self.kind == FishPetKind::Prego && self.sprite_row(false) == 3 {
             if self.birth_timer < self.birth_threshold - 190 {
                 ((self.birth_timer as i32 - self.birth_threshold as i32 + 200) / 2) as u8
             } else {
@@ -190,6 +231,31 @@ impl FishPetState {
         &mut self,
         aliens: &[PetAlienView],
         guppy_count: usize,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> FishPetUpdate {
+        assert_ne!(
+            self.kind,
+            FishPetKind::Zorf,
+            "Zorf needs the ordered hungry-fish view"
+        );
+        self.tick_inner(aliens, guppy_count, &[], rand_range)
+    }
+
+    pub fn tick_zorf(
+        &mut self,
+        aliens: &[PetAlienView],
+        hungry: &[ZorfHungryView],
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> FishPetUpdate {
+        assert_eq!(self.kind, FishPetKind::Zorf, "tick_zorf requires Zorf");
+        self.tick_inner(aliens, 0, hungry, rand_range)
+    }
+
+    fn tick_inner(
+        &mut self,
+        aliens: &[PetAlienView],
+        guppy_count: usize,
+        hungry: &[ZorfHungryView],
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> FishPetUpdate {
         let mut update = FishPetUpdate::default();
@@ -221,6 +287,21 @@ impl FishPetState {
                 };
             }
         }
+        if self.kind == FishPetKind::Zorf && aliens.is_empty() {
+            self.food_timer = self.food_timer.saturating_add(1);
+            if self.food_timer >= 65
+                && hungry
+                    .iter()
+                    .any(|fish| fish.hunger < 300 && fish.ordinary_diet)
+            {
+                self.food_timer = -10;
+                update.free_food = Some(ZorfFoodRequest {
+                    x: self.widget_x + 15,
+                    y: self.widget_y + 10,
+                    direction: if self.vx < 0.0 { 1 } else { 2 },
+                });
+            }
+        }
         match self.vx {
             0.0 => self.y += 1.0 / self.speed_mod,
             1.0 => self.y += 0.75 / self.speed_mod,
@@ -233,6 +314,8 @@ impl FishPetState {
             95.0,
             if self.kind == FishPetKind::Prego {
                 360.0
+            } else if self.kind == FishPetKind::Zorf {
+                270.0
             } else {
                 370.0
             },
@@ -394,11 +477,18 @@ impl FishPetState {
                 (9 + self.turn_ticks / 2) as u8
             };
         } else {
-            self.swim_counter += if self.vx_abs > 1 { 2 } else { 1 };
+            self.swim_counter += if self.kind == FishPetKind::Zorf || self.vx_abs <= 1 {
+                1
+            } else {
+                2
+            };
             if self.swim_counter > 19 {
                 self.swim_counter = 0;
             }
             self.frame = self.swim_counter / 2;
+            if self.kind == FishPetKind::Zorf && self.food_timer == -1 {
+                self.swim_counter = 10;
+            }
         }
         if self.previous_vx != self.vx && self.previous_vx != 0.0 && self.vx != 0.0 {
             self.previous_vx = self.vx;
@@ -594,5 +684,91 @@ mod tests {
         };
         pet.tick(&[alien], 0, &mut |_| 1);
         assert_eq!(pet.vx_abs, 7);
+    }
+
+    #[test]
+    fn zorf_keeps_common_draws_and_uses_its_own_speed_and_ceiling() {
+        let mut ranges = Vec::new();
+        let mut pet = FishPetState::spawn_tank1(1, FishPetKind::Zorf, &mut |range| {
+            ranges.push(range);
+            range - 1
+        });
+        assert_eq!(ranges, [265, 520, 2, 3, 200, 3, 10, 200]);
+        assert_eq!((pet.widget_x, pet.widget_y), (369, 539));
+        assert_eq!(pet.speed_mod, 3.0);
+        pet.tick_zorf(&[], &[], &mut |_| 1);
+        assert!(pet.y < 271.0);
+        assert!(pet.validate().is_ok());
+    }
+
+    #[test]
+    fn zorf_waits_for_strict_hunger_then_emits_from_old_widget_without_cap_input() {
+        let mut pet = actor(FishPetKind::Zorf);
+        pet.food_timer = 64;
+        let not_hungry = ZorfHungryView {
+            id: 2,
+            hunger: 300,
+            ordinary_diet: true,
+        };
+        assert!(
+            pet.tick_zorf(&[], &[not_hungry], &mut |_| 1)
+                .free_food
+                .is_none()
+        );
+        assert_eq!(pet.food_timer, 65);
+        let wrong_diet = ZorfHungryView {
+            id: 3,
+            hunger: 299,
+            ordinary_diet: false,
+        };
+        assert!(
+            pet.tick_zorf(&[], &[wrong_diet], &mut |_| 1)
+                .free_food
+                .is_none()
+        );
+        assert_eq!(pet.food_timer, 66);
+        let old_widget = (pet.widget_x, pet.widget_y);
+        pet.vx = -0.1;
+        // A stable leftward heading avoids the source turn pose, so this
+        // assertion isolates the newly emitted food pose.
+        pet.previous_vx = -0.1;
+        let hungry = ZorfHungryView {
+            id: 4,
+            hunger: 299,
+            ordinary_diet: true,
+        };
+        let result = pet.tick_zorf(&[], &[hungry], &mut |_| 1);
+        assert_eq!(
+            result.free_food,
+            Some(ZorfFoodRequest {
+                x: old_widget.0 + 15,
+                y: old_widget.1 + 10,
+                direction: 1,
+            })
+        );
+        assert_eq!(pet.food_timer, -10);
+        assert_eq!((pet.sprite_row(false), pet.sprite_frame()), (2, 0));
+    }
+
+    #[test]
+    fn zorf_invasion_freezes_negative_timer_and_turn_overrides_drop_pose() {
+        let mut pet = actor(FishPetKind::Zorf);
+        pet.food_timer = -5;
+        pet.turn_ticks = 5;
+        assert_eq!(pet.sprite_row(false), 1);
+        let alien = PetAlienView {
+            id: 2,
+            widget_x: 100,
+            widget_y: 100,
+            healing: false,
+        };
+        pet.tick_zorf(&[alien], &[], &mut |_| 1);
+        assert_eq!(pet.food_timer, -5);
+        pet.turn_ticks = 0;
+        pet.food_timer = -2;
+        pet.tick_zorf(&[], &[], &mut |_| 1);
+        assert_eq!(pet.food_timer, -1);
+        assert_eq!(pet.swim_counter, 10);
+        assert_eq!((pet.sprite_row(false), pet.sprite_frame()), (2, 9));
     }
 }

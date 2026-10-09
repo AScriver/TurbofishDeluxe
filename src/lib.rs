@@ -3,6 +3,7 @@ pub mod adventure;
 pub mod alien;
 pub mod app;
 pub mod assets;
+pub mod bonus;
 pub mod cli;
 pub mod fish_pet;
 pub mod font;

@@ -2,9 +2,9 @@
 
 An intended standalone Rust reimplementation of Insaniquarium Deluxe, targeting Windows first and reading assets from each user's owned installation. This is an unofficial fan project, unaffiliated with the game's developers or publisher.
 
-The workflow is installed. Normal-speed Rust runs cover feeding/growth/coins, earned1-1 through1-4 completion, Stinky/Niko/Oscar/Itchy, weak/strong/Balrog combat, upgrades, pet selection, Prego's first1-5 birth and save/reload. Fish facing was corrected and visually checked. Full gameplay fidelity remains unverified. The installed game binaries are authoritative and WinFish is secondary. See [STATUS.md](STATUS.md) for current evidence and gaps.
+The workflow is installed. Normal-speed Rust runs cover earned1-1 through1-5 completion, feeding/growth/currency, Stinky/Niko/Oscar/Itchy/Prego/Zorf, weak/strong/Balrog combat, upgrades, pet selection, shell bonus/results, early2-1 Potion→Star and save/reload. Fish facing was corrected and visually checked. Full gameplay fidelity remains unverified. Installed binaries are authoritative and WinFish is secondary. See [STATUS.md](STATUS.md) for evidence and gaps.
 
-The complete runtime goal remains in [requirements](docs/requirements.md). The [coverage checklist](docs/compatibility.md) records missing systems; the next integrated task is [1-5 completion, shell bonus and2-1](docs/adventure-1-5-bonus-2-1.md).
+The complete runtime goal remains in [requirements](docs/requirements.md). The [coverage checklist](docs/compatibility.md) records missing systems; the next integrated task is [Clyde/Starcatcher2-2](docs/adventure-2-2.md).
 
 ## Start here
 
@@ -42,7 +42,7 @@ That host helper requires PSScriptAnalyzer; it was available for setup. It is op
 
 ## Build and run
 
-Use the installed Rust1.95 MSVC toolchain from PowerShell7. Direct dependencies and transitives are pinned. Formatting, warnings-as-errors lint,127 regression tests and native build passed. Identified window reports cover the [first loop](docs/playtests/2026-10-08-m1-03.md), [first-stage completion/persistence/rescue](docs/playtests/2026-10-08-m2-01.md), [Stinky/score/save checks](docs/playtests/2026-10-08-stinky-score-01.md), [Adventure1-2](docs/playtests/2026-10-08-adventure-1-2-01.md), [Adventure1-3](docs/playtests/2026-10-08-adventure-1-3-01.md) and [Adventure1-4/selection/Prego](docs/playtests/2026-10-08-adventure-1-4-01.md); full retail fidelity remains open.
+Use installed Rust1.95 MSVC from PowerShell7. Direct dependencies/transitives are pinned. Formatting, warnings-as-errors lint,155 regression tests and native build passed. Identified window reports cover the [first loop](docs/playtests/2026-10-08-m1-03.md), [first-stage completion/persistence/rescue](docs/playtests/2026-10-08-m2-01.md), [Stinky/score](docs/playtests/2026-10-08-stinky-score-01.md), [1-2](docs/playtests/2026-10-08-adventure-1-2-01.md), [1-3](docs/playtests/2026-10-08-adventure-1-3-01.md), [1-4/selection/Prego](docs/playtests/2026-10-08-adventure-1-4-01.md) and [1-5/bonus/early2-1](docs/playtests/2026-10-08-adventure-1-5-bonus-2-1-01.md). Full retail fidelity remains open.
 
 ```powershell
 $cargoExecutable = (Get-Command cargo).Source
@@ -53,7 +53,7 @@ $runtimeArguments = @('--new-game', '--seed', '42')
 & $runtimeExecutable @runtimeArguments
 ```
 
-Steam discovery is automatic; pass `--game-dir <directory>` if needed. Project saves use `%LOCALAPPDATA%/TurbofishDeluxe`, separate from retail saves; use `--save-dir` for isolated checks. Escape pauses; S saves; Q while paused or closing the window saves/exits. Versions1–5 project saves migrate atomically to format6; [migration rules](docs/adventure-1-4.md#implementation-boundary) keep unknown historical state explicit. Continue is clickable (Enter also works); holding the hatch background skips its intro. Oscar becomes available after Large growth in1-3/1-4; buying it opens weapon/egg purchases. After Prego, choose up to three unlocked pets. Early1-5 is playable; third egg completion and later systems remain incomplete.
+Steam discovery is automatic; pass `--game-dir <directory>` if needed. Project saves use `%LOCALAPPDATA%/TurbofishDeluxe`, separate from retail saves; use `--save-dir` for isolated checks. Escape pauses; S saves; Q while paused or closing the window saves/exits. Versions1–6 project saves migrate atomically to format7; [migration rules](docs/adventure-1-5-bonus-2-1.md#material-unknowns-and-implementation-boundary) keep unknown historical state explicit. Continue is clickable (Enter also works); holding the hatch background skips its intro. Oscar becomes available after Large growth in later first-tank stages; buying it opens weapon/egg purchases. After Prego, choose up to three unlocked pets. Earned1-5/Zorf/bonus and selected early2-1 Potion/Star passed identified execution checks;2-1's third egg and later systems remain incomplete.
 
 `--evidence-dir` writes identity/events/captures and optional complete state snapshots. Current snapshots include `state` (board or null), `phase`, `progress` and `session_tick`; board ticks reset on a fresh stage while session ticks remain monotonic. The event log includes both time scopes. These observation files are private, separate from authoritative project saves.
 
