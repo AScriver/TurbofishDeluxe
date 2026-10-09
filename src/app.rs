@@ -12,6 +12,7 @@ use crate::{
     music::{MusicOwner, MusicReport},
     oscar::OscarPose,
     sim::{Action, AdventureState, CoinKind, Event, FishPose, FishSize, PetKind, TICK_MS},
+    ultra::UltraPose,
 };
 use macroquad::miniquad::{BlendFactor, BlendState, BlendValue, Equation};
 use macroquad::prelude::*;
@@ -111,6 +112,11 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_RHUBARB",
     "IMAGE_NIMBUS",
     "IMAGE_SCL_NIMBUS",
+    "IMAGE_AMP",
+    "IMAGE_SCL_AMP",
+    "IMAGE_ULTRA",
+    "IMAGE_SCL_ULTRA",
+    "IMAGE_BILATERUS",
     "IMAGE_BREEDER",
     "IMAGE_HUNGRYBREEDER",
     "IMAGE_SCL_BREEDER",
@@ -158,6 +164,10 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_BONUSCOUNT",
     "SOUND_UNLEASH",
     "SOUND_ROAR3",
+    "SOUND_TREASURE",
+    "SOUND_DIAMOND",
+    "SOUND_RATTLE",
+    "SOUND_SPLASHBIG",
     "SOUND_SONAR",
 ];
 
@@ -479,11 +489,50 @@ impl Presentation {
                     ..
                 } => "SOUND_PEARL",
                 Event::CoinCollectionStarted {
+                    kind: CoinKind::ShellPearl,
+                    ..
+                } => "SOUND_PEARL",
+                Event::CoinCollectionStarted {
+                    kind: CoinKind::Treasure,
+                    ..
+                } => "SOUND_TREASURE",
+                Event::CoinCollectionStarted {
+                    kind: CoinKind::ShellTreasure,
+                    ..
+                } => "SOUND_BONUSCOLLECT",
+                Event::CoinCollectionStarted {
+                    kind: CoinKind::ShellDiamond | CoinKind::ShellDiamondPenta,
+                    ..
+                } => "SOUND_DIAMOND",
+                Event::PetCollectedCoin {
+                    kind: CoinKind::Pearl | CoinKind::ShellPearl,
+                    ..
+                } => "SOUND_PEARL",
+                Event::PetCollectedCoin {
+                    kind: CoinKind::Treasure,
+                    ..
+                } => "SOUND_TREASURE",
+                Event::PetCollectedCoin {
+                    kind: CoinKind::ShellTreasure,
+                    ..
+                } => "SOUND_BONUSCOLLECT",
+                Event::PetCollectedCoin {
+                    kind: CoinKind::ShellDiamond | CoinKind::ShellDiamondPenta,
+                    ..
+                } => "SOUND_DIAMOND",
+                Event::CoinCollectionStarted {
                     kind: CoinKind::ShrapnelBomb,
                     ..
                 } => "SOUND_POINTS",
                 Event::CoinCredited {
-                    kind: CoinKind::Pearl | CoinKind::ShrapnelBomb,
+                    kind:
+                        CoinKind::Pearl
+                        | CoinKind::ShrapnelBomb
+                        | CoinKind::ShellPearl
+                        | CoinKind::Treasure
+                        | CoinKind::ShellTreasure
+                        | CoinKind::ShellDiamond
+                        | CoinKind::ShellDiamondPenta,
                     ..
                 } => continue,
                 Event::CoinCredited { .. } => "SOUND_POINTS",
@@ -497,10 +546,12 @@ impl Presentation {
                 Event::OscarBought { .. }
                 | Event::StarcatcherBought { .. }
                 | Event::GrubberBought { .. }
-                | Event::GekkoBought { .. } => "SOUND_GROW",
+                | Event::GekkoBought { .. }
+                | Event::UltraBought { .. } => "SOUND_GROW",
                 Event::OscarAteGuppy { .. }
                 | Event::GrubberAteGuppy { .. }
-                | Event::GekkoAtePrey { .. } => "SOUND_CHOMP",
+                | Event::GekkoAtePrey { .. }
+                | Event::UltraAteOscar { .. } => "SOUND_CHOMP",
                 Event::OscarDied { tick, oscar_id }
                     if death_has_missile_impact(events, *tick, *oscar_id) =>
                 {
@@ -522,11 +573,15 @@ impl Presentation {
                 {
                     continue;
                 }
+                Event::UltraDied { tick, id } if death_has_missile_impact(events, *tick, *id) => {
+                    continue;
+                }
                 Event::BreederDied { sound: true, .. } => "SOUND_DIE",
                 Event::OscarDied { .. }
                 | Event::StarcatcherDied { .. }
                 | Event::GrubberDied { .. }
-                | Event::GekkoDied { .. } => "SOUND_DIE",
+                | Event::GekkoDied { .. }
+                | Event::UltraDied { .. } => "SOUND_DIE",
                 Event::LarvaPickupSound { .. } => "SOUND_POINTS",
                 Event::FishPetHit { sound: true, .. } => "SOUND_PUNCH",
                 Event::RufusHit { sound: true, .. } => "SOUND_PUNCH",
@@ -556,6 +611,12 @@ impl Presentation {
                         forced: false,
                         ..
                     } => "SOUND_ROAR3",
+                    InvasionEvent::BilaterusSpawned { .. }
+                    | InvasionEvent::BilaterusHeadSwapped { .. } => "SOUND_RATTLE",
+                    InvasionEvent::BilaterusHeadHit { .. } => "SOUND_HIT",
+                    InvasionEvent::BilaterusFirstHeadDefeated { .. }
+                    | InvasionEvent::BilaterusDefeated { .. } => "SOUND_EXPLODE",
+                    InvasionEvent::BilaterusPreyEaten { .. } => "SOUND_CHOMP",
                     _ => continue,
                 },
                 Event::Niko { event, .. } => match event {
@@ -577,6 +638,18 @@ impl Presentation {
             };
             for effect_id in std::iter::once(id)
                 .chain(matches!(event, Event::EnergyBallRemoved { .. }).then_some("SOUND_EXPLODE"))
+                .chain(matches!(event, Event::UltraBought { .. }).then_some("SOUND_SPLASHBIG"))
+                .chain(
+                    matches!(
+                        event,
+                        Event::Invasion {
+                            event: InvasionEvent::BilaterusFirstHeadDefeated { .. }
+                                | InvasionEvent::BilaterusDefeated { .. },
+                            ..
+                        }
+                    )
+                    .then_some("SOUND_EXPLOSION1"),
+                )
             {
                 if let (Some(sound), Some(music)) = (self.sounds.get(effect_id), music)
                     && let Some(report) = music.play_effect(sound.clone())
@@ -805,6 +878,59 @@ impl Presentation {
                 );
             }
         }
+        for ultra in state.ultras.iter().filter(|ultra| ultra.alive) {
+            let row = match ultra.sprite_pose() {
+                UltraPose::Swim => 0.0,
+                UltraPose::Eat => 1.0,
+                UltraPose::Turn => 2.0,
+            };
+            let source = Rect::new(f32::from(ultra.frame) * 160.0, row * 160.0, 160.0, 160.0);
+            let hungry_tint = Color::from_rgba(250, 215, 95, 255);
+            draw_texture_ex(
+                &self.images["IMAGE_ULTRA"],
+                ultra.widget_x as f32,
+                ultra.widget_y as f32,
+                if ultra.hunger_visible() {
+                    hungry_tint
+                } else {
+                    WHITE
+                },
+                DrawTextureParams {
+                    source: Some(source),
+                    flip_x: ultra.facing_right(),
+                    ..Default::default()
+                },
+            );
+            if !ultra.hunger_visible() && ultra.hunger_overlay_alpha() > 0.0 {
+                draw_texture_ex(
+                    &self.images["IMAGE_ULTRA"],
+                    ultra.widget_x as f32,
+                    ultra.widget_y as f32,
+                    Color::new(
+                        250.0 / 255.0,
+                        215.0 / 255.0,
+                        95.0 / 255.0,
+                        ultra.hunger_overlay_alpha(),
+                    ),
+                    DrawTextureParams {
+                        source: Some(source),
+                        flip_x: ultra.facing_right(),
+                        ..Default::default()
+                    },
+                );
+            }
+            if state.blip_ultra_icon_visible(ultra) {
+                self.sprite(
+                    "IMAGE_MISCITEMS",
+                    ultra.widget_x as f32 + 40.0,
+                    ultra.widget_y as f32,
+                    Some(Rect::new(144.0, 0.0, 72.0, 72.0)),
+                    false,
+                    1.0,
+                    1.0,
+                );
+            }
+        }
         for grubber in &state.grubbers {
             let frame_x = f32::from(grubber.sprite_frame()) * 80.0;
             self.sprite(
@@ -884,6 +1010,7 @@ impl Presentation {
                 FishPetKind::Shrapnel => "IMAGE_SHRAPNEL",
                 FishPetKind::Gumbo => "IMAGE_GUMBO",
                 FishPetKind::Blip => "IMAGE_BLIP",
+                FishPetKind::Nimbus => "IMAGE_NIMBUS",
             };
             let source = Rect::new(
                 f32::from(pet.sprite_frame()) * 80.0,
@@ -982,6 +1109,33 @@ impl Presentation {
                 corpse.facing_right,
                 1.0,
                 corpse.opacity,
+            );
+        }
+        for corpse in &state.dead_ultras {
+            let source = Rect::new(f32::from(corpse.frame) * 160.0, 480.0, 160.0, 160.0);
+            // W1 DeadFish::Draw warms the first five Ultra death cels, then
+            // uses the ordinary corpse fade after the 90-count boundary.
+            let tint = if corpse.remaining_ticks >= 90 && corpse.frame < 5 {
+                Color::from_rgba(
+                    250 + corpse.frame,
+                    215 + corpse.frame * 8,
+                    95 + corpse.frame * 32,
+                    255,
+                )
+            } else {
+                Color::new(1.0, 1.0, 1.0, corpse.opacity)
+            };
+            draw_texture_ex(
+                &self.images["IMAGE_ULTRA"],
+                corpse.widget_x as f32,
+                (corpse.widget_y + i32::from((90_u16.saturating_sub(corpse.remaining_ticks)) / 2))
+                    as f32,
+                tint,
+                DrawTextureParams {
+                    source: Some(source),
+                    flip_x: corpse.facing_right,
+                    ..Default::default()
+                },
             );
         }
         for corpse in &state.dead_starcatchers {
@@ -1152,6 +1306,114 @@ impl Presentation {
                         );
                     }
                 }
+            }
+            for group in &wave.bilaterus {
+                // W1 Bilaterus::OrderInManagerChanged places the passive head
+                // behind bones 5..0 and the active head in front.
+                let draw_head = |index: usize| {
+                    let (Some(head), Some(scale), Some((row, frame, facing_right))) = (
+                        group.heads[index].as_ref(),
+                        group.head_emergence_scale(index),
+                        group.head_sprite_pose(index),
+                    ) else {
+                        return;
+                    };
+                    let inset = (80.0 * (1.0 - scale) / 2.0) as i32;
+                    let x = (head.widget_x + inset) as f32;
+                    let y = (head.widget_y + inset) as f32;
+                    let source =
+                        Rect::new(f32::from(frame) * 80.0, f32::from(row) * 80.0, 80.0, 80.0);
+                    self.sprite(
+                        "IMAGE_BILATERUS",
+                        x,
+                        y,
+                        Some(source),
+                        facing_right,
+                        scale,
+                        1.0,
+                    );
+                    if head.hit_ticks > 0 && group.emergence_ticks == 0 {
+                        self.additive_sprite(
+                            "IMAGE_BILATERUS",
+                            x,
+                            y,
+                            source,
+                            facing_right,
+                            (f32::from(head.hit_ticks) * 25.0 / 255.0).min(1.0),
+                        );
+                    }
+                    if index == group.active_head
+                        && group.emergence_ticks == 0
+                        && state.has_live_blip()
+                    {
+                        let bar = &self.images["IMAGE_HEALTHBAR"];
+                        let width = health_bar_visible_width(head.health, 100.0, bar.width());
+                        if width > 0.0 {
+                            self.sprite(
+                                "IMAGE_HEALTHBAR",
+                                head.widget_x as f32 - 20.0,
+                                head.widget_y as f32 + 77.0,
+                                Some(Rect::new(0.0, 0.0, width, bar.height())),
+                                false,
+                                1.0,
+                                1.0,
+                            );
+                        }
+                        self.sprite(
+                            "IMAGE_HEALTHBARTUBE",
+                            head.widget_x as f32 - 20.0,
+                            head.widget_y as f32 + 77.0,
+                            None,
+                            false,
+                            1.0,
+                            1.0,
+                        );
+                    }
+                };
+                draw_head(1 - group.active_head);
+                if group.emergence_ticks == 0 {
+                    for index in (0..group.bones.len()).rev() {
+                        let bone = &group.bones[index];
+                        let predecessor_x = if index == 0 {
+                            group.active().x
+                        } else {
+                            group.bones[index - 1].x
+                        };
+                        self.sprite(
+                            "IMAGE_BILATERUS",
+                            bone.widget_x as f32,
+                            bone.widget_y as f32,
+                            Some(Rect::new(
+                                f32::from(bone.sprite_frame(predecessor_x)) * 80.0,
+                                f32::from(crate::bilaterus::BilaterusBone::sprite_row(index))
+                                    * 80.0,
+                                80.0,
+                                80.0,
+                            )),
+                            false,
+                            1.0,
+                            1.0,
+                        );
+                    }
+                }
+                draw_head(group.active_head);
+            }
+            for fragment in &wave.fragments {
+                self.sprite(
+                    "IMAGE_BILATERUS",
+                    fragment.widget_x as f32,
+                    fragment.widget_y as f32,
+                    Some(Rect::new(
+                        f32::from(fragment.sprite_frame()) * 80.0,
+                        f32::from(fragment.sprite_row()) * 80.0,
+                        80.0,
+                        80.0,
+                    )),
+                    fragment.kind != crate::bilaterus::FragmentKind::Bone
+                        && fragment.facing_right(),
+                    1.0,
+                    1.0,
+                );
             }
             for missile in &state.missiles {
                 match missile.kind {
@@ -1334,7 +1596,48 @@ impl Presentation {
                 CoinKind::Silver => 0.0,
                 CoinKind::Gold => 1.0,
                 CoinKind::Diamond | CoinKind::DiamondPenta => 3.0,
-                CoinKind::Star => 2.0,
+                CoinKind::Star | CoinKind::ShellStar => 2.0,
+                CoinKind::Treasure => 4.0,
+                CoinKind::ShellSilver
+                | CoinKind::ShellGold
+                | CoinKind::ShellDiamond
+                | CoinKind::ShellDiamondPenta
+                | CoinKind::ShellPearl => {
+                    let shell_row = match coin.kind {
+                        CoinKind::ShellSilver => 0.0,
+                        CoinKind::ShellGold => 1.0,
+                        CoinKind::ShellDiamond | CoinKind::ShellDiamondPenta => 2.0,
+                        CoinKind::ShellPearl => 3.0,
+                        _ => unreachable!(),
+                    };
+                    self.sprite(
+                        "IMAGE_SHELLS",
+                        coin.x as f32 + 20.0,
+                        coin.y as f32 + 20.0,
+                        Some(Rect::new(
+                            f32::from(coin.frame % 20) * 32.0,
+                            shell_row * 32.0,
+                            32.0,
+                            32.0,
+                        )),
+                        false,
+                        1.0,
+                        alpha,
+                    );
+                    continue;
+                }
+                CoinKind::ShellTreasure => {
+                    self.sprite(
+                        "IMAGE_MONEYBAG",
+                        coin.x as f32 + 18.0,
+                        coin.y as f32 + 18.0,
+                        None,
+                        false,
+                        1.0,
+                        alpha,
+                    );
+                    continue;
+                }
                 CoinKind::Pearl => {
                     self.sprite(
                         "IMAGE_PEARL",
@@ -1612,6 +1915,24 @@ impl Presentation {
             );
             self.fonts["Pix118"].text("2000", 302.0, 58.0, Color::from_rgba(110, 250, 110, 255));
         }
+        if state.ultra_unlocked {
+            self.sprite("IMAGE_MENUBTNU", 290.0, 3.0, None, false, 1.0, 1.0);
+            self.sprite(
+                "IMAGE_SCL_ULTRA",
+                300.0,
+                5.0,
+                Some(Rect::new(
+                    ((state.tick / 2) % 10) as f32 * 40.0,
+                    0.0,
+                    40.0,
+                    40.0,
+                )),
+                false,
+                1.0,
+                1.0,
+            );
+            self.fonts["Pix118"].text("10000", 297.0, 58.0, Color::from_rgba(110, 250, 110, 255));
+        }
         if state.weapon_unlocked {
             self.sprite("IMAGE_MENUBTNU", 363.0, 3.0, None, false, 1.0, 1.0);
             if state.weapon_strength < 12 {
@@ -1630,7 +1951,11 @@ impl Presentation {
                     1.0,
                 );
                 self.fonts["Pix118"].text(
-                    if state.tank == 3 { "2000" } else { "1000" },
+                    match state.tank {
+                        3 => "2000",
+                        4 => "5000",
+                        _ => "1000",
+                    },
                     375.0,
                     58.0,
                     Color::from_rgba(110, 250, 110, 255),
@@ -2047,12 +2372,23 @@ impl Presentation {
                 PetKind::Blip => ("IMAGE_BLIP", 90.0, updates % 20 / 2),
                 PetKind::Rhubarb => ("IMAGE_RHUBARB", 90.0, updates % 40 / 4),
                 PetKind::Nimbus => ("IMAGE_NIMBUS", 90.0, updates % 20 / 2),
+                PetKind::Amp => ("IMAGE_AMP", 100.0, updates % 20 / 2),
+            };
+            let (preview_x, preview_width, preview_height) = if pet == PetKind::Amp {
+                (236.0, 160.0, 60.0)
+            } else {
+                (278.0, 80.0, 80.0)
             };
             self.sprite(
                 id,
-                278.0,
+                preview_x,
                 y,
-                Some(Rect::new(column as f32 * 80.0, 0.0, 80.0, 80.0)),
+                Some(Rect::new(
+                    column as f32 * preview_width,
+                    0.0,
+                    preview_width,
+                    preview_height,
+                )),
                 false,
                 1.0,
                 1.0,
@@ -2083,6 +2419,7 @@ impl Presentation {
                     PetKind::Blip => "BLIP the Porpoise",
                     PetKind::Rhubarb => "RHUBARB the Hermit Crab",
                     PetKind::Nimbus => "NIMBUS the Manta Ray",
+                    PetKind::Amp => "AMP the Electric Eel",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -2166,6 +2503,11 @@ impl Presentation {
                     "NIMBUS tosses any coins or",
                     "food he catches back up",
                     "toward the top of the tank.",
+                ],
+                PetKind::Amp => [
+                    "AMP can electrocute your",
+                    "entire tank, killing your fish",
+                    "and turning them into diamonds.",
                 ],
             };
             for (index, line) in description.iter().enumerate() {
@@ -2255,6 +2597,7 @@ impl Presentation {
                 PetKind::Blip => "IMAGE_SCL_BLIP",
                 PetKind::Rhubarb => "IMAGE_SCL_RHUBARB",
                 PetKind::Nimbus => "IMAGE_SCL_NIMBUS",
+                PetKind::Amp => "IMAGE_SCL_AMP",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
@@ -2451,6 +2794,16 @@ impl Presentation {
                     ],
                     90.0,
                 ),
+                PetKind::Amp => (
+                    "IMAGE_AMP",
+                    "AMP the Electric Eel",
+                    [
+                        "AMP can electrocute your",
+                        "entire tank, killing your fish",
+                        "and turning them into diamonds.",
+                    ],
+                    90.0,
+                ),
             };
             let column = if matches!(pet, PetKind::Niko | PetKind::Vert) {
                 let phase = session.ticks % 18;
@@ -2463,11 +2816,21 @@ impl Presentation {
             } else {
                 session.ticks % 20 / 2
             };
+            let (preview_x, preview_width, preview_height) = if pet == PetKind::Amp {
+                (240.0, 160.0, 60.0)
+            } else {
+                (280.0, 80.0, 80.0)
+            };
             self.sprite(
                 image,
-                280.0,
+                preview_x,
                 y,
-                Some(Rect::new(column as f32 * 80.0, 0.0, 80.0, 80.0)),
+                Some(Rect::new(
+                    column as f32 * preview_width,
+                    0.0,
+                    preview_width,
+                    preview_height,
+                )),
                 false,
                 1.0,
                 1.0,
@@ -3086,6 +3449,15 @@ pub async fn run(
                         if session
                             .board
                             .as_ref()
+                            .is_some_and(|board| board.ultra_unlocked)
+                            && Rect::new(290.0, 3.0, 58.0, 60.0).contains(pointer) =>
+                    {
+                        Action::BuyUltra
+                    }
+                    AdventurePhase::Playing
+                        if session
+                            .board
+                            .as_ref()
                             .is_some_and(|board| board.weapon_unlocked)
                             && Rect::new(363.0, 3.0, 58.0, 60.0).contains(pointer) =>
                     {
@@ -3280,7 +3652,23 @@ pub async fn run(
                 }
             }
         }
+        // Bilaterus observes its passive connector pose during the board's
+        // render pass. Publish that durable observation before saving or
+        // recording this frame, including when the board is paused.
+        let observed_connector_change = !exit_requested
+            && matches!(
+                session.phase,
+                AdventurePhase::Playing
+                    | AdventurePhase::FirstTankRescue
+                    | AdventurePhase::InvasionTutorial { .. }
+                    | AdventurePhase::GameOver { .. }
+            )
+            && session
+                .board
+                .as_mut()
+                .is_some_and(AdventureState::observe_rendered_bilaterus_connectors);
         if phase_transitioned
+            || observed_connector_change
             || save_requested
             || exit_requested
             || events.iter().any(|event| {
@@ -3595,6 +3983,38 @@ mod feed_input_tests {
         assert_eq!(
             pet_at_pointer(&unlocked, vec2(470.0, 414.0)),
             Some(PetKind::Rhubarb)
+        );
+    }
+
+    #[test]
+    fn amp_uses_second_card_in_third_column_and_preserves_nimbus() {
+        let unlocked = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+            PetKind::Clyde,
+            PetKind::Vert,
+            PetKind::Rufus,
+            PetKind::Meryl,
+            PetKind::Wadsworth,
+            PetKind::Seymour,
+            PetKind::Shrapnel,
+            PetKind::Gumbo,
+            PetKind::Blip,
+            PetKind::Rhubarb,
+            PetKind::Nimbus,
+            PetKind::Amp,
+        ];
+        assert_eq!(pet_card_rect(16), Rect::new(519.0, 124.0, 90.0, 83.0));
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(560.0, 165.0)),
+            Some(PetKind::Amp)
+        );
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(560.0, 82.0)),
+            Some(PetKind::Nimbus)
         );
     }
 

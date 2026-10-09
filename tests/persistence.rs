@@ -183,6 +183,286 @@ fn tank_four_first_session(pets: &[PetKind]) -> AdventureSession {
     session
 }
 
+fn tank_four_second_session(pets: &[PetKind]) -> AdventureSession {
+    let mut session = tank_four_first_session(&[]);
+    session.progress.level = 2;
+    session.progress.unlocked_pets.push(PetKind::Nimbus);
+    session.progress.selected_pets = pets.to_vec();
+    session.board = Some(AdventureState::new_tank4_second_stage(42, pets).unwrap());
+    session
+}
+
+fn current_bytes(session: AdventureSession) -> Vec<u8> {
+    serde_json::to_vec(&cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap()
+}
+
+fn pending_tank_four_second_session() -> AdventureSession {
+    use turbofish_deluxe::{
+        bilaterus::BilaterusState,
+        sim::{Coin, CoinKind, Food},
+    };
+
+    // Controlled current-format state, never evidence of earned purchases.
+    // Use the serialized allocator boundary so all new identities remain valid.
+    let mut value = serde_json::to_value(tank_four_second_session(&[PetKind::Nimbus])).unwrap();
+    let next_id = value["board"]["next_id"].as_u64().unwrap();
+    value["board"]["next_id"] = (next_id + 3).into();
+    let mut session: AdventureSession = serde_json::from_value(value).unwrap();
+    let board = session.board.as_mut().unwrap();
+    board.balance = 10_000;
+    board.upgrades.quality_unlocked = true;
+    board.upgrades.quantity_unlocked = true;
+    board.oscar_unlocked = true;
+    board.egg_unlocked = true;
+    board.ultra_unlocked = true;
+    board.weapon_unlocked = true;
+    let mut group = BilaterusState::spawn(next_id, 400, 110, &mut || 1);
+    group.emergence_ticks = 1;
+    assert!(group.pet_damage(101.0) < 0.0);
+    let wave = board.invasion.as_mut().unwrap();
+    wave.bilaterus.push(group);
+    wave.battle_active = true;
+    board.coins.push(Coin {
+        id: next_id + 1,
+        x: 100.25,
+        y: 160.5,
+        kind: CoinKind::ShellGold,
+        frame: 0,
+        animation_ticks: 6,
+        hazard_age_ticks: 23,
+        collecting: false,
+        bottom_ticks: 0,
+        fade_ticks: 0,
+        penta_rising: true,
+    });
+    board.food.push(Food {
+        id: next_id + 2,
+        x: 110.0,
+        y: 170.0,
+        frame: 0,
+        ineligible_ticks: 0,
+        removal_ticks: 0,
+        quality: 1,
+        direction: 0,
+        vx: 0.0,
+        vy: -2.0,
+        animation_period: 3,
+        free_from_zorf: false,
+        nimbus_rising: true,
+    });
+    session.apply_actions(&[Action::BuyUltra]);
+    assert_eq!(session.board.as_ref().unwrap().ultras.len(), 1);
+    session.validate().unwrap();
+    session
+}
+
+#[test]
+fn current_tank_four_second_entry_retains_sixteen_rosters_and_stage_constants() {
+    use turbofish_deluxe::invasion::WavePlan;
+
+    let canonical = tank_four_second_session(&[]).progress.unlocked_pets;
+    assert_eq!(canonical.len(), 16);
+    for pet in canonical {
+        let session = tank_four_second_session(&[pet]);
+        session.validate().unwrap();
+        let resumed = cli::decode_save(&current_bytes(session.clone())).unwrap();
+        assert_eq!(
+            serde_json::to_value(resumed).unwrap(),
+            serde_json::to_value(session).unwrap(),
+            "single-pet roster {pet:?} changed on reload"
+        );
+    }
+    let session = tank_four_second_session(&[PetKind::Niko, PetKind::Itchy, PetKind::Nimbus]);
+    let board = session.board.as_ref().unwrap();
+    assert_eq!(
+        (board.tank, board.level, board.balance, board.egg_price),
+        (4, 2, 200, 25_000)
+    );
+    assert_eq!(board.breeders.len(), 1);
+    assert_eq!(board.breeders[0].food_points, 2);
+    assert!(board.fish.is_empty());
+    assert_eq!(
+        board.pets,
+        vec![PetKind::Niko, PetKind::Itchy, PetKind::Nimbus]
+    );
+    assert!(board.ultras.is_empty() && board.dead_ultras.is_empty());
+    let wave = board.invasion.as_ref().unwrap();
+    assert_eq!(wave.plan, WavePlan::FixedBilaterus);
+    assert_eq!(wave.countdown, 3000);
+    assert!(wave.bilaterus.is_empty() && wave.fragments.is_empty());
+    assert!(AdventureState::new_tank4_second_stage(42, &[PetKind::Amp]).is_err());
+}
+
+#[test]
+fn current_tank_four_second_pending_group_ultra_and_rising_items_resume_exactly() {
+    let mut uninterrupted = pending_tank_four_second_session();
+    let mut resumed = cli::decode_save(&current_bytes(uninterrupted.clone())).unwrap();
+    assert_eq!(
+        serde_json::to_value(&resumed).unwrap(),
+        serde_json::to_value(&uninterrupted).unwrap()
+    );
+    // The active head has pet-lethal health but must survive the saved
+    // emergence boundary. Its first death, fragments, Ultra, food and coin
+    // must use identical IDs, draws and phases after reopening.
+    assert!(
+        resumed
+            .board
+            .as_ref()
+            .unwrap()
+            .invasion
+            .as_ref()
+            .unwrap()
+            .bilaterus[0]
+            .active()
+            .health
+            < 0.0
+    );
+    for _ in 0..40 {
+        let expected = uninterrupted.step(&[]);
+        let actual = resumed.step(&[]);
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&uninterrupted).unwrap()
+        );
+        resumed.validate().unwrap();
+    }
+    let board = resumed.board.as_ref().unwrap();
+    assert!(board.invasion.as_ref().unwrap().bilaterus[0].first_head_lost);
+    assert_eq!(board.ultras.len(), 1);
+    assert_eq!(
+        board.coins[0].kind,
+        turbofish_deluxe::sim::CoinKind::ShellGold
+    );
+    assert_eq!(board.coins[0].hazard_age_ticks, 63);
+}
+
+#[test]
+fn current_tank_four_second_rejects_missing_and_impossible_live_state() {
+    let current = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: pending_tank_four_second_session(),
+    })
+    .unwrap();
+    for field in ["ultra_unlocked", "ultras", "dead_ultras"] {
+        let mut missing = current.clone();
+        missing["session"]["board"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "missing board {field}"
+        );
+    }
+    for field in ["bilaterus", "fragments"] {
+        let mut missing = current.clone();
+        missing["session"]["board"]["invasion"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "missing wave {field}"
+        );
+    }
+    for (path, field) in [
+        ("ultras", "coin_timer"),
+        ("bilaterus", "active_head"),
+        ("coins", "hazard_age_ticks"),
+        ("food", "nimbus_rising"),
+    ] {
+        let mut missing = current.clone();
+        let items = if path == "bilaterus" {
+            &mut missing["session"]["board"]["invasion"][path]
+        } else {
+            &mut missing["session"]["board"][path]
+        };
+        items[0].as_object_mut().unwrap().remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "missing {path}[0].{field}"
+        );
+    }
+    for (path, field) in [("heads", "health"), ("bones", "follow_vx")] {
+        let mut missing = current.clone();
+        let group = &mut missing["session"]["board"]["invasion"]["bilaterus"][0];
+        if path == "heads" {
+            let active = group["active_head"].as_u64().unwrap() as usize;
+            group[path][active].as_object_mut().unwrap().remove(field);
+        } else {
+            group[path][0].as_object_mut().unwrap().remove(field);
+        }
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "missing Bilaterus {path} field {field}"
+        );
+    }
+    let mut corpse_session = pending_tank_four_second_session();
+    let board = corpse_session.board.as_mut().unwrap();
+    let ultra = board.ultras.remove(0);
+    board
+        .dead_ultras
+        .push(turbofish_deluxe::ultra::DeadUltra::from_impact(&ultra));
+    corpse_session.validate().unwrap();
+    let mut missing_corpse = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: corpse_session,
+    })
+    .unwrap();
+    missing_corpse["session"]["board"]["dead_ultras"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("remaining_ticks");
+    assert!(
+        cli::decode_save(&serde_json::to_vec(&missing_corpse).unwrap()).is_err(),
+        "missing Ultra corpse lifetime"
+    );
+    let mut invalid = current;
+    invalid["session"]["board"]["invasion"]["bilaterus"][0]["first_head_lost"] = true.into();
+    assert!(
+        cli::decode_save(&serde_json::to_vec(&invalid).unwrap()).is_err(),
+        "two-head group cannot claim its first head is lost"
+    );
+}
+
+#[test]
+fn current_tank_four_second_pause_keeps_live_board_while_session_time_advances() {
+    let session = pending_tank_four_second_session();
+    let mut resumed = cli::decode_save(&current_bytes(session)).unwrap();
+    let board_before = serde_json::to_value(resumed.board.as_ref().unwrap()).unwrap();
+    let session_ticks_before = resumed.ticks;
+    for _ in 0..12 {
+        resumed.paused_step();
+        assert_eq!(
+            serde_json::to_value(resumed.board.as_ref().unwrap()).unwrap(),
+            board_before
+        );
+    }
+    assert_eq!(resumed.ticks, session_ticks_before + 12);
+    resumed.validate().unwrap();
+    let mut reopened = cli::decode_save(&current_bytes(resumed.clone())).unwrap();
+    assert_eq!(
+        serde_json::to_value(&reopened).unwrap(),
+        serde_json::to_value(&resumed).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(reopened.step(&[])).unwrap(),
+        serde_json::to_value(resumed.step(&[])).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&reopened).unwrap(),
+        serde_json::to_value(&resumed).unwrap()
+    );
+}
+
 #[test]
 fn current_tank_four_accepts_fifteen_pet_rosters_and_rejects_unearned_nimbus() {
     let canonical = tank_four_first_session(&[]).progress.unlocked_pets;
@@ -220,7 +500,7 @@ fn current_tank_four_requires_all_breeder_and_rhubarb_state_without_backfill() {
             cli::decode_save(&serde_json::to_vec(&missing).unwrap())
                 .unwrap_err()
                 .to_string()
-                .contains("Incomplete format-sixteen"),
+                .contains("Incomplete format-seventeen"),
             "missing {field}"
         );
     }
@@ -309,7 +589,7 @@ fn current_tank_four_pending_birth_and_rhubarb_push_continue_identically_after_r
 }
 
 #[test]
-fn current_nimbus_hatch_and_both_sixteen_pet_entry_gates_survive_reload() {
+fn format_sixteen_nimbus_hatch_enters_current_four_two_and_amp_stays_gated() {
     use turbofish_deluxe::sim::{Event, Rejection};
     let mut session = tank_four_first_session(&[PetKind::Rhubarb]);
     session.progress.level = 2;
@@ -320,12 +600,18 @@ fn current_nimbus_hatch_and_both_sixteen_pet_entry_gates_survive_reload() {
         updates: 171,
     };
     session.validate().unwrap();
+    // The earned A31 endpoint has no Board. It loads byte-for-byte as a
+    // format-sixteen session; opening 4-2 constructs the current live state.
     let bytes = serde_json::to_vec(&cli::ProjectSave {
-        format_version: cli::SAVE_FORMAT_VERSION,
-        session,
+        format_version: 16,
+        session: session.clone(),
     })
     .unwrap();
     let mut loaded = cli::decode_save(&bytes).unwrap();
+    assert_eq!(
+        serde_json::to_value(&loaded).unwrap(),
+        serde_json::to_value(session).unwrap()
+    );
     loaded.apply_actions(&[
         Action::Continue,
         Action::TogglePet {
@@ -333,9 +619,65 @@ fn current_nimbus_hatch_and_both_sixteen_pet_entry_gates_survive_reload() {
         },
     ]);
     assert_eq!(loaded.progress.unlocked_pets.len(), 16);
-    let before = serde_json::to_value(&loaded).unwrap();
+    assert!(loaded.progress.selected_pets.is_empty());
+    assert!(matches!(loaded.phase, AdventurePhase::PetSelection { .. }));
+    assert!(
+        matches!(&loaded.phase, AdventurePhase::PetSelection { selected } if selected.as_slice() == [PetKind::Nimbus])
+    );
     assert!(
         loaded
+            .apply_actions(&[Action::Continue])
+            .iter()
+            .any(|event| matches!(event, Event::PetSelectionConfirmation { .. }))
+    );
+    let bytes = current_bytes(loaded.clone());
+    let mut resumed = cli::decode_save(&bytes).unwrap();
+    let expected = loaded.apply_actions(&[Action::ConfirmPetSelection { accept: true }]);
+    let actual = resumed.apply_actions(&[Action::ConfirmPetSelection { accept: true }]);
+    assert_eq!(
+        serde_json::to_value(actual).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&resumed).unwrap(),
+        serde_json::to_value(&loaded).unwrap()
+    );
+    assert!(matches!(resumed.phase, AdventurePhase::Playing));
+    assert_eq!(
+        (
+            resumed.board.as_ref().unwrap().tank,
+            resumed.board.as_ref().unwrap().level
+        ),
+        (4, 2)
+    );
+    for _ in 0..30 {
+        assert_eq!(
+            serde_json::to_value(resumed.step(&[])).unwrap(),
+            serde_json::to_value(loaded.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&loaded).unwrap()
+        );
+    }
+
+    // The next reward may be selected and persisted, but 4-3 is still gated.
+    let mut locked = tank_four_second_session(&[]);
+    locked.progress.level = 3;
+    locked.progress.unlocked_pets.push(PetKind::Amp);
+    locked.board = None;
+    locked.phase = AdventurePhase::Hatch {
+        pet: PetKind::Amp,
+        updates: 171,
+    };
+    locked.validate().unwrap();
+    let mut locked = cli::decode_save(&current_bytes(locked)).unwrap();
+    locked.apply_actions(&[Action::Continue]);
+    assert!(matches!(locked.phase, AdventurePhase::PetSelection { .. }));
+    locked.apply_actions(&[Action::TogglePet { pet: PetKind::Amp }]);
+    let before = serde_json::to_value(&locked).unwrap();
+    assert!(
+        locked
             .apply_actions(&[Action::Continue])
             .iter()
             .any(|event| matches!(
@@ -346,20 +688,19 @@ fn current_nimbus_hatch_and_both_sixteen_pet_entry_gates_survive_reload() {
                 }
             ))
     );
-    assert_eq!(serde_json::to_value(&loaded).unwrap(), before);
-    loaded.progress.selected_pets = vec![PetKind::Nimbus];
-    loaded.phase = AdventurePhase::PetSelectionConfirmation {
-        selected: vec![PetKind::Nimbus],
+    assert_eq!(serde_json::to_value(&locked).unwrap(), before);
+
+    // A persisted underfilled confirmation cannot bypass the same 4-3 gate.
+    let mut locked = cli::decode_save(&current_bytes(locked)).unwrap();
+    locked.progress.selected_pets = vec![PetKind::Amp];
+    locked.phase = AdventurePhase::PetSelectionConfirmation {
+        selected: vec![PetKind::Amp],
     };
-    let bytes = serde_json::to_vec(&cli::ProjectSave {
-        format_version: cli::SAVE_FORMAT_VERSION,
-        session: loaded,
-    })
-    .unwrap();
-    let mut reopened = cli::decode_save(&bytes).unwrap();
-    let before = serde_json::to_value(&reopened).unwrap();
+    locked.validate().unwrap();
+    let mut locked = cli::decode_save(&current_bytes(locked)).unwrap();
+    let before = serde_json::to_value(&locked).unwrap();
     assert!(
-        reopened
+        locked
             .apply_actions(&[Action::ConfirmPetSelection { accept: true }])
             .iter()
             .any(|event| matches!(
@@ -370,9 +711,8 @@ fn current_nimbus_hatch_and_both_sixteen_pet_entry_gates_survive_reload() {
                 }
             ))
     );
-    assert_eq!(serde_json::to_value(&reopened).unwrap(), before);
-    assert!(reopened.board.is_none());
-    reopened.validate().unwrap();
+    assert_eq!(serde_json::to_value(&locked).unwrap(), before);
+    assert!(locked.board.is_none());
 }
 
 #[test]

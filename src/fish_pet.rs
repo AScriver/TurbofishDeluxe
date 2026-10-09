@@ -18,6 +18,7 @@ pub enum FishPetKind {
     Shrapnel,
     Gumbo,
     Blip,
+    Nimbus,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,9 +34,50 @@ pub struct PetAlienView {
     pub widget_x: i32,
     pub widget_y: i32,
     pub healing: bool,
+    /// A Bilaterus view names its active physical head, but retains the
+    /// group's distinct +40 target/contact geometry.
+    pub bilaterus: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+impl PetAlienView {
+    fn center_offset(self) -> i32 {
+        if self.bilaterus { 40 } else { 80 }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NimbusCoinView {
+    pub id: u64,
+    pub widget_x: i32,
+    pub widget_y: i32,
+    /// Board owns raw-kind, Penta-membership, and collection filtering.
+    pub eligible: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NimbusFoodView {
+    pub id: u64,
+    pub widget_x: i32,
+    pub widget_y: i32,
+    /// Board owns food-kind and collection filtering.
+    pub eligible: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NimbusCoinRequest {
+    pub coin_id: u64,
+    pub x: i32,
+    pub y: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NimbusFoodRequest {
+    pub food_id: u64,
+    pub x: i32,
+    pub y: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FishPetUpdate {
     pub damaged_alien: Option<u64>,
     pub born_at: Option<(i32, i32)>,
@@ -50,6 +92,15 @@ pub struct FishPetUpdate {
     /// Wadsworth's active-state transition after the clock has advanced.
     pub ward_transition: Option<bool>,
     pub ward_bubbles: Option<[(i32, i32); 2]>,
+    pub nimbus_coin: Option<NimbusCoinRequest>,
+    pub nimbus_food: Option<NimbusFoodRequest>,
+}
+
+#[derive(Clone, Copy)]
+struct NimbusViews<'a> {
+    coins: &'a [NimbusCoinView],
+    foods: &'a [NimbusFoodView],
+    enemies_registered: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,7 +164,7 @@ pub struct FishPetState {
 impl FishPetState {
     /// Board's two spawn coordinates precede six unused/common Fish draws.
     /// In particular, a spawn Y up to 539 survives until the first update's
-    /// pre-integration clamp. Zorf overwrites the drawn speed divisor with 3.
+    /// pre-integration clamp. Zorf/Nimbus overwrite the drawn speed divisor.
     pub fn spawn_tank1(
         id: u64,
         kind: FishPetKind,
@@ -161,6 +212,8 @@ impl FishPetState {
                 4.0
             } else if kind == FishPetKind::Zorf {
                 3.0
+            } else if kind == FishPetKind::Nimbus {
+                0.5
             } else {
                 speed_mod
             },
@@ -195,6 +248,8 @@ impl FishPetState {
                 self.speed_mod == 4.0
             } else if self.kind == FishPetKind::Zorf {
                 self.speed_mod == 3.0
+            } else if self.kind == FishPetKind::Nimbus {
+                matches!(self.speed_mod, 0.5 | 1.8)
             } else {
                 [1.6, 1.8, 2.0].contains(&self.speed_mod)
             })
@@ -207,6 +262,8 @@ impl FishPetState {
                     79
                 } else if self.kind == FishPetKind::Shrapnel {
                     59
+                } else if self.kind == FishPetKind::Nimbus {
+                    39
                 } else {
                     19
                 })
@@ -313,6 +370,7 @@ impl FishPetState {
             FishPetKind::Shrapnel => u8::from(self.turn_ticks != 0),
             FishPetKind::Gumbo => u8::from(self.turn_ticks != 0),
             FishPetKind::Blip => u8::from(self.turn_ticks != 0),
+            FishPetKind::Nimbus => u8::from(self.turn_ticks != 0),
         }
     }
 
@@ -370,12 +428,11 @@ impl FishPetState {
         guppy_count: usize,
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> FishPetUpdate {
-        assert_ne!(
-            self.kind,
-            FishPetKind::Zorf,
-            "Zorf needs the ordered hungry-fish view"
+        assert!(
+            !matches!(self.kind, FishPetKind::Zorf | FishPetKind::Nimbus),
+            "Zorf and Nimbus need their ordered target views"
         );
-        self.tick_inner(aliens, guppy_count, &[], rand_range)
+        self.tick_inner(aliens, guppy_count, &[], None, rand_range)
     }
 
     pub fn tick_zorf(
@@ -385,7 +442,28 @@ impl FishPetState {
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> FishPetUpdate {
         assert_eq!(self.kind, FishPetKind::Zorf, "tick_zorf requires Zorf");
-        self.tick_inner(aliens, 0, hungry, rand_range)
+        self.tick_inner(aliens, 0, hungry, None, rand_range)
+    }
+
+    pub fn tick_nimbus(
+        &mut self,
+        coins: &[NimbusCoinView],
+        foods: &[NimbusFoodView],
+        enemies_registered: bool,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> FishPetUpdate {
+        assert_eq!(self.kind, FishPetKind::Nimbus);
+        self.tick_inner(
+            &[],
+            0,
+            &[],
+            Some(NimbusViews {
+                coins,
+                foods,
+                enemies_registered,
+            }),
+            rand_range,
+        )
     }
 
     /// This subtype owns its protection clock. The Board supplies registered
@@ -428,7 +506,7 @@ impl FishPetState {
                 (self.widget_x + 4, self.widget_y + 2),
             ]);
         }
-        let _motion = self.tick_inner(&[], 0, &[], rand_range);
+        let _motion = self.tick_inner(&[], 0, &[], None, rand_range);
         ward
     }
 
@@ -437,11 +515,16 @@ impl FishPetState {
         aliens: &[PetAlienView],
         guppy_count: usize,
         hungry: &[ZorfHungryView],
+        nimbus: Option<NimbusViews<'_>>,
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> FishPetUpdate {
         let mut update = FishPetUpdate::default();
         let hunting = self.kind == FishPetKind::Itchy && !aliens.is_empty();
-        if self.kind == FishPetKind::Gumbo && !aliens.is_empty() {
+        if let Some(views) = nimbus {
+            if !self.hunt_nimbus(views, &mut update) {
+                self.wander();
+            }
+        } else if self.kind == FishPetKind::Gumbo && !aliens.is_empty() {
             self.hunt_gumbo(aliens);
         } else if hunting {
             self.hunt(aliens, &mut update);
@@ -518,7 +601,11 @@ impl FishPetState {
         }
         self.x = self.x.clamp(10.0, 540.0);
         self.y = self.y.clamp(
-            95.0,
+            if self.kind == FishPetKind::Nimbus {
+                320.0
+            } else {
+                95.0
+            },
             if self.kind == FishPetKind::Prego {
                 360.0
             } else if self.kind == FishPetKind::Zorf {
@@ -562,12 +649,108 @@ impl FishPetState {
         update
     }
 
+    /// W1 FishTypePet::Hungry/FindNearestFood/HungryBehavior/CollideWithFood.
+    /// Contact geometry and conversion requests use installed PB60 instead
+    /// where it corrects the secondary coin-contact offset.
+    fn hunt_nimbus(&mut self, views: NimbusViews<'_>, update: &mut FishPetUpdate) -> bool {
+        let has_objects = !views.coins.is_empty() || !views.foods.is_empty();
+        self.speed_mod = if has_objects { 0.5 } else { 1.8 };
+        if !has_objects {
+            return false;
+        }
+
+        // Foods precede coins. Each axis is truncated before integer
+        // Euclidean distance, and a strict comparison retains the first tie.
+        let mut nearest = None;
+        let mut best_distance = 10_000;
+        if !views.enemies_registered {
+            for food in views.foods.iter().filter(|food| food.eligible) {
+                let dx = (self.x + 40.0 - f64::from(food.widget_x + 20)) as i32;
+                let dy = (self.y + 40.0 - f64::from(food.widget_y + 20)) as i32;
+                let distance = (f64::from(dx * dx + dy * dy).sqrt()) as i32;
+                if distance < best_distance {
+                    best_distance = distance;
+                    nearest = Some((food.widget_x, food.widget_y));
+                }
+            }
+        }
+        for coin in views.coins.iter().filter(|coin| coin.eligible) {
+            let dx = (self.x + 40.0 - f64::from(coin.widget_x + 36)) as i32;
+            let dy = (self.y + 40.0 - f64::from(coin.widget_y + 36)) as i32;
+            let distance = (f64::from(dx * dx + dy * dy).sqrt()) as i32;
+            if distance < best_distance {
+                best_distance = distance;
+                nearest = Some((coin.widget_x, coin.widget_y));
+            }
+        }
+
+        let Some((target_x, target_y)) = nearest else {
+            self.speed_mod = 1.8;
+            return true; // A nonempty but ineligible list still suppresses wander.
+        };
+        if self.special_timer >= 5 {
+            self.special_timer = 0;
+            let cx = self.x + 40.0;
+            let cy = self.y + 40.0;
+            let tx = f64::from(target_x + 36);
+            let ty = f64::from(target_y + 36);
+            if cx > tx + 18.0 && self.vx > -2.3 {
+                self.vx -= 0.5;
+            } else if cx < tx - 18.0 && self.vx < 2.3 {
+                self.vx += 0.5;
+            } else if cx > tx + 8.0 && self.vx > -1.3 {
+                self.vx -= 0.1;
+            } else if cx < tx - 8.0 && self.vx < 1.3 {
+                self.vx += 0.1;
+            } else if cx > tx && self.vx > -0.3 || cx < tx && self.vx < 0.3 {
+                self.vx = 0.0;
+            }
+            if cy > ty + 6.0 && self.vy > -2.0 {
+                self.vy -= 0.6;
+            } else if cy < ty - 6.0 && self.vy < 3.0 {
+                self.vy += 1.0;
+            } else if cy > ty && self.vy > -2.0 {
+                self.vy -= 0.3;
+            } else if cy < ty && self.vy < 3.0 {
+                self.vy += 0.5;
+            }
+        }
+
+        let cx = self.x + 40.0;
+        let cy = self.y + 40.0;
+        if let Some(coin) = views.coins.iter().find(|coin| {
+            coin.eligible
+                && (cx - f64::from(coin.widget_x + 36)).abs() < 30.0
+                && (cy - f64::from(coin.widget_y + 36)).abs() < 30.0
+        }) {
+            update.nimbus_coin = Some(NimbusCoinRequest {
+                coin_id: coin.id,
+                x: coin.widget_x,
+                y: self.y - 25.0,
+            });
+        }
+        if !views.enemies_registered
+            && let Some(food) = views.foods.iter().find(|food| {
+                food.eligible
+                    && (cx - f64::from(food.widget_x + 20)).abs() < 30.0
+                    && (cy - f64::from(food.widget_y + 20)).abs() < 30.0
+            })
+        {
+            update.nimbus_food = Some(NimbusFoodRequest {
+                food_id: food.id,
+                x: food.widget_x,
+                y: self.y - 30.0,
+            });
+        }
+        true
+    }
+
     fn hunt(&mut self, aliens: &[PetAlienView], update: &mut FishPetUpdate) {
         let mut nearest = None;
         let mut best_distance = 10_000;
         for alien in aliens.iter().filter(|alien| !alien.healing) {
-            let dx = (self.x + 40.0 - f64::from(alien.widget_x + 80)) as i32;
-            let dy = (self.y + 40.0 - f64::from(alien.widget_y + 80)) as i32;
+            let dx = (self.x + 40.0 - f64::from(alien.widget_x + alien.center_offset())) as i32;
+            let dy = (self.y + 40.0 - f64::from(alien.widget_y + alien.center_offset())) as i32;
             let distance = ((f64::from(dx * dx + dy * dy)).sqrt()) as i32;
             if distance < best_distance {
                 best_distance = distance;
@@ -578,8 +761,8 @@ impl FishPetState {
             self.special_timer = 0;
             let cx = self.x + 40.0;
             let cy = self.y + 40.0;
-            let tx = f64::from(target.widget_x + 80);
-            let ty = f64::from(target.widget_y + 80);
+            let tx = f64::from(target.widget_x + target.center_offset());
+            let ty = f64::from(target.widget_y + target.center_offset());
             if cx < tx && self.vx < 10.0 {
                 self.vx += 2.5;
             } else if cx > tx && self.vx > -10.0 {
@@ -598,8 +781,8 @@ impl FishPetState {
         // steering target. A pending-death alien remains eligible here.
         if let Some(alien) = aliens.iter().find(|alien| {
             !alien.healing
-                && (self.x + 40.0 - f64::from(alien.widget_x + 80)).abs() < 20.0
-                && (self.y + 40.0 - f64::from(alien.widget_y + 80)).abs() < 20.0
+                && (self.x + 40.0 - f64::from(alien.widget_x + alien.center_offset())).abs() < 20.0
+                && (self.y + 40.0 - f64::from(alien.widget_y + alien.center_offset())).abs() < 20.0
         }) {
             update.damaged_alien = Some(alien.id);
             update.punch_sound = true;
@@ -612,8 +795,8 @@ impl FishPetState {
         let mut nearest = None;
         let mut best = i32::MAX;
         for alien in aliens.iter().filter(|alien| !alien.healing) {
-            let dx = (self.x + 40.0 - f64::from(alien.widget_x + 80)) as i32;
-            let dy = (self.y + 40.0 - f64::from(alien.widget_y + 80)) as i32;
+            let dx = (self.x + 40.0 - f64::from(alien.widget_x + alien.center_offset())) as i32;
+            let dy = (self.y + 40.0 - f64::from(alien.widget_y + alien.center_offset())) as i32;
             let distance = ((f64::from(dx * dx + dy * dy)).sqrt()) as i32;
             if distance < best {
                 best = distance;
@@ -622,9 +805,9 @@ impl FishPetState {
         }
         if let Some(alien) = nearest.filter(|_| self.special_timer >= 5) {
             self.special_timer = 0;
-            // Raw target type 0x17 takes +40; ordinary raw6 takes +80.
-            let target_x = alien.widget_x + 80;
-            let target_y = alien.widget_y + 80;
+            // Bilaterus group uses +40; ordinary aliens use +80.
+            let target_x = alien.widget_x + alien.center_offset();
+            let target_y = alien.widget_y + alien.center_offset();
             if target_y > 260 && self.vy > -8.0 {
                 self.vy -= 2.0;
             } else if target_y < 300 && self.vy < 8.0 {
@@ -750,6 +933,8 @@ impl FishPetState {
                     79
                 } else if self.kind == FishPetKind::Shrapnel {
                     59
+                } else if self.kind == FishPetKind::Nimbus {
+                    39
                 } else {
                     19
                 })
@@ -770,6 +955,8 @@ impl FishPetState {
                     self.glint_phase = -1.0;
                 }
                 self.swim_counter / 6
+            } else if self.kind == FishPetKind::Nimbus {
+                self.swim_counter / 4
             } else {
                 self.swim_counter / 2
             };
@@ -796,6 +983,7 @@ mod tests {
             widget_x: 100,
             widget_y: 100,
             healing: false,
+            bilaterus: false,
         }];
         assert_eq!(pet.tick(&alien, 0, &mut |_| 1).note_at, None);
         assert_eq!(pet.coin_timer, 1299);
@@ -851,6 +1039,207 @@ mod tests {
     }
 
     #[test]
+    fn itchy_uses_group_center_40_and_strict_20_contact() {
+        let mut pet = actor(FishPetKind::Itchy);
+        pet.x = 100.0;
+        pet.y = 100.0;
+        pet.widget_x = 100;
+        pet.widget_y = 100;
+        pet.published_x = 100;
+        pet.published_y = 100;
+        pet.special_timer = 4;
+        let mut group = PetAlienView {
+            id: 91,
+            widget_x: 80,
+            widget_y: 100,
+            healing: false,
+            bilaterus: true,
+        };
+        assert_eq!(pet.tick(&[group], 0, &mut |_| 1).damaged_alien, None);
+        pet.x = 100.0;
+        pet.y = 100.0;
+        pet.widget_x = 100;
+        pet.widget_y = 100;
+        group.widget_x = 81;
+        let result = pet.tick(&[group], 0, &mut |_| 1);
+        assert_eq!(result.damaged_alien, Some(91));
+        assert!(result.punch_sound);
+
+        let mut centered = actor(FishPetKind::Itchy);
+        centered.x = 100.0;
+        centered.y = 100.0;
+        centered.widget_x = 100;
+        centered.widget_y = 100;
+        centered.special_timer = 5;
+        group.widget_x = 100;
+        centered.tick(&[group], 0, &mut |_| 1);
+        assert_eq!(centered.vx, 0.0); // +80 would have steered right.
+        assert_eq!(centered.special_timer, 1);
+    }
+
+    #[test]
+    fn gumbo_flees_from_group_center_40_not_ordinary_alien_center_80() {
+        let mut pet = actor(FishPetKind::Gumbo);
+        pet.x = 100.0;
+        pet.y = 100.0;
+        pet.widget_x = 100;
+        pet.widget_y = 100;
+        pet.special_timer = 5;
+        pet.tick(
+            &[PetAlienView {
+                id: 91,
+                widget_x: 250,
+                widget_y: 220,
+                healing: false,
+                bilaterus: true,
+            }],
+            0,
+            &mut |_| 1,
+        );
+        assert_eq!(pet.vx, 2.0);
+        assert_eq!(pet.vy, 1.5);
+    }
+
+    fn nimbus_at(x: i32, y: i32) -> FishPetState {
+        let mut pet = actor(FishPetKind::Nimbus);
+        pet.x = f64::from(x);
+        pet.y = f64::from(y);
+        pet.widget_x = x;
+        pet.widget_y = y;
+        pet.published_x = x;
+        pet.published_y = y;
+        pet.special_timer = 4;
+        pet
+    }
+
+    #[test]
+    fn nimbus_strict_primary_contact_can_convert_one_coin_and_one_food_before_motion() {
+        let mut pet = nimbus_at(100, 320);
+        let coins = [
+            NimbusCoinView {
+                id: 7,
+                widget_x: 74,
+                widget_y: 324,
+                eligible: true,
+            },
+            NimbusCoinView {
+                id: 8,
+                widget_x: 75,
+                widget_y: 324,
+                eligible: true,
+            },
+            NimbusCoinView {
+                id: 9,
+                widget_x: 104,
+                widget_y: 324,
+                eligible: true,
+            },
+        ];
+        let foods = [NimbusFoodView {
+            id: 11,
+            widget_x: 120,
+            widget_y: 340,
+            eligible: true,
+        }];
+        let update = pet.tick_nimbus(&coins, &foods, false, &mut |_| 1);
+        assert_eq!(
+            update.nimbus_coin,
+            Some(NimbusCoinRequest {
+                coin_id: 8,
+                x: 75,
+                y: 295.0
+            })
+        );
+        assert_eq!(
+            update.nimbus_food,
+            Some(NimbusFoodRequest {
+                food_id: 11,
+                x: 120,
+                y: 290.0
+            })
+        );
+        assert_ne!(pet.y, 320.0); // Requests used the pre-movement double Y.
+        pet.validate().unwrap();
+    }
+
+    #[test]
+    fn nimbus_coin_remains_available_during_enemy_registration_but_food_does_not() {
+        let mut pet = nimbus_at(100, 320);
+        let coins = [NimbusCoinView {
+            id: 7,
+            widget_x: 104,
+            widget_y: 324,
+            eligible: true,
+        }];
+        let foods = [NimbusFoodView {
+            id: 11,
+            widget_x: 120,
+            widget_y: 340,
+            eligible: true,
+        }];
+        let update = pet.tick_nimbus(&coins, &foods, true, &mut |_| 1);
+        assert_eq!(update.nimbus_coin.unwrap().coin_id, 7);
+        assert_eq!(update.nimbus_food, None);
+    }
+
+    #[test]
+    fn nimbus_nearest_food_wins_integer_distance_tie_and_ineligible_list_suppresses_wander() {
+        let mut pet = nimbus_at(100, 320);
+        pet.vx = 0.0;
+        pet.special_timer = 5;
+        let coins = [NimbusCoinView {
+            id: 7,
+            widget_x: 164,
+            widget_y: 324,
+            eligible: true,
+        }];
+        let foods = [NimbusFoodView {
+            id: 11,
+            widget_x: 60,
+            widget_y: 340,
+            eligible: true,
+        }];
+        pet.tick_nimbus(&coins, &foods, false, &mut |_| 1);
+        assert_eq!(pet.vx, -0.5); // Equidistant food steers left; coin would steer right.
+        assert_eq!(pet.special_timer, 1);
+
+        let mut ineligible = nimbus_at(100, 320);
+        ineligible.special_timer = 40;
+        ineligible.tick_nimbus(
+            &[NimbusCoinView {
+                eligible: false,
+                ..coins[0]
+            }],
+            &[],
+            false,
+            &mut |_| 1,
+        );
+        assert_eq!(ineligible.vy, -0.5); // No wander branch despite nonempty coin list.
+        assert_eq!(ineligible.speed_mod, 1.8);
+        assert_eq!(ineligible.special_timer, 41);
+
+        let mut empty = nimbus_at(100, 320);
+        empty.tick_nimbus(&[], &[], false, &mut |_| 1);
+        assert_eq!(empty.vy, 0.5);
+        assert_eq!(empty.speed_mod, 1.8);
+    }
+
+    #[test]
+    fn nimbus_constructor_and_forty_count_swim_animation() {
+        let mut draws = Vec::new();
+        let mut pet = FishPetState::spawn_tank1(1, FishPetKind::Nimbus, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(draws, [265, 520, 2, 3, 200, 3, 10, 200]);
+        assert_eq!(pet.speed_mod, 0.5);
+        pet.swim_counter = 39;
+        pet.tick_nimbus(&[], &[], false, &mut |_| 1);
+        assert_eq!((pet.swim_counter, pet.frame), (0, 0));
+        pet.validate().unwrap();
+    }
+
+    #[test]
     fn shrapnel_sampled_interval_emits_prior_widget_bomb_and_freezes_under_invasion() {
         let mut requests = Vec::new();
         let mut pet = FishPetState::spawn_tank1(77, FishPetKind::Shrapnel, &mut |upper| {
@@ -865,6 +1254,7 @@ mod tests {
             widget_x: 400,
             widget_y: 280,
             healing: false,
+            bilaterus: false,
         }];
         assert_eq!(pet.tick(&alien, 2, &mut |_| 1).bomb_at, None);
         assert_eq!(pet.coin_timer, 651);
@@ -985,18 +1375,21 @@ mod tests {
                 widget_x: 60,
                 widget_y: 60,
                 healing: true,
+                bilaterus: false,
             },
             PetAlienView {
                 id: 3,
                 widget_x: 40,
                 widget_y: 60,
                 healing: false,
+                bilaterus: false,
             },
             PetAlienView {
                 id: 4,
                 widget_x: 60,
                 widget_y: 60,
                 healing: false,
+                bilaterus: false,
             },
         ];
         let result = pet.tick(&aliens, 0, &mut |_| 1);
@@ -1037,6 +1430,7 @@ mod tests {
             widget_x: 0,
             widget_y: 0,
             healing: false,
+            bilaterus: false,
         };
         pet.tick(&[alien], 0, &mut |_| 1);
         assert_eq!(pet.birth_timer, 929);
@@ -1056,12 +1450,14 @@ mod tests {
             widget_x: 20,
             widget_y: 60,
             healing: false,
+            bilaterus: false,
         };
         let right = PetAlienView {
             id: 3,
             widget_x: 100,
             widget_y: 60,
             healing: false,
+            bilaterus: false,
         };
         pet.tick(&[left, right], 0, &mut |_| 1);
         assert_eq!(pet.vx, -2.5);
@@ -1082,6 +1478,7 @@ mod tests {
             widget_x: 400,
             widget_y: 300,
             healing: false,
+            bilaterus: false,
         };
         let mut ranges = Vec::new();
         pet.tick(&[alien], 0, &mut |range| {
@@ -1132,6 +1529,7 @@ mod tests {
             widget_x: 400,
             widget_y: 300,
             healing: false,
+            bilaterus: false,
         };
         pet.tick(&[alien], 0, &mut |_| 1);
         assert_eq!(pet.vx_abs, 7);
@@ -1212,6 +1610,7 @@ mod tests {
             widget_x: 100,
             widget_y: 100,
             healing: false,
+            bilaterus: false,
         };
         pet.tick_zorf(&[alien], &[], &mut |_| 1);
         assert_eq!(pet.food_timer, -5);
@@ -1287,6 +1686,7 @@ mod tests {
             widget_x: 500,
             widget_y: 300,
             healing: false,
+            bilaterus: false,
         };
         for _ in 0..3 {
             assert_eq!(pet.tick(&[alien], 0, &mut |_| 1).gold_at, None);
@@ -1313,12 +1713,14 @@ mod tests {
                 widget_x: 200,
                 widget_y: 200,
                 healing: true,
+                bilaterus: false,
             },
             PetAlienView {
                 id: 2,
                 widget_x: 300,
                 widget_y: 300,
                 healing: false,
+                bilaterus: false,
             },
         ];
         pet.tick(&aliens, 0, &mut |_| 1);

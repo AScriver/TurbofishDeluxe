@@ -12,6 +12,10 @@ use serde::{Deserialize, Serialize};
 use crate::alien::{
     AlienFoodView, AlienRuntimeRequest, PreyView, ShotResult, SylvesterKind, WeakSylvester,
 };
+use crate::bilaterus::{
+    BilaterusFragment, BilaterusPreyView, BilaterusShot, BilaterusState, BilaterusTransition,
+    FragmentKind,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InvasionOrigin {
@@ -46,11 +50,13 @@ pub struct WarningCoords {
 pub enum EncounterKind {
     Single(SylvesterKind),
     WeakBalrogPair,
+    Bilaterus,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WavePlan {
     Fixed(SylvesterKind),
+    FixedBilaterus,
     CyclingTank1Finale { next: EncounterKind },
     CyclingTank2Finale { next: EncounterKind },
     CyclingTank3Second { next: SylvesterKind },
@@ -61,6 +67,7 @@ impl WavePlan {
     pub fn expected(self) -> EncounterKind {
         match self {
             Self::Fixed(kind) => EncounterKind::Single(kind),
+            Self::FixedBilaterus => EncounterKind::Bilaterus,
             Self::CyclingTank1Finale { next } | Self::CyclingTank2Finale { next } => next,
             Self::CyclingTank3Second { next } | Self::CyclingTank3Finale { next } => {
                 EncounterKind::Single(next)
@@ -78,6 +85,32 @@ pub enum InvasionEvent {
         id: u64,
         x: i32,
         y: i32,
+    },
+    BilaterusSpawned {
+        id: u64,
+        x: i32,
+        y: i32,
+    },
+    BilaterusHeadSwapped {
+        id: u64,
+    },
+    BilaterusHeadHit {
+        id: u64,
+        health: f64,
+    },
+    BilaterusFirstHeadDefeated {
+        id: u64,
+    },
+    BilaterusDefeated {
+        id: u64,
+    },
+    BilaterusPreyEaten {
+        group_id: u64,
+        prey_id: u64,
+    },
+    BilaterusFragmentSpawned {
+        id: u64,
+        kind: FragmentKind,
     },
     PreyEaten {
         alien_id: u64,
@@ -128,6 +161,15 @@ pub struct InvasionClick {
     /// A live alien blocks feeding even for menu-area clicks (y <= 40).
     pub suppress_food: bool,
     pub events: Vec<InvasionEvent>,
+}
+
+/// Source child order is active head, bone 0..5, passive head. Callers must
+/// rebuild prey membership between calls, as each child can consume one prey.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BilaterusChild {
+    ActiveHead,
+    Bone(u8),
+    PassiveHead,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -183,6 +225,10 @@ pub struct Invasion1_2 {
     pub pending_modal: Option<InvasionTip>,
     pub warning: Option<WarningCoords>,
     pub actors: Vec<WeakSylvester>,
+    /// Bilaterus is a separate registered combat identity, never an Alien.
+    pub bilaterus: Vec<BilaterusState>,
+    /// Targetless visual effects do not hold the battle or wave countdown.
+    pub fragments: Vec<BilaterusFragment>,
     /// Set by the spawn transaction and cleared only after the last alien
     /// and missile leaves. It distinguishes a finished battle from peace.
     pub battle_active: bool,
@@ -221,6 +267,12 @@ impl Invasion1_2 {
 
     pub fn new_ulysses() -> Self {
         Self::with_origin(InvasionOrigin::StageStart, SylvesterKind::Ulysses)
+    }
+
+    pub fn new_bilaterus() -> Self {
+        let mut wave = Self::with_origin(InvasionOrigin::StageStart, SylvesterKind::Balrog);
+        wave.plan = WavePlan::FixedBilaterus;
+        wave
     }
 
     pub fn new_tank1_finale() -> Self {
@@ -290,6 +342,8 @@ impl Invasion1_2 {
             pending_modal: None,
             warning: None,
             actors: Vec::new(),
+            bilaterus: Vec::new(),
+            fragments: Vec::new(),
             battle_active: false,
             food_delay: 0,
             last_laser: None,
@@ -305,7 +359,153 @@ impl Invasion1_2 {
     }
 
     pub fn has_live_alien(&self) -> bool {
-        !self.actors.is_empty()
+        !self.actors.is_empty() || !self.bilaterus.is_empty()
+    }
+
+    pub fn has_live_bilaterus(&self) -> bool {
+        !self.bilaterus.is_empty()
+    }
+
+    pub fn bilaterus_by_id(&self, id: u64) -> Option<&BilaterusState> {
+        self.bilaterus.iter().find(|group| group.id == id)
+    }
+    pub fn bilaterus_by_id_mut(&mut self, id: u64) -> Option<&mut BilaterusState> {
+        self.bilaterus.iter_mut().find(|group| group.id == id)
+    }
+
+    /// Board commits each returned prey before calling the next child. This
+    /// wrapper deliberately updates only one child, never an entire group.
+    pub fn update_bilaterus_child(
+        &mut self,
+        id: u64,
+        child: BilaterusChild,
+        prey: &[BilaterusPreyView],
+        mut next_random: impl FnMut() -> u32,
+    ) -> Vec<InvasionEvent> {
+        let Some(group) = self.bilaterus_by_id_mut(id) else {
+            return Vec::new();
+        };
+        let eaten = match child {
+            BilaterusChild::ActiveHead => group.update_active(prey, &mut next_random),
+            BilaterusChild::Bone(index) => group.update_bone(usize::from(index), prey),
+            BilaterusChild::PassiveHead => {
+                group.update_passive();
+                None
+            }
+        };
+        eaten
+            .map(|prey_id| {
+                vec![InvasionEvent::BilaterusPreyEaten {
+                    group_id: id,
+                    prey_id,
+                }]
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn begin_bilaterus_update(&mut self, id: u64) -> (bool, Vec<InvasionEvent>) {
+        let Some(group) = self.bilaterus_by_id_mut(id) else {
+            return (false, Vec::new());
+        };
+        let (children_active, swapped) = group.begin_update_with_swap();
+        let events = if swapped {
+            vec![InvasionEvent::BilaterusHeadSwapped { id }]
+        } else {
+            Vec::new()
+        };
+        (children_active, events)
+    }
+
+    pub fn finish_bilaterus_update(
+        &mut self,
+        id: u64,
+        next_random: impl FnMut() -> u32,
+        next_id: impl FnMut() -> u64,
+    ) -> Vec<InvasionEvent> {
+        let transition = self
+            .bilaterus_by_id_mut(id)
+            .and_then(BilaterusState::finish_update);
+        transition
+            .map(|outcome| self.commit_bilaterus_transition(id, outcome, next_random, next_id))
+            .unwrap_or_default()
+    }
+
+    pub fn pet_hit_bilaterus(&mut self, id: u64, amount: f64) -> Option<f64> {
+        self.bilaterus_by_id_mut(id)
+            .map(|group| group.pet_damage(amount))
+    }
+
+    /// This is the shot transaction only; the Board emits its shared laser
+    /// once after trying the group and any ordinary projectile list.
+    pub fn shoot_bilaterus(
+        &mut self,
+        id: u64,
+        x: i32,
+        y: i32,
+        weapon: u8,
+        next_random: impl FnMut() -> u32,
+        next_id: impl FnMut() -> u64,
+    ) -> Vec<InvasionEvent> {
+        let Some(group) = self.bilaterus_by_id_mut(id) else {
+            return Vec::new();
+        };
+        match group.shoot(x, y, weapon) {
+            BilaterusShot::Miss => Vec::new(),
+            BilaterusShot::Hit { health, transition } => {
+                let mut events = vec![InvasionEvent::BilaterusHeadHit { id, health }];
+                if let Some(outcome) = transition {
+                    events.extend(self.commit_bilaterus_transition(
+                        id,
+                        outcome,
+                        next_random,
+                        next_id,
+                    ));
+                }
+                events
+            }
+        }
+    }
+
+    pub fn commit_bilaterus_transition(
+        &mut self,
+        id: u64,
+        outcome: BilaterusTransition,
+        mut next_random: impl FnMut() -> u32,
+        mut next_id: impl FnMut() -> u64,
+    ) -> Vec<InvasionEvent> {
+        let mut events = Vec::new();
+        let spawns = match outcome {
+            BilaterusTransition::FirstHeadLost { fragment } => {
+                events.push(InvasionEvent::BilaterusFirstHeadDefeated { id });
+                vec![fragment]
+            }
+            BilaterusTransition::Defeated {
+                diamond_at,
+                fragments,
+            } => {
+                self.bilaterus.retain(|group| group.id != id);
+                events.push(InvasionEvent::BilaterusDefeated { id });
+                events.push(InvasionEvent::DiamondDropped {
+                    alien_id: id,
+                    x: diamond_at.0,
+                    y: diamond_at.1,
+                });
+                fragments.to_vec()
+            }
+        };
+        for spec in spawns {
+            let fragment_id = next_id();
+            self.fragments.push(BilaterusFragment::spawn(
+                fragment_id,
+                spec,
+                &mut next_random,
+            ));
+            events.push(InvasionEvent::BilaterusFragmentSpawned {
+                id: fragment_id,
+                kind: spec.kind,
+            });
+        }
+        events
     }
 
     pub fn has_registered_kind(&self, kind: SylvesterKind) -> bool {
@@ -343,8 +543,8 @@ impl Invasion1_2 {
     }
 
     /// Runs the board's wave transition after its clock advances and before
-    /// entity updates. RNG is requested four times at warning (including the
-    /// unused second coordinate), then twice at spawn for the actor.
+    /// entity updates. Warning consumes both coordinate pairs; each actor
+    /// constructor then consumes its own source-derived draw sequence.
     pub fn board_update(
         &mut self,
         next_random: impl FnMut() -> u32,
@@ -427,26 +627,54 @@ impl Invasion1_2 {
                 };
                 let encounter = self.plan.expected();
                 let mut events = Vec::new();
-                let mut spawn = |kind, x, y| {
-                    let id = next_id();
-                    let actor =
-                        WeakSylvester::spawn_kind(kind, id, x, y, next_random(), next_random());
-                    let spawn_y = actor.widget_y;
-                    self.warps.push(WarpEffect {
-                        x: x + 30,
-                        y: spawn_y - 40,
-                        remaining_ticks: 36,
-                    });
-                    self.actors.push(actor);
-                    events.push(InvasionEvent::AlienSpawned { id, x, y: spawn_y });
-                };
                 match encounter {
-                    EncounterKind::Single(kind) => {
-                        spawn(kind, coords.first_x, coords.first_y);
+                    EncounterKind::Bilaterus => {
+                        let id = next_id();
+                        let group = BilaterusState::spawn(
+                            id,
+                            coords.first_x,
+                            coords.first_y,
+                            &mut next_random,
+                        );
+                        let (x, y) = group.active_head_position();
+                        self.warps.push(WarpEffect {
+                            x: x - 10,
+                            y: y - 70,
+                            remaining_ticks: 36,
+                        });
+                        self.bilaterus.push(group);
+                        events.push(InvasionEvent::BilaterusSpawned { id, x, y });
                     }
-                    EncounterKind::WeakBalrogPair => {
-                        spawn(SylvesterKind::Weak, coords.first_x, coords.first_y);
-                        spawn(SylvesterKind::Balrog, coords.second_x, coords.second_y);
+                    ordinary => {
+                        let mut spawn = |kind, x, y| {
+                            let id = next_id();
+                            let actor = WeakSylvester::spawn_kind(
+                                kind,
+                                id,
+                                x,
+                                y,
+                                next_random(),
+                                next_random(),
+                            );
+                            let spawn_y = actor.widget_y;
+                            self.warps.push(WarpEffect {
+                                x: x + 30,
+                                y: spawn_y - 40,
+                                remaining_ticks: 36,
+                            });
+                            self.actors.push(actor);
+                            events.push(InvasionEvent::AlienSpawned { id, x, y: spawn_y });
+                        };
+                        match ordinary {
+                            EncounterKind::Single(kind) => {
+                                spawn(kind, coords.first_x, coords.first_y)
+                            }
+                            EncounterKind::WeakBalrogPair => {
+                                spawn(SylvesterKind::Weak, coords.first_x, coords.first_y);
+                                spawn(SylvesterKind::Balrog, coords.second_x, coords.second_y);
+                            }
+                            EncounterKind::Bilaterus => unreachable!(),
+                        }
                     }
                 }
                 // Board::Update selects the next encounter after every actor
@@ -454,6 +682,7 @@ impl Invasion1_2 {
                 // successful %10 toggle.
                 self.plan = match self.plan {
                     WavePlan::Fixed(kind) => WavePlan::Fixed(kind),
+                    WavePlan::FixedBilaterus => WavePlan::FixedBilaterus,
                     WavePlan::CyclingTank1Finale { .. } => WavePlan::CyclingTank1Finale {
                         next: if !next_random().is_multiple_of(2) {
                             EncounterKind::Single(SylvesterKind::Balrog)
@@ -643,6 +872,7 @@ impl Invasion1_2 {
             body.widget_x = body.x as i32;
             body.widget_y = body.y as i32;
         }
+        self.fragments.retain_mut(BilaterusFragment::tick);
         events
     }
 
@@ -662,7 +892,26 @@ impl Invasion1_2 {
         x: i32,
         y: i32,
         weapon: u8,
+        next_random: impl FnMut() -> u32,
+    ) -> InvasionClick {
+        assert!(
+            self.bilaterus.is_empty(),
+            "Bilaterus click requires fragment IDs"
+        );
+        self.click_with_weapon_random_and_ids(x, y, weapon, next_random, || unreachable!())
+    }
+
+    /// Captures initial combat membership before damage so a lethal final
+    /// click still suppresses feeding and emits one Board laser. Group heads
+    /// are tried before ordinary Alien actors, retaining the shared RNG/ID
+    /// stream for targetless death fragments.
+    pub fn click_with_weapon_random_and_ids(
+        &mut self,
+        x: i32,
+        y: i32,
+        weapon: u8,
         mut next_random: impl FnMut() -> u32,
+        mut next_id: impl FnMut() -> u64,
     ) -> InvasionClick {
         let mut events = Vec::new();
         if self.food_delay > 0
@@ -685,7 +934,18 @@ impl Invasion1_2 {
         if !self.has_live_alien() {
             return result;
         }
-        for index in 0..self.actors.len() {
+        let group_ids: Vec<u64> = self.bilaterus.iter().map(|group| group.id).collect();
+        let mut group_hit = false;
+        for id in group_ids {
+            let hit = self.shoot_bilaterus(id, x, y, weapon, &mut next_random, &mut next_id);
+            if !hit.is_empty() {
+                result.events.extend(hit);
+                group_hit = true;
+                break;
+            }
+        }
+        let ordinary_count = if group_hit { 0 } else { self.actors.len() };
+        for index in 0..ordinary_count {
             let alien_id = self.actors[index].id;
             let was_healing = self.actors[index].healing;
             let shot_result =
@@ -774,7 +1034,7 @@ impl Invasion1_2 {
     /// The board calls this after alien and missile transactions. Peaceful
     /// empty waves do not synthesize another end event.
     pub fn finish_if_no_threats(&mut self, missiles_present: bool) -> Vec<InvasionEvent> {
-        if self.battle_active && self.actors.is_empty() && !missiles_present {
+        if self.battle_active && !self.has_live_alien() && !missiles_present {
             self.battle_active = false;
             self.food_delay = 36;
             vec![InvasionEvent::BattleEnded]
@@ -792,66 +1052,86 @@ impl Invasion1_2 {
         let fixed_gus = fixed == Some(SylvesterKind::Gus);
         let actor_kinds_valid = match self.plan {
             WavePlan::Fixed(kind) => {
-                self.actors.len() <= 1 && self.actors.iter().all(|actor| actor.kind == kind)
+                self.bilaterus.is_empty()
+                    && self.fragments.is_empty()
+                    && self.actors.len() <= 1
+                    && self.actors.iter().all(|actor| actor.kind == kind)
+            }
+            WavePlan::FixedBilaterus => {
+                self.actors.is_empty()
+                    && self.dead_aliens.is_empty()
+                    && self.bilaterus.len() <= 1
+                    && self.fragments.len() <= 8
             }
             WavePlan::CyclingTank1Finale { next } => {
-                matches!(
-                    next,
-                    EncounterKind::Single(SylvesterKind::Balrog) | EncounterKind::WeakBalrogPair
-                ) && matches!(
-                    self.actors.as_slice(),
-                    [] | [WeakSylvester {
-                        kind: SylvesterKind::Balrog,
-                        ..
-                    }] | [WeakSylvester {
-                        kind: SylvesterKind::Weak,
-                        ..
-                    }] | [
-                        WeakSylvester {
-                            kind: SylvesterKind::Weak,
-                            ..
-                        },
-                        WeakSylvester {
+                self.bilaterus.is_empty()
+                    && self.fragments.is_empty()
+                    && matches!(
+                        next,
+                        EncounterKind::Single(SylvesterKind::Balrog)
+                            | EncounterKind::WeakBalrogPair
+                    )
+                    && matches!(
+                        self.actors.as_slice(),
+                        [] | [WeakSylvester {
                             kind: SylvesterKind::Balrog,
                             ..
-                        }
-                    ]
-                )
+                        }] | [WeakSylvester {
+                            kind: SylvesterKind::Weak,
+                            ..
+                        }] | [
+                            WeakSylvester {
+                                kind: SylvesterKind::Weak,
+                                ..
+                            },
+                            WeakSylvester {
+                                kind: SylvesterKind::Balrog,
+                                ..
+                            }
+                        ]
+                    )
             }
             WavePlan::CyclingTank2Finale { next } => {
-                matches!(
-                    next,
-                    EncounterKind::Single(SylvesterKind::Gus | SylvesterKind::Destructor)
-                        | EncounterKind::WeakBalrogPair
-                ) && matches!(
-                    self.actors.as_slice(),
-                    [] | [WeakSylvester {
-                        kind: SylvesterKind::Gus
-                            | SylvesterKind::Destructor
-                            | SylvesterKind::Weak
-                            | SylvesterKind::Balrog,
-                        ..
-                    }] | [
-                        WeakSylvester {
-                            kind: SylvesterKind::Weak,
+                self.bilaterus.is_empty()
+                    && self.fragments.is_empty()
+                    && matches!(
+                        next,
+                        EncounterKind::Single(SylvesterKind::Gus | SylvesterKind::Destructor)
+                            | EncounterKind::WeakBalrogPair
+                    )
+                    && matches!(
+                        self.actors.as_slice(),
+                        [] | [WeakSylvester {
+                            kind: SylvesterKind::Gus
+                                | SylvesterKind::Destructor
+                                | SylvesterKind::Weak
+                                | SylvesterKind::Balrog,
                             ..
-                        },
-                        WeakSylvester {
-                            kind: SylvesterKind::Balrog,
-                            ..
-                        }
-                    ]
-                )
+                        }] | [
+                            WeakSylvester {
+                                kind: SylvesterKind::Weak,
+                                ..
+                            },
+                            WeakSylvester {
+                                kind: SylvesterKind::Balrog,
+                                ..
+                            }
+                        ]
+                    )
             }
             WavePlan::CyclingTank3Second { next } => {
-                matches!(next, SylvesterKind::Gus | SylvesterKind::Destructor)
+                self.bilaterus.is_empty()
+                    && self.fragments.is_empty()
+                    && matches!(next, SylvesterKind::Gus | SylvesterKind::Destructor)
                     && self.actors.len() <= 1
                     && self.actors.iter().all(|actor| {
                         matches!(actor.kind, SylvesterKind::Gus | SylvesterKind::Destructor)
                     })
             }
             WavePlan::CyclingTank3Finale { next } => {
-                matches!(next, SylvesterKind::Ulysses | SylvesterKind::Psychosquid)
+                self.bilaterus.is_empty()
+                    && self.fragments.is_empty()
+                    && matches!(next, SylvesterKind::Ulysses | SylvesterKind::Psychosquid)
                     && self.actors.len() <= 1
                     && self.actors.iter().all(|actor| {
                         matches!(
@@ -873,6 +1153,8 @@ impl Invasion1_2 {
             || self.warning.is_some() && !(1..=275).contains(&self.countdown)
             || !self.actors.is_empty() && self.countdown != 3000
             || !self.actors.is_empty() && !self.battle_active
+            || !self.bilaterus.is_empty() && self.countdown != 3000
+            || !self.bilaterus.is_empty() && !self.battle_active
             || self.actors.iter().any(|actor| !actor.alive)
             || !actor_kinds_valid
             || !fixed_weak && (self.danger_shown || self.battle_tip_shown)
@@ -912,6 +1194,12 @@ impl Invasion1_2 {
         for actor in &self.actors {
             actor.validate()?;
         }
+        for group in &self.bilaterus {
+            group.validate()?;
+        }
+        for fragment in &self.fragments {
+            fragment.validate()?;
+        }
         Ok(())
     }
 }
@@ -925,6 +1213,131 @@ impl Default for Invasion1_2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bilaterus_wave_consumes_all_constructor_draws_and_fragments_do_not_hold_battle() {
+        let mut wave = Invasion1_2::new_bilaterus();
+        wave.warning = Some(WarningCoords {
+            first_x: 105,
+            first_y: 160,
+            second_x: 410,
+            second_y: 290,
+        });
+        wave.countdown = 1;
+        let mut draws = 0;
+        let events = wave.board_update(
+            || {
+                draws += 1;
+                1
+            },
+            || 91,
+        );
+        assert_eq!(draws, 11);
+        assert_eq!(
+            events,
+            [InvasionEvent::BilaterusSpawned {
+                id: 91,
+                x: 105,
+                y: 160
+            }]
+        );
+        assert!(wave.has_live_alien());
+        assert!(wave.has_live_bilaterus());
+        assert!(wave.actors.is_empty());
+        wave.validate().unwrap();
+        let mut group = wave.bilaterus.pop().unwrap();
+        group.first_head_lost = true;
+        group.heads[0] = None;
+        group.active_head = 1;
+        group.emergence_ticks = 0;
+        group.heads[1].as_mut().unwrap().health = 0.0;
+        wave.bilaterus.push(group);
+        let transition = wave.bilaterus[0].finish_update();
+        let mut next_id = 100;
+        let end = wave.commit_bilaterus_transition(
+            91,
+            transition.unwrap(),
+            || 1,
+            || {
+                next_id += 1;
+                next_id
+            },
+        );
+        assert!(
+            end.iter()
+                .any(|event| matches!(event, InvasionEvent::DiamondDropped { alien_id: 91, .. }))
+        );
+        assert_eq!(wave.fragments.len(), 7);
+        assert!(!wave.has_live_alien());
+        assert_eq!(
+            wave.finish_if_no_threats(false),
+            [InvasionEvent::BattleEnded]
+        );
+        assert_eq!(wave.fragments.len(), 7); // visual tail does not hold liveness
+        assert!(wave.finish_if_no_threats(false).is_empty());
+    }
+
+    #[test]
+    fn final_group_click_keeps_initial_combat_suppression_and_one_laser() {
+        let mut wave = Invasion1_2::new_bilaterus();
+        let mut group = BilaterusState::spawn(71, 100, 120, &mut || 1);
+        group.first_head_lost = true;
+        group.heads[0] = None;
+        group.active_head = 1;
+        group.active_mut().health = 26.0;
+        group.emergence_ticks = 0;
+        wave.bilaterus.push(group);
+        wave.battle_active = true;
+        let mut id = 80;
+        let click = wave.click_with_weapon_random_and_ids(
+            120,
+            140,
+            12,
+            || 1,
+            || {
+                id += 1;
+                id
+            },
+        );
+        assert!(click.suppress_food);
+        assert_eq!(
+            click
+                .events
+                .iter()
+                .filter(|e| matches!(e, InvasionEvent::LaserFired { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            click
+                .events
+                .iter()
+                .filter(|e| matches!(e, InvasionEvent::DiamondDropped { .. }))
+                .count(),
+            1
+        );
+        assert!(!wave.has_live_alien());
+        assert_eq!(wave.fragments.len(), 7);
+    }
+
+    #[test]
+    fn periodic_head_swap_event_precedes_children_and_never_draws_rng() {
+        let mut wave = Invasion1_2::new_bilaterus();
+        let mut group = BilaterusState::spawn(71, 100, 120, &mut || 1);
+        group.emergence_ticks = 0;
+        group.swap_ticks = 999;
+        group.bones[0].widget_x = 101;
+        group.bones[5].widget_x = 106;
+        wave.bilaterus.push(group);
+        wave.battle_active = true;
+        let (children, events) = wave.begin_bilaterus_update(71);
+        assert!(children);
+        assert_eq!(events, [InvasionEvent::BilaterusHeadSwapped { id: 71 }]);
+        assert_eq!(wave.bilaterus[0].active_head, 1);
+        assert_eq!(wave.bilaterus[0].bones[0].widget_x, 106);
+        let (_, following) = wave.begin_bilaterus_update(71);
+        assert!(following.is_empty());
+    }
 
     #[test]
     fn tank3_finale_spawns_current_kind_before_independent_inverted_bit() {

@@ -8,6 +8,7 @@ pub struct RhubarbPrey {
     pub id: u64,
     pub widget_x: i32,
     pub widget_y: i32,
+    pub ultra: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -115,10 +116,13 @@ impl RhubarbState {
         let cy = (self.y + 40.0) as i32;
         let nearest = prey
             .iter()
-            .filter(|candidate| candidate.widget_y > selection_y)
+            .filter(|candidate| {
+                candidate.widget_y > selection_y - if candidate.ultra { 40 } else { 0 }
+            })
             .min_by_key(|candidate| {
-                let dx = cx - candidate.widget_x - 40;
-                let dy = cy - candidate.widget_y - 40;
+                let center = if candidate.ultra { 80 } else { 40 };
+                let dx = cx - candidate.widget_x - center;
+                let dy = cy - candidate.widget_y - center;
                 dx * dx + dy * dy
             });
         if let Some(target) = nearest {
@@ -132,18 +136,19 @@ impl RhubarbState {
                 }
             }
             for candidate in prey {
-                if candidate.widget_y <= effect_y {
+                let width = if candidate.ultra { 160 } else { 80 };
+                if candidate.widget_y <= effect_y - if candidate.ultra { 40 } else { 0 } {
                     continue;
                 }
                 if self.specialty_ticks == 5
                     && self.x + 40.0 > f64::from(candidate.widget_x)
-                    && self.x + 40.0 < f64::from(candidate.widget_x + 80)
+                    && self.x + 40.0 < f64::from(candidate.widget_x + width)
                 {
                     result.pushed_ids.push(candidate.id);
                 }
                 if self.specialty_ticks == 0
                     && self.x + 40.0 > f64::from(candidate.widget_x - 10)
-                    && self.x + 40.0 < f64::from(candidate.widget_x + 90)
+                    && self.x + 40.0 < f64::from(candidate.widget_x + width + 10)
                 {
                     self.specialty_ticks = 20;
                     result.specialty_started = true;
@@ -232,11 +237,13 @@ mod tests {
                 id: 2,
                 widget_x: 190,
                 widget_y: 300,
+                ultra: false,
             },
             RhubarbPrey {
                 id: 3,
                 widget_x: 201,
                 widget_y: 301,
+                ultra: false,
             },
         ];
         let arm = pet.begin_tick(&prey, false);
@@ -260,7 +267,8 @@ mod tests {
                 &[RhubarbPrey {
                     id: 2,
                     widget_x: 200,
-                    widget_y: 260
+                    widget_y: 260,
+                    ultra: false,
                 }],
                 false
             )
@@ -272,7 +280,8 @@ mod tests {
                 &[RhubarbPrey {
                     id: 2,
                     widget_x: 200,
-                    widget_y: 270
+                    widget_y: 270,
+                    ultra: false,
                 }],
                 false
             )
@@ -284,7 +293,8 @@ mod tests {
                 &[RhubarbPrey {
                     id: 2,
                     widget_x: 200,
-                    widget_y: 271
+                    widget_y: 271,
+                    ultra: false,
                 }],
                 false
             )

@@ -227,7 +227,7 @@ impl AdventureSession {
     pub fn validate(&self) -> Result<(), String> {
         if !matches!(
             (self.progress.tank, self.progress.level),
-            (1, 1..=6) | (2, 1..=6) | (3, 1..=6) | (4, 1..=2)
+            (1, 1..=6) | (2, 1..=6) | (3, 1..=6) | (4, 1..=3)
         ) || self.progress.shell_balance > MAX_SHELL_BALANCE
         {
             return Err("unsupported Adventure progress".into());
@@ -393,6 +393,25 @@ impl AdventureSession {
                 PetKind::Rhubarb,
                 PetKind::Nimbus,
             ],
+            (4, 3) => &[
+                PetKind::Stinky,
+                PetKind::Niko,
+                PetKind::Itchy,
+                PetKind::Prego,
+                PetKind::Zorf,
+                PetKind::Clyde,
+                PetKind::Vert,
+                PetKind::Rufus,
+                PetKind::Meryl,
+                PetKind::Wadsworth,
+                PetKind::Seymour,
+                PetKind::Shrapnel,
+                PetKind::Gumbo,
+                PetKind::Blip,
+                PetKind::Rhubarb,
+                PetKind::Nimbus,
+                PetKind::Amp,
+            ],
             _ => unreachable!("progress checked above"),
         };
         if self.progress.unlocked_pets != expected_pets {
@@ -414,7 +433,7 @@ impl AdventureSession {
         for result in &self.progress.later_stage_best_seconds {
             if !matches!(
                 (result.tank, result.level),
-                (1, 2..=5) | (2, 1..=5) | (3, 1..=5) | (4, 1)
+                (1, 2..=5) | (2, 1..=5) | (3, 1..=5) | (4, 1..=2)
             ) || (self.progress.tank, self.progress.level) <= (result.tank, result.level)
                 || recorded_stages.contains(&(result.tank, result.level))
             {
@@ -495,6 +514,7 @@ impl AdventureSession {
                         | (3, 5, PetKind::Blip)
                         | (3, 6, PetKind::Rhubarb)
                         | (4, 2, PetKind::Nimbus)
+                        | (4, 3, PetKind::Amp)
                 ) =>
             {
                 Ok(())
@@ -751,7 +771,7 @@ impl AdventureSession {
                             });
                             self.phase = AdventurePhase::PetSelection { selected };
                         }
-                        Action::Continue if (self.progress.tank, self.progress.level) != (4, 2) => {
+                        Action::Continue if (self.progress.tank, self.progress.level) != (4, 3) => {
                             self.progress.selected_pets = selected.clone();
                             if selected.len() < self.progress.selection_capacity() {
                                 events.push(Event::PetSelectionConfirmation {
@@ -785,7 +805,7 @@ impl AdventureSession {
                     });
                     match action {
                         Action::ConfirmPetSelection { accept: true }
-                            if (self.progress.tank, self.progress.level) != (4, 2) =>
+                            if (self.progress.tank, self.progress.level) != (4, 3) =>
                         {
                             events.push(Event::PetSelectionAccepted {
                                 tick: self.ticks,
@@ -1023,6 +1043,10 @@ impl AdventureSession {
                 AdventureState::new_tank4_first_stage(self.next_seed, &self.progress.selected_pets)
                     .expect("session selection is validated before starting a board")
             }
+            (4, 2) => {
+                AdventureState::new_tank4_second_stage(self.next_seed, &self.progress.selected_pets)
+                    .expect("session selection is validated before starting a board")
+            }
             _ => unreachable!("supported progress validated at load"),
         };
         self.next_seed = board.transition_seed();
@@ -1070,6 +1094,7 @@ impl AdventureSession {
             (3, 4) => PetKind::Blip,
             (3, 5) => PetKind::Rhubarb,
             (4, 1) => PetKind::Nimbus,
+            (4, 2) => PetKind::Amp,
             _ => unreachable!("stage not yet completable"),
         };
         self.progress.level = board.level + 1;
@@ -1769,6 +1794,106 @@ mod tests {
                 pet: PetKind::Nimbus,
             },
         ]);
+        assert!(session.apply_actions(&[Action::Continue]).iter().any(|event| matches!(
+            event,
+            Event::PetSelectionConfirmation { selected, .. } if selected == &vec![PetKind::Nimbus]
+        )));
+        assert!(
+            session
+                .apply_actions(&[Action::ConfirmPetSelection { accept: true }])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::StageStarted {
+                        tank: 4,
+                        level: 2,
+                        ..
+                    }
+                ))
+        );
+        let board = session.board.as_ref().unwrap();
+        assert_eq!((board.tank, board.level, board.egg_price), (4, 2, 25000));
+        assert_eq!(board.pets, vec![PetKind::Nimbus]);
+        assert_eq!(
+            board.invasion.as_ref().unwrap().plan.expected(),
+            crate::invasion::EncounterKind::Bilaterus
+        );
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn tank_four_second_unlocks_amp_once_and_gates_third_stage() {
+        // Three real priced purchases prove the typed 4-2 Board hands off to
+        // the seventeen-card reward roster without constructing unsupported 4-3.
+        let mut session = tank_four_first_session();
+        session.progress.level = 2;
+        session.progress.unlocked_pets.push(PetKind::Nimbus);
+        session.progress.selected_pets = vec![PetKind::Nimbus];
+        session.board = Some(
+            AdventureState::new_tank4_second_stage(42, &session.progress.selected_pets).unwrap(),
+        );
+        let board = session.board.as_mut().unwrap();
+        board.balance = 75000;
+        board.breeder_unlocked = true;
+        board.upgrades.quality_unlocked = true;
+        board.upgrades.quantity_unlocked = true;
+        board.oscar_unlocked = true;
+        board.ultra_unlocked = true;
+        board.weapon_unlocked = true;
+        board.egg_unlocked = true;
+        session.validate().unwrap();
+        let events = session.apply_actions(&[
+            Action::BuyEgg,
+            Action::BuyEgg,
+            Action::BuyEgg,
+            Action::BuyEgg,
+        ]);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, Event::EggBought { .. }))
+                .count(),
+            3
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::PetUnlocked {
+                        pet: PetKind::Amp,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::StageResultRecorded {
+                tank: 4,
+                level: 2,
+                final_balance: 0,
+                ..
+            }
+        )));
+        assert_eq!((session.progress.tank, session.progress.level), (4, 3));
+        assert_eq!(session.progress.unlocked_pets.len(), 17);
+        assert!(session.board.is_none());
+        assert!(matches!(
+            session.phase,
+            AdventurePhase::Hatch {
+                pet: PetKind::Amp,
+                updates: 0
+            }
+        ));
+        session.validate().unwrap();
+        session.phase = AdventurePhase::Hatch {
+            pet: PetKind::Amp,
+            updates: 171,
+        };
+        session.apply_actions(&[Action::Continue]);
+        assert!(matches!(session.phase, AdventurePhase::PetSelection { .. }));
         let before = serde_json::to_value(&session).unwrap();
         assert!(
             session
@@ -1783,26 +1908,6 @@ mod tests {
                 ))
         );
         assert_eq!(serde_json::to_value(&session).unwrap(), before);
-        session.progress.selected_pets = vec![PetKind::Nimbus];
-        session.phase = AdventurePhase::PetSelectionConfirmation {
-            selected: vec![PetKind::Nimbus],
-        };
-        session.validate().unwrap();
-        let before = serde_json::to_value(&session).unwrap();
-        assert!(
-            session
-                .apply_actions(&[Action::ConfirmPetSelection { accept: true }])
-                .iter()
-                .any(|event| matches!(
-                    event,
-                    Event::Rejected {
-                        reason: Rejection::Locked,
-                        ..
-                    }
-                ))
-        );
-        assert_eq!(serde_json::to_value(&session).unwrap(), before);
-        assert!(session.board.is_none());
         session.validate().unwrap();
     }
 

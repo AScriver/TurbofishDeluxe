@@ -10,6 +10,9 @@ pub struct RufusAlienView {
     pub widget_x: i32,
     pub widget_y: i32,
     pub healing: bool,
+    /// A registered group is centered and contacted through its own 80px
+    /// widget, rather than the ordinary Alien's 160px contact rectangle.
+    pub bilaterus: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -68,8 +71,9 @@ impl RufusState {
         let mut best = 100_000_000_i64;
         let mut chosen = None;
         for alien in aliens.iter().filter(|alien| !alien.healing) {
-            let dx = ((self.x + 40.0) - f64::from(alien.widget_x + 36)) as i64;
-            let dy = ((self.y + 40.0) - f64::from(alien.widget_y + 36)) as i64;
+            let center_offset = if alien.bilaterus { 40 } else { 36 };
+            let dx = ((self.x + 40.0) - f64::from(alien.widget_x + center_offset)) as i64;
+            let dy = ((self.y + 40.0) - f64::from(alien.widget_y + center_offset)) as i64;
             let d2 = dx * dx + dy * dy;
             if d2 < best {
                 best = d2;
@@ -89,9 +93,10 @@ impl RufusState {
         if let Some(target) = target {
             if self.chase_ticks > 4 {
                 self.chase_ticks = 0;
-                // Steering center is +80, independent of the nearest metric.
+                // Group steering uses its 80px center; ordinary Alien
+                // steering retains the source's +80 target coordinate.
                 let center = self.x + 40.0;
-                let tx = f64::from(target.widget_x + 80);
+                let tx = f64::from(target.widget_x + if target.bilaterus { 40 } else { 80 });
                 if center > tx && self.vx > -5.0 {
                     self.vx -= 1.8;
                 } else if center < tx && self.vx < 5.0 {
@@ -99,11 +104,16 @@ impl RufusState {
                 }
             }
             if let Some(contact) = aliens.iter().find(|alien| {
-                !alien.healing
-                    && self.x + 40.0 > f64::from(alien.widget_x + 30)
-                    && self.x + 40.0 < f64::from(alien.widget_x + 140)
-                    && self.y + 40.0 > f64::from(alien.widget_y + 10)
-                    && self.y + 40.0 < f64::from(alien.widget_y + 150)
+                let overlaps = if alien.bilaterus {
+                    (self.x - f64::from(alien.widget_x)).abs() < 10.0
+                        && (self.y - f64::from(alien.widget_y)).abs() < 10.0
+                } else {
+                    self.x + 40.0 > f64::from(alien.widget_x + 30)
+                        && self.x + 40.0 < f64::from(alien.widget_x + 140)
+                        && self.y + 40.0 > f64::from(alien.widget_y + 10)
+                        && self.y + 40.0 < f64::from(alien.widget_y + 150)
+                };
+                !alien.healing && overlaps
             }) {
                 self.vx = 0.0;
                 self.target_vx = 0.0;
@@ -240,12 +250,14 @@ mod tests {
                 widget_x: 100,
                 widget_y: 100,
                 healing: false,
+                bilaterus: false,
             },
             RufusAlienView {
                 id: 3,
                 widget_x: 105,
                 widget_y: 100,
                 healing: false,
+                bilaterus: false,
             },
         ];
         assert_eq!(pet.nearest(&candidates).unwrap().id, 3);
@@ -267,7 +279,43 @@ mod tests {
             widget_x: 100,
             widget_y: 100,
             healing: false,
+            bilaterus: false,
         };
         assert_eq!(pet.tick(&[alien], &mut |_| 1).damaged_alien, Some(2));
+    }
+
+    #[test]
+    fn group_contact_is_strict_ten_from_group_widget_not_ordinary_wide_box() {
+        let group = RufusAlienView {
+            id: 88,
+            widget_x: 100,
+            widget_y: 100,
+            healing: false,
+            bilaterus: true,
+        };
+        let mut inside = RufusState::spawn_tank2(1, &mut |_| 0);
+        inside.x = 109.9;
+        inside.y = 109.9;
+        inside.widget_x = 109;
+        inside.widget_y = 109;
+        inside.chase_ticks = 0;
+        assert_eq!(inside.tick(&[group], &mut |_| 1).damaged_alien, Some(88));
+        assert_eq!(inside.vx, 0.0);
+        assert_eq!(inside.target_vx, 0.0);
+
+        for (x, y) in [(110.0, 100.0), (100.0, 110.0)] {
+            let mut edge = RufusState::spawn_tank2(2, &mut |_| 0);
+            edge.x = x;
+            edge.y = y;
+            edge.widget_x = x as i32;
+            edge.widget_y = y as i32;
+            edge.chase_ticks = 0;
+            assert_eq!(edge.tick(&[group], &mut |_| 1).damaged_alien, None);
+            let ordinary = RufusAlienView {
+                bilaterus: false,
+                ..group
+            };
+            assert_eq!(edge.tick(&[ordinary], &mut |_| 1).damaged_alien, Some(88));
+        }
     }
 }

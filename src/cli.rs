@@ -95,7 +95,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 16;
+pub const SAVE_FORMAT_VERSION: u32 = 17;
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -202,7 +202,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=16) => {
+        Some(version @ 5..=17) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -261,6 +261,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                             && ["breeder_unlocked", "breeders", "dead_breeders", "rhubarb"]
                                 .iter()
                                 .any(|field| !board.contains_key(*field)))
+                        || (version >= 17 && incomplete_format_seventeen_board(board))
                         || (version >= 15
                             && board
                                 .get("missiles")
@@ -430,7 +431,8 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     13 => "thirteen",
                     14 => "fourteen",
                     15 => "fifteen",
-                    _ => "sixteen",
+                    16 => "sixteen",
+                    _ => "seventeen",
                 };
                 return Err(format!(
                     "Incomplete format-{label} save; required state fields are missing"
@@ -455,6 +457,175 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     };
     session.validate()?;
     Ok((session, migrated))
+}
+
+// Format seventeen persists the physical group and Ultra actors. Reject
+// missing fields before Serde can mistake an incomplete current save for an
+// older shape; historical versions keep their existing loader path.
+fn incomplete_format_seventeen_board(board: &serde_json::Map<String, serde_json::Value>) -> bool {
+    use serde_json::Value;
+    fn missing(value: &Value, fields: &[&str]) -> bool {
+        fields.iter().any(|field| value.get(*field).is_none())
+    }
+    fn incomplete_items(value: &Value, fields: &[&str]) -> bool {
+        value
+            .as_array()
+            .is_none_or(|items| items.iter().any(|item| missing(item, fields)))
+    }
+    if ["ultra_unlocked", "ultras", "dead_ultras"]
+        .iter()
+        .any(|field| !board.contains_key(*field))
+    {
+        return true;
+    }
+    if incomplete_items(
+        &board["ultras"],
+        &[
+            "id",
+            "alive",
+            "x",
+            "y",
+            "widget_x",
+            "widget_y",
+            "vx",
+            "vy",
+            "hunger",
+            "cannot_be_eaten_ticks",
+            "frame",
+            "turn_ticks",
+            "eating_ticks",
+            "coin_timer",
+            "coin_threshold",
+            "bought_timer",
+            "speed_mod",
+            "previous_vx",
+            "movement_state",
+            "movement_timer",
+            "special_timer",
+            "x_direction",
+            "vx_abs",
+            "swim_counter",
+            "speedy_speed_ticks",
+            "hunger_shown",
+            "hunger_animation_ticks",
+        ],
+    ) || incomplete_items(
+        &board["dead_ultras"],
+        &[
+            "id",
+            "x",
+            "y",
+            "widget_x",
+            "widget_y",
+            "frame",
+            "opacity",
+            "facing_right",
+            "remaining_ticks",
+            "vx",
+            "vy",
+            "speed_mod",
+        ],
+    ) {
+        return true;
+    }
+    if board
+        .get("food")
+        .is_some_and(|food| incomplete_items(food, &["nimbus_rising"]))
+    {
+        return true;
+    }
+    let Some(wave) = board.get("invasion").filter(|wave| !wave.is_null()) else {
+        return false;
+    };
+    if missing(wave, &["bilaterus", "fragments"])
+        || incomplete_items(
+            &wave["fragments"],
+            &[
+                "id",
+                "kind",
+                "x",
+                "y",
+                "widget_x",
+                "widget_y",
+                "vx",
+                "vy",
+                "frame",
+                "loop_count",
+            ],
+        )
+    {
+        return true;
+    }
+    wave["bilaterus"].as_array().is_none_or(|groups| {
+        groups.iter().any(|group| {
+            if missing(
+                group,
+                &[
+                    "id",
+                    "heads",
+                    "active_head",
+                    "bones",
+                    "emergence_ticks",
+                    "swap_ticks",
+                    "first_head_lost",
+                    "widget_x",
+                    "widget_y",
+                ],
+            ) {
+                return true;
+            }
+            group["heads"].as_array().is_none_or(|heads| {
+                heads.iter().any(|head| {
+                    !head.is_null()
+                        && missing(
+                            head,
+                            &[
+                                "x",
+                                "y",
+                                "widget_x",
+                                "widget_y",
+                                "vx",
+                                "vy",
+                                "health",
+                                "hit_ticks",
+                                "bite_cooldown",
+                                "frame",
+                                "swim_ticks",
+                                "turn_ticks",
+                                "movement_state",
+                                "movement_ticks",
+                                "movement_vx",
+                                "movement_vy",
+                                "facing_velocity",
+                                "follow_vx",
+                                "follow_vy",
+                                "follow_x",
+                                "follow_y",
+                                "follow_ticks",
+                                "connector_left",
+                                "turn_suppressed",
+                                "back",
+                            ],
+                        )
+                })
+            }) || incomplete_items(
+                &group["bones"],
+                &[
+                    "x",
+                    "y",
+                    "widget_x",
+                    "widget_y",
+                    "vx",
+                    "vy",
+                    "facing_velocity",
+                    "bite_cooldown",
+                    "follow_ticks",
+                    "follow_vx",
+                    "follow_vy",
+                ],
+            )
+        })
+    })
 }
 
 fn validate_legacy_boundary(value: &serde_json::Value, version: u64) -> Result<(), Box<dyn Error>> {
