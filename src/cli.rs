@@ -95,7 +95,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 11;
+pub const SAVE_FORMAT_VERSION: u32 = 12;
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -202,7 +202,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=11) => {
+        Some(version @ 5..=12) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -256,6 +256,10 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                 .iter()
                                 .any(|field| !board.contains_key(*field)))
                         || (version >= 11 && !board.contains_key("notes"))
+                        || (version >= 12
+                            && ["grubber_unlocked", "grubbers", "dead_grubbers", "larvae"]
+                                .iter()
+                                .any(|field| !board.contains_key(*field)))
                         || (version >= 9
                             && board
                                 .get("fish_pets")
@@ -264,6 +268,15 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                     pets.iter().any(|pet| {
                                         pet.get("coin_timer").is_none()
                                             || (version >= 11 && pet.get("meryl_blink").is_none())
+                                            || (version >= 12
+                                                && [
+                                                    "ward_active",
+                                                    "ward_timer",
+                                                    "published_x",
+                                                    "published_y",
+                                                ]
+                                                .iter()
+                                                .any(|field| pet.get(*field).is_none()))
                                     })
                                 }))
                         || board
@@ -353,7 +366,8 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     8 => "eight",
                     9 => "nine",
                     10 => "ten",
-                    _ => "eleven",
+                    11 => "eleven",
+                    _ => "twelve",
                 };
                 return Err(format!(
                     "Incomplete format-{label} save; required state fields are missing"

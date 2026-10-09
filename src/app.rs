@@ -25,6 +25,7 @@ use std::{
 const IMAGE_IDS: &[&str] = &[
     "IMAGE_AQUARIUM1",
     "IMAGE_AQUARIUM2",
+    "IMAGE_AQUARIUM4",
     "IMAGE_MENUBAR",
     "IMAGE_SMALLSWIM",
     "IMAGE_SMALLEAT",
@@ -85,6 +86,11 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_MERYL",
     "IMAGE_WADSWORTH",
     "IMAGE_SCL_WADSWORTH",
+    "IMAGE_SEYMOUR",
+    "IMAGE_SCL_SEYMOUR",
+    "IMAGE_GRUBBER",
+    "IMAGE_SCL_GRUBBER",
+    "IMAGE_ZZZ",
     "IMAGE_STARCATCHER",
     "IMAGE_SCL_STARCATCHER",
     "IMAGE_BONUSBUCKET",
@@ -127,17 +133,19 @@ pub struct Presentation {
     fonts: HashMap<String, RenderedFont>,
 }
 
-// W1 PetsScreen places pet IDs 0..4 in the first column and 5..9 in the
-// second. Use this for both drawing and hit testing.
+// W1 PetsScreen positions pet IDs 10..14 on the right of the preview instead
+// of extending the two left-hand columns into it. Draw and input share this.
 fn pet_card_rect(index: usize) -> Rect {
-    let column = index / 5;
-    let row = index % 5;
-    Rect::new(
-        25.0 + column as f32 * 94.0,
-        41.0 + row as f32 * 83.0,
-        90.0,
-        83.0,
-    )
+    let (x, y) = match index {
+        0..=4 => (25.0, 41.0 + index as f32 * 83.0),
+        5..=9 => (119.0, 41.0 + (index - 5) as f32 * 83.0),
+        10..=14 => (425.0, 41.0 + (index - 10) as f32 * 83.0),
+        15..=19 => (519.0, 41.0 + (index - 15) as f32 * 83.0),
+        20..=21 => (226.0, 290.0 + (index - 20) as f32 * 83.0),
+        22..=23 => (323.0, 290.0 + (index - 22) as f32 * 83.0),
+        _ => unreachable!("there are only 24 source pet cards"),
+    };
+    Rect::new(x, y, 90.0, 83.0)
 }
 
 fn pet_at_pointer(unlocked_pets: &[PetKind], pointer: Vec2) -> Option<PetKind> {
@@ -161,6 +169,19 @@ fn arms_held_feed(events: &[Event], gus_click: Option<(i32, i32)>) -> bool {
             .iter()
             .any(|event| matches!(event, Event::FoodDropped { .. })),
     }
+}
+
+fn death_has_missile_impact(events: &[Event], tick: u64, target_id: u64) -> bool {
+    events.iter().any(|event| {
+        matches!(
+            event,
+            Event::MissileImpacted {
+                tick: impact_tick,
+                target_id: impact_target,
+                ..
+            } if *impact_tick == tick && *impact_target == target_id
+        )
+    })
 }
 
 struct RenderedFont {
@@ -324,9 +345,30 @@ impl Presentation {
                 | Event::PotionBought { .. }
                 | Event::StarcatcherAteStar { .. }
                 | Event::WeaponBought { .. } => "SOUND_BUY",
-                Event::OscarBought { .. } | Event::StarcatcherBought { .. } => "SOUND_GROW",
-                Event::OscarAteGuppy { .. } => "SOUND_CHOMP",
-                Event::OscarDied { .. } | Event::StarcatcherDied { .. } => "SOUND_DIE",
+                Event::OscarBought { .. }
+                | Event::StarcatcherBought { .. }
+                | Event::GrubberBought { .. } => "SOUND_GROW",
+                Event::OscarAteGuppy { .. } | Event::GrubberAteGuppy { .. } => "SOUND_CHOMP",
+                Event::OscarDied { tick, oscar_id }
+                    if death_has_missile_impact(events, *tick, *oscar_id) =>
+                {
+                    continue;
+                }
+                Event::StarcatcherDied {
+                    tick,
+                    starcatcher_id,
+                } if death_has_missile_impact(events, *tick, *starcatcher_id) => {
+                    continue;
+                }
+                Event::GrubberDied { tick, grubber_id }
+                    if death_has_missile_impact(events, *tick, *grubber_id) =>
+                {
+                    continue;
+                }
+                Event::OscarDied { .. }
+                | Event::StarcatcherDied { .. }
+                | Event::GrubberDied { .. } => "SOUND_DIE",
+                Event::LarvaPickupSound { .. } => "SOUND_POINTS",
                 Event::FishPetHit { sound: true, .. } => "SOUND_PUNCH",
                 Event::RufusHit { sound: true, .. } => "SOUND_PUNCH",
                 Event::MissileLaunched { .. } => "SOUND_MISSLE",
@@ -371,10 +413,10 @@ impl Presentation {
 
     fn draw_board(&self, state: &AdventureState) {
         self.sprite(
-            if state.tank == 2 {
-                "IMAGE_AQUARIUM2"
-            } else {
-                "IMAGE_AQUARIUM1"
+            match state.tank {
+                2 => "IMAGE_AQUARIUM2",
+                3 => "IMAGE_AQUARIUM4",
+                _ => "IMAGE_AQUARIUM1",
             },
             0.0,
             0.0,
@@ -427,7 +469,11 @@ impl Presentation {
                 1.0,
             );
         }
-        for fish in state.fish.iter().filter(|fish| fish.alive) {
+        for fish in state.fish.iter().filter(|fish| {
+            fish.alive
+                && !(matches!(fish.size, FishSize::Small | FishSize::Medium)
+                    && state.hides_fish_at(fish.x, fish.y))
+        }) {
             let id = match (fish.sprite_pose(), fish.hunger_visible) {
                 (FishPose::Swim, false) => "IMAGE_SMALLSWIM",
                 (FishPose::Swim, true) => "IMAGE_HUNGRYSWIM",
@@ -514,6 +560,35 @@ impl Presentation {
                 );
             }
         }
+        for grubber in &state.grubbers {
+            let frame_x = f32::from(grubber.sprite_frame()) * 80.0;
+            self.sprite(
+                "IMAGE_GRUBBER",
+                grubber.widget_x as f32,
+                grubber.widget_y as f32,
+                Some(Rect::new(
+                    frame_x,
+                    f32::from(grubber.sprite_row()) * 80.0,
+                    80.0,
+                    80.0,
+                )),
+                false,
+                1.0,
+                1.0,
+            );
+            let hunger_alpha = f32::from(grubber.hunger_overlay_alpha()) / 255.0;
+            if hunger_alpha > 0.0 {
+                self.sprite(
+                    "IMAGE_GRUBBER",
+                    grubber.widget_x as f32,
+                    grubber.widget_y as f32,
+                    Some(Rect::new(frame_x, 160.0, 80.0, 80.0)),
+                    false,
+                    1.0,
+                    hunger_alpha,
+                );
+            }
+        }
         let aliens_present = state
             .invasion
             .as_ref()
@@ -525,6 +600,7 @@ impl Presentation {
                 FishPetKind::Zorf => "IMAGE_ZORF",
                 FishPetKind::Vert => "IMAGE_VERT",
                 FishPetKind::Meryl => "IMAGE_MERYL",
+                FishPetKind::Wadsworth => "IMAGE_WADSWORTH",
             };
             self.sprite(
                 image,
@@ -540,6 +616,20 @@ impl Presentation {
                 1.0,
                 1.0,
             );
+            if pet.kind == FishPetKind::Wadsworth
+                && !pet.ward_active
+                && (aliens_present || !state.missiles.is_empty())
+            {
+                self.sprite(
+                    "IMAGE_ZZZ",
+                    pet.widget_x as f32 + 40.0,
+                    pet.widget_y as f32 - 15.0,
+                    None,
+                    false,
+                    1.0,
+                    1.0,
+                );
+            }
         }
         for fish in &state.dead_fish {
             let row = match fish.size {
@@ -580,6 +670,22 @@ impl Presentation {
                 corpse.widget_x as f32,
                 corpse.widget_y as f32,
                 Some(Rect::new(f32::from(corpse.frame) * 80.0, 160.0, 80.0, 80.0)),
+                false,
+                1.0,
+                corpse.opacity,
+            );
+        }
+        for corpse in &state.dead_grubbers {
+            self.sprite(
+                "IMAGE_GRUBBER",
+                corpse.widget_x as f32,
+                corpse.widget_y as f32,
+                Some(Rect::new(
+                    f32::from(corpse.sprite_frame()) * 80.0,
+                    f32::from(corpse.sprite_row()) * 80.0,
+                    80.0,
+                    80.0,
+                )),
                 false,
                 1.0,
                 corpse.opacity,
@@ -832,6 +938,17 @@ impl Presentation {
                 alpha,
             );
         }
+        for larva in &state.larvae {
+            self.sprite(
+                "IMAGE_MONEY",
+                larva.widget_x as f32,
+                larva.widget_y as f32,
+                Some(Rect::new(f32::from(larva.frame) * 72.0, 360.0, 72.0, 72.0)),
+                false,
+                1.0,
+                1.0,
+            );
+        }
         for note in &state.notes {
             self.sprite(
                 "IMAGE_MISCITEMS",
@@ -920,6 +1037,24 @@ impl Presentation {
                 1.0,
             );
             self.fonts["Pix118"].text("1000", 229.0, 58.0, Color::from_rgba(110, 250, 110, 255));
+        }
+        if state.grubber_unlocked {
+            self.sprite("IMAGE_MENUBTNU", 217.0, 3.0, None, false, 1.0, 1.0);
+            self.sprite(
+                "IMAGE_SCL_GRUBBER",
+                225.0,
+                4.0,
+                Some(Rect::new(
+                    ((state.tick / 2) % 10) as f32 * 40.0,
+                    0.0,
+                    40.0,
+                    40.0,
+                )),
+                false,
+                1.0,
+                1.0,
+            );
+            self.fonts["Pix118"].text("750", 229.0, 58.0, Color::from_rgba(110, 250, 110, 255));
         }
         if state.potion_unlocked {
             self.sprite("IMAGE_MENUBTNU", 217.0, 3.0, None, false, 1.0, 1.0);
@@ -1386,6 +1521,7 @@ impl Presentation {
                 PetKind::Rufus => ("IMAGE_RUFUS", 90.0, updates % 20 / 2),
                 PetKind::Meryl => ("IMAGE_MERYL", 90.0, updates % 20 / 2),
                 PetKind::Wadsworth => ("IMAGE_WADSWORTH", 90.0, updates % 20 / 2),
+                PetKind::Seymour => ("IMAGE_SEYMOUR", 90.0, updates % 40 / 4),
             };
             self.sprite(
                 id,
@@ -1413,6 +1549,7 @@ impl Presentation {
                     PetKind::Rufus => "RUFUS the Fiddler Crab",
                     PetKind::Meryl => "MERYL the Mermaid",
                     PetKind::Wadsworth => "WADSWORTH the Whale",
+                    PetKind::Seymour => "SEYMOUR the Turtle",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -1466,6 +1603,11 @@ impl Presentation {
                     "WADSWORTH helps by sheltering",
                     "your baby and medium guppies",
                     "from hungry aliens.",
+                ],
+                PetKind::Seymour => [
+                    "SEYMOUR's presence makes all",
+                    "coins and diamonds drift",
+                    "at a slower rate.",
                 ],
             };
             for (index, line) in description.iter().enumerate() {
@@ -1549,12 +1691,13 @@ impl Presentation {
                 PetKind::Rufus => "IMAGE_SCL_RUFUS",
                 PetKind::Meryl => "IMAGE_SCL_MERYL",
                 PetKind::Wadsworth => "IMAGE_SCL_WADSWORTH",
+                PetKind::Seymour => "IMAGE_SCL_SEYMOUR",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
                 let phase = session.ticks % 18;
                 if phase > 9 { 18 - phase } else { phase }
-            } else if *pet == PetKind::Clyde {
+            } else if matches!(*pet, PetKind::Clyde | PetKind::Seymour) {
                 session.ticks / 4 % 10
             } else {
                 session.ticks / 2 % 10
@@ -1682,11 +1825,21 @@ impl Presentation {
                     ],
                     90.0,
                 ),
+                PetKind::Seymour => (
+                    "IMAGE_SEYMOUR",
+                    "SEYMOUR the Turtle",
+                    [
+                        "SEYMOUR's presence makes all",
+                        "coins and diamonds drift",
+                        "at a slower rate.",
+                    ],
+                    90.0,
+                ),
             };
             let column = if matches!(pet, PetKind::Niko | PetKind::Vert) {
                 let phase = session.ticks % 18;
                 if phase > 9 { 18 - phase } else { phase }
-            } else if pet == PetKind::Clyde {
+            } else if matches!(pet, PetKind::Clyde | PetKind::Seymour) {
                 session.ticks / 4 % 10
             } else {
                 session.ticks % 20 / 2
@@ -2242,6 +2395,15 @@ pub async fn run(
                         if session
                             .board
                             .as_ref()
+                            .is_some_and(|board| board.grubber_unlocked)
+                            && Rect::new(217.0, 3.0, 58.0, 60.0).contains(pointer) =>
+                    {
+                        Action::BuyGrubber
+                    }
+                    AdventurePhase::Playing
+                        if session
+                            .board
+                            .as_ref()
                             .is_some_and(|board| board.starcatcher_unlocked)
                             && Rect::new(290.0, 3.0, 58.0, 60.0).contains(pointer) =>
                     {
@@ -2257,7 +2419,11 @@ pub async fn run(
                         Action::BuyWeapon
                     }
                     AdventurePhase::Playing
-                        if Rect::new(436.0, 3.0, 58.0, 60.0).contains(pointer) =>
+                        if session
+                            .board
+                            .as_ref()
+                            .is_some_and(|board| board.egg_unlocked)
+                            && Rect::new(436.0, 3.0, 58.0, 60.0).contains(pointer) =>
                     {
                         Action::BuyEgg
                     }
@@ -2580,6 +2746,51 @@ mod feed_input_tests {
             pet_at_pointer(&unlocked, vec2(165.0, 414.0)),
             Some(PetKind::Wadsworth)
         );
+    }
+
+    #[test]
+    fn eleventh_pet_uses_first_right_hand_card_without_displacing_tenth() {
+        let unlocked = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+            PetKind::Clyde,
+            PetKind::Vert,
+            PetKind::Rufus,
+            PetKind::Meryl,
+            PetKind::Wadsworth,
+            PetKind::Seymour,
+        ];
+        assert_eq!(pet_card_rect(10), Rect::new(425.0, 41.0, 90.0, 83.0));
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(470.0, 82.0)),
+            Some(PetKind::Seymour)
+        );
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(165.0, 414.0)),
+            Some(PetKind::Wadsworth)
+        );
+        assert_eq!(pet_at_pointer(&unlocked, vec2(320.0, 82.0)), None);
+    }
+
+    #[test]
+    fn missile_death_audio_is_keyed_to_the_same_target_and_tick() {
+        let events = [
+            Event::GrubberDied {
+                tick: 41,
+                grubber_id: 7,
+            },
+            Event::MissileImpacted {
+                tick: 41,
+                missile_id: 9,
+                target_id: 7,
+            },
+        ];
+        assert!(death_has_missile_impact(&events, 41, 7));
+        assert!(!death_has_missile_impact(&events, 40, 7));
+        assert!(!death_has_missile_impact(&events, 41, 8));
     }
 
     #[test]

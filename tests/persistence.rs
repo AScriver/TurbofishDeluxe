@@ -84,6 +84,193 @@ fn meryl_session() -> AdventureSession {
     session
 }
 
+fn tank_three_session(pets: &[PetKind]) -> AdventureSession {
+    let mut session = meryl_session();
+    session.progress.tank = 3;
+    session.progress.level = 1;
+    session.progress.unlocked_pets.push(PetKind::Wadsworth);
+    session.progress.selected_pets = pets.to_vec();
+    session.board = Some(AdventureState::new_tank3_first_stage(42, pets).unwrap());
+    session
+}
+
+#[test]
+fn current_tank_three_save_accepts_every_unlocked_single_pet_roster() {
+    for pet in [
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Clyde,
+        PetKind::Vert,
+        PetKind::Rufus,
+        PetKind::Meryl,
+        PetKind::Wadsworth,
+    ] {
+        let session = tank_three_session(&[pet]);
+        session.validate().unwrap();
+        let saved = serde_json::to_vec(&cli::ProjectSave {
+            format_version: cli::SAVE_FORMAT_VERSION,
+            session: session.clone(),
+        })
+        .unwrap();
+        let restored = cli::decode_save(&saved).unwrap();
+        assert_eq!(
+            serde_json::to_value(restored).unwrap(),
+            serde_json::to_value(session).unwrap()
+        );
+    }
+}
+
+#[test]
+fn current_tank_three_lists_and_ward_fields_are_required_without_backfill() {
+    let current = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: tank_three_session(&[PetKind::Wadsworth]),
+    })
+    .unwrap();
+    for (pointer, fields) in [
+        (
+            "/session/board",
+            &["grubber_unlocked", "grubbers", "dead_grubbers", "larvae"][..],
+        ),
+        (
+            "/session/board/fish_pets/0",
+            &["ward_active", "ward_timer", "published_x", "published_y"][..],
+        ),
+    ] {
+        for field in fields {
+            let mut missing = current.clone();
+            missing
+                .pointer_mut(pointer)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .remove(*field);
+            assert!(
+                cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+                "{pointer}/{field} must be required"
+            );
+        }
+    }
+}
+
+#[test]
+fn current_bought_grubber_and_claimed_larva_reload_every_next_update() {
+    use turbofish_deluxe::sim::Event;
+    let mut uninterrupted =
+        tank_three_session(&[PetKind::Niko, PetKind::Itchy, PetKind::Wadsworth]);
+    let board = uninterrupted.board.as_mut().unwrap();
+    // Synthetic shop/production-boundary fixture; no earning claim.
+    board.balance = 750;
+    board.grubber_unlocked = true;
+    board.upgrades.quality_unlocked = true;
+    board.upgrades.quantity_unlocked = true;
+    uninterrupted.apply_actions(&[Action::BuyGrubber]);
+    for _ in 0..45 {
+        uninterrupted.step(&[]);
+    }
+    let grubber = &mut uninterrupted.board.as_mut().unwrap().grubbers[0];
+    grubber.coin_timer = grubber.coin_threshold - 1;
+    let produced = uninterrupted.step(&[]);
+    assert_eq!(
+        produced
+            .iter()
+            .filter(|event| matches!(event, Event::LarvaDropped { .. }))
+            .count(),
+        1
+    );
+    let larva_id = uninterrupted.board.as_ref().unwrap().larvae[0].id;
+    // Floor-born larvae must rise past the strict old-Y320 click gate.
+    // Advance normal Board updates rather than editing their visibility.
+    for _ in 0..64 {
+        if uninterrupted.board.as_ref().unwrap().larvae[0].mouse_visible {
+            break;
+        }
+        uninterrupted.step(&[]);
+    }
+    let larva = &uninterrupted.board.as_ref().unwrap().larvae[0];
+    assert_eq!(larva.id, larva_id);
+    assert!(larva.mouse_visible);
+    let click = Action::Click {
+        x: (larva.widget_x + 36) as f32,
+        y: (larva.widget_y + 36) as f32,
+    };
+    let claimed = uninterrupted.apply_actions(&[click]);
+    assert!(claimed.iter().any(|event| matches!(event, Event::LarvaCollectionStarted { larva_id: id, .. } if *id == larva_id)));
+    uninterrupted.validate().unwrap();
+    let saved = serde_json::to_vec(&cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: uninterrupted.clone(),
+    })
+    .unwrap();
+    let mut resumed = cli::decode_save(&saved).unwrap();
+    let mut credited = 0;
+    for _ in 0..64 {
+        let expected = uninterrupted.step(&[]);
+        let actual = resumed.step(&[]);
+        assert_eq!(
+            serde_json::to_value(&actual).unwrap(),
+            serde_json::to_value(&expected).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&uninterrupted).unwrap()
+        );
+        credited += actual.iter().filter(|event| matches!(event, Event::LarvaCredited { larva_id: id, amount: 150, .. } if *id == larva_id)).count();
+        resumed.validate().unwrap();
+    }
+    assert_eq!(credited, 1);
+}
+
+#[test]
+fn current_live_ward_and_published_position_reload_every_next_update() {
+    use turbofish_deluxe::fish_pet::FishPetKind;
+    let mut uninterrupted = tank_three_session(&[PetKind::Wadsworth]);
+    // Synthetic valid warning boundary, then ordinary spawn/activation ticks.
+    uninterrupted
+        .board
+        .as_mut()
+        .unwrap()
+        .invasion
+        .as_mut()
+        .unwrap()
+        .countdown = 276;
+    for _ in 0..276 {
+        uninterrupted.step(&[]);
+    }
+    let board = uninterrupted.board.as_ref().unwrap();
+    assert!(!board.invasion.as_ref().unwrap().actors.is_empty());
+    let ward = board
+        .fish_pets
+        .iter()
+        .find(|pet| pet.kind == FishPetKind::Wadsworth)
+        .unwrap();
+    assert!(ward.ward_active);
+    assert_eq!(ward.ward_timer, 120);
+    uninterrupted.validate().unwrap();
+    let saved = serde_json::to_vec(&cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: uninterrupted.clone(),
+    })
+    .unwrap();
+    let mut resumed = cli::decode_save(&saved).unwrap();
+    for _ in 0..64 {
+        let expected = uninterrupted.step(&[]);
+        let actual = resumed.step(&[]);
+        assert_eq!(
+            serde_json::to_value(&actual).unwrap(),
+            serde_json::to_value(&expected).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&uninterrupted).unwrap()
+        );
+        resumed.validate().unwrap();
+    }
+}
+
 #[test]
 fn current_pair_successor_song_note_and_pending_death_reload_every_update() {
     use turbofish_deluxe::{

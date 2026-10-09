@@ -2,6 +2,34 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-09 — Accept Grubber, live Wadsworth and earned Seymour
+
+**Changes/reason:** Integrate Tank3-1, explicit Grubber/Larva transactions and live Wadsworth protection, current format12/settlement, primary-corrected Aquarium4/Niko145,260, earned Seymour/eleventh card and temporary3-2 boundary. Preserve prior work/codec/history/earned checkpoints without new legacy migrations.
+
+**Checks/results:**273checks/formatting/strict workspace Clippy/locked native build/staging and [nine-run A26 acceptance](docs/playtests/2026-10-09-adventure-3-1-grubber-seymour-01.md). Earned Grubber prey/Larva150, three1000eggs/Seymour, right-card/Locked3-2/reload, in-flight one-credit and active ward/Balrog menu pause/reload passed. Root inspected representative frames and exact events;32build inputs/two executables/five DLLs/eight notices/gate/neutral fixture/ninefinals/fiveearned saves matched, allninePIDs absent and full-content install unchanged. Retail/audible/human checks remain unperformed.
+
+**Failures/reassessment:** Retain strict-Clippy/visibility-fixture failures, costly first-wave Large/Grubber losses and second Grubber loss, plus ten/fourteen JSON decimal differences with equal binary32 bits. Typed continuity is verified; text equality is not claimed. Prospective3-2 review found new Gekko vertical-limit/bubble-RNG defects and existing Coin precision/strict-bottom/fade defects. Gekko repairs remain unregistered/unrun outside the accepted A26 build; Coin fixes belong to the next increment.
+
+**Next:** Commit reviewed A26 files/report, excluding prepared Gekko. Automatically integrate [3-2](docs/adventure-3-2.md) under separate actor/Board/presentation/session ownership, gate/exercise/commit and continue3-3. No input currently required.
+
+## 2026-10-09 — Review Tank3-1 integration before execution
+
+Registered Grubber/Larva, live Wadsworth, Tank3-1 gates/transactions, Seymour reward/card and strict current format12. Initial all-target compile passed; no native A26 run yet. Independent review corrected Clyde's Tank3 save validation, repeated visible Larva input absorption/sound, exclusion of dead fish from ward reset, pre-move widget coin origin and the ward motion tail. New persistence cases cover all ten allowed rosters, required fields, claimed-Larva flight and active ward continuation; they are not tested yet.
+
+Primary PB41 corrected the earlier Aquarium3/Niko65,156 proposal: ordinary Tank3 uses Aquarium4 and Niko145,260. The constructor path/constants and deliberate correction are recorded in [3-1](docs/adventure-3-1.md). The earlier MODLOG entry remains historical.
+
+Full gate01 stopped before tests on two boolean-simplification lints and one eight-argument ward helper. Retain `.scratch/runtime/gate-adventure26-current-save-01.log`; apply minimal behavior-preserving repairs, then rerun the gate before freezing a native build. A root test-insertion syntax error was caught by direct readback and removed before this gate. No new legacy migration and no current A26 playability claim.
+
+Gate02 passed strict Clippy and229/230library tests. The remaining failure is a fixture expecting `mouse_visible=false` after the first update at oldY319; the strict oldY<320 branch already enables visibility. Correct only that assertion and retain one-credit/repeated-hit checks. Root initially misread it as a post-click assertion; the owner corrected the diagnosis by direct readback. Persistence/native checks have not run yet. Narrow independent readback accepted the corrected old-widget coin origin, edge damping-before-move/overshoot, and exactly one POINTS request per visible Larva hit.
+
+Gate03 passed230library/5asset/4font/30of31persistence cases. Root's bought-Grubber reload fixture clicked a newly produced Larva before it rose past the strict oldY320 visibility gate. Advance ordinary Board updates until that actual gate, then claim/save/reload; production is unchanged. The active-ward and all-roster persistence cases already passed. Retain the immutable gate03 failure and rerun the full gate.
+
+Gate04 passed273checks(230library+5assets+4fonts+31persistence+3binding), formatting/strict workspace Clippy/locked native build and staging. Exe85B391D6…2D989B/gateD60F5DBE…5102C4 identifies the released native acceptance build. Freeze all relevant inputs through native verification. Tester owns isolated normal-speed earned3-1/reload/pause/Seymour/Locked3-2 evidence; no A26 runtime result yet. Prospective primary3-2 study proceeds separately without editing frozen source.
+
+## 2026-10-09 — Begin Tank3-1 integration
+
+A25 committed`82b5da3194414ff7301b6e484cfd7418749e328a` with20reviewed files; no private captures/reference/native files staged. Register prepared Grubber/Larva, add strict current format12/session/claimed-Larva settlement and release separate Board/actor/presentation ownership. Existing A25 evidence identifies its immutable build; current edits remain unbuilt. Niko's source-derived Tank3 anchor65,156 needs a bounded constructor/validation correction rather than reusing Tank2. No legacy-save reconstruction. Gate and native earned-path verification follow owner completion.
+
 ## 2026-10-09 — Accept Meryl, earned Wadsworth and Tank2 bonus
 
 **Changes/reason:** Integrate Meryl's primary-corrected1400song/zero-valued notes, ordered finale encounters/independent effects/last-threat transactions, origin-aware Tank2 bonus and current format11. Preserve previous codec/tests/history without new legacy reconstruction; prepared unregistered A26 actors remain outside this commit/gate.

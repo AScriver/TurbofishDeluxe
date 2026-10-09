@@ -8,6 +8,9 @@ pub const NIKO_X: i32 = 95;
 pub const NIKO_Y: i32 = 253;
 pub const NIKO_TANK2_X: i32 = 175;
 pub const NIKO_TANK2_Y: i32 = 163;
+/// PB41 maps ordinary Tank3 to background4; W1 OtherTypePet.cpp agrees.
+pub const NIKO_TANK3_X: i32 = 145;
+pub const NIKO_TANK3_Y: i32 = 260;
 const fn tank1_x() -> i32 {
     NIKO_X
 }
@@ -52,6 +55,10 @@ impl NikoState {
         Self::spawn_at(owner_id, NIKO_TANK2_X, NIKO_TANK2_Y, rand_range)
     }
 
+    pub fn spawn_tank3(owner_id: u64, rand_range: &mut impl FnMut(u64) -> u64) -> Self {
+        Self::spawn_at(owner_id, NIKO_TANK3_X, NIKO_TANK3_Y, rand_range)
+    }
+
     fn spawn_at(
         owner_id: u64,
         anchor_x: i32,
@@ -80,7 +87,7 @@ impl NikoState {
             || self.movement_change_timer > 20
             || !matches!(
                 (self.anchor_x, self.anchor_y),
-                (NIKO_X, NIKO_Y) | (NIKO_TANK2_X, NIKO_TANK2_Y)
+                (NIKO_X, NIKO_Y) | (NIKO_TANK2_X, NIKO_TANK2_Y) | (NIKO_TANK3_X, NIKO_TANK3_Y)
             )
         {
             return Err("invalid ordinary Niko save state".into());
@@ -296,6 +303,18 @@ impl NikoPearl {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn third_background_anchor_preserves_constructor_draws() {
+        let mut draws = Vec::new();
+        let niko = NikoState::spawn_tank3(17, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(draws, [265, 520, 10, 250]);
+        assert_eq!((niko.anchor_x, niko.anchor_y), (145, 260));
+        niko.validate().unwrap();
+    }
 
     #[test]
     fn spawn_draws_four_common_values_and_cycle_events_are_exact() {

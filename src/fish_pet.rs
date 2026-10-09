@@ -1,4 +1,4 @@
-//! Ordinary Adventure fish-shaped pets, limited to Itchy, Prego, and Zorf.
+//! Ordinary Adventure fish-shaped pets, including Tank 3 Wadsworth.
 //! Behavioral rules are derived from pinned WinFish W1 `FishTypePet.cpp`,
 //! `Fish.cpp`, and `Board.cpp` (revision f919b3c). Installed-binary coverage
 //! for their full movement and animation remains partial. Board membership,
@@ -13,6 +13,14 @@ pub enum FishPetKind {
     Zorf,
     Vert,
     Meryl,
+    Wadsworth,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WardFishView {
+    pub widget_x: i32,
+    pub widget_y: i32,
+    pub small_or_medium: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,6 +42,9 @@ pub struct FishPetUpdate {
     pub note_at: Option<(i32, i32)>,
     /// The board applies its shared eleven-update punch sound delay.
     pub punch_sound: bool,
+    /// Wadsworth's active-state transition after the clock has advanced.
+    pub ward_transition: Option<bool>,
+    pub ward_bubbles: Option<[(i32, i32); 2]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,6 +87,12 @@ pub struct FishPetState {
     pub food_timer: i32,
     pub coin_timer: u16,
     pub meryl_blink: bool,
+    /// Independent of the protection clock: active with clock zero is legal.
+    pub ward_active: bool,
+    pub ward_timer: u16,
+    /// Prior widget coordinates published before this pet's own movement.
+    pub published_x: i32,
+    pub published_y: i32,
     speed_mod: f64,
     previous_vx: f64,
     movement_state: u8,
@@ -123,7 +140,13 @@ impl FishPetState {
             food_timer: 0,
             coin_timer: 0,
             meryl_blink: true,
-            speed_mod: if kind == FishPetKind::Zorf {
+            ward_active: false,
+            ward_timer: 0,
+            published_x: widget_x,
+            published_y: widget_y,
+            speed_mod: if kind == FishPetKind::Wadsworth {
+                4.0
+            } else if kind == FishPetKind::Zorf {
                 3.0
             } else {
                 speed_mod
@@ -154,7 +177,9 @@ impl FishPetState {
             || !(0.0..=550.0).contains(&self.y)
             || self.widget_x != self.x as i32
             || self.widget_y != self.y as i32
-            || !(if self.kind == FishPetKind::Zorf {
+            || !(if self.kind == FishPetKind::Wadsworth {
+                self.speed_mod == 4.0
+            } else if self.kind == FishPetKind::Zorf {
                 self.speed_mod == 3.0
             } else {
                 [1.6, 1.8, 2.0].contains(&self.speed_mod)
@@ -177,6 +202,15 @@ impl FishPetState {
             || (!matches!(self.kind, FishPetKind::Vert | FishPetKind::Meryl)
                 && self.coin_timer != 0)
             || (self.kind != FishPetKind::Meryl && !self.meryl_blink)
+            || (self.kind == FishPetKind::Wadsworth
+                && (self.ward_timer > 120
+                    || !(0..=550).contains(&self.published_x)
+                    || !(0..=550).contains(&self.published_y)))
+            || (self.kind != FishPetKind::Wadsworth
+                && (self.ward_active
+                    || self.ward_timer != 0
+                    || self.published_x != self.widget_x
+                    || self.published_y != self.widget_y))
         {
             return Err("invalid ordinary fish pet save state".into());
         }
@@ -237,6 +271,13 @@ impl FishPetState {
                     0
                 }
             }
+            FishPetKind::Wadsworth => {
+                if self.ward_timer > 0 {
+                    2
+                } else {
+                    u8::from(self.turn_ticks != 0)
+                }
+            }
         }
     }
 
@@ -247,7 +288,19 @@ impl FishPetState {
     }
 
     pub fn sprite_frame(&self) -> u8 {
-        if self.kind == FishPetKind::Zorf && self.sprite_row(false) == 2 {
+        if self.kind == FishPetKind::Wadsworth && self.ward_timer > 0 {
+            let timer = i32::from(self.ward_timer);
+            let frame = if !self.ward_active && timer > 20 {
+                9 - (29 - timer) / 2
+            } else if self.ward_active && timer > 110 {
+                9 - (120 - timer - 1) / 2
+            } else if timer < 11 {
+                9 - (timer - 1) / 2
+            } else {
+                5
+            };
+            frame.clamp(0, 9) as u8
+        } else if self.kind == FishPetKind::Zorf && self.sprite_row(false) == 2 {
             (self.food_timer + 10) as u8
         } else if self.kind == FishPetKind::Prego && self.sprite_row(false) == 3 {
             if self.birth_timer < self.birth_threshold - 190 {
@@ -282,6 +335,50 @@ impl FishPetState {
     ) -> FishPetUpdate {
         assert_eq!(self.kind, FishPetKind::Zorf, "tick_zorf requires Zorf");
         self.tick_inner(aliens, 0, hungry, rand_range)
+    }
+
+    /// This subtype owns its protection clock. The Board supplies registered
+    /// enemy/classic-missile membership and the ordered fish snapshot after
+    /// all earlier object phases, then uses the published prior widget pose
+    /// for the next fish/prey phase.
+    pub fn tick_wadsworth(
+        &mut self,
+        threat_present: bool,
+        fish: &[WardFishView],
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> FishPetUpdate {
+        assert_eq!(self.kind, FishPetKind::Wadsworth);
+        let mut ward = FishPetUpdate::default();
+        if self.ward_timer > 0 {
+            self.ward_timer -= 1;
+        } else if self.ward_active
+            && fish.iter().any(|view| {
+                view.small_or_medium
+                    && (self.x + 40.0 - f64::from(view.widget_x + 40)).abs() > 10.0
+                    && (self.y + 40.0 - f64::from(view.widget_y + 40)).abs() > 10.0
+            })
+        {
+            self.ward_timer = 100;
+        }
+        if threat_present {
+            if !self.ward_active {
+                self.ward_active = true;
+                self.ward_timer = 120;
+                ward.ward_transition = Some(true);
+            }
+            self.published_x = self.widget_x;
+            self.published_y = self.widget_y;
+        } else if self.ward_active {
+            self.ward_active = false;
+            self.ward_timer = 30;
+            ward.ward_transition = Some(false);
+            ward.ward_bubbles = Some([
+                (self.widget_x + 11, self.widget_y + 5),
+                (self.widget_x + 4, self.widget_y + 2),
+            ]);
+        }
+        let _motion = self.tick_inner(&[], 0, &[], rand_range);
+        ward
     }
 
     fn tick_inner(
@@ -392,6 +489,10 @@ impl FishPetState {
         self.y += self.vy / self.speed_mod;
         self.widget_x = self.x as i32;
         self.widget_y = self.y as i32;
+        if self.kind != FishPetKind::Wadsworth {
+            self.published_x = self.widget_x;
+            self.published_y = self.widget_y;
+        }
         update
     }
 
@@ -630,6 +731,70 @@ mod tests {
     fn actor(kind: FishPetKind) -> FishPetState {
         let mut rng = |_: u64| 0;
         FishPetState::spawn_tank1(1, kind, &mut rng)
+    }
+
+    #[test]
+    fn wadsworth_clock_is_independent_of_active_and_publishes_pre_move_widget() {
+        let mut pet = actor(FishPetKind::Wadsworth);
+        pet.x = 100.0;
+        pet.y = 200.0;
+        pet.widget_x = 100;
+        pet.widget_y = 200;
+        let old = (pet.widget_x, pet.widget_y);
+        let fish = [WardFishView {
+            widget_x: 160,
+            widget_y: 260,
+            small_or_medium: true,
+        }];
+        let activated = pet.tick_wadsworth(true, &fish, &mut |_| 1);
+        assert_eq!(activated.ward_transition, Some(true));
+        assert_eq!((pet.ward_active, pet.ward_timer), (true, 120));
+        assert_eq!((pet.published_x, pet.published_y), old);
+        assert_eq!((pet.sprite_row(false), pet.sprite_frame()), (2, 9));
+        pet.ward_timer = 1;
+        pet.tick_wadsworth(true, &fish, &mut |_| 1);
+        assert_eq!((pet.ward_active, pet.ward_timer), (true, 0));
+        pet.validate().unwrap();
+        pet.tick_wadsworth(true, &fish, &mut |_| 1);
+        assert_eq!(pet.ward_timer, 100);
+        let before_release = (pet.widget_x, pet.widget_y);
+        let released = pet.tick_wadsworth(false, &fish, &mut |_| 1);
+        assert_eq!(released.ward_transition, Some(false));
+        assert_eq!((pet.ward_active, pet.ward_timer), (false, 30));
+        assert_eq!(
+            released.ward_bubbles,
+            Some([
+                (before_release.0 + 11, before_release.1 + 5),
+                (before_release.0 + 4, before_release.1 + 2),
+            ])
+        );
+        assert_eq!((pet.sprite_row(false), pet.sprite_frame()), (2, 9));
+        pet.validate().unwrap();
+    }
+
+    #[test]
+    fn wadsworth_reset_needs_both_axis_separations_and_small_or_medium() {
+        let mut pet = actor(FishPetKind::Wadsworth);
+        pet.ward_active = true;
+        pet.ward_timer = 0;
+        pet.x = 100.0;
+        pet.y = 100.0;
+        pet.widget_x = 100;
+        pet.widget_y = 100;
+        let only_x_far = [WardFishView {
+            widget_x: 140,
+            widget_y: 100,
+            small_or_medium: true,
+        }];
+        pet.tick_wadsworth(true, &only_x_far, &mut |_| 1);
+        assert_eq!(pet.ward_timer, 0);
+        let large_far = [WardFishView {
+            widget_x: 140,
+            widget_y: 140,
+            small_or_medium: false,
+        }];
+        pet.tick_wadsworth(true, &large_far, &mut |_| 1);
+        assert_eq!(pet.ward_timer, 0);
     }
 
     #[test]

@@ -5,8 +5,10 @@
 use crate::{
     alien::{AlienFoodView, AlienRuntimeRequest, PreyView, SylvesterKind},
     clyde::{ClydeCoinView, ClydeState},
-    fish_pet::{FishPetKind, FishPetState, PetAlienView, ZorfHungryView},
+    fish_pet::{FishPetKind, FishPetState, PetAlienView, WardFishView, ZorfHungryView},
+    grubber::{DeadGrubber, GrubberPrey, GrubberState},
     invasion::{Invasion1_2, InvasionEvent, WavePlan},
+    larva::{LARVA_VALUE, LarvaState, LarvaUpdate},
     missile::{ClassicMissile, MissilePreyView},
     niko::{NikoEvent, NikoPearl, NikoState, PEARL_VALUE, PearlPhase, PearlUpdate},
     oscar::{DeadOscar, OscarPrey, OscarState},
@@ -35,6 +37,8 @@ pub const TANK2_THIRD_EGG_PRICE: i32 = 5000;
 pub const TANK2_FOURTH_EGG_PRICE: i32 = 7500;
 pub const TANK2_FIFTH_EGG_PRICE: i32 = 10000;
 pub const STARCATCHER_PRICE: i32 = 750;
+pub const GRUBBER_PRICE: i32 = 750;
+pub const TANK3_FIRST_EGG_PRICE: i32 = 1000;
 pub const POTION_PRICE: i32 = 250;
 pub const FOOD_QUALITY_PRICE: i32 = 200;
 pub const FOOD_QUANTITY_PRICE: i32 = 300;
@@ -63,6 +67,7 @@ pub enum PetKind {
     Rufus,
     Meryl,
     Wadsworth,
+    Seymour,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -359,6 +364,7 @@ pub enum Action {
     BuyWeapon,
     BuyPotion,
     BuyStarcatcher,
+    BuyGrubber,
     HoldFeed { x: f32, y: f32, elapsed_ms: u32 },
     HoldFire { x: f32, y: f32, elapsed_ms: u32 },
     TogglePet { pet: PetKind },
@@ -508,6 +514,59 @@ pub enum Event {
     StarcatcherDied {
         tick: u64,
         starcatcher_id: u64,
+    },
+    GrubberBought {
+        tick: u64,
+        grubber_id: u64,
+        balance: i32,
+    },
+    GrubberAteGuppy {
+        tick: u64,
+        grubber_id: u64,
+        guppy_id: u64,
+    },
+    GrubberDied {
+        tick: u64,
+        grubber_id: u64,
+    },
+    GrubberBubble {
+        tick: u64,
+        grubber_id: u64,
+        x: i32,
+        y: i32,
+    },
+    LarvaDropped {
+        tick: u64,
+        grubber_id: u64,
+        larva_id: u64,
+    },
+    LarvaCollectionStarted {
+        tick: u64,
+        larva_id: u64,
+    },
+    LarvaPickupSound {
+        tick: u64,
+        larva_id: u64,
+    },
+    LarvaCredited {
+        tick: u64,
+        larva_id: u64,
+        amount: i32,
+        balance: i32,
+    },
+    LarvaExpired {
+        tick: u64,
+        larva_id: u64,
+    },
+    WadsworthProtectionChanged {
+        tick: u64,
+        pet_id: u64,
+        active: bool,
+    },
+    WadsworthBubbles {
+        tick: u64,
+        pet_id: u64,
+        positions: [(i32, i32); 2],
     },
     WeaponBought {
         tick: u64,
@@ -690,6 +749,7 @@ pub struct AdventureState {
     #[serde(default)]
     pub oscar_unlocked: bool,
     pub starcatcher_unlocked: bool,
+    pub grubber_unlocked: bool,
     #[serde(default)]
     pub weapon_unlocked: bool,
     #[serde(default = "initial_weapon_strength")]
@@ -712,6 +772,9 @@ pub struct AdventureState {
     pub oscars: Vec<OscarState>,
     pub starcatchers: Vec<StarcatcherState>,
     pub dead_starcatchers: Vec<DeadStarcatcher>,
+    pub grubbers: Vec<GrubberState>,
+    pub dead_grubbers: Vec<DeadGrubber>,
+    pub larvae: Vec<LarvaState>,
     #[serde(default)]
     pub fish_pets: Vec<FishPetState>,
     #[serde(default)]
@@ -777,6 +840,7 @@ impl AdventureState {
             egg_unlocked: false,
             oscar_unlocked: false,
             starcatcher_unlocked: false,
+            grubber_unlocked: false,
             weapon_unlocked: false,
             weapon_strength: 2,
             potion_unlocked: false,
@@ -791,6 +855,9 @@ impl AdventureState {
             oscars: Vec::new(),
             starcatchers: Vec::new(),
             dead_starcatchers: Vec::new(),
+            grubbers: Vec::new(),
+            dead_grubbers: Vec::new(),
+            larvae: Vec::new(),
             fish_pets: Vec::new(),
             punch_sound_cooldown: 0,
             dead_oscars: Vec::new(),
@@ -907,7 +974,8 @@ impl AdventureState {
                 | PetKind::Vert
                 | PetKind::Rufus
                 | PetKind::Meryl
-                | PetKind::Wadsworth => {
+                | PetKind::Wadsworth
+                | PetKind::Seymour => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -959,7 +1027,8 @@ impl AdventureState {
                 | PetKind::Vert
                 | PetKind::Rufus
                 | PetKind::Meryl
-                | PetKind::Wadsworth => {
+                | PetKind::Wadsworth
+                | PetKind::Seymour => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1014,7 +1083,11 @@ impl AdventureState {
                     }));
                     state.rng_state = rng_state;
                 }
-                PetKind::Vert | PetKind::Rufus | PetKind::Meryl | PetKind::Wadsworth => {
+                PetKind::Vert
+                | PetKind::Rufus
+                | PetKind::Meryl
+                | PetKind::Wadsworth
+                | PetKind::Seymour => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1071,7 +1144,7 @@ impl AdventureState {
                     state.rng_state = rng_state;
                 }
                 PetKind::Vert => state.spawn_fish_pet(FishPetKind::Vert),
-                PetKind::Rufus | PetKind::Meryl | PetKind::Wadsworth => {
+                PetKind::Rufus | PetKind::Meryl | PetKind::Wadsworth | PetKind::Seymour => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1137,7 +1210,7 @@ impl AdventureState {
                     }));
                     state.rng_state = rng_state;
                 }
-                PetKind::Meryl | PetKind::Wadsworth => {
+                PetKind::Meryl | PetKind::Wadsworth | PetKind::Seymour => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1212,7 +1285,80 @@ impl AdventureState {
                     state.rng_state = rng_state;
                 }
                 PetKind::Meryl => state.spawn_fish_pet(FishPetKind::Meryl),
-                PetKind::Wadsworth => unreachable!("roster checked before construction"),
+                PetKind::Wadsworth | PetKind::Seymour => {
+                    unreachable!("roster checked before construction")
+                }
+            }
+        }
+        state.spawn_starter_guppies(false);
+        Ok(state)
+    }
+
+    /// Ordinary Tank 3-1 begins after the earned Tank 2 bonus. Selected pets
+    /// are constructed before the two starter guppies, preserving Board's
+    /// actor-constructor RNG order; the Balrog countdown starts at 3000.
+    pub fn new_tank3_first_stage(seed: u64, pets: &[PetKind]) -> Result<Self, String> {
+        let canonical = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+            PetKind::Clyde,
+            PetKind::Vert,
+            PetKind::Rufus,
+            PetKind::Meryl,
+            PetKind::Wadsworth,
+        ];
+        if pets.len() > 3
+            || pets.iter().any(|pet| !canonical.contains(pet))
+            || pets.windows(2).any(|pair| {
+                canonical.iter().position(|pet| *pet == pair[0])
+                    >= canonical.iter().position(|pet| *pet == pair[1])
+            })
+        {
+            return Err("invalid Adventure 3-1 pet selection".into());
+        }
+        let mut state = Self::empty_board(seed);
+        state.tank = 3;
+        state.level = 1;
+        state.egg_price = TANK3_FIRST_EGG_PRICE;
+        state.invasion = Some(Invasion1_2::new_balrog());
+        state.pets = pets.to_vec();
+        for pet in pets {
+            match pet {
+                PetKind::Stinky => {
+                    state.stinky = Some(state.spawn_stinky(StinkyOrigin::StageStart))
+                }
+                PetKind::Niko => {
+                    let owner_id = state.id();
+                    state.niko = Some(NikoState::spawn_tank3(owner_id, &mut |upper| {
+                        state.rand_range(upper)
+                    }));
+                }
+                PetKind::Itchy => state.spawn_fish_pet(FishPetKind::Itchy),
+                PetKind::Prego => state.spawn_fish_pet(FishPetKind::Prego),
+                PetKind::Zorf => state.spawn_fish_pet(FishPetKind::Zorf),
+                PetKind::Clyde => {
+                    let id = state.id();
+                    let mut rng_state = state.rng_state;
+                    state.clyde = Some(ClydeState::spawn_tank2(id, &mut |upper| {
+                        Self::advance_rng(&mut rng_state) % upper
+                    }));
+                    state.rng_state = rng_state;
+                }
+                PetKind::Vert => state.spawn_fish_pet(FishPetKind::Vert),
+                PetKind::Rufus => {
+                    let id = state.id();
+                    let mut rng_state = state.rng_state;
+                    state.rufus = Some(RufusState::spawn_tank2(id, &mut |upper| {
+                        Self::advance_rng(&mut rng_state) % upper
+                    }));
+                    state.rng_state = rng_state;
+                }
+                PetKind::Meryl => state.spawn_fish_pet(FishPetKind::Meryl),
+                PetKind::Wadsworth => state.spawn_fish_pet(FishPetKind::Wadsworth),
+                PetKind::Seymour => unreachable!("roster checked before construction"),
             }
         }
         state.spawn_starter_guppies(false);
@@ -1331,6 +1477,25 @@ impl AdventureState {
         self.fish.iter().any(|fish| fish.alive)
             || self.oscars.iter().any(|oscar| oscar.alive)
             || self.starcatchers.iter().any(|actor| actor.alive)
+            || self.grubbers.iter().any(|actor| actor.alive)
+    }
+
+    /// Rendering tests the fish's current double position against the
+    /// Wadsworth coordinates published from the pet's prior widget pose.
+    pub fn hides_fish_at(&self, x: f32, y: f32) -> bool {
+        self.fish_pets.iter().any(|pet| {
+            pet.kind == FishPetKind::Wadsworth
+                && pet.ward_active
+                && (f64::from(x) - f64::from(pet.published_x)).abs() < 8.0
+                && (f64::from(y) - f64::from(pet.published_y)).abs() < 8.0
+        })
+    }
+
+    fn ward_snapshot(&self) -> Option<(i32, i32)> {
+        self.fish_pets
+            .iter()
+            .find(|pet| pet.kind == FishPetKind::Wadsworth && pet.ward_active)
+            .map(|pet| (pet.published_x, pet.published_y))
     }
 
     /// Board::Buy counts coins already flying to the money display as
@@ -1344,17 +1509,23 @@ impl AdventureState {
             .fold(self.balance, |funds, coin| {
                 funds.saturating_add(coin.kind.value())
             });
-        self.pearls
+        let pearl_funds = self
+            .pearls
             .iter()
             .filter(|pearl| pearl.phase == PearlPhase::Collecting)
-            .fold(coin_funds, |funds, _| funds.saturating_add(PEARL_VALUE))
+            .fold(coin_funds, |funds, _| funds.saturating_add(PEARL_VALUE));
+        self.larvae
+            .iter()
+            .filter(|larva| larva.picked_up)
+            .fold(pearl_funds, |funds, _| funds.saturating_add(LARVA_VALUE))
     }
 
     /// Validate durable board relationships before accepting a project save.
     /// The profile and screen phase are checked by AdventureSession separately.
     pub fn validate(&self) -> Result<(), String> {
         if !((self.tank == 1 && (1..=5).contains(&self.level))
-            || (self.tank == 2 && (1..=5).contains(&self.level)))
+            || (self.tank == 2 && (1..=5).contains(&self.level))
+            || (self.tank, self.level) == (3, 1))
             || self.next_id == 0
             || self.next_id == u64::MAX
             || self.rng_state == 0
@@ -1364,10 +1535,8 @@ impl AdventureState {
             || !(1..=9).contains(&self.upgrades.quantity)
             || (!self.upgrades.quality_unlocked && self.upgrades.quality > 0)
             || (!self.upgrades.quantity_unlocked && self.upgrades.quantity > 1)
-            || (self.tank == 1 && self.food.len() > usize::from(self.upgrades.quantity))
-            || (self.tank == 2
-                && self.food.iter().filter(|food| !food.free_from_zorf).count()
-                    > usize::from(self.upgrades.quantity))
+            || self.food.iter().filter(|food| !food.free_from_zorf).count()
+                > usize::from(self.upgrades.quantity)
             || self.food.iter().any(|food| {
                 food.quality > 3
                     || food.direction > 2
@@ -1377,7 +1546,7 @@ impl AdventureState {
                     || !food.vx.is_finite()
                     || !food.vy.is_finite()
                     || (food.free_from_zorf
-                        && (self.tank != 2
+                        && (!(2..=3).contains(&self.tank)
                             || !self.pets.contains(&PetKind::Zorf)
                             || food.quality != 1
                             || food.direction == 0))
@@ -1387,26 +1556,36 @@ impl AdventureState {
             || !(2..=12).contains(&self.weapon_strength)
             || (!self.weapon_unlocked && self.weapon_strength > 2)
             || self.punch_sound_cooldown > 11
-            || self.pets.contains(&PetKind::Wadsworth)
+            || self.pets.contains(&PetKind::Seymour)
+            || (self.tank != 3 && self.pets.contains(&PetKind::Wadsworth))
+            || (self.tank != 3
+                && (self.grubber_unlocked
+                    || !self.grubbers.is_empty()
+                    || !self.dead_grubbers.is_empty()
+                    || !self.larvae.is_empty()))
             || (self.tank != 2 || !(2..=5).contains(&self.level))
                 && (self.starcatcher_unlocked
                     || !self.starcatchers.is_empty()
-                    || !self.dead_starcatchers.is_empty()
-                    || self.clyde.is_some())
+                    || !self.dead_starcatchers.is_empty())
+            || !((self.tank == 2 && (2..=5).contains(&self.level))
+                || (self.tank, self.level) == (3, 1))
+                && self.clyde.is_some()
             || self.coins.iter().any(|coin| {
                 (coin.penta_rising && coin.kind != CoinKind::DiamondPenta)
                     || (coin.kind == CoinKind::DiamondPenta
                         && !(self.tank == 2 && (2..=5).contains(&self.level)))
             })
             || (self.potion_armed && !self.potion_unlocked)
-            || (self.tank == 1
+            || (self.tank != 2
                 && (self.potion_unlocked
                     || self.potion_armed
                     || self.food.iter().any(|food| food.quality == 3)))
         {
             return Err("invalid Adventure board counters or upgrades".into());
         }
-        let expected_price = if self.tank == 2 {
+        let expected_price = if self.tank == 3 {
+            TANK3_FIRST_EGG_PRICE
+        } else if self.tank == 2 {
             match self.level {
                 1 => TANK2_FIRST_EGG_PRICE,
                 2 => TANK2_SECOND_EGG_PRICE,
@@ -1429,6 +1608,65 @@ impl AdventureState {
             return Err("wrong egg price for Adventure stage".into());
         }
         match (self.tank, self.level) {
+            (3, 1)
+                if self
+                    .invasion
+                    .as_ref()
+                    .is_none_or(|wave| wave.plan != WavePlan::Fixed(SylvesterKind::Balrog))
+                    || self.pets.len() > 3
+                    || self.pets.windows(2).any(|pair| {
+                        let canonical = [
+                            PetKind::Stinky,
+                            PetKind::Niko,
+                            PetKind::Itchy,
+                            PetKind::Prego,
+                            PetKind::Zorf,
+                            PetKind::Clyde,
+                            PetKind::Vert,
+                            PetKind::Rufus,
+                            PetKind::Meryl,
+                            PetKind::Wadsworth,
+                        ];
+                        canonical.iter().position(|pet| *pet == pair[0])
+                            >= canonical.iter().position(|pet| *pet == pair[1])
+                    })
+                    || self.stinky.is_some() != self.pets.contains(&PetKind::Stinky)
+                    || self.niko.is_some() != self.pets.contains(&PetKind::Niko)
+                    || self.clyde.is_some() != self.pets.contains(&PetKind::Clyde)
+                    || self.rufus.is_some() != self.pets.contains(&PetKind::Rufus)
+                    || self
+                        .fish_pets
+                        .iter()
+                        .map(|pet| pet.kind)
+                        .collect::<Vec<_>>()
+                        != self
+                            .pets
+                            .iter()
+                            .filter_map(|pet| match pet {
+                                PetKind::Itchy => Some(FishPetKind::Itchy),
+                                PetKind::Prego => Some(FishPetKind::Prego),
+                                PetKind::Zorf => Some(FishPetKind::Zorf),
+                                PetKind::Vert => Some(FishPetKind::Vert),
+                                PetKind::Meryl => Some(FishPetKind::Meryl),
+                                PetKind::Wadsworth => Some(FishPetKind::Wadsworth),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                    || self.oscar_unlocked
+                    || self.starcatcher_unlocked
+                    || self.weapon_unlocked
+                    || self.potion_unlocked
+                    || (self.egg_unlocked && !self.grubber_unlocked)
+                    || (self.grubber_unlocked != self.upgrades.quality_unlocked)
+                    || (self.grubber_unlocked != self.upgrades.quantity_unlocked)
+                    || self.weapon_strength != 2
+                    || !self.oscars.is_empty()
+                    || !self.dead_oscars.is_empty()
+                    || !self.starcatchers.is_empty()
+                    || !self.dead_starcatchers.is_empty() =>
+            {
+                return Err("third-tank roster or Grubber gates disagree".into());
+            }
             (1, 1)
                 if !self.pets.is_empty()
                     || self.stinky.is_some()
@@ -1663,7 +1901,9 @@ impl AdventureState {
         {
             return Err("carnivore and weapon unlock order disagrees".into());
         }
-        if (!self.notes.is_empty() && (self.tank, self.level) != (2, 5))
+        if !(self.notes.is_empty()
+            || (self.tank, self.level) == (2, 5)
+            || (self.tank, self.level) == (3, 1) && self.pets.contains(&PetKind::Meryl))
             || self
                 .notes
                 .iter()
@@ -1686,8 +1926,10 @@ impl AdventureState {
         if let Some(rufus) = &self.rufus {
             rufus.validate()?;
         }
-        if !(self.tank == 2 && (4..=5).contains(&self.level))
-            && (!self.missiles.is_empty() || self.rufus.is_some())
+        if !(self.missiles.is_empty() || self.tank == 2 && (4..=5).contains(&self.level))
+            || (!(self.tank == 2 && (4..=5).contains(&self.level))
+                && (self.tank, self.level) != (3, 1)
+                && self.rufus.is_some())
         {
             return Err("Destructor missiles or Rufus outside Adventure 2-4".into());
         }
@@ -1714,6 +1956,15 @@ impl AdventureState {
         }
         for corpse in &self.dead_starcatchers {
             corpse.validate()?;
+        }
+        for actor in &self.grubbers {
+            actor.validate()?;
+        }
+        for corpse in &self.dead_grubbers {
+            corpse.validate()?;
+        }
+        for larva in &self.larvae {
+            larva.validate()?;
         }
         if let Some(wave) = &self.invasion {
             wave.validate()?;
@@ -1742,6 +1993,9 @@ impl AdventureState {
                 || (self.tank == 2
                     && (niko.anchor_x, niko.anchor_y)
                         != (crate::niko::NIKO_TANK2_X, crate::niko::NIKO_TANK2_Y))
+                || (self.tank == 3
+                    && (niko.anchor_x, niko.anchor_y)
+                        != (crate::niko::NIKO_TANK3_X, crate::niko::NIKO_TANK3_Y))
             {
                 return Err("Niko anchor disagrees with tank".into());
             }
@@ -1791,6 +2045,15 @@ impl AdventureState {
         for corpse in &self.dead_starcatchers {
             register(corpse.id)?;
         }
+        for actor in &self.grubbers {
+            register(actor.id)?;
+        }
+        for corpse in &self.dead_grubbers {
+            register(corpse.id)?;
+        }
+        for larva in &self.larvae {
+            register(larva.id)?;
+        }
         for pet in &self.fish_pets {
             register(pet.id)?;
         }
@@ -1834,6 +2097,10 @@ impl AdventureState {
                 .any(|oscar| oscar.id == id && oscar.alive)
             || self
                 .starcatchers
+                .iter()
+                .any(|actor| actor.id == id && actor.alive)
+            || self
+                .grubbers
                 .iter()
                 .any(|actor| actor.id == id && actor.alive)
     }
@@ -1924,6 +2191,17 @@ impl AdventureState {
                 widget_y: oscar.widget_y,
             });
         }
+        if let Some(actor) = self
+            .grubbers
+            .iter()
+            .find(|actor| actor.id == target_id && actor.alive)
+        {
+            return Some(MissilePreyView {
+                id: target_id,
+                widget_x: actor.widget_x,
+                widget_y: actor.widget_y,
+            });
+        }
         self.starcatchers
             .iter()
             .find(|actor| actor.id == target_id && actor.alive)
@@ -1975,6 +2253,16 @@ impl AdventureState {
                     events.push(Event::StarcatcherDied {
                         tick: self.tick,
                         starcatcher_id: target_id,
+                    });
+                } else if let Some(pos) =
+                    self.grubbers.iter().position(|actor| actor.id == target_id)
+                {
+                    self.dead_grubbers
+                        .push(DeadGrubber::from_impact(&self.grubbers[pos]));
+                    self.grubbers.remove(pos);
+                    events.push(Event::GrubberDied {
+                        tick: self.tick,
+                        grubber_id: target_id,
                     });
                 }
                 self.remove_missile(missile_id, events);
@@ -2220,6 +2508,34 @@ impl AdventureState {
                     });
                 }
             }
+            Action::BuyGrubber => {
+                if (self.tank, self.level) != (3, 1) || !self.grubber_unlocked {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::Locked,
+                    });
+                } else if self.available_funds() < GRUBBER_PRICE {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::InsufficientFunds,
+                    });
+                } else {
+                    self.balance -= GRUBBER_PRICE;
+                    let grubber_id = self.id();
+                    let mut rng_state = self.rng_state;
+                    let actor = GrubberState::spawn_bought(grubber_id, &mut |upper| {
+                        Self::advance_rng(&mut rng_state) % upper
+                    });
+                    self.rng_state = rng_state;
+                    self.grubbers.push(actor);
+                    self.egg_unlocked = true;
+                    events.push(Event::GrubberBought {
+                        tick: self.tick,
+                        grubber_id,
+                        balance: self.balance,
+                    });
+                }
+            }
             Action::BuyWeapon => {
                 if (self.tank != 1 && !(self.tank == 2 && (2..=5).contains(&self.level)))
                     || !self.weapon_unlocked
@@ -2274,6 +2590,28 @@ impl AdventureState {
     fn apply_world_click(&mut self, x: f32, y: f32, events: &mut Vec<Event>) {
         let world_x = x as i32;
         let world_y = y as i32;
+        // Larva is a separate raised widget rather than an ordinary Coin.
+        // Its exact overlap priority against other source widgets is unknown;
+        // this Board adaptation gives a visible larva first input, including
+        // one already flying to the HUD. A repeated hit still reaches it.
+        if let Some(larva) = self
+            .larvae
+            .iter_mut()
+            .rev()
+            .find(|larva| larva.contains_world_point(world_x, world_y))
+        {
+            events.push(Event::LarvaPickupSound {
+                tick: self.tick,
+                larva_id: larva.id,
+            });
+            if larva.try_pick_up() {
+                events.push(Event::LarvaCollectionStarted {
+                    tick: self.tick,
+                    larva_id: larva.id,
+                });
+            }
+            return;
+        }
         // Niko pearls are sorted above ordinary coins. A collectible's mouse
         // handler only forwards this click to the Board when its WORLD point
         // overlaps an alien widget; PB05 Coin vtable +0xd8 confirms the
@@ -2682,10 +3020,15 @@ impl AdventureState {
         self.update_dead_fish();
         self.dead_oscars.retain_mut(|corpse| !corpse.tick());
         self.dead_starcatchers.retain_mut(|corpse| !corpse.tick());
+        self.dead_grubbers.retain_mut(|corpse| !corpse.tick());
         self.update_starcatchers(&mut events);
         self.update_food(&mut events);
         self.update_fish(&mut events);
         self.update_oscars(&mut events);
+        // Larva widgets precede later animal widgets in W1 Board sorting;
+        // a newly emitted Larva begins its own updates on the next tick.
+        self.update_larvae(&mut events);
+        self.update_grubbers(&mut events);
         self.update_invasion_objects(&mut events);
         self.update_missiles(&mut events);
         self.update_stinky(&mut events);
@@ -2791,6 +3134,7 @@ impl AdventureState {
 
     fn update_fish(&mut self, events: &mut Vec<Event>) {
         let meryl_song = self.fish_pets.iter().any(FishPetState::song_active);
+        let ward = self.ward_snapshot();
         let alien_live = self
             .invasion
             .as_ref()
@@ -2806,6 +3150,19 @@ impl AdventureState {
             } else {
                 None
             };
+            if let Some(ward_position) = ward
+                && matches!(self.fish[index].size, FishSize::Small | FishSize::Medium)
+            {
+                self.update_warded_fish(
+                    index,
+                    ward_position,
+                    next_state,
+                    alien_live,
+                    meryl_song,
+                    events,
+                );
+                continue;
+            }
             let coin_drop;
             let mut eaten_food = None;
             let mut grew = None;
@@ -3057,6 +3414,11 @@ impl AdventureState {
                             self.starcatcher_unlocked = true;
                         }
                     }
+                    if self.tank == 3 {
+                        self.upgrades.quality_unlocked = true;
+                        self.upgrades.quantity_unlocked = true;
+                        self.grubber_unlocked = true;
+                    }
                 }
                 events.push(Event::FishGrew {
                     tick: self.tick,
@@ -3091,6 +3453,96 @@ impl AdventureState {
                     });
                 }
             }
+        }
+    }
+
+    fn update_warded_fish(
+        &mut self,
+        index: usize,
+        ward_position: (i32, i32),
+        next_state: Option<u8>,
+        alien_live: bool,
+        meryl_song: bool,
+        events: &mut Vec<Event>,
+    ) {
+        let fish = &mut self.fish[index];
+        let (ward_x, ward_y) = ward_position;
+        // DropCoin runs before Move and reads the previous integer widget
+        // position, even when Wadsworth moves the doubles during this update.
+        let old_widget_x = fish.x.trunc();
+        let old_widget_y = fish.y.trunc();
+        fish.cannot_be_eaten_ticks = fish.cannot_be_eaten_ticks.saturating_sub(1);
+        fish.vx = if fish.vx < 0.0 { -0.5 } else { 0.5 };
+        if fish.bought_timer == 0 {
+            fish.vy = 0.0;
+        }
+        for (position, goal, far_step) in [(&mut fish.x, ward_x, 5.0), (&mut fish.y, ward_y, 4.0)] {
+            let distance = *position - goal as f32;
+            if distance > 50.0 {
+                *position -= far_step;
+            } else if distance < -50.0 {
+                *position += far_step;
+            } else if distance > 5.0 {
+                *position -= 3.0;
+            } else if distance < -5.0 {
+                *position += 3.0;
+            }
+        }
+        fish.special_timer = fish.special_timer.saturating_add(1);
+        fish.movement_timer += 1;
+        if fish.movement_timer > 20 {
+            fish.movement_timer = 0;
+            if let Some(state) = next_state {
+                fish.movement_state = state;
+            }
+        }
+        let coin_drop = if alien_live {
+            None
+        } else {
+            Self::coin_due(fish, meryl_song)
+                .map(|(id, _, _, kind)| (id, old_widget_x + 5.0, old_widget_y + 10.0, kind))
+        };
+        if fish.bought_timer > 0 {
+            fish.bought_timer -= 1;
+            fish.vy *= 0.9;
+        }
+        // Fish::Update clamps before its final integration, then eases the
+        // horizontal velocity near an edge. The final Move may overshoot.
+        fish.x = fish.x.clamp(10.0, 540.0);
+        fish.y = fish.y.min(370.0);
+        if fish.bought_timer == 0 || fish.vy <= 0.0 {
+            fish.y = fish.y.max(95.0);
+        }
+        if fish.x > 535.0 && fish.vx > 0.1 {
+            fish.vx -= 0.1;
+        }
+        if fish.x < 15.0 && fish.vx < -0.1 {
+            fish.vx += 0.1;
+        }
+        Self::advance_animation(fish);
+        fish.facing_right = fish.vx >= 0.0;
+        fish.x += fish.vx / fish.speed_mod;
+        fish.y += fish.vy / fish.speed_mod;
+        fish.hunger_visible = fish.hunger < 301;
+        if let Some((fish_id, x, y, kind)) = coin_drop {
+            let coin_id = self.id();
+            self.coins.push(Coin {
+                id: coin_id,
+                x,
+                y,
+                kind,
+                frame: 0,
+                collecting: false,
+                bottom_ticks: 0,
+                fade_ticks: 0,
+                penta_rising: false,
+            });
+            events.push(Event::CoinDropped {
+                tick: self.tick,
+                coin_id,
+                fish_id,
+                kind,
+            });
         }
     }
 
@@ -3329,6 +3781,7 @@ impl AdventureState {
                     self.fish.retain(|fish| fish.id != prey_id);
                     self.oscars.retain(|oscar| oscar.id != prey_id);
                     self.starcatchers.retain(|actor| actor.id != prey_id);
+                    self.grubbers.retain(|actor| actor.id != prey_id);
                     detached_target |= self.detach_missile_target(prey_id, events);
                 }
                 InvasionEvent::GusAteFood { food_id, .. } => {
@@ -3516,7 +3969,109 @@ impl AdventureState {
         }
     }
 
+    fn update_grubbers(&mut self, events: &mut Vec<Event>) {
+        let alien_present = self
+            .invasion
+            .as_ref()
+            .is_some_and(Invasion1_2::has_live_alien);
+        let mut index = 0;
+        while index < self.grubbers.len() {
+            let prey = self
+                .fish
+                .iter()
+                .map(|fish| GrubberPrey {
+                    id: fish.id,
+                    widget_x: fish.x as i32,
+                    widget_y: fish.y as i32,
+                    // Wadsworth wards against enemy acquisition, not this diet.
+                    eligible: fish.alive
+                        && fish.size == FishSize::Small
+                        && fish.cannot_be_eaten_ticks == 0,
+                })
+                .collect::<Vec<_>>();
+            let mut rng_state = self.rng_state;
+            let update = self.grubbers[index].tick(&prey, alien_present, &mut |upper| {
+                Self::advance_rng(&mut rng_state) % upper
+            });
+            self.rng_state = rng_state;
+            let grubber_id = self.grubbers[index].id;
+            if let Some(guppy_id) = update.eaten_prey {
+                self.fish.retain(|fish| fish.id != guppy_id);
+                events.push(Event::GrubberAteGuppy {
+                    tick: self.tick,
+                    grubber_id,
+                    guppy_id,
+                });
+                if self.detach_missile_target(guppy_id, events) {
+                    self.finish_destructor_battle(events);
+                }
+            }
+            for (x, y) in update.bubbles {
+                events.push(Event::GrubberBubble {
+                    tick: self.tick,
+                    grubber_id,
+                    x,
+                    y,
+                });
+            }
+            // The actor may die in its hunger hook yet still produce on its
+            // update tail. Construct now, before the next actor draws RNG.
+            if let Some((x, y)) = update.larva_at {
+                let larva_id = self.id();
+                let larva = LarvaState::spawn(larva_id, x, y, &mut || self.rand());
+                self.larvae.push(larva);
+                events.push(Event::LarvaDropped {
+                    tick: self.tick,
+                    grubber_id,
+                    larva_id,
+                });
+            }
+            if update.died {
+                self.dead_grubbers
+                    .push(DeadGrubber::from_live(&self.grubbers[index]));
+                events.push(Event::GrubberDied {
+                    tick: self.tick,
+                    grubber_id,
+                });
+                if self.detach_missile_target(grubber_id, events) {
+                    self.finish_destructor_battle(events);
+                }
+                self.grubbers.remove(index);
+            } else {
+                index += 1;
+            }
+        }
+    }
+
+    fn update_larvae(&mut self, events: &mut Vec<Event>) {
+        let mut index = 0;
+        while index < self.larvae.len() {
+            let larva_id = self.larvae[index].id;
+            match self.larvae[index].tick() {
+                LarvaUpdate::Alive => index += 1,
+                LarvaUpdate::Expired => {
+                    self.larvae.remove(index);
+                    events.push(Event::LarvaExpired {
+                        tick: self.tick,
+                        larva_id,
+                    });
+                }
+                LarvaUpdate::Credited => {
+                    self.larvae.remove(index);
+                    self.balance = (self.balance + LARVA_VALUE).min(9_999_999);
+                    events.push(Event::LarvaCredited {
+                        tick: self.tick,
+                        larva_id,
+                        amount: LARVA_VALUE,
+                        balance: self.balance,
+                    });
+                }
+            }
+        }
+    }
+
     fn update_invasion_objects(&mut self, events: &mut Vec<Event>) {
+        let warded = self.ward_snapshot().is_some();
         let actor_ids = self.invasion.as_ref().map_or_else(Vec::new, |wave| {
             wave.actors.iter().map(|actor| actor.id).collect()
         });
@@ -3531,7 +4086,8 @@ impl AdventureState {
                     widget_y: fish.y as i32,
                     width: 80,
                     height: 80,
-                    eligible: fish.cannot_be_eaten_ticks == 0,
+                    eligible: fish.cannot_be_eaten_ticks == 0
+                        && !(warded && matches!(fish.size, FishSize::Small | FishSize::Medium)),
                 })
                 .collect::<Vec<_>>();
             prey.extend(
@@ -3558,6 +4114,19 @@ impl AdventureState {
                         width: 80,
                         height: 80,
                         eligible: actor.cannot_be_eaten_ticks == 0,
+                    }),
+            );
+            prey.extend(
+                self.grubbers
+                    .iter()
+                    .filter(|actor| actor.alive)
+                    .map(|actor| PreyView {
+                        id: actor.id,
+                        widget_x: actor.widget_x,
+                        widget_y: actor.widget_y,
+                        width: 80,
+                        height: 80,
+                        eligible: true,
                     }),
             );
             let food = self
@@ -3662,7 +4231,22 @@ impl AdventureState {
             let guppy_count = self.fish.iter().filter(|fish| fish.alive).count();
             let pet_id = self.fish_pets[index].id;
             let mut rng_state = self.rng_state;
-            let update = if self.fish_pets[index].kind == FishPetKind::Zorf {
+            let update = if self.fish_pets[index].kind == FishPetKind::Wadsworth {
+                let fish = self
+                    .fish
+                    .iter()
+                    .filter(|fish| fish.alive)
+                    .map(|fish| WardFishView {
+                        widget_x: fish.x as i32,
+                        widget_y: fish.y as i32,
+                        small_or_medium: matches!(fish.size, FishSize::Small | FishSize::Medium),
+                    })
+                    .collect::<Vec<_>>();
+                let threat_present = !aliens.is_empty() || !self.missiles.is_empty();
+                self.fish_pets[index].tick_wadsworth(threat_present, &fish, &mut |upper| {
+                    Self::advance_rng(&mut rng_state) % upper
+                })
+            } else if self.fish_pets[index].kind == FishPetKind::Zorf {
                 let hungry = self
                     .fish
                     .iter()
@@ -3682,6 +4266,20 @@ impl AdventureState {
                 })
             };
             self.rng_state = rng_state;
+            if let Some(active) = update.ward_transition {
+                events.push(Event::WadsworthProtectionChanged {
+                    tick: self.tick,
+                    pet_id,
+                    active,
+                });
+            }
+            if let Some(positions) = update.ward_bubbles {
+                events.push(Event::WadsworthBubbles {
+                    tick: self.tick,
+                    pet_id,
+                    positions,
+                });
+            }
             if let Some(alien_id) = update.damaged_alien
                 && let Some(actor) = self
                     .invasion
@@ -4068,6 +4666,7 @@ impl AdventureState {
             (1, 1) => FIRST_STAGE_COIN_BOTTOM_TICKS,
             (1, 2..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             (2, 1..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
+            (3, 1) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             _ => unreachable!("coin lifetime for this Adventure stage is not implemented"),
         };
         let mut credited = Vec::new();
@@ -4161,6 +4760,367 @@ impl AdventureState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tank3_large_growth_opens_grubber_then_purchase_opens_egg() {
+        let mut board = AdventureState::new_tank3_first_stage(0x3101, &[]).unwrap();
+        assert_eq!((board.balance, board.egg_price), (200, 1000));
+        assert_eq!(board.invasion.as_ref().unwrap().countdown, 3000);
+        assert!(board.apply(Action::BuyGrubber).iter().any(|event| matches!(
+            event,
+            Event::Rejected {
+                reason: Rejection::Locked,
+                ..
+            }
+        )));
+        let fish = &mut board.fish[0];
+        fish.size = FishSize::Medium;
+        fish.x = 100.0;
+        fish.y = 100.0;
+        fish.hunger = 400;
+        fish.food_ate = fish.food_needed_to_grow - 1;
+        board.food.push(Food {
+            id: 100,
+            x: 120.0,
+            y: 120.0,
+            frame: 0,
+            ineligible_ticks: 0,
+            removal_ticks: 0,
+            quality: 0,
+            direction: 0,
+            vx: 0.0,
+            vy: 0.0,
+            animation_period: 3,
+            free_from_zorf: false,
+        });
+        let mut events = Vec::new();
+        board.update_fish(&mut events);
+        assert_eq!(board.fish[0].size, FishSize::Large);
+        assert!(
+            board.grubber_unlocked
+                && board.upgrades.quality_unlocked
+                && board.upgrades.quantity_unlocked
+        );
+        assert!(!board.egg_unlocked);
+        board.balance = 750;
+        assert!(
+            board
+                .apply(Action::BuyGrubber)
+                .iter()
+                .any(|event| matches!(event, Event::GrubberBought { balance: 0, .. }))
+        );
+        assert!(board.egg_unlocked);
+        assert_eq!(
+            (board.grubbers[0].widget_y, board.grubbers[0].y),
+            (65, 65.0)
+        );
+    }
+
+    #[test]
+    fn every_available_single_pet_roster_constructs_a_valid_third_tank_board() {
+        let unlocked = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+            PetKind::Clyde,
+            PetKind::Vert,
+            PetKind::Rufus,
+            PetKind::Meryl,
+            PetKind::Wadsworth,
+        ];
+        for (index, pet) in unlocked.into_iter().enumerate() {
+            let board = AdventureState::new_tank3_first_stage(0x3100 + index as u64, &[pet])
+                .expect("unlocked single pet belongs in Tank 3-1");
+            board
+                .validate()
+                .unwrap_or_else(|error| panic!("{pet:?}: {error}"));
+        }
+        assert!(AdventureState::new_tank3_first_stage(7, &[PetKind::Seymour]).is_err());
+    }
+
+    #[test]
+    fn two_grubbers_commit_one_small_prey_before_next_snapshot() {
+        let mut board = AdventureState::new_tank3_first_stage(0x3102, &[]).unwrap();
+        board.fish.clear();
+        board.grubber_unlocked = true;
+        board.upgrades.quality_unlocked = true;
+        board.upgrades.quantity_unlocked = true;
+        board.balance = 1500;
+        board.apply(Action::BuyGrubber);
+        board.apply(Action::BuyGrubber);
+        assert_eq!(board.grubbers.len(), 2);
+        for actor in &mut board.grubbers {
+            actor.x = 100.0;
+            actor.y = 100.0;
+            actor.widget_x = 100;
+            actor.widget_y = 100;
+            actor.hunger = 800;
+            actor.bought_timer = 0;
+        }
+        let mut fish = board.make_fish(100.0, 100.0, false, false);
+        fish.size = FishSize::Small;
+        fish.cannot_be_eaten_ticks = 0;
+        let fish_id = fish.id;
+        board.fish.push(fish);
+        let mut events = Vec::new();
+        board.update_grubbers(&mut events);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event,
+                    Event::GrubberAteGuppy { guppy_id, .. } if *guppy_id == fish_id
+                ))
+                .count(),
+            1
+        );
+        assert!(board.fish.is_empty());
+        assert!(board.dead_fish.is_empty());
+    }
+
+    #[test]
+    fn due_grubber_produces_on_starvation_tail_and_board_removes_live_actor() {
+        let mut board = AdventureState::new_tank3_first_stage(0x3103, &[]).unwrap();
+        board.grubber_unlocked = true;
+        board.upgrades.quality_unlocked = true;
+        board.upgrades.quantity_unlocked = true;
+        board.balance = 750;
+        board.apply(Action::BuyGrubber);
+        let actor = &mut board.grubbers[0];
+        actor.x = 100.0;
+        actor.y = 300.0;
+        actor.widget_x = 100;
+        actor.widget_y = 300;
+        actor.bought_timer = 0;
+        actor.hunger = 1;
+        actor.coin_timer = actor.coin_threshold - 1;
+        let mut events = Vec::new();
+        board.update_grubbers(&mut events);
+        assert!(board.grubbers.is_empty());
+        assert_eq!(
+            (
+                board.dead_grubbers[0].widget_x,
+                board.dead_grubbers[0].widget_y
+            ),
+            (100, 300)
+        );
+        assert_eq!(
+            (board.larvae[0].widget_x, board.larvae[0].widget_y),
+            (104, 290)
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, Event::GrubberDied { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, Event::LarvaDropped { .. }))
+                .count(),
+            1
+        );
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn claimed_larva_funds_and_arrival_credit_only_once() {
+        let mut board = AdventureState::new_tank3_first_stage(0x3104, &[]).unwrap();
+        let larva_id = board.id();
+        let larva = LarvaState::spawn(larva_id, 100, 319, &mut || board.rand());
+        board.larvae.push(larva);
+        let mut events = Vec::new();
+        board.update_larvae(&mut events);
+        // Spawned at Y=319: the first old-position check is already below
+        // the strict 320 visibility boundary.
+        assert!(board.larvae[0].mouse_visible);
+        board.update_larvae(&mut events);
+        assert!(board.larvae[0].mouse_visible);
+        let click = board.apply(Action::Click { x: 110.0, y: 320.0 });
+        assert!(click.iter().any(|event| matches!(event,
+            Event::LarvaCollectionStarted { larva_id: id, .. } if *id == larva_id
+        )));
+        board.balance = 900;
+        assert_eq!(board.available_funds(), 1050);
+        board.grubber_unlocked = true;
+        board.upgrades.quality_unlocked = true;
+        board.upgrades.quantity_unlocked = true;
+        board.egg_unlocked = true;
+        board.apply(Action::BuyEgg);
+        assert_eq!(board.balance, -100);
+        let mut credits = 0;
+        for _ in 0..100 {
+            board.update_larvae(&mut events);
+            credits = events
+                .iter()
+                .filter(|event| {
+                    matches!(event,
+                        Event::LarvaCredited { larva_id: id, .. } if *id == larva_id
+                    )
+                })
+                .count();
+            if credits > 0 {
+                break;
+            }
+        }
+        assert_eq!(credits, 1);
+        assert_eq!(board.balance, 50);
+        assert!(board.larvae.is_empty());
+        board.update_larvae(&mut events);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, Event::LarvaCredited { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn picked_visible_larva_absorbs_repeat_click_without_another_transaction() {
+        // Larva::MouseDown handles repeated hits while its widget is still
+        // visible during HUD flight; neither food nor combat receives them.
+        let mut board = AdventureState::new_tank3_first_stage(0x3106, &[]).unwrap();
+        let larva_id = board.id();
+        let mut larva = LarvaState::spawn(larva_id, 100, 200, &mut || board.rand());
+        larva.mouse_visible = true;
+        board.larvae.push(larva);
+        let initial_balance = board.balance;
+        let first = board.apply(Action::Click { x: 110.0, y: 210.0 });
+        let second = board.apply(Action::Click { x: 110.0, y: 210.0 });
+        assert_eq!(
+            first
+                .iter()
+                .filter(|event| matches!(event,
+                    Event::LarvaCollectionStarted { larva_id: id, .. } if *id == larva_id
+                ))
+                .count(),
+            1
+        );
+        assert!(!second.iter().any(|event| matches!(
+            event,
+            Event::LarvaCollectionStarted { .. }
+                | Event::FoodDropped { .. }
+                | Event::Invasion {
+                    event: InvasionEvent::LaserFired { .. },
+                    ..
+                }
+        )));
+        assert_eq!(
+            first
+                .iter()
+                .chain(second.iter())
+                .filter(|event| matches!(event,
+                    Event::LarvaPickupSound { larva_id: id, .. } if *id == larva_id
+                ))
+                .count(),
+            2
+        );
+        assert_eq!(board.balance, initial_balance);
+        assert!(board.food.is_empty());
+        assert!(board.larvae[0].picked_up);
+    }
+
+    #[test]
+    fn dead_guppy_record_cannot_restart_wadsworth_active_clock() {
+        // Fish death retains a Rust record until corpse removal. The source
+        // ward scans only members still in its live fish widget list.
+        let mut board =
+            AdventureState::new_tank3_first_stage(0x3107, &[PetKind::Wadsworth]).unwrap();
+        let pet = &mut board.fish_pets[0];
+        pet.x = 100.0;
+        pet.y = 100.0;
+        pet.widget_x = 100;
+        pet.widget_y = 100;
+        pet.published_x = 100;
+        pet.published_y = 100;
+        pet.ward_active = true;
+        pet.ward_timer = 0;
+        board.fish[0].x = 100.0;
+        board.fish[0].y = 100.0;
+        board.fish[1].x = 300.0;
+        board.fish[1].y = 300.0;
+        board.fish[1].alive = false;
+        let live_id = board.fish[0].id;
+        let missile_id = board.id();
+        board
+            .missiles
+            .push(ClassicMissile::launch(missile_id, live_id, 200, 200, 0));
+        board.update_fish_pets(&mut Vec::new());
+        assert!(board.fish_pets[0].ward_active);
+        assert_eq!(board.fish_pets[0].ward_timer, 0);
+    }
+
+    #[test]
+    fn warded_medium_drops_at_old_widget_before_attraction() {
+        // Fish::DropCoin precedes the Wadsworth branch's eventual Move.
+        let mut board =
+            AdventureState::new_tank3_first_stage(0x3108, &[PetKind::Wadsworth]).unwrap();
+        let pet = &mut board.fish_pets[0];
+        pet.ward_active = true;
+        pet.published_x = 100;
+        pet.published_y = 200;
+        let fish = &mut board.fish[0];
+        fish.size = FishSize::Medium;
+        fish.x = 200.0;
+        fish.y = 200.0;
+        fish.bought_timer = 0;
+        fish.coin_timer = fish.coin_threshold - 1;
+        board.update_fish(&mut Vec::new());
+        assert_eq!((board.coins[0].x, board.coins[0].y), (205.0, 210.0));
+        assert!(board.fish[0].x < 200.0);
+    }
+
+    #[test]
+    fn warded_edge_damps_velocity_before_move_and_allows_overshoot() {
+        // W1 Fish::Update (514-533) damps at x>535 and clamps before Move.
+        let mut board =
+            AdventureState::new_tank3_first_stage(0x3109, &[PetKind::Wadsworth]).unwrap();
+        let pet = &mut board.fish_pets[0];
+        pet.ward_active = true;
+        pet.published_x = 540;
+        pet.published_y = 200;
+        let fish = &mut board.fish[0];
+        fish.x = 539.9;
+        fish.y = 200.0;
+        fish.vx = 0.5;
+        fish.speed_mod = 2.0;
+        fish.bought_timer = 0;
+        board.update_fish(&mut Vec::new());
+        assert!((board.fish[0].vx - 0.4).abs() < 0.00001);
+        assert!((board.fish[0].x - 540.1).abs() < 0.0001);
+    }
+
+    #[test]
+    fn ward_hides_only_strict_near_pose_and_freezes_hunger_without_freezing_motion() {
+        let mut board =
+            AdventureState::new_tank3_first_stage(0x3105, &[PetKind::Wadsworth]).unwrap();
+        let pet = board
+            .fish_pets
+            .iter_mut()
+            .find(|pet| pet.kind == FishPetKind::Wadsworth)
+            .unwrap();
+        pet.ward_active = true;
+        pet.ward_timer = 100;
+        pet.published_x = 100;
+        pet.published_y = 100;
+        assert!(board.hides_fish_at(107.9, 92.1));
+        assert!(!board.hides_fish_at(108.0, 100.0));
+        let fish = &mut board.fish[0];
+        fish.size = FishSize::Medium;
+        fish.x = 180.0;
+        fish.y = 180.0;
+        fish.hunger = 301;
+        fish.bought_timer = 0;
+        let before = (fish.x, fish.y);
+        let mut events = Vec::new();
+        board.update_fish(&mut events);
+        assert_eq!(board.fish[0].hunger, 301);
+        assert_ne!((board.fish[0].x, board.fish[0].y), before);
+    }
 
     #[test]
     fn source_first_tank_initial_state_and_purchase_gates() {
