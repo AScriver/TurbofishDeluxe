@@ -37,6 +37,10 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_FOOD",
     "IMAGE_MONEY",
     "IMAGE_MISCITEMS",
+    "IMAGE_SPARKS",
+    "IMAGE_EXPLOSION",
+    "IMAGE_EXPLOSIONSMALL",
+    "IMAGE_EXPLOSIONTINY",
     "IMAGE_EGGPIECES",
     "IMAGE_MENUBTNU",
     "IMAGE_MENUBTNO",
@@ -54,6 +58,7 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SYLV",
     "IMAGE_GUS",
     "IMAGE_DESTRUCTOR",
+    "IMAGE_PSYCHOSQUID",
     "IMAGE_MISSILE",
     "IMAGE_LASERS",
     "IMAGE_WARPHOLE",
@@ -94,6 +99,8 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_GEKKO",
     "IMAGE_SHRAPNEL",
     "IMAGE_SCL_SHRAPNEL",
+    "IMAGE_GUMBO",
+    "IMAGE_SCL_GUMBO",
     "IMAGE_ZZZ",
     "IMAGE_STARCATCHER",
     "IMAGE_SCL_STARCATCHER",
@@ -129,6 +136,8 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_SING",
     "SOUND_BONUSCOLLECT",
     "SOUND_BONUSCOUNT",
+    "SOUND_UNLEASH",
+    "SOUND_ROAR3",
 ];
 
 pub struct Presentation {
@@ -186,6 +195,29 @@ fn death_has_missile_impact(events: &[Event], tick: u64, target_id: u64) -> bool
             } if *impact_tick == tick && *impact_target == target_id
         )
     })
+}
+
+fn healing_warning_after_events(
+    mut until_tick: Option<u64>,
+    events: &[Event],
+    playing: bool,
+) -> Option<u64> {
+    for event in events {
+        match event {
+            Event::Invasion {
+                tick,
+                event: InvasionEvent::PsychosquidHealingHit { .. },
+            } => until_tick = Some(tick.saturating_add(500)),
+            Event::Invasion {
+                event:
+                    InvasionEvent::PsychosquidPhaseChanged { healing: false, .. }
+                    | InvasionEvent::BattleEnded,
+                ..
+            } => until_tick = None,
+            _ => {}
+        }
+    }
+    if playing { until_tick } else { None }
 }
 
 struct RenderedFont {
@@ -345,8 +377,12 @@ impl Presentation {
                     kind: CoinKind::Pearl,
                     ..
                 } => "SOUND_PEARL",
+                Event::CoinCollectionStarted {
+                    kind: CoinKind::ShrapnelBomb,
+                    ..
+                } => "SOUND_POINTS",
                 Event::CoinCredited {
-                    kind: CoinKind::Pearl,
+                    kind: CoinKind::Pearl | CoinKind::ShrapnelBomb,
                     ..
                 } => continue,
                 Event::CoinCredited { .. } => "SOUND_POINTS",
@@ -397,6 +433,8 @@ impl Presentation {
                 Event::MissileImpacted { .. } => "SOUND_DIE",
                 Event::PregoBirth { .. } => "SOUND_BABY",
                 Event::MerylNoteDropped { .. } => "SOUND_SING",
+                Event::ShrapnelBombDropped { .. } => "SOUND_UNLEASH",
+                Event::ShrapnelBombExploded { .. } => "SOUND_EXPLODE",
                 Event::HatchOpened { .. } => "SOUND_HATCH",
                 Event::Invasion { event, .. } => match event {
                     InvasionEvent::WarningStarted(_) => "SOUND_AWOOGA",
@@ -404,6 +442,11 @@ impl Presentation {
                     InvasionEvent::AlienHit { .. } => "SOUND_HIT",
                     InvasionEvent::AlienDefeated { .. } => "SOUND_EXPLOSION1",
                     InvasionEvent::LaserFired { .. } => "SOUND_ZAP",
+                    InvasionEvent::PsychosquidPhaseChanged {
+                        healing: false,
+                        forced: false,
+                        ..
+                    } => "SOUND_ROAR3",
                     _ => continue,
                 },
                 Event::Niko { event, .. } => match event {
@@ -657,21 +700,35 @@ impl Presentation {
                 FishPetKind::Meryl => "IMAGE_MERYL",
                 FishPetKind::Wadsworth => "IMAGE_WADSWORTH",
                 FishPetKind::Seymour => "IMAGE_SEYMOUR",
+                FishPetKind::Shrapnel => "IMAGE_SHRAPNEL",
             };
+            let source = Rect::new(
+                f32::from(pet.sprite_frame()) * 80.0,
+                f32::from(pet.sprite_row(aliens_present)) * 80.0,
+                80.0,
+                80.0,
+            );
             self.sprite(
                 image,
                 pet.widget_x as f32,
                 pet.widget_y as f32,
-                Some(Rect::new(
-                    f32::from(pet.sprite_frame()) * 80.0,
-                    f32::from(pet.sprite_row(aliens_present)) * 80.0,
-                    80.0,
-                    80.0,
-                )),
+                Some(source),
                 pet.facing_right(),
                 1.0,
                 1.0,
             );
+            if pet.kind == FishPetKind::Shrapnel && pet.shrapnel_flash_alpha() > 0 {
+                // W1 uses an additive pass; standard alpha is the present renderer's approximation.
+                self.sprite(
+                    image,
+                    pet.widget_x as f32,
+                    pet.widget_y as f32,
+                    Some(source),
+                    pet.facing_right(),
+                    1.0,
+                    f32::from(pet.shrapnel_flash_alpha()) / 255.0,
+                );
+            }
             if pet.kind == FishPetKind::Wadsworth
                 && !pet.ward_active
                 && (aliens_present || !state.missiles.is_empty())
@@ -814,6 +871,7 @@ impl Presentation {
                         SylvesterKind::Balrog => "IMAGE_BALROG",
                         SylvesterKind::Gus => "IMAGE_GUS",
                         SylvesterKind::Destructor => "IMAGE_DESTRUCTOR",
+                        SylvesterKind::Psychosquid => "IMAGE_PSYCHOSQUID",
                         SylvesterKind::Weak | SylvesterKind::Strong => "IMAGE_SYLV",
                     };
                     // Gus's eating row uses the velocity facing even when a
@@ -825,6 +883,7 @@ impl Presentation {
                     };
                     self.sprite(alien_image, x, y, Some(source), facing_right, scale, 1.0);
                     if alien.kind != SylvesterKind::Gus
+                        && !(alien.kind == SylvesterKind::Psychosquid && alien.healing)
                         && alien.hit_flash()
                         && alien.spawn_ticks == 0
                     {
@@ -897,6 +956,7 @@ impl Presentation {
                     match body.kind {
                         SylvesterKind::Balrog => "IMAGE_BALROG",
                         SylvesterKind::Destructor => "IMAGE_DESTRUCTOR",
+                        SylvesterKind::Psychosquid => "IMAGE_PSYCHOSQUID",
                         SylvesterKind::Weak | SylvesterKind::Strong | SylvesterKind::Gus => {
                             "IMAGE_SYLV"
                         }
@@ -1006,6 +1066,28 @@ impl Presentation {
                     );
                     continue;
                 }
+                CoinKind::ShrapnelBomb => {
+                    self.sprite(
+                        "IMAGE_MISCITEMS",
+                        coin.x as f32,
+                        coin.y as f32,
+                        Some(Rect::new(0.0, 0.0, 72.0, 72.0)),
+                        false,
+                        1.0,
+                        alpha,
+                    );
+                    // W1 adds SPARKS cel(frame) at (+10,-10); macroquad uses standard blending.
+                    self.sprite(
+                        "IMAGE_SPARKS",
+                        coin.x as f32 + 10.0,
+                        coin.y as f32 - 10.0,
+                        Some(Rect::new(f32::from(coin.frame) * 40.0, 0.0, 40.0, 40.0)),
+                        false,
+                        1.0,
+                        alpha,
+                    );
+                    continue;
+                }
             };
             self.sprite(
                 "IMAGE_MONEY",
@@ -1020,6 +1102,28 @@ impl Presentation {
                 false,
                 1.0,
                 alpha,
+            );
+        }
+        for shot in &state.bomb_shots {
+            let Some(frame) = shot.sprite_frame() else {
+                continue;
+            };
+            let (image, cell) = match shot.shot_type {
+                3 => ("IMAGE_EXPLOSION", 80.0),
+                4 => ("IMAGE_EXPLOSIONSMALL", 60.0),
+                5 => ("IMAGE_EXPLOSIONTINY", 40.0),
+                _ => continue,
+            };
+            // W1 uses additive blending for types 3 and 4; this sprite helper
+            // currently projects their image and opacity with standard alpha.
+            self.sprite(
+                image,
+                shot.x as f32,
+                shot.y as f32,
+                Some(Rect::new(f32::from(frame) * cell, 0.0, cell, cell)),
+                false,
+                1.0,
+                f32::from(shot.alpha) / 255.0,
             );
         }
         for larva in &state.larvae {
@@ -1212,11 +1316,7 @@ impl Presentation {
                     1.0,
                 );
                 self.fonts["Pix118"].text(
-                    if state.tank == 3 && state.level == 2 {
-                        "2000"
-                    } else {
-                        "1000"
-                    },
+                    if state.tank == 3 { "2000" } else { "1000" },
                     375.0,
                     58.0,
                     Color::from_rgba(110, 250, 110, 255),
@@ -1629,6 +1729,7 @@ impl Presentation {
                 PetKind::Wadsworth => ("IMAGE_WADSWORTH", 90.0, updates % 20 / 2),
                 PetKind::Seymour => ("IMAGE_SEYMOUR", 90.0, updates % 40 / 4),
                 PetKind::Shrapnel => ("IMAGE_SHRAPNEL", 90.0, updates % 40 / 4),
+                PetKind::Gumbo => ("IMAGE_GUMBO", 90.0, updates % 20 / 2),
             };
             self.sprite(
                 id,
@@ -1658,6 +1759,7 @@ impl Presentation {
                     PetKind::Wadsworth => "WADSWORTH the Whale",
                     PetKind::Seymour => "SEYMOUR the Turtle",
                     PetKind::Shrapnel => "SHRAPNEL the Robot Fish",
+                    PetKind::Gumbo => "GUMBO the Angler",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -1721,6 +1823,11 @@ impl Presentation {
                     "SHRAPNEL drops bombs that",
                     "blow up fish on contact but",
                     "give lots of cash when clicked.",
+                ],
+                PetKind::Gumbo => [
+                    "GUMBO attracts guppies using",
+                    "the lantern on his head,",
+                    "luring them away from aliens.",
                 ],
             };
             for (index, line) in description.iter().enumerate() {
@@ -1806,6 +1913,7 @@ impl Presentation {
                 PetKind::Wadsworth => "IMAGE_SCL_WADSWORTH",
                 PetKind::Seymour => "IMAGE_SCL_SEYMOUR",
                 PetKind::Shrapnel => "IMAGE_SCL_SHRAPNEL",
+                PetKind::Gumbo => "IMAGE_SCL_GUMBO",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
@@ -1959,6 +2067,16 @@ impl Presentation {
                     ],
                     90.0,
                 ),
+                PetKind::Gumbo => (
+                    "IMAGE_GUMBO",
+                    "GUMBO the Angler",
+                    [
+                        "GUMBO attracts guppies using",
+                        "the lantern on his head,",
+                        "luring them away from aliens.",
+                    ],
+                    90.0,
+                ),
             };
             let column = if matches!(pet, PetKind::Niko | PetKind::Vert) {
                 let phase = session.ticks % 18;
@@ -2018,7 +2136,13 @@ impl Presentation {
         self.main_button(Rect::new(525.0, 4.0, 80.0, height), "Menu");
     }
 
-    fn draw(&self, session: &AdventureSession, paused: bool, pointer: Vec2) {
+    fn draw(
+        &self,
+        session: &AdventureSession,
+        paused: bool,
+        pointer: Vec2,
+        healing_warning_until_tick: Option<u64>,
+    ) {
         match session.phase {
             AdventurePhase::Hatch { pet, updates } => self.draw_hatch(pet, updates),
             AdventurePhase::Bonus { ref state } => self.draw_bonus(state),
@@ -2037,6 +2161,31 @@ impl Presentation {
             }
             AdventurePhase::GameSelector | AdventurePhase::HelpScreen => {
                 self.sprite("IMAGE_HATCHSCREEN", 0.0, 0.0, None, false, 1.0, 1.0);
+            }
+        }
+        if matches!(session.phase, AdventurePhase::Playing)
+            && let (Some(board), Some(until)) = (&session.board, healing_warning_until_tick)
+        {
+            let remaining = until.saturating_sub(board.tick);
+            if remaining > 0 && remaining % 32 < 27 {
+                let message = "Stop shooting! Alien regains health!";
+                let width = self.fonts["ContinuumBold14"]
+                    .metrics
+                    .measure_width(message)
+                    .unwrap_or(0) as f32;
+                let x = 90.0 + (460.0 - width) / 2.0 + 2.0;
+                self.fonts["ContinuumBold14outback"].text(
+                    message,
+                    x,
+                    462.0,
+                    Color::from_rgba(0, 75, 0, 255),
+                );
+                self.fonts["ContinuumBold14"].text(
+                    message,
+                    x,
+                    462.0,
+                    Color::from_rgba(180, 250, 90, 255),
+                );
             }
         }
         if matches!(
@@ -2357,6 +2506,7 @@ pub async fn run(
     let mut feed_press_at = None::<(f64, Option<(i32, i32)>)>;
     let mut held_feed_at = None::<f64>;
     let mut held_fire_at = None::<f64>;
+    let mut healing_warning_until_tick = None::<u64>;
     prevent_quit();
     loop {
         let elapsed = get_time() - started;
@@ -2768,6 +2918,11 @@ pub async fn run(
         {
             cli::save_session(&options, &session)?;
         }
+        healing_warning_until_tick = healing_warning_after_events(
+            healing_warning_until_tick,
+            &events,
+            matches!(session.phase, AdventurePhase::Playing),
+        );
         let mut music_reports = presentation.play(&events, music.as_ref());
         if let Some(owner) = music.as_mut() {
             owner.sync(&session, paused);
@@ -2804,7 +2959,7 @@ pub async fn run(
             (480.0 * scale) as i32,
         ));
         set_camera(&camera);
-        presentation.draw(&session, paused, pointer);
+        presentation.draw(&session, paused, pointer, healing_warning_until_tick);
         if music_unavailable.is_some() {
             draw_text("Music unavailable", 425.0, 470.0, 18.0, YELLOW);
         }
@@ -2933,6 +3088,68 @@ mod feed_input_tests {
             pet_at_pointer(&unlocked, vec2(470.0, 82.0)),
             Some(PetKind::Seymour)
         );
+    }
+
+    #[test]
+    fn thirteenth_pet_uses_third_right_hand_card() {
+        let unlocked = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+            PetKind::Clyde,
+            PetKind::Vert,
+            PetKind::Rufus,
+            PetKind::Meryl,
+            PetKind::Wadsworth,
+            PetKind::Seymour,
+            PetKind::Shrapnel,
+            PetKind::Gumbo,
+        ];
+        assert_eq!(pet_card_rect(12), Rect::new(425.0, 207.0, 90.0, 83.0));
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(470.0, 248.0)),
+            Some(PetKind::Gumbo)
+        );
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(470.0, 165.0)),
+            Some(PetKind::Shrapnel)
+        );
+    }
+
+    #[test]
+    fn healing_warning_requires_an_accepted_shot_and_clears_on_exit() {
+        let entered = Event::Invasion {
+            tick: 11,
+            event: InvasionEvent::PsychosquidPhaseChanged {
+                id: 7,
+                healing: true,
+                forced: false,
+            },
+        };
+        let hit = Event::Invasion {
+            tick: 12,
+            event: InvasionEvent::PsychosquidHealingHit {
+                id: 7,
+                health: 269.0,
+            },
+        };
+        let exited = Event::Invasion {
+            tick: 13,
+            event: InvasionEvent::PsychosquidPhaseChanged {
+                id: 7,
+                healing: false,
+                forced: false,
+            },
+        };
+        assert_eq!(healing_warning_after_events(None, &[entered], true), None);
+        assert_eq!(healing_warning_after_events(None, &[hit], true), Some(512));
+        assert_eq!(
+            healing_warning_after_events(Some(512), &[exited], true),
+            None
+        );
+        assert_eq!(healing_warning_after_events(Some(512), &[], false), None);
     }
 
     #[test]

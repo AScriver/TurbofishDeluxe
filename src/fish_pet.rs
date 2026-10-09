@@ -15,6 +15,7 @@ pub enum FishPetKind {
     Meryl,
     Wadsworth,
     Seymour,
+    Shrapnel,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,6 +42,7 @@ pub struct FishPetUpdate {
     pub gold_at: Option<(i32, i32)>,
     /// Meryl's zero-value note is emitted at the prior integer widget.
     pub note_at: Option<(i32, i32)>,
+    pub bomb_at: Option<(i32, i32)>,
     /// The board applies its shared eleven-update punch sound delay.
     pub punch_sound: bool,
     /// Wadsworth's active-state transition after the clock has advanced.
@@ -87,6 +89,8 @@ pub struct FishPetState {
     #[serde(default)]
     pub food_timer: i32,
     pub coin_timer: u16,
+    pub bomb_threshold: u16,
+    pub glint_phase: f64,
     pub meryl_blink: bool,
     /// Independent of the protection clock: active with clock zero is legal.
     pub ward_active: bool,
@@ -140,6 +144,12 @@ impl FishPetState {
             birth_threshold: 930,
             food_timer: 0,
             coin_timer: 0,
+            bomb_threshold: if kind == FishPetKind::Shrapnel {
+                rand_range(20) as u16 + 633
+            } else {
+                0
+            },
+            glint_phase: 0.0,
             meryl_blink: true,
             ward_active: false,
             ward_timer: 0,
@@ -171,6 +181,7 @@ impl FishPetState {
                 self.vy,
                 self.previous_vx,
                 self.speed_mod,
+                self.glint_phase,
             ]
             .into_iter()
             .all(f64::is_finite)
@@ -192,6 +203,8 @@ impl FishPetState {
             || self.swim_counter
                 > (if self.kind == FishPetKind::Seymour {
                     79
+                } else if self.kind == FishPetKind::Shrapnel {
+                    59
                 } else {
                     19
                 })
@@ -205,8 +218,16 @@ impl FishPetState {
             || (self.kind != FishPetKind::Zorf && self.food_timer != 0)
             || (self.kind == FishPetKind::Vert && self.coin_timer >= 216)
             || (self.kind == FishPetKind::Meryl && self.coin_timer >= 1400)
-            || (!matches!(self.kind, FishPetKind::Vert | FishPetKind::Meryl)
-                && self.coin_timer != 0)
+            || (self.kind == FishPetKind::Shrapnel
+                && (!(633..=652).contains(&self.bomb_threshold)
+                    || self.coin_timer >= self.bomb_threshold
+                    || !(-1.0..1.0).contains(&self.glint_phase)))
+            || (self.kind != FishPetKind::Shrapnel
+                && (self.bomb_threshold != 0 || self.glint_phase != 0.0))
+            || (!matches!(
+                self.kind,
+                FishPetKind::Vert | FishPetKind::Meryl | FishPetKind::Shrapnel
+            ) && self.coin_timer != 0)
             || (self.kind != FishPetKind::Meryl && !self.meryl_blink)
             || (self.kind == FishPetKind::Wadsworth
                 && (self.ward_timer > 120
@@ -285,6 +306,7 @@ impl FishPetState {
                 }
             }
             FishPetKind::Seymour => u8::from(self.turn_ticks != 0),
+            FishPetKind::Shrapnel => u8::from(self.turn_ticks != 0),
         }
     }
 
@@ -317,6 +339,14 @@ impl FishPetState {
             }
         } else {
             self.frame
+        }
+    }
+
+    pub fn shrapnel_flash_alpha(&self) -> u8 {
+        if self.kind == FishPetKind::Shrapnel && self.coin_timer + 50 > self.bomb_threshold {
+            (self.glint_phase.abs() * 255.0) as u8
+        } else {
+            0
         }
     }
 
@@ -454,6 +484,13 @@ impl FishPetState {
                 update.note_at = Some((self.widget_x + 15, self.widget_y - 5));
             } else if self.coin_timer >= 1400 {
                 self.coin_timer = 0;
+            }
+        }
+        if self.kind == FishPetKind::Shrapnel && aliens.is_empty() {
+            self.coin_timer += 1;
+            if self.coin_timer >= self.bomb_threshold {
+                self.coin_timer = 0;
+                update.bomb_at = Some((self.widget_x + 15, self.widget_y + 10));
             }
         }
         match self.vx {
@@ -646,7 +683,10 @@ impl FishPetState {
                 (9 + self.turn_ticks / 2) as u8
             };
         } else {
-            self.swim_counter += if self.kind == FishPetKind::Zorf || self.vx_abs <= 1 {
+            self.swim_counter += if self.kind == FishPetKind::Zorf
+                || self.kind == FishPetKind::Shrapnel && self.vx_abs < 3
+                || self.vx_abs <= 1
+            {
                 1
             } else {
                 2
@@ -654,6 +694,8 @@ impl FishPetState {
             if self.swim_counter
                 > (if self.kind == FishPetKind::Seymour {
                     79
+                } else if self.kind == FishPetKind::Shrapnel {
+                    59
                 } else {
                     19
                 })
@@ -668,6 +710,12 @@ impl FishPetState {
                 }
             } else if self.kind == FishPetKind::Seymour {
                 self.swim_counter / 8
+            } else if self.kind == FishPetKind::Shrapnel {
+                self.glint_phase += 0.1;
+                if self.glint_phase >= 1.0 {
+                    self.glint_phase = -1.0;
+                }
+                self.swim_counter / 6
             } else {
                 self.swim_counter / 2
             };
@@ -746,6 +794,48 @@ mod tests {
     fn actor(kind: FishPetKind) -> FishPetState {
         let mut rng = |_: u64| 0;
         FishPetState::spawn_tank1(1, kind, &mut rng)
+    }
+
+    #[test]
+    fn shrapnel_sampled_interval_emits_prior_widget_bomb_and_freezes_under_invasion() {
+        let mut requests = Vec::new();
+        let mut pet = FishPetState::spawn_tank1(77, FishPetKind::Shrapnel, &mut |upper| {
+            requests.push(upper);
+            upper - 1
+        });
+        assert_eq!(pet.bomb_threshold, 652);
+        assert_eq!(requests.last(), Some(&20));
+        pet.coin_timer = 651;
+        let alien = [PetAlienView {
+            id: 9,
+            widget_x: 400,
+            widget_y: 280,
+            healing: false,
+        }];
+        assert_eq!(pet.tick(&alien, 2, &mut |_| 1).bomb_at, None);
+        assert_eq!(pet.coin_timer, 651);
+        let origin = (pet.widget_x, pet.widget_y);
+        assert_eq!(
+            pet.tick(&[], 2, &mut |_| 1).bomb_at,
+            Some((origin.0 + 15, origin.1 + 10))
+        );
+        assert_eq!(pet.coin_timer, 0);
+        pet.validate().unwrap();
+    }
+
+    #[test]
+    fn shrapnel_two_step_velocity_uses_slow_six_tick_swim_frame() {
+        let mut pet = actor(FishPetKind::Shrapnel);
+        pet.vx = 1.0;
+        pet.previous_vx = 1.0;
+        pet.vx_abs = 2;
+        pet.swim_counter = 4;
+        pet.animate();
+        assert_eq!((pet.swim_counter, pet.frame), (5, 0));
+        pet.swim_counter = 4;
+        pet.vx_abs = 3;
+        pet.animate();
+        assert_eq!((pet.swim_counter, pet.frame), (6, 1));
     }
 
     #[test]

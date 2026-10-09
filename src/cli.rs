@@ -95,7 +95,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 13;
+pub const SAVE_FORMAT_VERSION: u32 = 14;
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -202,7 +202,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=13) => {
+        Some(version @ 5..=14) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -256,6 +256,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                 .iter()
                                 .any(|field| !board.contains_key(*field)))
                         || (version >= 11 && !board.contains_key("notes"))
+                        || (version >= 14 && !board.contains_key("bomb_shots"))
                         || (version >= 13
                             && ["gekko_unlocked", "gekkos", "dead_gekkos"]
                                 .iter()
@@ -269,6 +270,15 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                         .iter()
                                         .any(|coin| coin.get("animation_ticks").is_none())
                                 }))
+                        || (version >= 14
+                            && board
+                                .get("coins")
+                                .and_then(serde_json::Value::as_array)
+                                .is_some_and(|coins| {
+                                    coins
+                                        .iter()
+                                        .any(|coin| coin.get("hazard_age_ticks").is_none())
+                                }))
                         || (version >= 12
                             && ["grubber_unlocked", "grubbers", "dead_grubbers", "larvae"]
                                 .iter()
@@ -280,6 +290,10 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                 .is_some_and(|pets| {
                                     pets.iter().any(|pet| {
                                         pet.get("coin_timer").is_none()
+                                            || (version >= 14
+                                                && ["bomb_threshold", "glint_phase"]
+                                                    .iter()
+                                                    .any(|field| pet.get(*field).is_none()))
                                             || (version >= 11 && pet.get("meryl_blink").is_none())
                                             || (version >= 12
                                                 && [
@@ -344,6 +358,23 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                                     .iter()
                                                     .any(|actor| actor.get("kind").is_none())
                                             }))
+                                    || (version >= 14
+                                        && wave
+                                            .get("actors")
+                                            .and_then(serde_json::Value::as_array)
+                                            .is_some_and(|actors| {
+                                                actors.iter().any(|actor| {
+                                                    [
+                                                        "phase_ticks",
+                                                        "phase_threshold",
+                                                        "healing",
+                                                        "ever_healed",
+                                                        "movement_divisor",
+                                                    ]
+                                                    .iter()
+                                                    .any(|field| actor.get(*field).is_none())
+                                                })
+                                            }))
                                     || (version >= 11
                                         && wave
                                             .get("dead_aliens")
@@ -381,7 +412,8 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     10 => "ten",
                     11 => "eleven",
                     12 => "twelve",
-                    _ => "thirteen",
+                    13 => "thirteen",
+                    _ => "fourteen",
                 };
                 return Err(format!(
                     "Incomplete format-{label} save; required state fields are missing"

@@ -119,6 +119,236 @@ fn bought_gekko_session() -> AdventureSession {
     session
 }
 
+fn tank_three_third_session(pets: &[PetKind]) -> AdventureSession {
+    let mut session = tank_three_second_session(&[]);
+    session.progress.level = 3;
+    session.progress.unlocked_pets.push(PetKind::Shrapnel);
+    session.progress.selected_pets = pets.to_vec();
+    session.board = Some(AdventureState::new_tank3_third_stage(42, pets).unwrap());
+    session
+}
+
+fn psychosquid_and_bomb_session(divisor: f64) -> AdventureSession {
+    use turbofish_deluxe::{
+        alien::{SylvesterKind, WeakSylvester},
+        fish_pet::FishPetKind,
+    };
+    // Controlled current-format fixture. Actual update creates the bomb;
+    // private next_id allocation gives the alien a distinct legal Board ID.
+    let mut session = tank_three_third_session(&[PetKind::Seymour, PetKind::Shrapnel]);
+    let shrapnel = session
+        .board
+        .as_mut()
+        .unwrap()
+        .fish_pets
+        .iter_mut()
+        .find(|pet| pet.kind == FishPetKind::Shrapnel)
+        .unwrap();
+    shrapnel.coin_timer = shrapnel.bomb_threshold - 1;
+    session.step(&[]);
+    let mut encoded = serde_json::to_value(&session).unwrap();
+    let alien_id = encoded["board"]["next_id"].as_u64().unwrap();
+    encoded["board"]["next_id"] = (alien_id + 1).into();
+    session = serde_json::from_value(encoded).unwrap();
+    let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Psychosquid, alien_id, 480, 180, 1, 1);
+    actor.spawn_ticks = 0;
+    actor.health = 300.25;
+    actor.healing = true;
+    actor.ever_healed = true;
+    actor.phase_ticks = 399;
+    actor.movement_divisor = divisor;
+    let wave = session.board.as_mut().unwrap().invasion.as_mut().unwrap();
+    wave.actors = vec![actor];
+    wave.battle_active = true;
+    // Actual spawning resets the next countdown to3000 before registering
+    // the actor. The earlier bomb-producing tick had reduced it to2999.
+    wave.countdown = 3000;
+    session.validate().unwrap();
+    session
+}
+
+#[test]
+fn current_tank_three_third_save_accepts_each_of_twelve_available_pets() {
+    for pet in [
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Clyde,
+        PetKind::Vert,
+        PetKind::Rufus,
+        PetKind::Meryl,
+        PetKind::Wadsworth,
+        PetKind::Seymour,
+        PetKind::Shrapnel,
+    ] {
+        let session = tank_three_third_session(&[pet]);
+        session.validate().unwrap();
+        let bytes = serde_json::to_vec(&cli::ProjectSave {
+            format_version: cli::SAVE_FORMAT_VERSION,
+            session: session.clone(),
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(cli::decode_save(&bytes).unwrap()).unwrap(),
+            serde_json::to_value(session).unwrap()
+        );
+    }
+    assert!(AdventureState::new_tank3_third_stage(42, &[PetKind::Gumbo]).is_err());
+}
+
+#[test]
+fn current_psychosquid_and_shrapnel_require_all_new_authoritative_fields() {
+    let current = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: psychosquid_and_bomb_session(0.5),
+    })
+    .unwrap();
+    for field in [
+        "phase_ticks",
+        "phase_threshold",
+        "healing",
+        "ever_healed",
+        "movement_divisor",
+    ] {
+        let mut missing = current.clone();
+        missing
+            .pointer_mut("/session/board/invasion/actors/0")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "accepted missing {field}"
+        );
+    }
+    for field in ["bomb_threshold", "glint_phase"] {
+        let mut missing = current.clone();
+        // All FishTypePet fields are required in the current format, even
+        // when the neutral values belong to Seymour rather than Shrapnel.
+        missing
+            .pointer_mut("/session/board/fish_pets/0")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "accepted missing {field}"
+        );
+    }
+    let mut missing = current;
+    missing
+        .pointer_mut("/session/board/coins/0")
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .remove("hazard_age_ticks");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+}
+
+#[test]
+fn current_psychosquid_over_starting_health_and_distinct_speed_resume_exact_updates() {
+    for divisor in [0.5_f64, 2.0] {
+        let mut uninterrupted = psychosquid_and_bomb_session(divisor);
+        let bytes = serde_json::to_vec(&cli::ProjectSave {
+            format_version: cli::SAVE_FORMAT_VERSION,
+            session: uninterrupted.clone(),
+        })
+        .unwrap();
+        let mut resumed = cli::decode_save(&bytes).unwrap();
+        let actor = &resumed
+            .board
+            .as_ref()
+            .unwrap()
+            .invasion
+            .as_ref()
+            .unwrap()
+            .actors[0];
+        assert_eq!(actor.health.to_bits(), 300.25_f64.to_bits());
+        assert_eq!(actor.movement_divisor.to_bits(), divisor.to_bits());
+        for _ in 0..85 {
+            assert_eq!(
+                serde_json::to_value(resumed.step(&[])).unwrap(),
+                serde_json::to_value(uninterrupted.step(&[])).unwrap()
+            );
+            assert_eq!(
+                serde_json::to_value(&resumed).unwrap(),
+                serde_json::to_value(&uninterrupted).unwrap()
+            );
+            resumed.validate().unwrap();
+        }
+    }
+}
+
+#[test]
+fn current_bomb_burst_requires_each_field_and_continues_after_reload() {
+    use turbofish_deluxe::sim::CoinKind;
+    let mut session = psychosquid_and_bomb_session(2.0);
+    let board = session.board.as_mut().unwrap();
+    let target_x = f64::from(board.fish[0].x as i32) + 4.0;
+    let target_y = f64::from(board.fish[0].y as i32) + 4.0;
+    let bomb = board
+        .coins
+        .iter_mut()
+        .find(|coin| coin.kind == CoinKind::ShrapnelBomb)
+        .unwrap();
+    // Controlled contact at the primary signed age31 boundary. No debug
+    // earning claim: ordinary Board transactions create the finite bursts.
+    bomb.x = target_x;
+    bomb.y = target_y;
+    bomb.hazard_age_ticks = 30;
+    session.step(&[]);
+    assert!(!session.board.as_ref().unwrap().bomb_shots.is_empty());
+    session.validate().unwrap();
+    let saved = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: session.clone(),
+    })
+    .unwrap();
+    let mut missing_list = saved.clone();
+    missing_list["session"]["board"]
+        .as_object_mut()
+        .unwrap()
+        .remove("bomb_shots");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing_list).unwrap()).is_err());
+    for field in [
+        "shot_type",
+        "x",
+        "y",
+        "age_ticks",
+        "frame",
+        "delay_ticks",
+        "alpha",
+    ] {
+        let mut missing = saved.clone();
+        missing
+            .pointer_mut("/session/board/bomb_shots/0")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "accepted missing burst {field}"
+        );
+    }
+    let mut resumed = cli::decode_save(&serde_json::to_vec(&saved).unwrap()).unwrap();
+    for _ in 0..24 {
+        assert_eq!(
+            serde_json::to_value(resumed.step(&[])).unwrap(),
+            serde_json::to_value(session.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&session).unwrap()
+        );
+    }
+    assert!(resumed.board.as_ref().unwrap().bomb_shots.is_empty());
+}
+
 #[test]
 fn current_tank_three_second_save_accepts_all_eleven_single_pet_rosters() {
     for pet in [
@@ -1177,6 +1407,7 @@ fn current_actor_corpse_and_diamond_phase_reload_preserves_every_next_update() {
         y: 119.5,
         kind: CoinKind::DiamondPenta,
         animation_ticks: 0,
+        hazard_age_ticks: 0,
         frame: 0,
         collecting: false,
         bottom_ticks: 0,

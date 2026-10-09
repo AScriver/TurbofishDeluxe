@@ -42,6 +42,7 @@ pub const GRUBBER_PRICE: i32 = 750;
 pub const GEKKO_PRICE: i32 = 2000;
 pub const TANK3_FIRST_EGG_PRICE: i32 = 1000;
 pub const TANK3_SECOND_EGG_PRICE: i32 = 5000;
+pub const TANK3_THIRD_EGG_PRICE: i32 = 7500;
 pub const POTION_PRICE: i32 = 250;
 pub const FOOD_QUALITY_PRICE: i32 = 200;
 pub const FOOD_QUANTITY_PRICE: i32 = 300;
@@ -72,6 +73,7 @@ pub enum PetKind {
     Wadsworth,
     Seymour,
     Shrapnel,
+    Gumbo,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,6 +183,7 @@ pub enum CoinKind {
     Star,
     DiamondPenta,
     Pearl,
+    ShrapnelBomb,
 }
 
 impl CoinKind {
@@ -192,6 +195,7 @@ impl CoinKind {
             Self::Star => 40,
             Self::DiamondPenta => 200,
             Self::Pearl => 500,
+            Self::ShrapnelBomb => 150,
         }
     }
 }
@@ -344,10 +348,52 @@ pub struct Coin {
     pub kind: CoinKind,
     pub frame: u8,
     pub animation_ticks: u8,
+    pub hazard_age_ticks: i32,
     pub collecting: bool,
     pub bottom_ticks: u16,
     pub fade_ticks: u8,
     pub penta_rising: bool,
+}
+
+/// Bomb contact's short-lived Shot types 3..5. These are visual effects,
+/// not collectible GameObjects and therefore do not consume Board entity IDs.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BombShot {
+    pub shot_type: u8,
+    pub x: i32,
+    pub y: i32,
+    pub age_ticks: u8,
+    pub frame: i8,
+    pub delay_ticks: u8,
+    pub alpha: u8,
+}
+
+impl BombShot {
+    pub fn sprite_frame(&self) -> Option<u8> {
+        (self.delay_ticks == 0 && self.frame >= 0).then_some(self.frame.max(0) as u8)
+    }
+
+    fn tick(&mut self) -> bool {
+        if self.delay_ticks > 0 {
+            self.delay_ticks -= 1;
+            return false;
+        }
+        self.age_ticks += if self.alpha > 150 { 2 } else { 1 };
+        self.frame = (self.age_ticks / 2) as i8 - 1;
+        self.age_ticks > 19
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if !(3..=5).contains(&self.shot_type)
+            || self.age_ticks > 19
+            || !(-1..=9).contains(&self.frame)
+            || self.delay_ticks > 2
+            || !(50..=249).contains(&self.alpha)
+        {
+            return Err("invalid Shrapnel contact shot".into());
+        }
+        Ok(())
+    }
 }
 
 /// A zero-value Meryl note. It shares neither collection flight nor coin
@@ -568,6 +614,17 @@ pub enum Event {
         gekko_id: u64,
         x: i32,
         y: i32,
+    },
+    ShrapnelBombDropped {
+        tick: u64,
+        pet_id: u64,
+        coin_id: u64,
+    },
+    ShrapnelBombExploded {
+        tick: u64,
+        coin_id: u64,
+        target_id: Option<u64>,
+        fragments: u8,
     },
     LarvaDropped {
         tick: u64,
@@ -823,6 +880,7 @@ pub struct AdventureState {
     pub dead_fish: Vec<DeadFish>,
     pub food: Vec<Food>,
     pub coins: Vec<Coin>,
+    pub bomb_shots: Vec<BombShot>,
     pub notes: Vec<NoteState>,
     pub tutorial: TutorialState,
     #[serde(default)]
@@ -906,6 +964,7 @@ impl AdventureState {
             dead_fish: Vec::new(),
             food: Vec::new(),
             coins: Vec::new(),
+            bomb_shots: Vec::new(),
             notes: Vec::new(),
             tutorial: TutorialState::default(),
             upgrades: FoodUpgrades::default(),
@@ -1018,7 +1077,8 @@ impl AdventureState {
                 | PetKind::Meryl
                 | PetKind::Wadsworth
                 | PetKind::Seymour
-                | PetKind::Shrapnel => {
+                | PetKind::Shrapnel
+                | PetKind::Gumbo => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1072,7 +1132,8 @@ impl AdventureState {
                 | PetKind::Meryl
                 | PetKind::Wadsworth
                 | PetKind::Seymour
-                | PetKind::Shrapnel => {
+                | PetKind::Shrapnel
+                | PetKind::Gumbo => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1132,7 +1193,8 @@ impl AdventureState {
                 | PetKind::Meryl
                 | PetKind::Wadsworth
                 | PetKind::Seymour
-                | PetKind::Shrapnel => {
+                | PetKind::Shrapnel
+                | PetKind::Gumbo => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1193,7 +1255,8 @@ impl AdventureState {
                 | PetKind::Meryl
                 | PetKind::Wadsworth
                 | PetKind::Seymour
-                | PetKind::Shrapnel => {
+                | PetKind::Shrapnel
+                | PetKind::Gumbo => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1259,7 +1322,11 @@ impl AdventureState {
                     }));
                     state.rng_state = rng_state;
                 }
-                PetKind::Meryl | PetKind::Wadsworth | PetKind::Seymour | PetKind::Shrapnel => {
+                PetKind::Meryl
+                | PetKind::Wadsworth
+                | PetKind::Seymour
+                | PetKind::Shrapnel
+                | PetKind::Gumbo => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1334,7 +1401,7 @@ impl AdventureState {
                     state.rng_state = rng_state;
                 }
                 PetKind::Meryl => state.spawn_fish_pet(FishPetKind::Meryl),
-                PetKind::Wadsworth | PetKind::Seymour | PetKind::Shrapnel => {
+                PetKind::Wadsworth | PetKind::Seymour | PetKind::Shrapnel | PetKind::Gumbo => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1347,7 +1414,7 @@ impl AdventureState {
     /// are constructed before the two starter guppies, preserving Board's
     /// actor-constructor RNG order; the Balrog countdown starts at 3000.
     pub fn new_tank3_first_stage(seed: u64, pets: &[PetKind]) -> Result<Self, String> {
-        Self::validate_tank3_selection(pets, false)?;
+        Self::validate_tank3_selection(pets, false, false)?;
         let mut state = Self::empty_board(seed);
         state.tank = 3;
         state.level = 1;
@@ -1361,7 +1428,7 @@ impl AdventureState {
     /// The first 3-2 expected alien draw precedes pet and starter-fish
     /// constructors. Later waves use one conditional toggle roll after spawn.
     pub fn new_tank3_second_stage(seed: u64, pets: &[PetKind]) -> Result<Self, String> {
-        Self::validate_tank3_selection(pets, true)?;
+        Self::validate_tank3_selection(pets, true, false)?;
         let mut state = Self::empty_board(seed);
         state.tank = 3;
         state.level = 2;
@@ -1377,7 +1444,23 @@ impl AdventureState {
         Ok(state)
     }
 
-    fn validate_tank3_selection(pets: &[PetKind], allow_seymour: bool) -> Result<(), String> {
+    pub fn new_tank3_third_stage(seed: u64, pets: &[PetKind]) -> Result<Self, String> {
+        Self::validate_tank3_selection(pets, true, true)?;
+        let mut state = Self::empty_board(seed);
+        state.tank = 3;
+        state.level = 3;
+        state.egg_price = TANK3_THIRD_EGG_PRICE;
+        state.invasion = Some(Invasion1_2::new_psychosquid());
+        state.spawn_tank3_pets(pets);
+        state.spawn_starter_guppies(false);
+        Ok(state)
+    }
+
+    fn validate_tank3_selection(
+        pets: &[PetKind],
+        allow_seymour: bool,
+        allow_shrapnel: bool,
+    ) -> Result<(), String> {
         let canonical = [
             PetKind::Stinky,
             PetKind::Niko,
@@ -1390,11 +1473,14 @@ impl AdventureState {
             PetKind::Meryl,
             PetKind::Wadsworth,
             PetKind::Seymour,
+            PetKind::Shrapnel,
         ];
         if pets.len() > 3
-            || pets
-                .iter()
-                .any(|pet| !canonical.contains(pet) || *pet == PetKind::Seymour && !allow_seymour)
+            || pets.iter().any(|pet| {
+                !canonical.contains(pet)
+                    || *pet == PetKind::Seymour && !allow_seymour
+                    || *pet == PetKind::Shrapnel && !allow_shrapnel
+            })
             || pets.windows(2).any(|pair| {
                 canonical.iter().position(|pet| *pet == pair[0])
                     >= canonical.iter().position(|pet| *pet == pair[1])
@@ -1439,7 +1525,8 @@ impl AdventureState {
                 PetKind::Meryl => self.spawn_fish_pet(FishPetKind::Meryl),
                 PetKind::Wadsworth => self.spawn_fish_pet(FishPetKind::Wadsworth),
                 PetKind::Seymour => self.spawn_fish_pet(FishPetKind::Seymour),
-                PetKind::Shrapnel => unreachable!("roster checked before construction"),
+                PetKind::Shrapnel => self.spawn_fish_pet(FishPetKind::Shrapnel),
+                PetKind::Gumbo => unreachable!("roster checked before construction"),
             }
         }
     }
@@ -1605,7 +1692,7 @@ impl AdventureState {
     pub fn validate(&self) -> Result<(), String> {
         if !((self.tank == 1 && (1..=5).contains(&self.level))
             || (self.tank == 2 && (1..=5).contains(&self.level))
-            || (self.tank == 3 && (1..=2).contains(&self.level)))
+            || (self.tank == 3 && (1..=3).contains(&self.level)))
             || self.next_id == 0
             || self.next_id == u64::MAX
             || self.rng_state == 0
@@ -1636,22 +1723,24 @@ impl AdventureState {
             || !(2..=12).contains(&self.weapon_strength)
             || (!self.weapon_unlocked && self.weapon_strength > 2)
             || self.punch_sound_cooldown > 11
-            || self.pets.contains(&PetKind::Shrapnel)
-            || ((self.tank, self.level) != (3, 2) && self.pets.contains(&PetKind::Seymour))
+            || self.pets.contains(&PetKind::Gumbo)
+            || ((self.tank, self.level) != (3, 3) && self.pets.contains(&PetKind::Shrapnel))
+            || !matches!((self.tank, self.level), (3, 2..=3))
+                && self.pets.contains(&PetKind::Seymour)
             || (self.tank != 3 && self.pets.contains(&PetKind::Wadsworth))
             || (self.tank != 3
                 && (self.grubber_unlocked
                     || !self.grubbers.is_empty()
                     || !self.dead_grubbers.is_empty()
                     || !self.larvae.is_empty()))
-            || ((self.tank, self.level) != (3, 2)
-                && (self.gekko_unlocked || !self.gekkos.is_empty() || !self.dead_gekkos.is_empty()))
+            || !matches!((self.tank, self.level), (3, 2..=3))
+                && (self.gekko_unlocked || !self.gekkos.is_empty() || !self.dead_gekkos.is_empty())
             || (self.tank != 2 || !(2..=5).contains(&self.level))
                 && (self.starcatcher_unlocked
                     || !self.starcatchers.is_empty()
                     || !self.dead_starcatchers.is_empty())
             || !((self.tank == 2 && (2..=5).contains(&self.level))
-                || (self.tank == 3 && (1..=2).contains(&self.level)))
+                || (self.tank == 3 && (1..=3).contains(&self.level)))
                 && self.clyde.is_some()
             || self.coins.iter().any(|coin| {
                 (coin.penta_rising && coin.kind != CoinKind::DiamondPenta)
@@ -1659,7 +1748,13 @@ impl AdventureState {
                     || coin.frame > 9
                     || !coin.x.is_finite()
                     || !coin.y.is_finite()
-                    || (coin.kind == CoinKind::Pearl && (self.tank, self.level) != (3, 2))
+                    || (coin.kind == CoinKind::Pearl
+                        && !(self.tank == 3 && (2..=3).contains(&self.level)))
+                    || (coin.kind == CoinKind::ShrapnelBomb
+                        && ((self.tank, self.level) != (3, 3)
+                            || !self.pets.contains(&PetKind::Shrapnel)
+                            || coin.fade_ticks != 0))
+                    || (coin.kind != CoinKind::ShrapnelBomb && coin.hazard_age_ticks != 0)
                     || (coin.kind == CoinKind::DiamondPenta
                         && !(self.tank == 2 && (2..=5).contains(&self.level)))
             })
@@ -1672,10 +1767,11 @@ impl AdventureState {
             return Err("invalid Adventure board counters or upgrades".into());
         }
         let expected_price = if self.tank == 3 {
-            if self.level == 1 {
-                TANK3_FIRST_EGG_PRICE
-            } else {
-                TANK3_SECOND_EGG_PRICE
+            match self.level {
+                1 => TANK3_FIRST_EGG_PRICE,
+                2 => TANK3_SECOND_EGG_PRICE,
+                3 => TANK3_THIRD_EGG_PRICE,
+                _ => unreachable!(),
             }
         } else if self.tank == 2 {
             match self.level {
@@ -1759,9 +1855,13 @@ impl AdventureState {
             {
                 return Err("third-tank roster or Grubber gates disagree".into());
             }
-            (3, 2)
+            (3, 2..=3)
                 if self.invasion.as_ref().is_none_or(|wave| {
-                    !matches!(wave.plan, WavePlan::CyclingTank3Second { .. })
+                    if self.level == 2 {
+                        !matches!(wave.plan, WavePlan::CyclingTank3Second { .. })
+                    } else {
+                        wave.plan != WavePlan::Fixed(SylvesterKind::Psychosquid)
+                    }
                 }) || self.pets.len() > 3
                     || self.pets.windows(2).any(|pair| {
                         let canonical = [
@@ -1776,6 +1876,7 @@ impl AdventureState {
                             PetKind::Meryl,
                             PetKind::Wadsworth,
                             PetKind::Seymour,
+                            PetKind::Shrapnel,
                         ];
                         canonical.iter().position(|pet| *pet == pair[0])
                             >= canonical.iter().position(|pet| *pet == pair[1])
@@ -1800,6 +1901,7 @@ impl AdventureState {
                                 PetKind::Meryl => Some(FishPetKind::Meryl),
                                 PetKind::Wadsworth => Some(FishPetKind::Wadsworth),
                                 PetKind::Seymour => Some(FishPetKind::Seymour),
+                                PetKind::Shrapnel => Some(FishPetKind::Shrapnel),
                                 _ => None,
                             })
                             .collect::<Vec<_>>()
@@ -2059,7 +2161,7 @@ impl AdventureState {
         if !(self.notes.is_empty()
             || (self.tank, self.level) == (2, 5)
             || (self.tank == 3
-                && (1..=2).contains(&self.level)
+                && (1..=3).contains(&self.level)
                 && self.pets.contains(&PetKind::Meryl)))
             || self
                 .notes
@@ -2150,6 +2252,12 @@ impl AdventureState {
         }
         for pet in &self.fish_pets {
             pet.validate()?;
+        }
+        if (self.tank, self.level) != (3, 3) && !self.bomb_shots.is_empty() {
+            return Err("Shrapnel shots outside Adventure 3-3".into());
+        }
+        for shot in &self.bomb_shots {
+            shot.validate()?;
         }
         if let Some(niko) = &self.niko {
             niko.validate()?;
@@ -2704,7 +2812,7 @@ impl AdventureState {
                 }
             }
             Action::BuyGrubber => {
-                if self.tank != 3 || !(1..=2).contains(&self.level) || !self.grubber_unlocked {
+                if self.tank != 3 || !(1..=3).contains(&self.level) || !self.grubber_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -2736,7 +2844,7 @@ impl AdventureState {
                 }
             }
             Action::BuyGekko => {
-                if (self.tank, self.level) != (3, 2) || !self.gekko_unlocked {
+                if self.tank != 3 || !(2..=3).contains(&self.level) || !self.gekko_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -2768,7 +2876,7 @@ impl AdventureState {
                 let price = if self.tank == 3 { 2000 } else { WEAPON_PRICE };
                 if (self.tank != 1
                     && !(self.tank == 2 && (2..=5).contains(&self.level))
-                    && (self.tank, self.level) != (3, 2))
+                    && !(self.tank == 3 && (2..=3).contains(&self.level)))
                     || !self.weapon_unlocked
                 {
                     events.push(Event::Rejected {
@@ -2932,11 +3040,15 @@ impl AdventureState {
                 .invasion
                 .as_ref()
                 .is_some_and(Invasion1_2::has_live_alien);
-            let click = self.invasion.as_mut().unwrap().click_with_weapon(
-                world_x,
-                world_y,
-                self.weapon_strength,
-            );
+            let mut rng_state = self.rng_state;
+            let click = self
+                .invasion
+                .as_mut()
+                .unwrap()
+                .click_with_weapon_and_random(world_x, world_y, self.weapon_strength, || {
+                    Self::advance_rng(&mut rng_state) as u32
+                });
+            self.rng_state = rng_state;
             let suppress_food = click.suppress_food;
             self.record_invasion_events(click.events, events);
             if missiles_present && !alien_present && world_y > 40 {
@@ -3199,7 +3311,12 @@ impl AdventureState {
         {
             let missiles_present = !self.missiles.is_empty();
             let alien_present = wave.has_live_alien();
-            let shot = wave.click_with_weapon(x as i32, y as i32, self.weapon_strength);
+            let mut rng_state = self.rng_state;
+            let shot =
+                wave.click_with_weapon_and_random(x as i32, y as i32, self.weapon_strength, || {
+                    Self::advance_rng(&mut rng_state) as u32
+                });
+            self.rng_state = rng_state;
             self.record_invasion_events(shot.events, &mut events);
             if missiles_present && !alien_present {
                 self.fire_missile_only_laser(x as i32, y as i32, &mut events);
@@ -3271,6 +3388,10 @@ impl AdventureState {
         self.update_rufus(&mut events);
         self.update_fish_pets(&mut events);
         self.update_coins(&mut events);
+        // Effects created by a coin update are stepped after coin widgets in
+        // this Board adaptation; the source WidgetManager's exact insertion
+        // timing relative to a newly added Shot remains unverified.
+        self.bomb_shots.retain_mut(|shot| !shot.tick());
         self.update_notes(&mut events);
         self.update_pearls(&mut events);
         events
@@ -3669,6 +3790,7 @@ impl AdventureState {
                     kind,
                     frame: 0,
                     animation_ticks: 0,
+                    hazard_age_ticks: 0,
                     collecting: false,
                     bottom_ticks: 0,
                     fade_ticks: 0,
@@ -3768,6 +3890,7 @@ impl AdventureState {
                 kind,
                 frame: 0,
                 animation_ticks: 0,
+                hazard_age_ticks: 0,
                 collecting: false,
                 bottom_ticks: 0,
                 fade_ticks: 0,
@@ -4033,6 +4156,7 @@ impl AdventureState {
                         kind: CoinKind::Diamond,
                         frame: 0,
                         animation_ticks: 0,
+                        hazard_age_ticks: 0,
                         collecting: false,
                         bottom_ticks: 0,
                         fade_ticks: 0,
@@ -4097,6 +4221,7 @@ impl AdventureState {
                         kind: CoinKind::DiamondPenta,
                         frame: 0,
                         animation_ticks: 0,
+                        hazard_age_ticks: 0,
                         collecting: false,
                         bottom_ticks: 0,
                         fade_ticks: 0,
@@ -4180,6 +4305,7 @@ impl AdventureState {
                     kind: CoinKind::Diamond,
                     frame: 0,
                     animation_ticks: 0,
+                    hazard_age_ticks: 0,
                     collecting: false,
                     bottom_ticks: 0,
                     fade_ticks: 0,
@@ -4366,6 +4492,7 @@ impl AdventureState {
                     kind: CoinKind::Pearl,
                     frame: 0,
                     animation_ticks: 0,
+                    hazard_age_ticks: 0,
                     collecting: false,
                     bottom_ticks: 0,
                     fade_ticks: 0,
@@ -4663,12 +4790,34 @@ impl AdventureState {
                     kind: CoinKind::Gold,
                     frame: 0,
                     animation_ticks: 0,
+                    hazard_age_ticks: 0,
                     collecting: false,
                     bottom_ticks: 0,
                     fade_ticks: 0,
                     penta_rising: false,
                 });
                 events.push(Event::VertGoldDropped {
+                    tick: self.tick,
+                    pet_id,
+                    coin_id,
+                });
+            }
+            if let Some((x, y)) = update.bomb_at {
+                let coin_id = self.id();
+                self.coins.push(Coin {
+                    id: coin_id,
+                    x: f64::from(x),
+                    y: f64::from(y),
+                    kind: CoinKind::ShrapnelBomb,
+                    frame: 0,
+                    animation_ticks: 0,
+                    hazard_age_ticks: 0,
+                    collecting: false,
+                    bottom_ticks: 0,
+                    fade_ticks: 0,
+                    penta_rising: false,
+                });
+                events.push(Event::ShrapnelBombDropped {
                     tick: self.tick,
                     pet_id,
                     coin_id,
@@ -4808,7 +4957,10 @@ impl AdventureState {
                 // ChaseEntity calls overlap on every update with a target,
                 // even when its five-update steering gate has not elapsed.
                 if let Some(index) = self.coins.iter().position(|coin| {
-                    if coin.collecting || (starcatcher_live && coin.kind == CoinKind::Star) {
+                    if coin.collecting
+                        || coin.kind == CoinKind::ShrapnelBomb
+                        || (starcatcher_live && coin.kind == CoinKind::Star)
+                    {
                         return false;
                     }
                     let x = coin.x.trunc();
@@ -4933,7 +5085,9 @@ impl AdventureState {
                 id: coin.id,
                 widget_x: coin.x as i32,
                 widget_y: coin.y as i32,
-                eligible: !(coin.collecting || starcatcher_live && coin.kind == CoinKind::Star),
+                eligible: !(coin.collecting
+                    || coin.kind == CoinKind::ShrapnelBomb
+                    || starcatcher_live && coin.kind == CoinKind::Star),
                 collectible: true,
             })
             .collect::<Vec<_>>();
@@ -4985,14 +5139,15 @@ impl AdventureState {
     ) -> Option<i32> {
         let mut best_distance = 100_000_000_i64;
         let mut best_x = None;
-        let mut views =
-            coins
-                .iter()
-                .filter_map(|coin| {
-                    (!(coin.collecting || starcatcher_live && coin.kind == CoinKind::Star))
-                        .then_some((coin.id, coin.x.trunc() as i32, coin.y.trunc() as i32))
-                })
-                .collect::<Vec<_>>();
+        let mut views = coins
+            .iter()
+            .filter_map(|coin| {
+                (!(coin.collecting
+                    || coin.kind == CoinKind::ShrapnelBomb
+                    || starcatcher_live && coin.kind == CoinKind::Star))
+                    .then_some((coin.id, coin.x.trunc() as i32, coin.y.trunc() as i32))
+            })
+            .collect::<Vec<_>>();
         views.extend(notes.iter().map(|note| (note.id, note.x, note.y)));
         views.sort_by_key(|(id, _, _)| *id);
         for (_, x, y) in views {
@@ -5016,15 +5171,21 @@ impl AdventureState {
             (1, 1) => FIRST_STAGE_COIN_BOTTOM_TICKS,
             (1, 2..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             (2, 1..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
-            (3, 1..=2) => SECOND_STAGE_COIN_BOTTOM_TICKS,
+            (3, 1..=3) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             _ => unreachable!("coin lifetime for this Adventure stage is not implemented"),
         };
         let bottom_limit = if seymour_present { 200 } else { bottom_limit };
         let mut credited = Vec::new();
         let mut expired = Vec::new();
-        for coin in &mut self.coins {
+        for index in 0..self.coins.len() {
+            let coin = &mut self.coins[index];
             coin.animation_ticks = (coin.animation_ticks + 1) % 80;
-            coin.frame = (coin.animation_ticks / if seymour_present { 4 } else { 2 }) % 10;
+            if coin.kind == CoinKind::ShrapnelBomb {
+                coin.hazard_age_ticks = coin.hazard_age_ticks.wrapping_add(1);
+                coin.frame = (coin.animation_ticks / 2) % 5;
+            } else {
+                coin.frame = (coin.animation_ticks / if seymour_present { 4 } else { 2 }) % 10;
+            }
             if coin.collecting {
                 coin.fade_ticks = 0;
                 // Coin::Update tests last tick's integer widget Y before its
@@ -5068,7 +5229,25 @@ impl AdventureState {
                 coin.y = 370.0;
                 coin.bottom_ticks += 1;
                 if coin.bottom_ticks >= bottom_limit {
-                    coin.fade_ticks = 5;
+                    if coin.kind == CoinKind::ShrapnelBomb {
+                        expired.push(coin.id);
+                    } else {
+                        coin.fade_ticks = 5;
+                    }
+                }
+            }
+            if coin.kind == CoinKind::ShrapnelBomb && expired.contains(&coin.id) {
+                let (coin_id, x, y) = (coin.id, coin.x, coin.y);
+                self.explode_bomb(coin_id, None, x, y, events);
+                continue;
+            }
+            if coin.kind == CoinKind::ShrapnelBomb && coin.hazard_age_ticks > 30 {
+                let (coin_id, x, y) = (coin.id, coin.x, coin.y);
+                if !expired.contains(&coin_id)
+                    && let Some(target_id) = self.bomb_contact(x, y, events)
+                {
+                    expired.push(coin_id);
+                    self.explode_bomb(coin_id, Some(target_id), x, y, events);
                 }
             }
         }
@@ -5090,6 +5269,159 @@ impl AdventureState {
                 coin_id: id,
             });
         }
+    }
+
+    fn bomb_contact(&mut self, x: f64, y: f64, events: &mut Vec<Event>) -> Option<u64> {
+        let x = x + 36.0;
+        let y = y + 36.0;
+        let overlaps = |left: i32, top: i32, size: i32| {
+            x > f64::from(left + 10)
+                && x < f64::from(left + size - 10)
+                && y > f64::from(top + 10)
+                && y < f64::from(top + size - 10)
+        };
+        if let Some(fish) = self
+            .fish
+            .iter_mut()
+            .find(|fish| fish.alive && overlaps(fish.x as i32, fish.y as i32, 80))
+        {
+            let id = fish.id;
+            fish.alive = false;
+            self.dead_fish.push(DeadFish::from_live(fish));
+            events.push(Event::FishDied {
+                tick: self.tick,
+                fish_id: id,
+            });
+            if self.detach_missile_target(id, events) {
+                self.finish_destructor_battle(events);
+            }
+            return Some(id);
+        }
+        if let Some(pos) = self
+            .oscars
+            .iter()
+            .position(|actor| actor.alive && overlaps(actor.widget_x, actor.widget_y, 80))
+        {
+            let id = self.oscars[pos].id;
+            self.dead_oscars
+                .push(DeadOscar::from_impact(&self.oscars[pos]));
+            self.oscars.remove(pos);
+            events.push(Event::OscarDied {
+                tick: self.tick,
+                oscar_id: id,
+            });
+            if self.detach_missile_target(id, events) {
+                self.finish_destructor_battle(events);
+            }
+            return Some(id);
+        }
+        if let Some(pos) = self
+            .gekkos
+            .iter()
+            .position(|actor| actor.alive && overlaps(actor.widget_x, actor.widget_y, 160))
+        {
+            let id = self.gekkos[pos].id;
+            self.dead_gekkos
+                .push(DeadGekko::from_impact(&self.gekkos[pos]));
+            self.gekkos.remove(pos);
+            events.push(Event::GekkoDied {
+                tick: self.tick,
+                gekko_id: id,
+            });
+            if self.detach_missile_target(id, events) {
+                self.finish_destructor_battle(events);
+            }
+            return Some(id);
+        }
+        if let Some(pos) = self
+            .starcatchers
+            .iter()
+            .position(|actor| actor.alive && overlaps(actor.widget_x, actor.widget_y, 160))
+        {
+            let id = self.starcatchers[pos].id;
+            self.dead_starcatchers
+                .push(DeadStarcatcher::from_impact(&self.starcatchers[pos]));
+            self.starcatchers.remove(pos);
+            events.push(Event::StarcatcherDied {
+                tick: self.tick,
+                starcatcher_id: id,
+            });
+            if self.detach_missile_target(id, events) {
+                self.finish_destructor_battle(events);
+            }
+            return Some(id);
+        }
+        if let Some(pos) = self
+            .grubbers
+            .iter()
+            .position(|actor| actor.alive && overlaps(actor.widget_x, actor.widget_y, 160))
+        {
+            let id = self.grubbers[pos].id;
+            self.dead_grubbers
+                .push(DeadGrubber::from_impact(&self.grubbers[pos]));
+            self.grubbers.remove(pos);
+            events.push(Event::GrubberDied {
+                tick: self.tick,
+                grubber_id: id,
+            });
+            if self.detach_missile_target(id, events) {
+                self.finish_destructor_battle(events);
+            }
+            return Some(id);
+        }
+        None
+    }
+
+    fn explode_bomb(
+        &mut self,
+        coin_id: u64,
+        target_id: Option<u64>,
+        x: f64,
+        y: f64,
+        events: &mut Vec<Event>,
+    ) {
+        let widget_x = x.trunc() as i32;
+        let widget_y = y.trunc() as i32;
+        let fragments = self.rand_range(3) as u8 + 2;
+        for _ in 0..fragments {
+            let shot_type = self.rand_range(3) as u8 + 3;
+            let shot_x = widget_x + self.rand_range(30) as i32 - 10;
+            let shot_y = widget_y + self.rand_range(30) as i32 - 10;
+            // The source constructor reads an uninitialized prior type before
+            // assigning the requested one. This Rust path initializes that
+            // field to zero: no delay draw, then one alpha draw.
+            let alpha = self.rand_range(200) as u8 + 50;
+            self.bomb_shots.push(BombShot {
+                shot_type,
+                x: shot_x,
+                y: shot_y,
+                age_ticks: 0,
+                frame: 0,
+                delay_ticks: 0,
+                alpha,
+            });
+        }
+        if target_id.is_some() {
+            // Contact creates one more Shot after Remove; bottom expiry does
+            // not. These two draws follow every fragment constructor draw.
+            let shot_type = self.rand_range(3) as u8 + 3;
+            let alpha = self.rand_range(200) as u8 + 50;
+            self.bomb_shots.push(BombShot {
+                shot_type,
+                x: widget_x,
+                y: widget_y,
+                age_ticks: 0,
+                frame: 0,
+                delay_ticks: 0,
+                alpha,
+            });
+        }
+        events.push(Event::ShrapnelBombExploded {
+            tick: self.tick,
+            coin_id,
+            target_id,
+            fragments,
+        });
     }
 
     fn update_notes(&mut self, events: &mut Vec<Event>) {
@@ -5115,6 +5447,295 @@ impl AdventureState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_shrapnel_bomb(board: &mut AdventureState, x: f64, y: f64, age: i32) -> u64 {
+        let id = board.id();
+        board.coins.push(Coin {
+            id,
+            x,
+            y,
+            kind: CoinKind::ShrapnelBomb,
+            frame: 0,
+            animation_ticks: 0,
+            hazard_age_ticks: age,
+            collecting: false,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+            penta_rising: false,
+        });
+        id
+    }
+
+    #[test]
+    fn bomb_shot_waits_its_delay_then_uses_alpha_dependent_source_pace() {
+        let mut shot = BombShot {
+            shot_type: 4,
+            x: 100,
+            y: 120,
+            age_ticks: 0,
+            frame: 0,
+            delay_ticks: 2,
+            alpha: 151,
+        };
+        shot.validate().unwrap();
+        assert_eq!(shot.sprite_frame(), None);
+        assert!(!shot.tick());
+        assert_eq!((shot.age_ticks, shot.delay_ticks), (0, 1));
+        assert!(!shot.tick());
+        assert_eq!((shot.age_ticks, shot.delay_ticks), (0, 0));
+        assert!(!shot.tick());
+        assert_eq!((shot.age_ticks, shot.sprite_frame()), (2, Some(0)));
+        while shot.age_ticks < 18 {
+            assert!(!shot.tick());
+        }
+        assert!(shot.tick());
+    }
+
+    #[test]
+    fn third_tank_third_stage_has_earned_pet_gate_and_reused_purchase_chain() {
+        let mut board =
+            AdventureState::new_tank3_third_stage(0x3301, &[PetKind::Shrapnel]).unwrap();
+        assert_eq!(
+            (board.balance, board.egg_price, board.fish.len()),
+            (200, 7500, 2)
+        );
+        assert_eq!(
+            board.invasion.as_ref().unwrap().plan,
+            WavePlan::Fixed(SylvesterKind::Psychosquid)
+        );
+        board.validate().unwrap();
+        board.upgrades.quality_unlocked = true;
+        board.upgrades.quantity_unlocked = true;
+        board.grubber_unlocked = true;
+        board.balance = GRUBBER_PRICE;
+        assert!(
+            board
+                .apply(Action::BuyGrubber)
+                .iter()
+                .any(|event| matches!(event, Event::GrubberBought { .. }))
+        );
+        assert!(board.gekko_unlocked);
+        board.balance = GEKKO_PRICE;
+        assert!(
+            board
+                .apply(Action::BuyGekko)
+                .iter()
+                .any(|event| matches!(event, Event::GekkoBought { .. }))
+        );
+        assert!(board.weapon_unlocked && board.egg_unlocked);
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn bomb_arms_on_thirty_first_update_and_first_contact_commits_before_next_bomb() {
+        let mut board = AdventureState::new_tank3_third_stage(0x3302, &[]).unwrap();
+        board.fish.truncate(1);
+        board.fish[0].x = 100.0;
+        board.fish[0].y = 100.0;
+        let fish_id = board.fish[0].id;
+        let first = test_shrapnel_bomb(&mut board, 100.0, 100.0, 29);
+        let second = test_shrapnel_bomb(&mut board, 100.0, 100.0, 29);
+        let mut events = Vec::new();
+        board.update_coins(&mut events);
+        assert!(board.fish[0].alive && events.is_empty());
+        assert_eq!(board.coins[0].hazard_age_ticks, 30);
+        let rng_before_contact = board.rng_state;
+        board.update_coins(&mut events);
+        assert!(!board.fish[0].alive);
+        assert_eq!(board.dead_fish.len(), 1);
+        assert_eq!(
+            board.coins.iter().map(|coin| coin.id).collect::<Vec<_>>(),
+            vec![second]
+        );
+        assert_eq!(events.iter().filter(|event| matches!(event, Event::ShrapnelBombExploded { coin_id, target_id: Some(id), .. } if *coin_id == first && *id == fish_id)).count(), 1);
+        let fragments = events
+            .iter()
+            .find_map(|event| match event {
+                Event::ShrapnelBombExploded {
+                    coin_id, fragments, ..
+                } if *coin_id == first => Some(*fragments),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(board.bomb_shots.len(), usize::from(fragments) + 1);
+        assert!(
+            board
+                .bomb_shots
+                .iter()
+                .all(|shot| (3..=5).contains(&shot.shot_type) && shot.delay_ticks == 0)
+        );
+        let mut source_order_rng = rng_before_contact;
+        for _ in 0..(1 + usize::from(fragments) * 4 + 2) {
+            AdventureState::advance_rng(&mut source_order_rng);
+        }
+        assert_eq!(board.rng_state, source_order_rng);
+    }
+
+    #[test]
+    fn claimed_bomb_is_safe_and_age_does_not_wrap_with_sprite_animation() {
+        let mut board = AdventureState::new_tank3_third_stage(0x3303, &[]).unwrap();
+        board.fish[0].x = 100.0;
+        board.fish[0].y = 100.0;
+        let id = test_shrapnel_bomb(&mut board, 100.0, 100.0, 254);
+        board.coins[0].collecting = true;
+        board.coins[0].animation_ticks = 79;
+        let mut events = Vec::new();
+        board.update_coins(&mut events);
+        assert!(board.fish[0].alive);
+        assert_eq!(
+            (
+                board.coins[0].hazard_age_ticks,
+                board.coins[0].animation_ticks,
+                board.coins[0].frame
+            ),
+            (255, 0, 0)
+        );
+        board.update_coins(&mut events);
+        assert_eq!(board.coins[0].hazard_age_ticks, 256);
+        assert!(board.coins.iter().any(|coin| coin.id == id));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::ShrapnelBombExploded { .. }))
+        );
+    }
+
+    #[test]
+    fn unclaimed_bomb_remains_armed_across_byte_and_word_age_boundaries() {
+        for (before, after) in [(254, 256), (65_534, 65_536)] {
+            let mut board = AdventureState::new_tank3_third_stage(
+                0x3320,
+                &[PetKind::Seymour, PetKind::Shrapnel],
+            )
+            .unwrap();
+            board.fish[0].x = 100.0;
+            board.fish[0].y = 100.0;
+            board.fish[1].x = 430.0;
+            board.fish[1].y = 300.0;
+            let bomb_id = test_shrapnel_bomb(&mut board, 300.0, 100.0, before);
+            let mut events = Vec::new();
+            board.update_coins(&mut events);
+            assert_eq!(board.coins[0].hazard_age_ticks, after - 1);
+            assert!(board.fish[0].alive);
+            board.coins[0].x = 100.0;
+            board.update_coins(&mut events);
+            assert!(!board.fish[0].alive);
+            assert!(board.coins.iter().all(|coin| coin.id != bomb_id));
+            assert!(events.iter().any(|event| matches!(event, Event::ShrapnelBombExploded { coin_id, target_id: Some(_), .. } if *coin_id == bomb_id)));
+        }
+    }
+
+    #[test]
+    fn bomb_bottom_expiry_is_immediate_and_seymour_only_extends_the_floor_clock() {
+        let mut board =
+            AdventureState::new_tank3_third_stage(0x3304, &[PetKind::Seymour, PetKind::Shrapnel])
+                .unwrap();
+        let id = test_shrapnel_bomb(&mut board, 400.0, 369.5, 30);
+        board.coins[0].bottom_ticks = 199;
+        let mut events = Vec::new();
+        let rng_before_expiry = board.rng_state;
+        board.update_coins(&mut events);
+        assert!(board.coins.is_empty());
+        assert_eq!(events.iter().filter(|event| matches!(event, Event::ShrapnelBombExploded { coin_id, target_id: None, fragments: 2..=4, .. } if *coin_id == id)).count(), 1);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::CoinExpired { coin_id, .. } if *coin_id == id))
+        );
+        let fragments = events
+            .iter()
+            .find_map(|event| match event {
+                Event::ShrapnelBombExploded {
+                    coin_id, fragments, ..
+                } if *coin_id == id => Some(*fragments),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(board.bomb_shots.len(), usize::from(fragments));
+        let mut source_order_rng = rng_before_expiry;
+        for _ in 0..(1 + usize::from(fragments) * 4) {
+            AdventureState::advance_rng(&mut source_order_rng);
+        }
+        assert_eq!(board.rng_state, source_order_rng);
+        let draws_after = board.rng_state;
+        board.update_coins(&mut events);
+        assert_eq!(board.rng_state, draws_after);
+    }
+
+    #[test]
+    fn bomb_uses_large_species_bounds_and_records_ordinary_corpse() {
+        let mut board = AdventureState::new_tank3_third_stage(0x3305, &[]).unwrap();
+        for fish in &mut board.fish {
+            fish.x = 430.0;
+            fish.y = 300.0;
+        }
+        let id = board.id();
+        let mut gekko = GekkoState::spawn_bought(id, &mut |_| 0);
+        gekko.x = 100.0;
+        gekko.y = 100.0;
+        gekko.widget_x = 100;
+        gekko.widget_y = 100;
+        board.gekkos.push(gekko);
+        // Center x=140/y=140 is inside Gekko's +10..150 bounds, even though
+        // it would miss a wrongly reused 80-pixel Guppy contact box at x=170.
+        let bomb_id = test_shrapnel_bomb(&mut board, 134.0, 134.0, 30);
+        let mut events = Vec::new();
+        board.update_coins(&mut events);
+        assert!(board.gekkos.is_empty());
+        assert_eq!(board.dead_gekkos.len(), 1);
+        assert!(events.iter().any(|event| matches!(event, Event::ShrapnelBombExploded { coin_id, target_id: Some(target), .. } if *coin_id == bomb_id && *target == id)));
+    }
+
+    #[test]
+    fn collectors_ignore_bomb_even_when_it_overlaps_an_ordinary_coin_pursuit() {
+        let mut board =
+            AdventureState::new_tank3_third_stage(0x3306, &[PetKind::Stinky, PetKind::Clyde])
+                .unwrap();
+        let stinky = board.stinky.as_mut().unwrap();
+        stinky.x = 100.0;
+        stinky.y = 100.0;
+        let clyde = board.clyde.as_mut().unwrap();
+        clyde.x = 100.0;
+        clyde.y = 100.0;
+        clyde.widget_x = 100;
+        clyde.widget_y = 100;
+        let bomb_id = test_shrapnel_bomb(&mut board, 100.0, 100.0, 0);
+        let ordinary_id = board.id();
+        board.coins.push(Coin {
+            id: ordinary_id,
+            x: 200.0,
+            y: 100.0,
+            kind: CoinKind::Silver,
+            frame: 0,
+            animation_ticks: 0,
+            hazard_age_ticks: 0,
+            collecting: false,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+            penta_rising: false,
+        });
+        assert_eq!(
+            AdventureState::stinky_target_x(
+                board.stinky.as_ref().unwrap(),
+                &board.coins,
+                &[],
+                false
+            ),
+            Some(200)
+        );
+        let start_balance = board.balance;
+        let mut events = Vec::new();
+        board.update_stinky(&mut events);
+        board.update_clyde(&mut events);
+        assert_eq!(board.balance, start_balance);
+        assert!(board.coins.iter().any(|coin| coin.id == bomb_id));
+        assert!(board.coins.iter().any(|coin| coin.id == ordinary_id));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::PetCollectedCoin { .. }))
+        );
+    }
 
     #[test]
     fn tank3_second_stage_purchase_chain_and_selected_seymour_are_distinct() {
@@ -5200,6 +5821,7 @@ mod tests {
             kind: CoinKind::Pearl,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -5248,6 +5870,7 @@ mod tests {
             kind: CoinKind::Silver,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -5271,6 +5894,7 @@ mod tests {
             kind: CoinKind::Silver,
             frame: 9,
             animation_ticks: 79,
+            hazard_age_ticks: 0,
             collecting: true,
             bottom_ticks: 19,
             fade_ticks: 4,
@@ -5721,6 +6345,7 @@ mod tests {
             kind: CoinKind::Silver,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -5856,6 +6481,7 @@ mod tests {
             kind: CoinKind::Gold,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 149,
             fade_ticks: 0,
@@ -5935,6 +6561,7 @@ mod tests {
             kind: CoinKind::Gold,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: true,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -6115,6 +6742,7 @@ mod tests {
                 kind: CoinKind::Gold,
                 frame: 0,
                 animation_ticks: 0,
+                hazard_age_ticks: 0,
                 collecting: true,
                 bottom_ticks: 0,
                 fade_ticks: 0,
@@ -6127,6 +6755,7 @@ mod tests {
                 kind: CoinKind::Silver,
                 frame: 0,
                 animation_ticks: 0,
+                hazard_age_ticks: 0,
                 collecting: false,
                 bottom_ticks: 0,
                 fade_ticks: 1,
@@ -6139,6 +6768,7 @@ mod tests {
                 kind: CoinKind::Gold,
                 frame: 0,
                 animation_ticks: 0,
+                hazard_age_ticks: 0,
                 collecting: false,
                 bottom_ticks: 0,
                 fade_ticks: 0,
@@ -6200,6 +6830,7 @@ mod tests {
             kind: CoinKind::Silver,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -6266,6 +6897,7 @@ mod tests {
                 kind: CoinKind::Silver,
                 frame: 0,
                 animation_ticks: 0,
+                hazard_age_ticks: 0,
                 collecting: false,
                 bottom_ticks: 0,
                 fade_ticks: 0,
@@ -6295,6 +6927,7 @@ mod tests {
                 kind: CoinKind::Silver,
                 frame: 0,
                 animation_ticks: 0,
+                hazard_age_ticks: 0,
                 collecting: false,
                 bottom_ticks: 0,
                 fade_ticks: 0,
@@ -6317,6 +6950,7 @@ mod tests {
             kind: CoinKind::Silver,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -6350,6 +6984,7 @@ mod tests {
             kind: CoinKind::Silver,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 148,
             fade_ticks: 0,
@@ -6374,6 +7009,7 @@ mod tests {
             kind: CoinKind::Gold,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 18,
             fade_ticks: 0,
@@ -6405,6 +7041,7 @@ mod tests {
             kind: CoinKind::Gold,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 18,
             fade_ticks: 0,
@@ -6589,6 +7226,7 @@ mod tests {
             kind: CoinKind::Silver,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: true,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -6959,6 +7597,7 @@ mod tests {
             kind: CoinKind::Silver,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -7004,6 +7643,7 @@ mod tests {
             kind: CoinKind::Silver,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -7032,6 +7672,7 @@ mod tests {
             kind: CoinKind::Silver,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -7059,6 +7700,7 @@ mod tests {
             kind: CoinKind::Silver,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -7544,6 +8186,7 @@ mod tests {
             kind: CoinKind::Star,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -7573,6 +8216,7 @@ mod tests {
             kind: CoinKind::Star,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: true,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -7599,6 +8243,7 @@ mod tests {
             kind: CoinKind::DiamondPenta,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -7696,6 +8341,7 @@ mod tests {
             kind: CoinKind::Silver,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -8113,6 +8759,7 @@ mod tests {
             kind: CoinKind::Silver,
             frame: 0,
             animation_ticks: 0,
+            hazard_age_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,

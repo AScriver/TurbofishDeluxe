@@ -22,6 +22,7 @@ pub enum SylvesterKind {
     Balrog,
     Gus,
     Destructor,
+    Psychosquid,
 }
 
 impl SylvesterKind {
@@ -32,6 +33,7 @@ impl SylvesterKind {
             Self::Balrog => 1.2,
             Self::Gus => 1.6,
             Self::Destructor => 1.2,
+            Self::Psychosquid => 0.5,
         }
     }
 
@@ -42,6 +44,7 @@ impl SylvesterKind {
             Self::Balrog => 130.0,
             Self::Gus => 100.0,
             Self::Destructor => 150.0,
+            Self::Psychosquid => 260.0,
         }
     }
 }
@@ -76,6 +79,7 @@ pub struct AlienUpdate {
     pub prey_eaten: Option<u64>,
     /// Registered zero-health aliens finish this active update before removal.
     pub defeated: bool,
+    pub phase_changed: Option<bool>,
 }
 
 /// A Board callback executes the launch before the actor requests its reload
@@ -134,6 +138,11 @@ pub struct WeakSylvester {
     pub launch_ticks: u16,
     pub reload_ticks: u16,
     pub special_ticks: u8,
+    pub phase_ticks: u16,
+    pub phase_threshold: u16,
+    pub healing: bool,
+    pub ever_healed: bool,
+    pub movement_divisor: f64,
 }
 
 impl WeakSylvester {
@@ -201,6 +210,19 @@ impl WeakSylvester {
                 0
             },
             special_ticks: 0,
+            phase_ticks: if kind == SylvesterKind::Psychosquid {
+                200
+            } else {
+                0
+            },
+            phase_threshold: if kind == SylvesterKind::Psychosquid {
+                400
+            } else {
+                0
+            },
+            healing: false,
+            ever_healed: false,
+            movement_divisor: kind.speed_divisor(),
         }
     }
 
@@ -262,7 +284,7 @@ impl WeakSylvester {
             } else {
                 self.wander(&mut || runtime(AlienRuntimeRequest::Random));
             }
-        } else if self.kind == SylvesterKind::Destructor {
+        } else if self.kind == SylvesterKind::Destructor || self.healing {
             // AlienUnk01 never chases for Destructor, even with nearby fish.
             self.wander(&mut || runtime(AlienRuntimeRequest::Random));
         } else if let Some(target) = self.nearest_eligible(prey) {
@@ -274,8 +296,19 @@ impl WeakSylvester {
             self.wander(&mut || runtime(AlienRuntimeRequest::Random));
         }
 
-        self.x = self.x.clamp(-10.0, 490.0) + self.vx / self.kind.speed_divisor() + emergence_dx;
-        self.y = self.y.clamp(85.0, 290.0) + self.vy / self.kind.speed_divisor();
+        if self.kind == SylvesterKind::Psychosquid {
+            self.phase_ticks += 1;
+            if self.phase_ticks >= self.phase_threshold {
+                self.healing = !self.healing;
+                self.ever_healed |= self.healing;
+                self.special_ticks = 10;
+                self.phase_ticks = (runtime(AlienRuntimeRequest::Random) % 100) as u16;
+                self.movement_divisor = if self.healing { 2.0 } else { 0.5 };
+                result.phase_changed = Some(self.healing);
+            }
+        }
+        self.x = self.x.clamp(-10.0, 490.0) + self.vx / self.movement_divisor + emergence_dx;
+        self.y = self.y.clamp(85.0, 290.0) + self.vy / self.movement_divisor;
         self.hit_ticks = self.hit_ticks.saturating_sub(1);
         self.chase_ticks = self.chase_ticks.saturating_sub(1);
 
@@ -331,6 +364,16 @@ impl WeakSylvester {
     }
 
     pub fn shot_with_weapon(&mut self, shot_x: i32, shot_y: i32, weapon: u8) -> ShotResult {
+        self.shot_with_weapon_and_random(shot_x, shot_y, weapon, || 0)
+    }
+
+    pub fn shot_with_weapon_and_random(
+        &mut self,
+        shot_x: i32,
+        shot_y: i32,
+        weapon: u8,
+        mut next_random: impl FnMut() -> u32,
+    ) -> ShotResult {
         let sx = f64::from(shot_x);
         let sy = f64::from(shot_y);
         if !self.alive
@@ -343,11 +386,22 @@ impl WeakSylvester {
             return ShotResult::Miss;
         }
 
-        self.health -= if self.kind == SylvesterKind::Destructor {
-            f64::from(weapon) * 2.0 + 2.0
+        if self.kind == SylvesterKind::Psychosquid && self.healing {
+            self.health += f64::from(weapon) * 3.0;
         } else {
-            f64::from(weapon) * 3.0
-        };
+            self.health -= if self.kind == SylvesterKind::Destructor {
+                f64::from(weapon) * 2.0 + 2.0
+            } else {
+                f64::from(weapon) * 3.0
+            };
+            if self.kind == SylvesterKind::Psychosquid && self.health < 100.0 && !self.ever_healed {
+                self.healing = true;
+                self.ever_healed = true;
+                self.special_ticks = 10;
+                self.phase_ticks = (next_random() % 100) as u16;
+                // The forced Shot path does not write movement_divisor.
+            }
+        }
         self.apply_shot_push(sx, sy);
         if self.health <= 0.0 {
             self.alive = false;
@@ -416,7 +470,7 @@ impl WeakSylvester {
             || self.widget_y < 64
             || self.widget_y > 312
             || !self.health.is_finite()
-            || self.health > self.kind.starting_health()
+            || (self.kind != SylvesterKind::Psychosquid && self.health > self.kind.starting_health())
             || (self.health * 4.0).fract() != 0.0
             // Project-save guard for one ordinary Itchy contact per elapsed
             // spawn update. This bounds malformed pending-death state without
@@ -441,7 +495,15 @@ impl WeakSylvester {
                 && (self.reload_ticks < 75 || self.reload_ticks > 199
                     || self.launch_ticks > self.reload_ticks || self.special_ticks > 10))
             || (self.kind != SylvesterKind::Destructor
-                && (self.launch_ticks != 0 || self.reload_ticks != 0 || self.special_ticks != 0))
+                && (self.launch_ticks != 0 || self.reload_ticks != 0
+                    || (self.kind != SylvesterKind::Psychosquid && self.special_ticks != 0)))
+            || (self.kind == SylvesterKind::Psychosquid && (self.phase_threshold != 400
+                || self.phase_ticks >= 400 || self.special_ticks > 10
+                || (self.movement_divisor != 0.5 && self.movement_divisor != 2.0)
+                || (!self.ever_healed && self.healing)))
+            || (self.kind != SylvesterKind::Psychosquid && (self.phase_ticks != 0
+                || self.phase_threshold != 0 || self.healing || self.ever_healed
+                || self.movement_divisor != self.kind.speed_divisor()))
         {
             return Err("invalid weak Sylvester counters".into());
         }
@@ -449,8 +511,12 @@ impl WeakSylvester {
     }
 
     pub fn sprite_row(&self) -> u8 {
-        if self.kind == SylvesterKind::Gus && self.hit_ticks > 0 {
+        if self.kind == SylvesterKind::Psychosquid && self.special_ticks > 0 {
+            4
+        } else if self.kind == SylvesterKind::Gus && self.hit_ticks > 0 {
             2
+        } else if self.kind == SylvesterKind::Psychosquid && self.healing {
+            2 + u8::from(self.turn_ticks != 0)
         } else {
             u8::from(self.turn_ticks != 0)
         }
@@ -631,7 +697,7 @@ impl WeakSylvester {
         if self.vx < self.target_vx {
             self.vx += 0.1;
         }
-        if self.special_ticks == 0 || self.kind != SylvesterKind::Destructor {
+        if self.special_ticks == 0 {
             self.movement_change_ticks += 1;
             if self.movement_change_ticks > 20 {
                 self.movement_change_ticks = 0;
@@ -643,7 +709,7 @@ impl WeakSylvester {
     }
 
     fn animate(&mut self) {
-        let speed_divisor = self.kind.speed_divisor();
+        let speed_divisor = self.movement_divisor;
         if self.previous_vx < 0.0 && self.vx > 0.0 {
             self.turn_ticks = -10;
         } else if self.previous_vx > 0.0 && self.vx < 0.0 {
@@ -653,6 +719,16 @@ impl WeakSylvester {
 
         if self.special_ticks > 0 {
             self.special_ticks -= 1;
+            if self.kind == SylvesterKind::Psychosquid {
+                if self.special_ticks > 0 {
+                    if self.healing {
+                        self.frame = 10 - self.special_ticks;
+                    }
+                    self.previous_vx = self.vx;
+                    return;
+                }
+                self.swim_ticks = 0;
+            }
             if self.kind == SylvesterKind::Destructor {
                 if self.special_ticks > 0 {
                     self.frame = self.special_ticks;
@@ -669,7 +745,11 @@ impl WeakSylvester {
             self.frame = (9 - self.turn_ticks) as u8;
         } else if self.turn_ticks < 0 {
             self.frame = (self.turn_ticks + 10) as u8;
-        } else if self.kind == SylvesterKind::Destructor || self.vx.abs() <= 1.6 {
+        } else if matches!(
+            self.kind,
+            SylvesterKind::Destructor | SylvesterKind::Psychosquid
+        ) || self.vx.abs() <= 1.6
+        {
             self.swim_ticks += 1;
             if self.swim_ticks > 19 {
                 self.swim_ticks = 0;
@@ -714,15 +794,25 @@ impl WeakSylvester {
         if self.kind == SylvesterKind::Destructor {
             if self.special_ticks == 0 {
                 if sx < self.x + 60.0 {
-                    self.vx = self.kind.speed_divisor() * 3.0;
+                    self.vx = self.movement_divisor * 3.0;
                 } else if sx > self.x + 100.0 {
-                    self.vx = -self.kind.speed_divisor() * 3.0;
+                    self.vx = -self.movement_divisor * 3.0;
                 }
             }
             return;
         }
-        let diagonal = self.kind.speed_divisor() * 2.5;
-        let cardinal = self.kind.speed_divisor() * 3.0;
+        let diagonal = self.movement_divisor
+            * if self.kind == SylvesterKind::Psychosquid {
+                3.5
+            } else {
+                2.5
+            };
+        let cardinal = self.movement_divisor
+            * if self.kind == SylvesterKind::Psychosquid {
+                4.0
+            } else {
+                3.0
+            };
         let left = sx < self.x + 60.0;
         let upper = sy < self.y + 60.0;
         let right = sx > self.x + 100.0;
@@ -753,6 +843,85 @@ mod tests {
 
     fn alien() -> WeakSylvester {
         WeakSylvester::spawn(7, 100, 120, 1, 1)
+    }
+
+    #[test]
+    fn psychosquid_timed_and_forced_healing_preserve_distinct_speed_writes() {
+        let mut timed = WeakSylvester::spawn_kind(SylvesterKind::Psychosquid, 90, 100, 120, 1, 1);
+        timed.spawn_ticks = 0;
+        timed.phase_ticks = 399;
+        timed.movement_change_ticks = 0;
+        let mut requests = Vec::new();
+        let changed = timed.update_with_runtime(&[], &[], |request| {
+            requests.push(request);
+            37
+        });
+        assert_eq!(changed.phase_changed, Some(true));
+        assert_eq!(
+            (
+                timed.phase_ticks,
+                timed.movement_divisor,
+                timed.special_ticks
+            ),
+            (37, 2.0, 9)
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| matches!(request, AlienRuntimeRequest::Random))
+                .count(),
+            1
+        );
+        assert_eq!(timed.sprite_row(), 4);
+
+        let mut forced = WeakSylvester::spawn_kind(SylvesterKind::Psychosquid, 91, 100, 120, 1, 1);
+        forced.spawn_ticks = 0;
+        forced.health = 104.0;
+        assert!(matches!(
+            forced.shot_with_weapon_and_random(110, 130, 2, || 81),
+            ShotResult::Hit { health: 98.0 }
+        ));
+        assert!(forced.healing && forced.ever_healed);
+        assert_eq!(
+            (
+                forced.phase_ticks,
+                forced.movement_divisor,
+                forced.special_ticks
+            ),
+            (81, 0.5, 10)
+        );
+        forced.validate().unwrap();
+    }
+
+    #[test]
+    fn psychosquid_healing_has_no_starting_health_cap_and_uses_hit_immunity() {
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Psychosquid, 92, 100, 120, 1, 1);
+        actor.spawn_ticks = 0;
+        actor.healing = true;
+        actor.ever_healed = true;
+        actor.movement_divisor = 2.0;
+        actor.health = 259.0;
+        assert!(matches!(
+            actor.shot_with_weapon(110, 130, 12),
+            ShotResult::Hit { health: 295.0 }
+        ));
+        assert_eq!(actor.shot_with_weapon(110, 130, 12), ShotResult::Miss);
+        actor.validate().unwrap();
+    }
+
+    #[test]
+    fn psychosquid_transition_freezes_wander_roll_but_keeps_motion() {
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Psychosquid, 93, 100, 120, 1, 1);
+        actor.spawn_ticks = 0;
+        actor.healing = true;
+        actor.ever_healed = true;
+        actor.special_ticks = 10;
+        actor.movement_change_ticks = 20;
+        let old_x = actor.x;
+        actor.update(&[], || panic!("transition must not consume movement RNG"));
+        assert_eq!(actor.movement_change_ticks, 20);
+        assert_eq!(actor.special_ticks, 9);
+        assert_ne!(actor.x, old_x);
     }
 
     #[test]

@@ -93,6 +93,15 @@ pub enum InvasionEvent {
         id: u64,
         health: f64,
     },
+    PsychosquidHealingHit {
+        id: u64,
+        health: f64,
+    },
+    PsychosquidPhaseChanged {
+        id: u64,
+        healing: bool,
+        forced: bool,
+    },
     AlienDefeated {
         id: u64,
     },
@@ -201,6 +210,10 @@ impl Invasion1_2 {
 
     pub fn new_destructor() -> Self {
         Self::with_origin(InvasionOrigin::StageStart, SylvesterKind::Destructor)
+    }
+
+    pub fn new_psychosquid() -> Self {
+        Self::with_origin(InvasionOrigin::StageStart, SylvesterKind::Psychosquid)
     }
 
     pub fn new_tank1_finale() -> Self {
@@ -538,6 +551,13 @@ impl Invasion1_2 {
                 prey_id,
             });
         }
+        if let Some(healing) = update.phase_changed {
+            events.push(InvasionEvent::PsychosquidPhaseChanged {
+                id,
+                healing,
+                forced: false,
+            });
+        }
         if update.defeated {
             events.extend(self.remove_registered_alien(id));
         }
@@ -593,6 +613,16 @@ impl Invasion1_2 {
     }
 
     pub fn click_with_weapon(&mut self, x: i32, y: i32, weapon: u8) -> InvasionClick {
+        self.click_with_weapon_and_random(x, y, weapon, || 0)
+    }
+
+    pub fn click_with_weapon_and_random(
+        &mut self,
+        x: i32,
+        y: i32,
+        weapon: u8,
+        mut next_random: impl FnMut() -> u32,
+    ) -> InvasionClick {
         let mut events = Vec::new();
         if self.food_delay > 0
             && self.last_laser.is_some_and(|(last_x, last_y)| {
@@ -616,14 +646,30 @@ impl Invasion1_2 {
         }
         for index in 0..self.actors.len() {
             let alien_id = self.actors[index].id;
-            let shot_result = self.actors[index].shot_with_weapon(x, y, weapon);
+            let was_healing = self.actors[index].healing;
+            let shot_result =
+                self.actors[index].shot_with_weapon_and_random(x, y, weapon, &mut next_random);
             match shot_result {
                 ShotResult::Miss => continue,
                 ShotResult::Hit { health } => {
-                    result.events.push(InvasionEvent::AlienHit {
-                        id: alien_id,
-                        health,
-                    });
+                    if was_healing {
+                        result.events.push(InvasionEvent::PsychosquidHealingHit {
+                            id: alien_id,
+                            health,
+                        });
+                    } else {
+                        result.events.push(InvasionEvent::AlienHit {
+                            id: alien_id,
+                            health,
+                        });
+                        if self.actors[index].healing {
+                            result.events.push(InvasionEvent::PsychosquidPhaseChanged {
+                                id: alien_id,
+                                healing: true,
+                                forced: true,
+                            });
+                        }
+                    }
                     break;
                 }
                 ShotResult::Defeated { .. } => {
@@ -828,6 +874,45 @@ impl Default for Invasion1_2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn psychosquid_healing_shot_reports_only_heal_event_and_timed_exit_reports_phase() {
+        let mut wave = Invasion1_2::new_psychosquid();
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Psychosquid, 201, 100, 120, 1, 1);
+        actor.spawn_ticks = 0;
+        actor.healing = true;
+        actor.ever_healed = true;
+        actor.movement_divisor = 2.0;
+        actor.phase_ticks = 399;
+        wave.actors.push(actor);
+        wave.battle_active = true;
+        let shot = wave.click_with_weapon_and_random(110, 130, 2, || {
+            panic!("accepted healing shot draws no RNG")
+        });
+        assert!(shot.events.iter().any(|event| matches!(
+            event,
+            InvasionEvent::PsychosquidHealingHit {
+                id: 201,
+                health: 266.0
+            }
+        )));
+        assert!(
+            !shot
+                .events
+                .iter()
+                .any(|event| matches!(event, InvasionEvent::AlienHit { .. }))
+        );
+        let events = wave.update_actor_with_runtime(201, &[], &[], |_| 41);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            InvasionEvent::PsychosquidPhaseChanged {
+                id: 201,
+                healing: false,
+                forced: false
+            }
+        )));
+        assert_eq!(wave.actors[0].movement_divisor, 0.5);
+    }
 
     #[test]
     fn first_warning_pauses_at_276_then_consumes_all_four_coordinate_draws() {
