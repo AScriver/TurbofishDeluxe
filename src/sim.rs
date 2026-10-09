@@ -6,7 +6,7 @@ use crate::{
     alien::{AlienFoodView, AlienRuntimeRequest, PreyView, SylvesterKind},
     clyde::{ClydeCoinView, ClydeState},
     fish_pet::{FishPetKind, FishPetState, PetAlienView, ZorfHungryView},
-    invasion::{Invasion1_2, InvasionEvent},
+    invasion::{Invasion1_2, InvasionEvent, WavePlan},
     missile::{ClassicMissile, MissilePreyView},
     niko::{NikoEvent, NikoPearl, NikoState, PEARL_VALUE, PearlPhase, PearlUpdate},
     oscar::{DeadOscar, OscarPrey, OscarState},
@@ -15,6 +15,9 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+
+#[cfg(test)]
+use crate::invasion::EncounterKind;
 
 pub const TICK_MS: u32 = 28;
 pub const BOARD_WIDTH: f32 = 640.0;
@@ -30,6 +33,7 @@ pub const TANK2_FIRST_EGG_PRICE: i32 = 750;
 pub const TANK2_SECOND_EGG_PRICE: i32 = 3000;
 pub const TANK2_THIRD_EGG_PRICE: i32 = 5000;
 pub const TANK2_FOURTH_EGG_PRICE: i32 = 7500;
+pub const TANK2_FIFTH_EGG_PRICE: i32 = 10000;
 pub const STARCATCHER_PRICE: i32 = 750;
 pub const POTION_PRICE: i32 = 250;
 pub const FOOD_QUALITY_PRICE: i32 = 200;
@@ -58,6 +62,7 @@ pub enum PetKind {
     Vert,
     Rufus,
     Meryl,
+    Wadsworth,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,6 +338,16 @@ pub struct Coin {
     pub penta_rising: bool,
 }
 
+/// A zero-value Meryl note. It shares neither collection flight nor coin
+/// affordability; its visual lifetime is independent of the emitter.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NoteState {
+    pub id: u64,
+    pub x: i32,
+    pub y: i32,
+    pub age_ticks: u8,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Action {
     Click { x: f32, y: f32 },
@@ -525,6 +540,15 @@ pub enum Event {
         pet_id: u64,
         coin_id: u64,
     },
+    MerylNoteDropped {
+        tick: u64,
+        pet_id: u64,
+        note_id: u64,
+    },
+    MerylNoteExpired {
+        tick: u64,
+        note_id: u64,
+    },
     MissileLaunched {
         tick: u64,
         missile_id: u64,
@@ -697,6 +721,7 @@ pub struct AdventureState {
     pub dead_fish: Vec<DeadFish>,
     pub food: Vec<Food>,
     pub coins: Vec<Coin>,
+    pub notes: Vec<NoteState>,
     pub tutorial: TutorialState,
     #[serde(default)]
     pub upgrades: FoodUpgrades,
@@ -772,6 +797,7 @@ impl AdventureState {
             dead_fish: Vec::new(),
             food: Vec::new(),
             coins: Vec::new(),
+            notes: Vec::new(),
             tutorial: TutorialState::default(),
             upgrades: FoodUpgrades::default(),
             invasion: None,
@@ -861,7 +887,7 @@ impl AdventureState {
         let mut state = Self::empty_board(seed);
         state.level = 5;
         state.egg_price = FIFTH_STAGE_EGG_PRICE;
-        state.invasion = Some(Invasion1_2::new_balrog());
+        state.invasion = Some(Invasion1_2::new_tank1_finale());
         state.pets = pets.to_vec();
         for pet in pets {
             match pet {
@@ -880,7 +906,8 @@ impl AdventureState {
                 | PetKind::Clyde
                 | PetKind::Vert
                 | PetKind::Rufus
-                | PetKind::Meryl => {
+                | PetKind::Meryl
+                | PetKind::Wadsworth => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -928,7 +955,11 @@ impl AdventureState {
                 PetKind::Itchy => state.spawn_fish_pet(FishPetKind::Itchy),
                 PetKind::Prego => state.spawn_fish_pet(FishPetKind::Prego),
                 PetKind::Zorf => state.spawn_fish_pet(FishPetKind::Zorf),
-                PetKind::Clyde | PetKind::Vert | PetKind::Rufus | PetKind::Meryl => {
+                PetKind::Clyde
+                | PetKind::Vert
+                | PetKind::Rufus
+                | PetKind::Meryl
+                | PetKind::Wadsworth => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -983,7 +1014,7 @@ impl AdventureState {
                     }));
                     state.rng_state = rng_state;
                 }
-                PetKind::Vert | PetKind::Rufus | PetKind::Meryl => {
+                PetKind::Vert | PetKind::Rufus | PetKind::Meryl | PetKind::Wadsworth => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1040,7 +1071,7 @@ impl AdventureState {
                     state.rng_state = rng_state;
                 }
                 PetKind::Vert => state.spawn_fish_pet(FishPetKind::Vert),
-                PetKind::Rufus | PetKind::Meryl => {
+                PetKind::Rufus | PetKind::Meryl | PetKind::Wadsworth => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1106,7 +1137,82 @@ impl AdventureState {
                     }));
                     state.rng_state = rng_state;
                 }
-                PetKind::Meryl => unreachable!("roster checked before construction"),
+                PetKind::Meryl | PetKind::Wadsworth => {
+                    unreachable!("roster checked before construction")
+                }
+            }
+        }
+        state.spawn_starter_guppies(false);
+        Ok(state)
+    }
+
+    pub fn new_tank2_fifth_stage(seed: u64, pets: &[PetKind]) -> Result<Self, String> {
+        let canonical = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+            PetKind::Clyde,
+            PetKind::Vert,
+            PetKind::Rufus,
+            PetKind::Meryl,
+        ];
+        if pets.len() > 3
+            || pets.iter().any(|pet| !canonical.contains(pet))
+            || pets.windows(2).any(|pair| {
+                canonical.iter().position(|pet| *pet == pair[0])
+                    >= canonical.iter().position(|pet| *pet == pair[1])
+            })
+        {
+            return Err("invalid Adventure 2-5 pet selection".into());
+        }
+        let mut state = Self::empty_board(seed);
+        state.tank = 2;
+        state.level = 5;
+        state.egg_price = TANK2_FIFTH_EGG_PRICE;
+        // Board::InitLevel chooses the first expected species before
+        // Board::StartGame constructs selected pets and starter guppies.
+        let first = if state.rand_range(2) != 0 {
+            SylvesterKind::Destructor
+        } else {
+            SylvesterKind::Gus
+        };
+        state.invasion = Some(Invasion1_2::new_tank2_finale(first));
+        state.pets = pets.to_vec();
+        for pet in pets {
+            match pet {
+                PetKind::Stinky => {
+                    state.stinky = Some(state.spawn_stinky(StinkyOrigin::StageStart))
+                }
+                PetKind::Niko => {
+                    let owner_id = state.id();
+                    state.niko = Some(NikoState::spawn_tank2(owner_id, &mut |upper| {
+                        state.rand_range(upper)
+                    }));
+                }
+                PetKind::Itchy => state.spawn_fish_pet(FishPetKind::Itchy),
+                PetKind::Prego => state.spawn_fish_pet(FishPetKind::Prego),
+                PetKind::Zorf => state.spawn_fish_pet(FishPetKind::Zorf),
+                PetKind::Clyde => {
+                    let id = state.id();
+                    let mut rng_state = state.rng_state;
+                    state.clyde = Some(ClydeState::spawn_tank2(id, &mut |upper| {
+                        Self::advance_rng(&mut rng_state) % upper
+                    }));
+                    state.rng_state = rng_state;
+                }
+                PetKind::Vert => state.spawn_fish_pet(FishPetKind::Vert),
+                PetKind::Rufus => {
+                    let id = state.id();
+                    let mut rng_state = state.rng_state;
+                    state.rufus = Some(RufusState::spawn_tank2(id, &mut |upper| {
+                        Self::advance_rng(&mut rng_state) % upper
+                    }));
+                    state.rng_state = rng_state;
+                }
+                PetKind::Meryl => state.spawn_fish_pet(FishPetKind::Meryl),
+                PetKind::Wadsworth => unreachable!("roster checked before construction"),
             }
         }
         state.spawn_starter_guppies(false);
@@ -1138,9 +1244,10 @@ impl AdventureState {
     /// Recover only from the persisted owning wave at the migration boundary.
     pub fn initialize_legacy_alien_body_kind(&mut self) {
         if let Some(wave) = self.invasion.as_mut()
-            && let Some(body) = wave.dead_alien.as_mut()
+            && let Some(body) = wave.dead_aliens.first_mut()
+            && let WavePlan::Fixed(kind) = wave.plan
         {
-            body.kind = wave.kind;
+            body.kind = kind;
         }
     }
 
@@ -1247,7 +1354,7 @@ impl AdventureState {
     /// The profile and screen phase are checked by AdventureSession separately.
     pub fn validate(&self) -> Result<(), String> {
         if !((self.tank == 1 && (1..=5).contains(&self.level))
-            || (self.tank == 2 && (1..=4).contains(&self.level)))
+            || (self.tank == 2 && (1..=5).contains(&self.level)))
             || self.next_id == 0
             || self.next_id == u64::MAX
             || self.rng_state == 0
@@ -1280,7 +1387,8 @@ impl AdventureState {
             || !(2..=12).contains(&self.weapon_strength)
             || (!self.weapon_unlocked && self.weapon_strength > 2)
             || self.punch_sound_cooldown > 11
-            || (self.tank != 2 || !(2..=4).contains(&self.level))
+            || self.pets.contains(&PetKind::Wadsworth)
+            || (self.tank != 2 || !(2..=5).contains(&self.level))
                 && (self.starcatcher_unlocked
                     || !self.starcatchers.is_empty()
                     || !self.dead_starcatchers.is_empty()
@@ -1288,7 +1396,7 @@ impl AdventureState {
             || self.coins.iter().any(|coin| {
                 (coin.penta_rising && coin.kind != CoinKind::DiamondPenta)
                     || (coin.kind == CoinKind::DiamondPenta
-                        && !(self.tank == 2 && (2..=4).contains(&self.level)))
+                        && !(self.tank == 2 && (2..=5).contains(&self.level)))
             })
             || (self.potion_armed && !self.potion_unlocked)
             || (self.tank == 1
@@ -1304,6 +1412,7 @@ impl AdventureState {
                 2 => TANK2_SECOND_EGG_PRICE,
                 3 => TANK2_THIRD_EGG_PRICE,
                 4 => TANK2_FOURTH_EGG_PRICE,
+                5 => TANK2_FIFTH_EGG_PRICE,
                 _ => unreachable!(),
             }
         } else {
@@ -1359,7 +1468,7 @@ impl AdventureState {
                     || self
                         .invasion
                         .as_ref()
-                        .is_none_or(|wave| wave.kind != SylvesterKind::Strong)
+                        .is_none_or(|wave| wave.plan != WavePlan::Fixed(SylvesterKind::Strong))
                     || !self.fish_pets.is_empty() =>
             {
                 return Err("third-stage roster disagrees".into());
@@ -1371,18 +1480,16 @@ impl AdventureState {
                     || self
                         .invasion
                         .as_ref()
-                        .is_none_or(|wave| wave.kind != SylvesterKind::Balrog)
+                        .is_none_or(|wave| wave.plan != WavePlan::Fixed(SylvesterKind::Balrog))
                     || self.fish_pets.len() != 1
                     || self.fish_pets[0].kind != FishPetKind::Itchy =>
             {
                 return Err("fourth-stage roster or Balrog wave disagrees".into());
             }
             (1, 5)
-                if self
-                    .invasion
-                    .as_ref()
-                    .is_none_or(|wave| wave.kind != SylvesterKind::Balrog)
-                    || self.pets.len() > 3
+                if self.invasion.as_ref().is_none_or(|wave| {
+                    !matches!(wave.plan, WavePlan::CyclingTank1Finale { .. })
+                }) || self.pets.len() > 3
                     || self.pets.iter().any(|pet| {
                         matches!(
                             pet,
@@ -1427,7 +1534,7 @@ impl AdventureState {
                 if self
                     .invasion
                     .as_ref()
-                    .is_none_or(|wave| wave.kind != SylvesterKind::Strong)
+                    .is_none_or(|wave| wave.plan != WavePlan::Fixed(SylvesterKind::Strong))
                     || self.pets.len() > 3
                     || self.pets.iter().any(|pet| {
                         matches!(
@@ -1475,17 +1582,21 @@ impl AdventureState {
             {
                 return Err("second-tank roster or upgrade gates disagree".into());
             }
-            (2, 2..=4)
+            (2, 2..=5)
                 if self.invasion.as_ref().is_none_or(|wave| {
-                    wave.kind
-                        != match self.level {
-                            2 => SylvesterKind::Balrog,
-                            3 => SylvesterKind::Gus,
-                            _ => SylvesterKind::Destructor,
-                        }
+                    if self.level == 5 {
+                        !matches!(wave.plan, WavePlan::CyclingTank2Finale { .. })
+                    } else {
+                        wave.plan
+                            != WavePlan::Fixed(match self.level {
+                                2 => SylvesterKind::Balrog,
+                                3 => SylvesterKind::Gus,
+                                _ => SylvesterKind::Destructor,
+                            })
+                    }
                 }) || self.pets.len() > 3
-                    || self.pets.contains(&PetKind::Meryl)
-                    || (self.level != 4 && self.pets.contains(&PetKind::Rufus))
+                    || (self.level != 5 && self.pets.contains(&PetKind::Meryl))
+                    || (self.level < 4 && self.pets.contains(&PetKind::Rufus))
                     || (self.level == 2 && self.pets.contains(&PetKind::Vert))
                     || self.pets.windows(2).any(|pair| {
                         let canonical = [
@@ -1497,6 +1608,7 @@ impl AdventureState {
                             PetKind::Clyde,
                             PetKind::Vert,
                             PetKind::Rufus,
+                            PetKind::Meryl,
                         ];
                         canonical.iter().position(|pet| *pet == pair[0])
                             >= canonical.iter().position(|pet| *pet == pair[1])
@@ -1518,6 +1630,7 @@ impl AdventureState {
                                 PetKind::Prego => Some(FishPetKind::Prego),
                                 PetKind::Zorf => Some(FishPetKind::Zorf),
                                 PetKind::Vert => Some(FishPetKind::Vert),
+                                PetKind::Meryl => Some(FishPetKind::Meryl),
                                 _ => None,
                             })
                             .collect::<Vec<_>>()
@@ -1550,6 +1663,20 @@ impl AdventureState {
         {
             return Err("carnivore and weapon unlock order disagrees".into());
         }
+        if (!self.notes.is_empty() && (self.tank, self.level) != (2, 5))
+            || self
+                .notes
+                .iter()
+                .any(|note| note.age_ticks > 100 || note.y < 0 || note.y > 550)
+            || self
+                .fish_pets
+                .iter()
+                .filter(|pet| pet.kind == FishPetKind::Meryl)
+                .count()
+                > 1
+        {
+            return Err("invalid Meryl note or roster state".into());
+        }
         if let Some(stinky) = &self.stinky {
             stinky.validate()?;
         }
@@ -1559,7 +1686,8 @@ impl AdventureState {
         if let Some(rufus) = &self.rufus {
             rufus.validate()?;
         }
-        if (self.tank, self.level) != (2, 4) && (!self.missiles.is_empty() || self.rufus.is_some())
+        if !(self.tank == 2 && (4..=5).contains(&self.level))
+            && (!self.missiles.is_empty() || self.rufus.is_some())
         {
             return Err("Destructor missiles or Rufus outside Adventure 2-4".into());
         }
@@ -1589,7 +1717,12 @@ impl AdventureState {
         }
         if let Some(wave) = &self.invasion {
             wave.validate()?;
-            if (self.tank, self.level) == (1, 2) && wave.kind != SylvesterKind::Weak {
+            if wave.battle_active != (wave.has_live_alien() || !self.missiles.is_empty()) {
+                return Err("invasion battle membership latch disagrees".into());
+            }
+            if (self.tank, self.level) == (1, 2)
+                && wave.plan != WavePlan::Fixed(SylvesterKind::Weak)
+            {
                 return Err("second-stage wave must be weak".into());
             }
         }
@@ -1673,14 +1806,19 @@ impl AdventureState {
         if let Some(niko) = &self.niko {
             register(niko.owner_id)?;
         }
-        if let Some(alien) = self.invasion.as_ref().and_then(|wave| wave.alien.as_ref()) {
-            register(alien.id)?;
+        if let Some(wave) = &self.invasion {
+            for alien in &wave.actors {
+                register(alien.id)?;
+            }
         }
         for food in &self.food {
             register(food.id)?;
         }
         for coin in &self.coins {
             register(coin.id)?;
+        }
+        for note in &self.notes {
+            register(note.id)?;
         }
         for pearl in &self.pearls {
             register(pearl.id)?;
@@ -1756,22 +1894,11 @@ impl AdventureState {
     }
 
     fn finish_destructor_battle(&mut self, events: &mut Vec<Event>) {
-        if (self.tank, self.level) != (2, 4) || !self.missiles.is_empty() {
-            return;
-        }
         let Some(wave) = self.invasion.as_mut() else {
             return;
         };
-        if wave.alien.is_some() || wave.food_delay == 36 {
-            return;
-        }
-        wave.food_delay = 36;
-        self.held_feed = None;
-        self.held_fire = None;
-        events.push(Event::Invasion {
-            tick: self.tick,
-            event: InvasionEvent::BattleEnded,
-        });
+        let ended = wave.finish_if_no_threats(!self.missiles.is_empty());
+        self.record_invasion_events(ended, events);
     }
 
     fn missile_prey_view(&self, target_id: u64) -> Option<MissilePreyView> {
@@ -1873,14 +2000,16 @@ impl AdventureState {
         let aliens = self
             .invasion
             .as_ref()
-            .and_then(|wave| wave.alien.as_ref())
-            .map(|actor| {
-                vec![RufusAlienView {
-                    id: actor.id,
-                    widget_x: actor.widget_x,
-                    widget_y: actor.widget_y,
-                    healing: false,
-                }]
+            .map(|wave| {
+                wave.actors
+                    .iter()
+                    .map(|actor| RufusAlienView {
+                        id: actor.id,
+                        widget_x: actor.widget_x,
+                        widget_y: actor.widget_y,
+                        healing: false,
+                    })
+                    .collect::<Vec<_>>()
             })
             .unwrap_or_default();
         let mut rng_state = self.rng_state;
@@ -1893,8 +2022,7 @@ impl AdventureState {
             && let Some(actor) = self
                 .invasion
                 .as_mut()
-                .and_then(|wave| wave.alien.as_mut())
-                .filter(|actor| actor.id == alien_id)
+                .and_then(|wave| wave.actor_by_id_mut(alien_id))
             && let Some(health) = actor.rufus_hit()
         {
             let sound = update.punch_requested && self.punch_sound_cooldown == 0;
@@ -2064,7 +2192,7 @@ impl AdventureState {
                 }
             }
             Action::BuyStarcatcher => {
-                if !(self.tank == 2 && (2..=4).contains(&self.level) && self.starcatcher_unlocked) {
+                if !(self.tank == 2 && (2..=5).contains(&self.level) && self.starcatcher_unlocked) {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -2093,7 +2221,7 @@ impl AdventureState {
                 }
             }
             Action::BuyWeapon => {
-                if (self.tank != 1 && !(self.tank == 2 && (2..=4).contains(&self.level)))
+                if (self.tank != 1 && !(self.tank == 2 && (2..=5).contains(&self.level)))
                     || !self.weapon_unlocked
                 {
                     events.push(Event::Rejected {
@@ -2176,7 +2304,7 @@ impl AdventureState {
 
         let on_collectible = pearl_id.is_some() || coin_id.is_some();
         let on_alien_widget = self.invasion.as_ref().is_some_and(|wave| {
-            wave.alien.as_ref().is_some_and(|alien| {
+            wave.actors.iter().any(|alien| {
                 world_x >= alien.widget_x
                     && world_x < alien.widget_x + 160
                     && world_y >= alien.widget_y
@@ -2192,17 +2320,19 @@ impl AdventureState {
         let gus_live = self
             .invasion
             .as_ref()
-            .is_some_and(|wave| wave.kind == SylvesterKind::Gus && wave.has_live_alien());
+            .is_some_and(|wave| wave.has_registered_kind(SylvesterKind::Gus));
         let gus_feed_delay = self.invasion.as_ref().is_some_and(|wave| {
-            wave.kind == SylvesterKind::Gus
-                && wave.alien.as_ref().is_some_and(|alien| {
-                    let center_x = f64::from(alien.widget_x + 80);
-                    let center_y = f64::from(alien.widget_y + 80);
-                    center_x > f64::from(x) - 35.0
-                        && center_x < f64::from(x) + 75.0
-                        && center_y > f64::from(y) - 35.0
-                        && center_y < f64::from(y) + 75.0
-                })
+            wave.actors.iter().any(|alien| {
+                if alien.kind != SylvesterKind::Gus {
+                    return false;
+                }
+                let center_x = f64::from(alien.widget_x + 80);
+                let center_y = f64::from(alien.widget_y + 80);
+                center_x > f64::from(x) - 35.0
+                    && center_x < f64::from(x) + 75.0
+                    && center_y > f64::from(y) - 35.0
+                    && center_y < f64::from(y) + 75.0
+            })
         });
         if gus_live && (!on_collectible || on_alien_widget) {
             // Coin forwarding reaches Board MouseDown with world coordinates;
@@ -2463,7 +2593,8 @@ impl AdventureState {
         let mut events = Vec::new();
         if let Some((x, y, elapsed_ms)) = self.held_feed.take() {
             let feeding_blocked = self.invasion.as_ref().is_some_and(|wave| {
-                (wave.has_live_alien() && wave.kind != SylvesterKind::Gus) || wave.food_delay > 0
+                (wave.has_live_alien() && !wave.has_registered_kind(SylvesterKind::Gus))
+                    || wave.food_delay > 0
             }) || !self.missiles.is_empty();
             if !feeding_blocked
                 && elapsed_ms > 200
@@ -2478,7 +2609,7 @@ impl AdventureState {
                 if self
                     .invasion
                     .as_ref()
-                    .is_some_and(|wave| wave.kind == SylvesterKind::Gus && wave.has_live_alien())
+                    .is_some_and(|wave| wave.has_registered_kind(SylvesterKind::Gus))
                 {
                     self.drop_food_with_price(x, y, 20, FOOD_PRICE, true, &mut events);
                 } else {
@@ -2494,7 +2625,7 @@ impl AdventureState {
             && y.is_finite()
             && y > 40.0
             && let Some(wave) = self.invasion.as_mut()
-            && wave.kind != SylvesterKind::Gus
+            && !wave.has_registered_kind(SylvesterKind::Gus)
         {
             let missiles_present = !self.missiles.is_empty();
             let alien_present = wave.has_live_alien();
@@ -2563,6 +2694,7 @@ impl AdventureState {
         self.update_rufus(&mut events);
         self.update_fish_pets(&mut events);
         self.update_coins(&mut events);
+        self.update_notes(&mut events);
         self.update_pearls(&mut events);
         events
     }
@@ -2658,6 +2790,7 @@ impl AdventureState {
     }
 
     fn update_fish(&mut self, events: &mut Vec<Event>) {
+        let meryl_song = self.fish_pets.iter().any(FishPetState::song_active);
         let alien_live = self
             .invasion
             .as_ref()
@@ -2701,7 +2834,7 @@ impl AdventureState {
                     coin_drop = if alien_live {
                         None
                     } else {
-                        Self::coin_due(fish)
+                        Self::coin_due(fish, meryl_song)
                     };
                 } else {
                     let fish_cx = fish.x + 40.0;
@@ -2814,7 +2947,7 @@ impl AdventureState {
                     coin_drop = if alien_live {
                         None
                     } else {
-                        Self::coin_due(fish)
+                        Self::coin_due(fish, meryl_song)
                     };
                     if fish.bought_timer > 0 {
                         fish.bought_timer -= 1;
@@ -2920,7 +3053,7 @@ impl AdventureState {
                         self.potion_unlocked = true;
                         if self.level == 1 {
                             self.egg_unlocked = true;
-                        } else if (2..=4).contains(&self.level) {
+                        } else if (2..=5).contains(&self.level) {
                             self.starcatcher_unlocked = true;
                         }
                     }
@@ -2961,12 +3094,12 @@ impl AdventureState {
         }
     }
 
-    fn coin_due(fish: &mut Fish) -> Option<(u64, f32, f32, CoinKind)> {
+    fn coin_due(fish: &mut Fish, meryl_song: bool) -> Option<(u64, f32, f32, CoinKind)> {
         if fish.size == FishSize::Small {
             return None;
         }
         fish.coin_timer += 1;
-        if fish.coin_timer < fish.coin_threshold {
+        if fish.coin_timer < (if meryl_song { 35 } else { fish.coin_threshold }) {
             return None;
         }
         fish.coin_timer = 0;
@@ -3184,10 +3317,9 @@ impl AdventureState {
     }
 
     fn record_invasion_events(&mut self, wave_events: Vec<InvasionEvent>, events: &mut Vec<Event>) {
-        let defeated_destructor = (self.tank, self.level) == (2, 4)
-            && wave_events
-                .iter()
-                .any(|event| matches!(event, InvasionEvent::AlienDefeated { .. }));
+        let alien_defeated = wave_events
+            .iter()
+            .any(|event| matches!(event, InvasionEvent::AlienDefeated { .. }));
         let mut detached_target = false;
         for event in wave_events {
             match event {
@@ -3232,7 +3364,7 @@ impl AdventureState {
                 event,
             });
         }
-        if defeated_destructor || detached_target {
+        if alien_defeated || detached_target {
             self.finish_destructor_battle(events);
         }
     }
@@ -3385,111 +3517,126 @@ impl AdventureState {
     }
 
     fn update_invasion_objects(&mut self, events: &mut Vec<Event>) {
-        let mut prey = self
-            .fish
-            .iter()
-            .filter(|fish| fish.alive)
-            .map(|fish| PreyView {
-                id: fish.id,
-                widget_x: fish.x as i32,
-                widget_y: fish.y as i32,
-                width: 80,
-                height: 80,
-                eligible: fish.cannot_be_eaten_ticks == 0,
-            })
-            .collect::<Vec<_>>();
-        prey.extend(
-            self.oscars
+        let actor_ids = self.invasion.as_ref().map_or_else(Vec::new, |wave| {
+            wave.actors.iter().map(|actor| actor.id).collect()
+        });
+        for actor_id in actor_ids {
+            let mut prey = self
+                .fish
                 .iter()
-                .filter(|oscar| oscar.alive)
-                .map(|oscar| PreyView {
-                    id: oscar.id,
-                    widget_x: oscar.widget_x,
-                    widget_y: oscar.widget_y,
+                .filter(|fish| fish.alive)
+                .map(|fish| PreyView {
+                    id: fish.id,
+                    widget_x: fish.x as i32,
+                    widget_y: fish.y as i32,
                     width: 80,
                     height: 80,
-                    eligible: oscar.cannot_be_eaten_ticks == 0,
-                }),
-        );
-        prey.extend(
-            self.starcatchers
+                    eligible: fish.cannot_be_eaten_ticks == 0,
+                })
+                .collect::<Vec<_>>();
+            prey.extend(
+                self.oscars
+                    .iter()
+                    .filter(|oscar| oscar.alive)
+                    .map(|oscar| PreyView {
+                        id: oscar.id,
+                        widget_x: oscar.widget_x,
+                        widget_y: oscar.widget_y,
+                        width: 80,
+                        height: 80,
+                        eligible: oscar.cannot_be_eaten_ticks == 0,
+                    }),
+            );
+            prey.extend(
+                self.starcatchers
+                    .iter()
+                    .filter(|actor| actor.alive)
+                    .map(|actor| PreyView {
+                        id: actor.id,
+                        widget_x: actor.widget_x,
+                        widget_y: actor.widget_y,
+                        width: 80,
+                        height: 80,
+                        eligible: actor.cannot_be_eaten_ticks == 0,
+                    }),
+            );
+            let food = self
+                .food
                 .iter()
-                .filter(|actor| actor.alive)
-                .map(|actor| PreyView {
-                    id: actor.id,
-                    widget_x: actor.widget_x,
-                    widget_y: actor.widget_y,
-                    width: 80,
-                    height: 80,
-                    eligible: actor.cannot_be_eaten_ticks == 0,
-                }),
-        );
-        let food = self
-            .food
-            .iter()
-            .map(|item| AlienFoodView {
-                id: item.id,
-                widget_x: item.x as i32,
-                widget_y: item.y as i32,
-                quality: item.quality,
-                eligible: item.ineligible_ticks == 0,
-            })
-            .collect::<Vec<_>>();
-        if let Some(wave) = self.invasion.as_mut() {
-            let mut rng_state = self.rng_state;
-            let mut next_id = self.next_id;
-            let missiles = &mut self.missiles;
-            let mut launches = Vec::new();
-            let wave_events =
-                wave.objects_update_with_runtime(&prey, &food, |request| match request {
-                    AlienRuntimeRequest::Random => Self::advance_rng(&mut rng_state) as u32,
-                    AlienRuntimeRequest::Launch {
-                        x,
-                        y,
-                        center_x,
-                        center_y,
-                        ..
-                    } => {
-                        let mut farthest = None;
-                        let mut best = 0_i64;
-                        for candidate in prey.iter().filter(|candidate| candidate.eligible) {
-                            if missiles
-                                .iter()
-                                .any(|missile| missile.target_id == candidate.id)
-                            {
-                                continue;
+                .map(|item| AlienFoodView {
+                    id: item.id,
+                    widget_x: item.x as i32,
+                    widget_y: item.y as i32,
+                    quality: item.quality,
+                    eligible: item.ineligible_ticks == 0,
+                })
+                .collect::<Vec<_>>();
+            if let Some(wave) = self.invasion.as_mut() {
+                let mut rng_state = self.rng_state;
+                let mut next_id = self.next_id;
+                let missiles = &mut self.missiles;
+                let mut launches = Vec::new();
+                let wave_events = wave.update_actor_with_runtime(
+                    actor_id,
+                    &prey,
+                    &food,
+                    |request| match request {
+                        AlienRuntimeRequest::Random => Self::advance_rng(&mut rng_state) as u32,
+                        AlienRuntimeRequest::Launch {
+                            x,
+                            y,
+                            center_x,
+                            center_y,
+                            ..
+                        } => {
+                            let mut farthest = None;
+                            let mut best = 0_i64;
+                            for candidate in prey.iter().filter(|candidate| candidate.eligible) {
+                                if missiles
+                                    .iter()
+                                    .any(|missile| missile.target_id == candidate.id)
+                                {
+                                    continue;
+                                }
+                                let dx =
+                                    i64::from(center_x - candidate.widget_x - candidate.width / 2);
+                                let dy =
+                                    i64::from(center_y - candidate.widget_y - candidate.height / 2);
+                                let d2 = dx * dx + dy * dy;
+                                if d2 > best {
+                                    best = d2;
+                                    farthest = Some(candidate.id);
+                                }
                             }
-                            let dx = i64::from(center_x - candidate.widget_x - candidate.width / 2);
-                            let dy =
-                                i64::from(center_y - candidate.widget_y - candidate.height / 2);
-                            let d2 = dx * dx + dy * dy;
-                            if d2 > best {
-                                best = d2;
-                                farthest = Some(candidate.id);
-                            }
+                            let Some(target_id) = farthest else {
+                                return 0;
+                            };
+                            let id = next_id;
+                            next_id += 1;
+                            let visual_draw = Self::advance_rng(&mut rng_state) as u32;
+                            missiles.push(ClassicMissile::launch(id, target_id, x, y, visual_draw));
+                            launches.push((id, target_id));
+                            1
                         }
-                        let Some(target_id) = farthest else {
-                            return 0;
-                        };
-                        let id = next_id;
-                        next_id += 1;
-                        let visual_draw = Self::advance_rng(&mut rng_state) as u32;
-                        missiles.push(ClassicMissile::launch(id, target_id, x, y, visual_draw));
-                        launches.push((id, target_id));
-                        1
-                    }
-                });
-            self.rng_state = rng_state;
-            self.next_id = next_id;
-            for (missile_id, target_id) in launches {
-                events.push(Event::MissileLaunched {
-                    tick: self.tick,
-                    missile_id,
-                    target_id,
-                });
+                    },
+                );
+                self.rng_state = rng_state;
+                self.next_id = next_id;
+                for (missile_id, target_id) in launches {
+                    events.push(Event::MissileLaunched {
+                        tick: self.tick,
+                        missile_id,
+                        target_id,
+                    });
+                }
+                self.record_invasion_events(wave_events, events);
             }
-            self.record_invasion_events(wave_events, events);
         }
+        if let Some(wave) = self.invasion.as_mut() {
+            let effect_events = wave.update_effects();
+            self.record_invasion_events(effect_events, events);
+        }
+        self.finish_destructor_battle(events);
     }
 
     fn update_fish_pets(&mut self, events: &mut Vec<Event>) {
@@ -3500,14 +3647,16 @@ impl AdventureState {
             let aliens = self
                 .invasion
                 .as_ref()
-                .and_then(|wave| wave.alien.as_ref())
-                .map(|actor| {
-                    vec![PetAlienView {
-                        id: actor.id,
-                        widget_x: actor.widget_x,
-                        widget_y: actor.widget_y,
-                        healing: false,
-                    }]
+                .map(|wave| {
+                    wave.actors
+                        .iter()
+                        .map(|actor| PetAlienView {
+                            id: actor.id,
+                            widget_x: actor.widget_x,
+                            widget_y: actor.widget_y,
+                            healing: false,
+                        })
+                        .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
             let guppy_count = self.fish.iter().filter(|fish| fish.alive).count();
@@ -3537,8 +3686,7 @@ impl AdventureState {
                 && let Some(actor) = self
                     .invasion
                     .as_mut()
-                    .and_then(|wave| wave.alien.as_mut())
-                    .filter(|actor| actor.id == alien_id)
+                    .and_then(|wave| wave.actor_by_id_mut(alien_id))
                 && let Some(health) = actor.itchy_hit()
             {
                 let sound = update.punch_sound && self.punch_sound_cooldown == 0;
@@ -3582,6 +3730,20 @@ impl AdventureState {
                     tick: self.tick,
                     pet_id,
                     coin_id,
+                });
+            }
+            if let Some((x, y)) = update.note_at {
+                let note_id = self.id();
+                self.notes.push(NoteState {
+                    id: note_id,
+                    x,
+                    y,
+                    age_ticks: 0,
+                });
+                events.push(Event::MerylNoteDropped {
+                    tick: self.tick,
+                    pet_id,
+                    note_id,
                 });
             }
             if let Some(drop) = update.free_food {
@@ -3667,15 +3829,15 @@ impl AdventureState {
         // The installed payload ranks integer coin centers by squared distance
         // from Stinky's double center. W1's recovered source expression differs;
         // equal-distance candidates retain their original coin-list order.
-        if !alien_live && !self.coins.is_empty() {
+        if !alien_live && (!self.coins.is_empty() || !self.notes.is_empty()) {
             let center_x = stinky.x + 40.0;
             let center_y = stinky.y + 40.0;
-            if let Some(target_index) =
-                Self::stinky_target_index(&stinky, &self.coins, starcatcher_live)
+            if let Some(target_x) =
+                Self::stinky_target_x(&stinky, &self.coins, &self.notes, starcatcher_live)
             {
                 if stinky.chase_timer > 4 {
                     stinky.chase_timer = 0;
-                    let target_x = f64::from(self.coins[target_index].x.trunc());
+                    let target_x = f64::from(target_x);
                     if center_x > target_x + 48.0 {
                         if stinky.vx > -2.3 {
                             stinky.vx -= 1.0;
@@ -3820,8 +3982,8 @@ impl AdventureState {
             return;
         };
         let starcatcher_live = self.starcatchers.iter().any(|actor| actor.alive);
-        let coin_list_nonempty = !self.coins.is_empty();
-        let views = self
+        let coin_list_nonempty = !self.coins.is_empty() || !self.notes.is_empty();
+        let mut views = self
             .coins
             .iter()
             .map(|coin| ClydeCoinView {
@@ -3829,8 +3991,17 @@ impl AdventureState {
                 widget_x: coin.x as i32,
                 widget_y: coin.y as i32,
                 eligible: !(coin.collecting || starcatcher_live && coin.kind == CoinKind::Star),
+                collectible: true,
             })
             .collect::<Vec<_>>();
+        views.extend(self.notes.iter().map(|note| ClydeCoinView {
+            id: note.id,
+            widget_x: note.x,
+            widget_y: note.y,
+            eligible: true,
+            collectible: false,
+        }));
+        views.sort_by_key(|view| view.id);
         let mut rng_state = self.rng_state;
         let update = clyde.tick(&views, coin_list_nonempty, &mut |upper| {
             Self::advance_rng(&mut rng_state) % upper
@@ -3862,33 +4033,41 @@ impl AdventureState {
         self.clyde = Some(clyde);
     }
 
-    fn stinky_target_index(
+    fn stinky_target_x(
         stinky: &StinkyState,
         coins: &[Coin],
+        notes: &[NoteState],
         starcatcher_live: bool,
-    ) -> Option<usize> {
+    ) -> Option<i32> {
         let mut best_distance = 100_000_000_i64;
-        let mut best_index = None;
-        for (index, coin) in coins.iter().enumerate() {
-            if coin.collecting || (starcatcher_live && coin.kind == CoinKind::Star) {
-                continue;
-            }
-            let dx = ((stinky.x + 40.0) - (f64::from(coin.x.trunc()) + 40.0)) as i64;
-            let dy = ((stinky.y + 40.0) - (f64::from(coin.y.trunc()) + 40.0)) as i64;
+        let mut best_x = None;
+        let mut views =
+            coins
+                .iter()
+                .filter_map(|coin| {
+                    (!(coin.collecting || starcatcher_live && coin.kind == CoinKind::Star))
+                        .then_some((coin.id, coin.x.trunc() as i32, coin.y.trunc() as i32))
+                })
+                .collect::<Vec<_>>();
+        views.extend(notes.iter().map(|note| (note.id, note.x, note.y)));
+        views.sort_by_key(|(id, _, _)| *id);
+        for (_, x, y) in views {
+            let dx = ((stinky.x + 40.0) - (f64::from(x) + 40.0)) as i64;
+            let dy = ((stinky.y + 40.0) - (f64::from(y) + 40.0)) as i64;
             let distance = dx * dx + dy * dy;
             if distance < best_distance {
                 best_distance = distance;
-                best_index = Some(index);
+                best_x = Some(x);
             }
         }
-        best_index
+        best_x
     }
 
     fn update_coins(&mut self, events: &mut Vec<Event>) {
         let bottom_limit = match (self.tank, self.level) {
             (1, 1) => FIRST_STAGE_COIN_BOTTOM_TICKS,
             (1, 2..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
-            (2, 1..=4) => SECOND_STAGE_COIN_BOTTOM_TICKS,
+            (2, 1..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             _ => unreachable!("coin lifetime for this Adventure stage is not implemented"),
         };
         let mut credited = Vec::new();
@@ -3955,6 +4134,25 @@ impl AdventureState {
             events.push(Event::CoinExpired {
                 tick: self.tick,
                 coin_id: id,
+            });
+        }
+    }
+
+    fn update_notes(&mut self, events: &mut Vec<Event>) {
+        let mut expired = Vec::new();
+        for note in &mut self.notes {
+            note.age_ticks += 1;
+            if note.age_ticks < 101 && note.y >= 50 {
+                note.y -= 1;
+            } else {
+                expired.push(note.id);
+            }
+        }
+        self.notes.retain(|note| !expired.contains(&note.id));
+        for note_id in expired {
+            events.push(Event::MerylNoteExpired {
+                tick: self.tick,
+                note_id,
             });
         }
     }
@@ -4718,7 +4916,10 @@ mod tests {
     #[test]
     fn fourth_stage_itchy_can_leave_balrog_pending_death_during_emergence() {
         let mut board = AdventureState::new_fourth_stage(0x580);
-        assert_eq!(board.invasion.as_ref().unwrap().kind, SylvesterKind::Balrog);
+        assert_eq!(
+            board.invasion.as_ref().unwrap().plan,
+            WavePlan::Fixed(SylvesterKind::Balrog)
+        );
         assert_eq!(board.invasion.as_ref().unwrap().countdown, 3000);
         board.validate().unwrap();
         let alien_id = board.id();
@@ -4731,7 +4932,8 @@ mod tests {
             1,
         );
         alien.health = 1.0;
-        board.invasion.as_mut().unwrap().alien = Some(alien);
+        board.invasion.as_mut().unwrap().actors.push(alien);
+        board.invasion.as_mut().unwrap().battle_active = true;
         board.fish_pets[0].x = 140.0;
         board.fish_pets[0].y = 160.0;
         board.fish_pets[0].widget_x = 140;
@@ -4746,14 +4948,14 @@ mod tests {
                 ..
             } if *id == alien_id
         )));
-        assert!(board.invasion.as_ref().unwrap().alien.is_some());
+        assert!(board.invasion.as_ref().unwrap().has_live_alien());
         assert!(
             board
                 .invasion
                 .as_ref()
                 .unwrap()
-                .alien
-                .as_ref()
+                .actors
+                .first()
                 .unwrap()
                 .alive
         );
@@ -4762,8 +4964,8 @@ mod tests {
             .invasion
             .as_mut()
             .unwrap()
-            .alien
-            .as_mut()
+            .actors
+            .first_mut()
             .unwrap()
             .spawn_ticks = 0;
         let removal = board.update_objects();
@@ -4774,7 +4976,7 @@ mod tests {
                 .count(),
             1
         );
-        assert!(board.invasion.as_ref().unwrap().alien.is_none());
+        assert!(!board.invasion.as_ref().unwrap().has_live_alien());
     }
 
     #[test]
@@ -4818,14 +5020,20 @@ mod tests {
         assert_eq!(board.fish.last().unwrap().cannot_be_eaten_ticks, 0);
         assert_eq!(board.fish_pets[0].birth_threshold, 930);
 
-        board.invasion.as_mut().unwrap().alien = Some(crate::alien::WeakSylvester::spawn_kind(
-            SylvesterKind::Balrog,
-            801,
-            100,
-            120,
-            1,
-            1,
-        ));
+        board
+            .invasion
+            .as_mut()
+            .unwrap()
+            .actors
+            .push(crate::alien::WeakSylvester::spawn_kind(
+                SylvesterKind::Balrog,
+                801,
+                100,
+                120,
+                1,
+                1,
+            ));
+        board.invasion.as_mut().unwrap().battle_active = true;
         board.fish_pets[0].birth_timer = 929;
         board.update_objects();
         assert_eq!(board.fish_pets[0].birth_timer, 929);
@@ -5080,7 +5288,7 @@ mod tests {
         state.upgrades.quantity_unlocked = true;
         let wave = state.invasion.as_mut().unwrap();
         wave.countdown = 3000;
-        wave.alien = Some(crate::alien::WeakSylvester::spawn_kind(
+        wave.actors.push(crate::alien::WeakSylvester::spawn_kind(
             SylvesterKind::Strong,
             900,
             100,
@@ -5088,6 +5296,7 @@ mod tests {
             1,
             1,
         ));
+        wave.battle_active = true;
         state.tick = 5;
         state.apply(Action::HoldFire {
             x: 180.0,
@@ -5119,8 +5328,8 @@ mod tests {
             .invasion
             .as_mut()
             .unwrap()
-            .alien
-            .as_mut()
+            .actors
+            .first_mut()
             .unwrap()
             .hit_ticks = 0;
         state.apply(Action::HoldFire {
@@ -5257,8 +5466,8 @@ mod tests {
                 .invasion
                 .as_ref()
                 .unwrap()
-                .alien
-                .as_ref()
+                .actors
+                .first()
                 .unwrap()
                 .spawn_ticks,
             14
@@ -5274,7 +5483,9 @@ mod tests {
         let mut state = AdventureState::new_second_stage(0xa16);
         let wave = state.invasion.as_mut().unwrap();
         wave.countdown = 3000;
-        wave.alien = Some(crate::alien::WeakSylvester::spawn(900, 100, 120, 1, 1));
+        wave.actors
+            .push(crate::alien::WeakSylvester::spawn(900, 100, 120, 1, 1));
+        wave.battle_active = true;
         state.coins.push(Coin {
             id: 901,
             x: 160.0,
@@ -5366,7 +5577,8 @@ mod tests {
         player.invasion.as_mut().unwrap().countdown = 3000;
         let mut actor = crate::alien::WeakSylvester::spawn(910, 100, 120, 1, 1);
         actor.health = 6.0;
-        player.invasion.as_mut().unwrap().alien = Some(actor);
+        player.invasion.as_mut().unwrap().actors.push(actor);
+        player.invasion.as_mut().unwrap().battle_active = true;
         let shot = player.apply(Action::Click { x: 180.0, y: 200.0 });
         let coin_id = shot
             .iter()
@@ -5402,7 +5614,8 @@ mod tests {
         pet.invasion.as_mut().unwrap().countdown = 3000;
         let mut actor = crate::alien::WeakSylvester::spawn(920, 100, 120, 1, 1);
         actor.health = 6.0;
-        pet.invasion.as_mut().unwrap().alien = Some(actor);
+        pet.invasion.as_mut().unwrap().actors.push(actor);
+        pet.invasion.as_mut().unwrap().battle_active = true;
         pet.apply(Action::Click { x: 180.0, y: 200.0 });
         let stinky = pet.stinky.as_mut().unwrap();
         stinky.x = 125.0;
@@ -5740,7 +5953,10 @@ mod tests {
             AdventureState::new_tank2_second_stage(0x2201, &[PetKind::Niko, PetKind::Clyde])
                 .unwrap();
         assert_eq!((board.balance, board.egg_price), (200, 3000));
-        assert_eq!(board.invasion.as_ref().unwrap().kind, SylvesterKind::Balrog);
+        assert_eq!(
+            board.invasion.as_ref().unwrap().plan,
+            WavePlan::Fixed(SylvesterKind::Balrog)
+        );
         assert_eq!(board.invasion.as_ref().unwrap().countdown, 3000);
         assert_eq!(
             (
@@ -5953,7 +6169,8 @@ mod tests {
         let mut gus =
             crate::alien::WeakSylvester::spawn_kind(SylvesterKind::Gus, gus_id, 100, 100, 1, 1);
         gus.spawn_ticks = 0;
-        board.invasion.as_mut().unwrap().alien = Some(gus);
+        board.invasion.as_mut().unwrap().actors.push(gus);
+        board.invasion.as_mut().unwrap().battle_active = true;
         let coin_id = board.id();
         board.coins.push(Coin {
             id: coin_id,
@@ -5986,8 +6203,8 @@ mod tests {
                 .invasion
                 .as_ref()
                 .unwrap()
-                .alien
-                .as_ref()
+                .actors
+                .first()
                 .unwrap()
                 .health,
             100.0
@@ -6000,7 +6217,8 @@ mod tests {
         let gus_id = board.id();
         let gus =
             crate::alien::WeakSylvester::spawn_kind(SylvesterKind::Gus, gus_id, 100, 100, 1, 1);
-        board.invasion.as_mut().unwrap().alien = Some(gus);
+        board.invasion.as_mut().unwrap().actors.push(gus);
+        board.invasion.as_mut().unwrap().battle_active = true;
         board.apply(Action::HoldFeed {
             x: 300.0,
             y: 399.0,
@@ -6041,14 +6259,15 @@ mod tests {
         let mut gus =
             crate::alien::WeakSylvester::spawn_kind(SylvesterKind::Gus, gus_id, 100, 100, 1, 1);
         gus.spawn_ticks = 0;
-        board.invasion.as_mut().unwrap().alien = Some(gus);
+        board.invasion.as_mut().unwrap().actors.push(gus);
+        board.invasion.as_mut().unwrap().battle_active = true;
         board.apply(Action::Click { x: 105.0, y: 180.0 });
         assert_eq!(board.food[0].ineligible_ticks, 0);
         board.food.clear();
         board.apply(Action::Click { x: 106.0, y: 180.0 });
         assert_eq!(board.food[0].ineligible_ticks, 20);
         board.food.clear();
-        board.invasion.as_mut().unwrap().alien.as_mut().unwrap().x = 100.5;
+        board.invasion.as_mut().unwrap().actors[0].x = 100.5;
         board.apply(Action::Click { x: 215.0, y: 180.0 });
         assert_eq!(board.food[0].ineligible_ticks, 0);
         assert_eq!(board.balance, 200);
@@ -6063,22 +6282,23 @@ mod tests {
             crate::alien::WeakSylvester::spawn_kind(SylvesterKind::Gus, gus_id, 100, 100, 1, 1);
         gus.spawn_ticks = 15;
         gus.health = 0.0;
-        board.invasion.as_mut().unwrap().alien = Some(gus);
+        board.invasion.as_mut().unwrap().actors.push(gus);
+        board.invasion.as_mut().unwrap().battle_active = true;
         let blocked = board.update_objects();
         assert!(
             !blocked
                 .iter()
                 .any(|event| matches!(event, Event::VertGoldDropped { .. }))
         );
-        assert!(board.invasion.as_ref().unwrap().alien.is_some());
+        assert!(board.invasion.as_ref().unwrap().has_live_alien());
         assert_eq!(board.fish_pets[0].coin_timer, 215);
 
         board
             .invasion
             .as_mut()
             .unwrap()
-            .alien
-            .as_mut()
+            .actors
+            .first_mut()
             .unwrap()
             .spawn_ticks = 0;
         let released = board.update_objects();
@@ -6095,8 +6315,8 @@ mod tests {
                 .count(),
             1
         );
-        assert!(board.invasion.as_ref().unwrap().alien.is_none());
-        assert!(board.invasion.as_ref().unwrap().dead_alien.is_none());
+        assert!(!board.invasion.as_ref().unwrap().has_live_alien());
+        assert!(board.invasion.as_ref().unwrap().dead_aliens.is_empty());
     }
 
     #[test]
@@ -6122,7 +6342,8 @@ mod tests {
         );
         alien.spawn_ticks = 0;
         alien.launch_ticks = 75;
-        board.invasion.as_mut().unwrap().alien = Some(alien);
+        board.invasion.as_mut().unwrap().actors.push(alien);
+        board.invasion.as_mut().unwrap().battle_active = true;
         let mut events = Vec::new();
         board.update_invasion_objects(&mut events);
         assert_eq!(
@@ -6145,8 +6366,8 @@ mod tests {
                 .invasion
                 .as_ref()
                 .unwrap()
-                .alien
-                .as_ref()
+                .actors
+                .first()
                 .unwrap()
                 .reload_ticks
                 >= 150
@@ -6167,7 +6388,8 @@ mod tests {
             1,
         );
         alien.spawn_ticks = 0;
-        board.invasion.as_mut().unwrap().alien = Some(alien);
+        board.invasion.as_mut().unwrap().actors.push(alien);
+        board.invasion.as_mut().unwrap().battle_active = true;
         let missile_id = board.id();
         let mut missile = ClassicMissile::launch(missile_id, board.fish[0].id, 100, 280, 0);
         missile.immunity_ticks = 0;
@@ -6196,7 +6418,7 @@ mod tests {
         );
         assert!(board.missiles.is_empty());
         assert_eq!(board.invasion.as_ref().unwrap().food_delay, 0);
-        board.invasion.as_mut().unwrap().alien = None;
+        board.invasion.as_mut().unwrap().actors.clear();
         let next_id = board.id();
         let mut next = ClassicMissile::launch(next_id, board.fish[1].id, 100, 280, 0);
         next.immunity_ticks = 0;
@@ -6269,7 +6491,8 @@ mod tests {
         );
         alien.spawn_ticks = 0;
         alien.health = 0.25;
-        board.invasion.as_mut().unwrap().alien = Some(alien);
+        board.invasion.as_mut().unwrap().actors.push(alien);
+        board.invasion.as_mut().unwrap().battle_active = true;
         let mut events = Vec::new();
         board.update_rufus(&mut events);
         assert_eq!(
@@ -6277,16 +6500,16 @@ mod tests {
                 .invasion
                 .as_ref()
                 .unwrap()
-                .alien
-                .as_ref()
+                .actors
+                .first()
                 .unwrap()
                 .health,
             0.0
         );
-        assert!(board.invasion.as_ref().unwrap().alien.is_some());
+        assert!(board.invasion.as_ref().unwrap().has_live_alien());
         board.validate().unwrap();
         board.update_invasion_objects(&mut events);
-        assert!(board.invasion.as_ref().unwrap().alien.is_none());
+        assert!(!board.invasion.as_ref().unwrap().has_live_alien());
         assert_eq!(events.iter().filter(|event| matches!(event, Event::AlienDiamondDropped { alien_id: id, .. } if *id == alien_id)).count(), 1);
         assert_eq!(
             events
@@ -6304,6 +6527,91 @@ mod tests {
     }
 
     #[test]
+    fn pair_commits_first_bite_before_second_actor_sees_prey() {
+        let mut board = AdventureState::new_tank2_fifth_stage(0x2501, &[]).unwrap();
+        board.fish.truncate(1);
+        board.fish[0].x = 140.0;
+        board.fish[0].y = 160.0;
+        board.fish[0].cannot_be_eaten_ticks = 0;
+        let prey_id = board.fish[0].id;
+        let wave = board.invasion.as_mut().unwrap();
+        wave.countdown = 3000;
+        wave.plan = WavePlan::CyclingTank2Finale {
+            next: EncounterKind::Single(SylvesterKind::Gus),
+        };
+        for (id, kind) in [(90, SylvesterKind::Weak), (91, SylvesterKind::Balrog)] {
+            let mut actor = crate::alien::WeakSylvester::spawn_kind(kind, id, 100, 120, 1, 1);
+            actor.spawn_ticks = 0;
+            actor.chase_ticks = 0;
+            wave.actors.push(actor);
+        }
+        wave.battle_active = true;
+        let mut events = Vec::new();
+        board.update_invasion_objects(&mut events);
+        assert_eq!(events.iter().filter(|event| matches!(event, Event::Invasion { event: InvasionEvent::PreyEaten { prey_id: id, .. }, .. } if *id == prey_id)).count(), 1);
+        assert!(board.fish.is_empty());
+        assert!(board.invasion.as_ref().unwrap().has_live_alien());
+    }
+
+    #[test]
+    fn meryl_song_uses_fish_before_pet_boundary_and_note_cannot_mask_coin() {
+        let mut board = AdventureState::new_tank2_fifth_stage(0x2502, &[PetKind::Meryl]).unwrap();
+        board.fish[0].size = FishSize::Medium;
+        board.fish[0].coin_threshold = 100;
+        board.fish[0].coin_timer = 34;
+        board.fish_pets[0].coin_timer = 1299;
+        let first = board.update_objects();
+        assert!(
+            !first
+                .iter()
+                .any(|event| matches!(event, Event::CoinDropped { .. }))
+        );
+        assert!(
+            first
+                .iter()
+                .any(|event| matches!(event, Event::MerylNoteDropped { .. }))
+        );
+        assert!(board.fish_pets[0].song_active());
+        assert_eq!(board.notes[0].age_ticks, 1);
+        let second = board.update_objects();
+        assert!(second.iter().any(|event| matches!(
+            event,
+            Event::CoinDropped {
+                kind: CoinKind::Silver,
+                ..
+            }
+        )));
+        board.fish_pets[0].coin_timer = 1399;
+        board.update_objects();
+        assert!(!board.fish_pets[0].song_active());
+        let note_id = board.notes[0].id;
+        board.notes[0].x = 100;
+        board.notes[0].y = 100;
+        let overlapping_coin_id = board.id();
+        board.coins.push(Coin {
+            id: overlapping_coin_id,
+            x: 100.0,
+            y: 100.0,
+            kind: CoinKind::Silver,
+            frame: 0,
+            collecting: false,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+            penta_rising: false,
+        });
+        let coin_id = board.coins.last().unwrap().id;
+        let claim = board.apply(Action::Click { x: 110.0, y: 110.0 });
+        assert!(claim.iter().any(|event| matches!(event, Event::CoinCollectionStarted { coin_id: id, .. } if *id == coin_id)));
+        assert_eq!(board.notes[0].id, note_id);
+        board.notes[0].age_ticks = 99;
+        board.notes[0].y = 50;
+        board.update_notes(&mut Vec::new());
+        assert_eq!((board.notes[0].age_ticks, board.notes[0].y), (100, 49));
+        board.update_notes(&mut Vec::new());
+        assert!(board.notes.is_empty());
+    }
+
+    #[test]
     fn missile_impact_makes_guppy_corpse_and_detaches_before_battle_end() {
         let mut board = AdventureState::new_tank2_fourth_stage(0x2403, &[]).unwrap();
         let target_id = board.fish[0].id;
@@ -6313,6 +6621,7 @@ mod tests {
         board
             .missiles
             .push(ClassicMissile::launch(id, target_id, 100, 100, 0));
+        board.invasion.as_mut().unwrap().battle_active = true;
         let mut events = Vec::new();
         board.update_missiles(&mut events);
         assert!(!board.fish[0].alive);
@@ -6360,6 +6669,7 @@ mod tests {
         board
             .missiles
             .push(ClassicMissile::launch(id, target_id, 100, 100, 0));
+        board.invasion.as_mut().unwrap().battle_active = true;
         board.validate().unwrap();
         let resumed: AdventureState =
             serde_json::from_str(&serde_json::to_string(&board).unwrap()).unwrap();
@@ -6382,6 +6692,7 @@ mod tests {
         board
             .missiles
             .push(ClassicMissile::launch(first, target, 100, 100, 0));
+        board.invasion.as_mut().unwrap().battle_active = true;
         board.validate().unwrap();
         let second = board.id();
         board

@@ -57,7 +57,8 @@ fn pending_destructor_session() -> (AdventureSession, u64, u64) {
     actor.health = 0.25;
     assert_eq!(actor.itchy_hit(), Some(0.0));
     assert_eq!(actor.rufus_hit(), Some(-0.25));
-    board.invasion.as_mut().unwrap().alien = Some(actor);
+    board.invasion.as_mut().unwrap().actors = vec![actor];
+    board.invasion.as_mut().unwrap().battle_active = true;
     board.missiles.push(ClassicMissile::launch(
         missile_id,
         board.fish[0].id,
@@ -71,6 +72,242 @@ fn pending_destructor_session() -> (AdventureSession, u64, u64) {
     rufus.frame = 3;
     session.validate().unwrap();
     (session, alien_id, missile_id)
+}
+
+fn meryl_session() -> AdventureSession {
+    let mut session = rufus_session();
+    session.progress.level = 5;
+    session.progress.unlocked_pets.push(PetKind::Meryl);
+    session.progress.selected_pets = vec![PetKind::Niko, PetKind::Itchy, PetKind::Meryl];
+    session.board =
+        Some(AdventureState::new_tank2_fifth_stage(42, &session.progress.selected_pets).unwrap());
+    session
+}
+
+#[test]
+fn current_pair_successor_song_note_and_pending_death_reload_every_update() {
+    use turbofish_deluxe::{
+        alien::{SylvesterKind, WeakSylvester},
+        fish_pet::FishPetKind,
+        invasion::{EncounterKind, InvasionEvent, WavePlan},
+        sim::Event,
+    };
+    let mut uninterrupted = meryl_session();
+    uninterrupted
+        .board
+        .as_mut()
+        .unwrap()
+        .fish_pets
+        .iter_mut()
+        .find(|pet| pet.kind == FishPetKind::Meryl)
+        .unwrap()
+        .coin_timer = 1299;
+    let note_events = uninterrupted.step(&[]);
+    assert_eq!(
+        note_events
+            .iter()
+            .filter(|event| matches!(event, Event::MerylNoteDropped { .. }))
+            .count(),
+        1
+    );
+    let mut fixture = serde_json::to_value(&uninterrupted).unwrap();
+    let first_id = fixture["board"]["next_id"].as_u64().unwrap();
+    fixture["board"]["next_id"] = (first_id + 2).into();
+    uninterrupted = serde_json::from_value(fixture).unwrap();
+    let board = uninterrupted.board.as_mut().unwrap();
+    let wave = board.invasion.as_mut().unwrap();
+    wave.plan = WavePlan::CyclingTank2Finale {
+        next: EncounterKind::Single(SylvesterKind::Destructor),
+    };
+    // A spawned encounter resets its countdown before registering actors.
+    wave.countdown = 3000;
+    let mut weak = WeakSylvester::spawn_kind(SylvesterKind::Weak, first_id, 40, 100, 1, 1);
+    weak.spawn_ticks = 0;
+    weak.health = 0.0;
+    wave.actors = vec![
+        weak,
+        WeakSylvester::spawn_kind(SylvesterKind::Balrog, first_id + 1, 500, 100, 1, 1),
+    ];
+    wave.battle_active = true;
+    uninterrupted.validate().unwrap();
+    let saved = serde_json::to_vec(&cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: uninterrupted.clone(),
+    })
+    .unwrap();
+    let mut resumed = cli::decode_save(&saved).unwrap();
+    for index in 0..64 {
+        let expected_events = uninterrupted.step(&[]);
+        let actual_events = resumed.step(&[]);
+        assert_eq!(
+            serde_json::to_value(&actual_events).unwrap(),
+            serde_json::to_value(&expected_events).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&uninterrupted).unwrap()
+        );
+        if index == 0 {
+            assert_eq!(actual_events.iter().filter(|event| matches!(event, Event::Invasion { event: InvasionEvent::AlienDefeated { id }, .. } if *id == first_id)).count(), 1);
+            assert!(!actual_events.iter().any(|event| matches!(
+                event,
+                Event::Invasion {
+                    event: InvasionEvent::BattleEnded,
+                    ..
+                }
+            )));
+        }
+        resumed.validate().unwrap();
+    }
+}
+
+#[test]
+fn current_finale_fields_are_required_without_reconstruction() {
+    let mut session = meryl_session();
+    session
+        .board
+        .as_mut()
+        .unwrap()
+        .fish_pets
+        .iter_mut()
+        .find(|pet| pet.kind == turbofish_deluxe::fish_pet::FishPetKind::Meryl)
+        .unwrap()
+        .coin_timer = 1300;
+    let current = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    for pointer in [
+        "/session/board",
+        "/session/board/invasion",
+        "/session/board/fish_pets/0",
+        "/session/board/fish_pets/1",
+    ] {
+        let fields: &[&str] = match pointer {
+            "/session/board" => &["notes"],
+            "/session/board/invasion" => {
+                &["plan", "actors", "warps", "dead_aliens", "battle_active"]
+            }
+            _ => &["meryl_blink"],
+        };
+        for field in fields {
+            let mut missing = current.clone();
+            missing
+                .pointer_mut(pointer)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .remove(*field);
+            assert!(
+                cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+                "{pointer}/{field} must be present"
+            );
+        }
+    }
+}
+
+#[test]
+fn current_save_rejects_battle_latch_without_matching_registered_threats() {
+    let (mut missile_only, _, _) = pending_destructor_session();
+    missile_only.step(&[]);
+    let board = missile_only.board.as_ref().unwrap();
+    assert!(board.invasion.as_ref().unwrap().actors.is_empty());
+    assert!(!board.missiles.is_empty());
+    assert!(board.invasion.as_ref().unwrap().battle_active);
+    missile_only.validate().unwrap();
+    let mut missing_battle = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: missile_only,
+    })
+    .unwrap();
+    missing_battle["session"]["board"]["invasion"]["battle_active"] = false.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&missing_battle).unwrap()).is_err());
+    let peaceful = meryl_session();
+    peaceful.validate().unwrap();
+    let mut phantom_battle = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: peaceful,
+    })
+    .unwrap();
+    phantom_battle["session"]["board"]["invasion"]["battle_active"] = true.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&phantom_battle).unwrap()).is_err());
+}
+
+#[test]
+fn current_tank_two_bonus_origin_and_results_credit_survive_reload() {
+    use turbofish_deluxe::bonus::{BonusResult, BonusState};
+    let mut session = meryl_session();
+    session.progress.level = 6;
+    session.progress.unlocked_pets.push(PetKind::Wadsworth);
+    session.board = None;
+    let mut bonus = BonusState::new_for_tank(42, 2).unwrap();
+    bonus.click(0.0, 0.0);
+    bonus.update();
+    let shell = &bonus.shells[0];
+    bonus.click(shell.x as f32 + 1.0, shell.y as f32 + 1.0);
+    bonus.update();
+    session.ticks = bonus.tick;
+    session.phase = AdventurePhase::Bonus { state: bonus };
+    session.validate().unwrap();
+    let current = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: session.clone(),
+    })
+    .unwrap();
+    let mut missing = current.clone();
+    missing["session"]["phase"]["Bonus"]["state"]
+        .as_object_mut()
+        .unwrap()
+        .remove("origin_tank");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+    let mut resumed = cli::decode_save(&serde_json::to_vec(&current).unwrap()).unwrap();
+    for _ in 0..32 {
+        assert_eq!(
+            serde_json::to_value(resumed.step(&[])).unwrap(),
+            serde_json::to_value(session.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&session).unwrap()
+        );
+        resumed.validate().unwrap();
+    }
+    session.progress.tank = 3;
+    session.progress.level = 1;
+    session.progress.shell_balance = 317;
+    session.phase = AdventurePhase::BonusResults {
+        result: BonusResult {
+            origin_tank: 2,
+            earned: 217,
+            previous_balance: 100,
+            updates: 8,
+        },
+    };
+    let results = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    let mut loaded = cli::decode_save(&serde_json::to_vec(&results).unwrap()).unwrap();
+    for _ in 0..40 {
+        loaded.step(&[]);
+    }
+    assert_eq!(loaded.progress.shell_balance, 317);
+    loaded.apply_actions(&[Action::Continue]);
+    assert!(matches!(loaded.phase, AdventurePhase::PetSelection { .. }));
+    loaded.validate().unwrap();
+    for invalid in [0, 1, 3, 255] {
+        let mut wrong = results.clone();
+        wrong["session"]["phase"]["BonusResults"]["result"]["origin_tank"] = invalid.into();
+        assert!(cli::decode_save(&serde_json::to_vec(&wrong).unwrap()).is_err());
+    }
+    let mut missing = results;
+    missing["session"]["phase"]["BonusResults"]["result"]
+        .as_object_mut()
+        .unwrap()
+        .remove("origin_tank");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
 }
 
 #[test]
@@ -112,7 +349,7 @@ fn current_destructor_pending_death_live_missile_and_rufus_reload_exactly() {
                 1
             );
             let board = resumed.board.as_ref().unwrap();
-            assert!(board.invasion.as_ref().unwrap().dead_alien.is_some());
+            assert!(!board.invasion.as_ref().unwrap().dead_aliens.is_empty());
             assert!(
                 board
                     .missiles
@@ -174,7 +411,7 @@ fn current_save_rejects_malformed_missile_clock_and_destructor_health() {
         ),
         ("/session/board/rufus/vy", serde_json::json!(1.0)),
         (
-            "/session/board/invasion/alien/health",
+            "/session/board/invasion/actors/0/health",
             serde_json::json!(-0.1),
         ),
     ] {
@@ -208,7 +445,8 @@ fn current_gus_quarter_pending_death_and_vert_clock_reload_exactly() {
     actor.health = 0.25;
     assert_eq!(actor.itchy_hit(), Some(0.0));
     assert_eq!(actor.itchy_hit(), Some(-0.25));
-    board.invasion.as_mut().unwrap().alien = Some(actor);
+    board.invasion.as_mut().unwrap().actors = vec![actor];
+    board.invasion.as_mut().unwrap().battle_active = true;
     board
         .fish_pets
         .iter_mut()
@@ -230,8 +468,8 @@ fn current_gus_quarter_pending_death_and_vert_clock_reload_exactly() {
             .invasion
             .as_ref()
             .unwrap()
-            .alien
-            .as_ref()
+            .actors
+            .first()
             .unwrap()
             .health,
         -0.25
@@ -266,8 +504,8 @@ fn current_gus_quarter_pending_death_and_vert_clock_reload_exactly() {
                     .invasion
                     .as_ref()
                     .unwrap()
-                    .dead_alien
-                    .is_none()
+                    .dead_aliens
+                    .is_empty()
             );
         }
         resumed.validate().unwrap();
@@ -566,6 +804,7 @@ fn bonus_results_reload_does_not_repeat_profile_credit() {
     session.board = None;
     session.phase = AdventurePhase::BonusResults {
         result: BonusResult {
+            origin_tank: 1,
             earned: 217,
             previous_balance: 100,
             updates: 8,
@@ -911,7 +1150,12 @@ fn format_four_stage_three_migration_retains_state_and_remembered_growth_gate() 
     assert_eq!(board.weapon_strength, 2);
     let wave = board.invasion.as_ref().unwrap();
     assert_eq!(wave.countdown, 3000);
-    assert_eq!(wave.kind, turbofish_deluxe::alien::SylvesterKind::Strong);
+    assert_eq!(
+        wave.plan.expected(),
+        turbofish_deluxe::invasion::EncounterKind::Single(
+            turbofish_deluxe::alien::SylvesterKind::Strong
+        )
+    );
     assert_eq!(
         wave.origin,
         turbofish_deluxe::invasion::InvasionOrigin::LegacyV4Resume
@@ -934,14 +1178,15 @@ fn format_four_stage_three_migration_retains_state_and_remembered_growth_gate() 
 fn modern_requires_variant_and_rejects_weak_actor_on_strong_stage() {
     let mut session = third_stage_session();
     let wave = session.board.as_mut().unwrap().invasion.as_mut().unwrap();
-    wave.alien = Some(turbofish_deluxe::alien::WeakSylvester::spawn_kind(
+    wave.actors = vec![turbofish_deluxe::alien::WeakSylvester::spawn_kind(
         turbofish_deluxe::alien::SylvesterKind::Strong,
         99,
         100,
         120,
         1,
         1,
-    ));
+    )];
+    wave.battle_active = true;
     let mut modern = serde_json::to_value(cli::ProjectSave {
         format_version: cli::SAVE_FORMAT_VERSION,
         session,
@@ -954,16 +1199,17 @@ fn modern_requires_variant_and_rejects_weak_actor_on_strong_stage() {
     missing_wave_kind["session"]["board"]["invasion"]
         .as_object_mut()
         .unwrap()
-        .remove("kind");
+        .remove("plan");
     assert!(cli::decode_save(&serde_json::to_vec(&missing_wave_kind).unwrap()).is_err());
     let mut missing_actor_kind = modern.clone();
-    missing_actor_kind["session"]["board"]["invasion"]["alien"]
+    missing_actor_kind["session"]["board"]["invasion"]["actors"][0]
         .as_object_mut()
         .unwrap()
         .remove("kind");
     assert!(cli::decode_save(&serde_json::to_vec(&missing_actor_kind).unwrap()).is_err());
     let mut wrong_actor_kind = modern;
-    wrong_actor_kind["session"]["board"]["invasion"]["alien"]["kind"] = serde_json::json!("Weak");
+    wrong_actor_kind["session"]["board"]["invasion"]["actors"][0]["kind"] =
+        serde_json::json!("Weak");
     assert!(cli::decode_save(&serde_json::to_vec(&wrong_actor_kind).unwrap()).is_err());
 }
 
@@ -1084,7 +1330,12 @@ fn format_five_fourth_board_gets_explicit_new_support_without_rewriting_earned_s
         turbofish_deluxe::fish_pet::FishPetKind::Itchy
     );
     let wave = board.invasion.as_ref().unwrap();
-    assert_eq!(wave.kind, turbofish_deluxe::alien::SylvesterKind::Balrog);
+    assert_eq!(
+        wave.plan.expected(),
+        turbofish_deluxe::invasion::EncounterKind::Single(
+            turbofish_deluxe::alien::SylvesterKind::Balrog
+        )
+    );
     assert_eq!(
         wave.origin,
         turbofish_deluxe::invasion::InvasionOrigin::LegacyV5Resume
@@ -1112,7 +1363,7 @@ fn format_five_strong_corpse_kind_is_recovered_but_modern_missing_kind_is_reject
         .invasion
         .as_mut()
         .unwrap()
-        .dead_alien = Some(DeadAlienEffect {
+        .dead_aliens = vec![DeadAlienEffect {
         kind: SylvesterKind::Strong,
         x: 100.5,
         y: 200.5,
@@ -1124,13 +1375,13 @@ fn format_five_strong_corpse_kind_is_recovered_but_modern_missing_kind_is_reject
         facing_right: true,
         opacity: 1.0,
         remaining_ticks: 125,
-    });
+    }];
     let mut legacy = serde_json::to_value(cli::ProjectSave {
         format_version: 5,
         session,
     })
     .unwrap();
-    legacy["session"]["board"]["invasion"]["dead_alien"]
+    legacy["session"]["board"]["invasion"]["dead_aliens"][0]
         .as_object_mut()
         .unwrap()
         .remove("kind");
@@ -1143,8 +1394,8 @@ fn format_five_strong_corpse_kind_is_recovered_but_modern_missing_kind_is_reject
             .invasion
             .as_ref()
             .unwrap()
-            .dead_alien
-            .as_ref()
+            .dead_aliens
+            .first()
             .unwrap()
             .kind,
         SylvesterKind::Strong
@@ -1154,7 +1405,7 @@ fn format_five_strong_corpse_kind_is_recovered_but_modern_missing_kind_is_reject
         session: migrated,
     })
     .unwrap();
-    modern["session"]["board"]["invasion"]["dead_alien"]
+    modern["session"]["board"]["invasion"]["dead_aliens"][0]
         .as_object_mut()
         .unwrap()
         .remove("kind");

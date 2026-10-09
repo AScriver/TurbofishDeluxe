@@ -95,7 +95,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 10;
+pub const SAVE_FORMAT_VERSION: u32 = 11;
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -202,7 +202,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=10) => {
+        Some(version @ 5..=11) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -255,12 +255,16 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                             && ["missiles", "rufus"]
                                 .iter()
                                 .any(|field| !board.contains_key(*field)))
+                        || (version >= 11 && !board.contains_key("notes"))
                         || (version >= 9
                             && board
                                 .get("fish_pets")
                                 .and_then(serde_json::Value::as_array)
                                 .is_some_and(|pets| {
-                                    pets.iter().any(|pet| pet.get("coin_timer").is_none())
+                                    pets.iter().any(|pet| {
+                                        pet.get("coin_timer").is_none()
+                                            || (version >= 11 && pet.get("meryl_blink").is_none())
+                                    })
                                 }))
                         || board
                             .get("food")
@@ -291,8 +295,36 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                             .get("invasion")
                             .and_then(serde_json::Value::as_object)
                             .is_some_and(|wave| {
-                                !wave.contains_key("kind")
+                                (version < 11
+                                    && !wave.contains_key("kind")
+                                    && !wave.contains_key("plan"))
+                                    || (version >= 11
+                                        && [
+                                            "plan",
+                                            "actors",
+                                            "warps",
+                                            "dead_aliens",
+                                            "battle_active",
+                                        ]
+                                        .iter()
+                                        .any(|field| !wave.contains_key(*field)))
                                     || (version >= 9 && !wave.contains_key("gus_warning_shown"))
+                                    || (version >= 11
+                                        && wave
+                                            .get("actors")
+                                            .and_then(serde_json::Value::as_array)
+                                            .is_some_and(|actors| {
+                                                actors
+                                                    .iter()
+                                                    .any(|actor| actor.get("kind").is_none())
+                                            }))
+                                    || (version >= 11
+                                        && wave
+                                            .get("dead_aliens")
+                                            .and_then(serde_json::Value::as_array)
+                                            .is_some_and(|bodies| {
+                                                bodies.iter().any(|body| body.get("kind").is_none())
+                                            }))
                                     || wave
                                         .get("alien")
                                         .and_then(serde_json::Value::as_object)
@@ -319,7 +351,9 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     6 => "six",
                     7 => "seven",
                     8 => "eight",
-                    _ => "nine",
+                    9 => "nine",
+                    10 => "ten",
+                    _ => "eleven",
                 };
                 return Err(format!(
                     "Incomplete format-{label} save; required state fields are missing"

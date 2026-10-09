@@ -227,7 +227,7 @@ impl AdventureSession {
     pub fn validate(&self) -> Result<(), String> {
         if !matches!(
             (self.progress.tank, self.progress.level),
-            (1, 1..=6) | (2, 1..=5)
+            (1, 1..=6) | (2, 1..=6) | (3, 1)
         ) || self.progress.shell_balance > MAX_SHELL_BALANCE
         {
             return Err("unsupported Adventure progress".into());
@@ -288,6 +288,18 @@ impl AdventureSession {
                 PetKind::Rufus,
                 PetKind::Meryl,
             ],
+            (2, 6) | (3, 1) => &[
+                PetKind::Stinky,
+                PetKind::Niko,
+                PetKind::Itchy,
+                PetKind::Prego,
+                PetKind::Zorf,
+                PetKind::Clyde,
+                PetKind::Vert,
+                PetKind::Rufus,
+                PetKind::Meryl,
+                PetKind::Wadsworth,
+            ],
             _ => unreachable!("progress checked above"),
         };
         if self.progress.unlocked_pets != expected_pets {
@@ -307,7 +319,7 @@ impl AdventureSession {
         }
         let mut recorded_stages = Vec::new();
         for result in &self.progress.later_stage_best_seconds {
-            if !matches!((result.tank, result.level), (1, 2..=5) | (2, 1..=4))
+            if !matches!((result.tank, result.level), (1, 2..=5) | (2, 1..=5))
                 || (self.progress.tank, self.progress.level) <= (result.tank, result.level)
                 || recorded_stages.contains(&(result.tank, result.level))
             {
@@ -381,6 +393,7 @@ impl AdventureSession {
                         | (2, 3, PetKind::Vert)
                         | (2, 4, PetKind::Rufus)
                         | (2, 5, PetKind::Meryl)
+                        | (2, 6, PetKind::Wadsworth)
                 ) =>
             {
                 Ok(())
@@ -399,13 +412,15 @@ impl AdventureSession {
                 None,
             ) if (self.progress.tank, self.progress.level) == (1, 6) => Ok(()),
             (AdventurePhase::Bonus { state }, None)
-                if (self.progress.tank, self.progress.level) == (1, 6)
+                if self.progress.level == 6
+                    && self.progress.tank == state.origin_tank
                     && state.tick <= self.ticks =>
             {
                 state.validate()
             }
             (AdventurePhase::BonusResults { result }, None)
-                if (self.progress.tank, self.progress.level) == (2, 1)
+                if matches!(result.origin_tank, 1 | 2)
+                    && (self.progress.tank, self.progress.level) == (result.origin_tank + 1, 1)
                     && self.progress.shell_balance
                         == result
                             .previous_balance
@@ -416,14 +431,14 @@ impl AdventureSession {
             }
             (AdventurePhase::PetSelection { selected }, None)
                 if self.progress.unlocked_pets.len() >= 4
-                    && (self.progress.tank, self.progress.level) != (1, 6)
+                    && self.progress.level != 6
                     && self.progress.valid_selection(selected) =>
             {
                 Ok(())
             }
             (AdventurePhase::PetSelectionConfirmation { selected }, None)
                 if self.progress.unlocked_pets.len() >= 4
-                    && (self.progress.tank, self.progress.level) != (1, 6)
+                    && self.progress.level != 6
                     && self.progress.valid_selection(selected)
                     && selected.len() < self.progress.selection_capacity()
                     && *selected == self.progress.selected_pets =>
@@ -635,7 +650,7 @@ impl AdventureSession {
                             });
                             self.phase = AdventurePhase::PetSelection { selected };
                         }
-                        Action::Continue if (self.progress.tank, self.progress.level) != (2, 5) => {
+                        Action::Continue if (self.progress.tank, self.progress.level) != (3, 1) => {
                             self.progress.selected_pets = selected.clone();
                             if selected.len() < self.progress.selection_capacity() {
                                 events.push(Event::PetSelectionConfirmation {
@@ -669,7 +684,7 @@ impl AdventureSession {
                     });
                     match action {
                         Action::ConfirmPetSelection { accept: true }
-                            if (self.progress.tank, self.progress.level) != (2, 5) =>
+                            if (self.progress.tank, self.progress.level) != (3, 1) =>
                         {
                             events.push(Event::PetSelectionAccepted {
                                 tick: self.ticks,
@@ -731,16 +746,18 @@ impl AdventureSession {
                         .map(|event| Event::Bonus { tick, event }),
                 );
                 if update.completed {
+                    let origin_tank = state.origin_tank;
                     let earned = state.shells_earned;
                     self.next_seed = state.transition_seed();
                     let previous_balance = self.progress.shell_balance;
                     self.progress.shell_balance = previous_balance
                         .saturating_add(earned)
                         .min(MAX_SHELL_BALANCE);
-                    self.progress.tank = 2;
+                    self.progress.tank = origin_tank + 1;
                     self.progress.level = 1;
                     self.phase = AdventurePhase::BonusResults {
                         result: BonusResult {
+                            origin_tank,
                             earned,
                             previous_balance,
                             updates: 0,
@@ -824,14 +841,15 @@ impl AdventureSession {
     }
 
     fn start_current_stage(&mut self, events: &mut Vec<Event>) -> bool {
-        if (self.progress.tank, self.progress.level) == (1, 6) {
+        if self.progress.level == 6 {
             self.board = None;
             self.phase = AdventurePhase::Bonus {
-                state: BonusState::new(self.next_seed),
+                state: BonusState::new_for_tank(self.next_seed, self.progress.tank)
+                    .expect("supported Adventure bonus origin"),
             };
             events.push(Event::StageStarted {
                 tick: self.ticks,
-                tank: 1,
+                tank: self.progress.tank,
                 level: 6,
             });
             return true;
@@ -876,6 +894,10 @@ impl AdventureSession {
                 AdventureState::new_tank2_fourth_stage(self.next_seed, &self.progress.selected_pets)
                     .expect("session selection is validated before starting a board")
             }
+            (2, 5) => {
+                AdventureState::new_tank2_fifth_stage(self.next_seed, &self.progress.selected_pets)
+                    .expect("session selection is validated before starting a board")
+            }
             _ => unreachable!("supported progress validated at load"),
         };
         self.next_seed = board.transition_seed();
@@ -916,6 +938,7 @@ impl AdventureSession {
             (2, 2) => PetKind::Vert,
             (2, 3) => PetKind::Rufus,
             (2, 4) => PetKind::Meryl,
+            (2, 5) => PetKind::Wadsworth,
             _ => unreachable!("stage not yet completable"),
         };
         self.progress.level = board.level + 1;
@@ -1130,8 +1153,8 @@ mod tests {
         assert_eq!(board.fish_pets[0].coin_timer, 0);
         assert_eq!(board.fish.len(), 2);
         assert_eq!(
-            board.invasion.as_ref().unwrap().kind,
-            crate::alien::SylvesterKind::Gus
+            board.invasion.as_ref().unwrap().plan.expected(),
+            crate::invasion::EncounterKind::Single(crate::alien::SylvesterKind::Gus)
         );
         session.validate().unwrap();
 
@@ -1199,8 +1222,8 @@ mod tests {
         assert!(board.rufus.is_some());
         assert!(board.missiles.is_empty());
         assert_eq!(
-            board.invasion.as_ref().unwrap().kind,
-            crate::alien::SylvesterKind::Destructor
+            board.invasion.as_ref().unwrap().plan.expected(),
+            crate::invasion::EncounterKind::Single(crate::alien::SylvesterKind::Destructor)
         );
         assert!(board.fish.iter().all(|fish| fish.food_ate == 2));
         board.eggs = 2;
@@ -1237,17 +1260,26 @@ mod tests {
                 pet: PetKind::Meryl,
             },
         ]);
-        let before = serde_json::to_value(&session).unwrap();
-        let events = session.apply_actions(&[Action::Continue]);
-        assert!(events.iter().any(|event| matches!(
-            event,
-            Event::Rejected {
-                reason: Rejection::Locked,
-                ..
-            }
-        )));
-        assert_eq!(serde_json::to_value(&session).unwrap(), before);
-        assert!(session.board.is_none());
+        session.apply_actions(&[Action::Continue]);
+        assert!(matches!(
+            session.phase,
+            AdventurePhase::PetSelectionConfirmation { .. }
+        ));
+        session.apply_actions(&[Action::ConfirmPetSelection { accept: true }]);
+        let board = session.board.as_ref().unwrap();
+        assert_eq!(
+            (
+                board.tank,
+                board.level,
+                board.tick,
+                board.balance,
+                board.egg_price
+            ),
+            (2, 5, 0, 200, 10000)
+        );
+        assert_eq!(board.pets, vec![PetKind::Meryl]);
+        assert_eq!(board.fish_pets[0].kind, crate::fish_pet::FishPetKind::Meryl);
+        assert!(matches!(session.phase, AdventurePhase::Playing));
         session.validate().unwrap();
     }
 
@@ -1301,6 +1333,135 @@ mod tests {
         assert_eq!(state.tick, 0);
         assert!(state.started_at.is_none());
         session.validate().unwrap();
+    }
+
+    #[test]
+    fn tank_two_finale_rewards_wadsworth_then_bonus_advances_once_to_tank_three() {
+        let mut session = AdventureSession::new(42);
+        session.progress.tank = 2;
+        session.progress.level = 5;
+        session.progress.unlocked_pets = vec![
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+            PetKind::Clyde,
+            PetKind::Vert,
+            PetKind::Rufus,
+            PetKind::Meryl,
+        ];
+        session.progress.selected_pets = vec![PetKind::Niko, PetKind::Itchy, PetKind::Meryl];
+        session.board = Some(
+            AdventureState::new_tank2_fifth_stage(42, &session.progress.selected_pets).unwrap(),
+        );
+        let board = session.board.as_mut().unwrap();
+        board.eggs = 2;
+        board.balance = 10000;
+        board.upgrades.quality_unlocked = true;
+        board.upgrades.quantity_unlocked = true;
+        board.potion_unlocked = true;
+        board.starcatcher_unlocked = true;
+        board.weapon_unlocked = true;
+        board.egg_unlocked = true;
+        let paid = session.apply_actions(&[Action::BuyEgg, Action::BuyEgg]);
+        assert_eq!(
+            paid.iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::PetUnlocked {
+                        pet: PetKind::Wadsworth,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!((session.progress.tank, session.progress.level), (2, 6));
+        assert!(session.board.is_none());
+        session.validate().unwrap();
+        session.phase = AdventurePhase::Hatch {
+            pet: PetKind::Wadsworth,
+            updates: 171,
+        };
+        session.apply_actions(&[Action::Continue]);
+        let AdventurePhase::Bonus { state } = &mut session.phase else {
+            panic!("bonus expected")
+        };
+        assert_eq!((state.origin_tank, state.duration_seconds()), (2, 20));
+        assert!(state.shells.is_empty());
+        // Controlled completion boundary, not an earned runtime claim. Keep
+        // session time and the bonus's old-counter completion state coherent.
+        state.started_at = Some(0);
+        state.tick = 751;
+        state.timed_out = true;
+        state.empty_updates = 101;
+        state.shells_earned = 217;
+        session.ticks = 751;
+        session.progress.shell_balance = 539;
+        session.validate().unwrap();
+        let completed = session.step(&[]);
+        assert_eq!(
+            completed
+                .iter()
+                .filter(|event| matches!(event, Event::BonusResultsCommitted { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            (
+                session.progress.tank,
+                session.progress.level,
+                session.progress.shell_balance
+            ),
+            (3, 1, 756)
+        );
+        let AdventurePhase::BonusResults { result } = &session.phase else {
+            panic!("results expected")
+        };
+        assert_eq!(
+            (result.origin_tank, result.earned, result.previous_balance),
+            (2, 217, 539)
+        );
+        for _ in 0..40 {
+            assert!(
+                !session
+                    .step(&[])
+                    .iter()
+                    .any(|event| matches!(event, Event::BonusResultsCommitted { .. }))
+            );
+        }
+        assert_eq!(session.progress.shell_balance, 756);
+        session.apply_actions(&[Action::Continue]);
+        assert!(matches!(session.phase, AdventurePhase::PetSelection { .. }));
+        session.apply_actions(&[Action::TogglePet {
+            pet: PetKind::Wadsworth,
+        }]);
+        let before = serde_json::to_value(&session).unwrap();
+        assert!(
+            session
+                .apply_actions(&[Action::Continue])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::Locked,
+                        ..
+                    }
+                ))
+        );
+        assert_eq!(serde_json::to_value(&session).unwrap(), before);
+        session.validate().unwrap();
+        // Malformed source identity must reject rather than overflow in a guard.
+        session.phase = AdventurePhase::BonusResults {
+            result: BonusResult {
+                origin_tank: 255,
+                earned: 217,
+                previous_balance: 539,
+                updates: 40,
+            },
+        };
+        assert!(session.validate().is_err());
     }
 
     #[test]

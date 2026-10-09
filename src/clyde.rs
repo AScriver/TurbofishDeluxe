@@ -10,6 +10,8 @@ pub struct ClydeCoinView {
     pub widget_x: i32,
     pub widget_y: i32,
     pub eligible: bool,
+    /// Special notes remain chase targets but cannot be collected on contact.
+    pub collectible: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -103,7 +105,7 @@ impl ClydeState {
                 }
                 update.collected_coin = coins
                     .iter()
-                    .filter(|coin| coin.eligible)
+                    .filter(|coin| coin.eligible && coin.collectible)
                     .find(|coin| {
                         let center_x = self.x + 40.0;
                         let center_y = self.y + 40.0;
@@ -238,6 +240,7 @@ mod tests {
             widget_x: 150,
             widget_y: 140,
             eligible: false,
+            collectible: true,
         };
         actor.tick(&[blocked], true, &mut |_| 1);
         assert_eq!(actor.target_vx, -0.5);
@@ -266,6 +269,7 @@ mod tests {
             widget_x: 99,
             widget_y: 101,
             eligible: true,
+            collectible: true,
         };
         let second = ClydeCoinView {
             id: 3,
@@ -296,6 +300,7 @@ mod tests {
             widget_x: 250,
             widget_y: 250,
             eligible: true,
+            collectible: true,
         };
         actor.tick(&[target], true, &mut |_| 1);
         assert!((actor.vx - 2.4).abs() < 1e-12); // +1 under the <2 guard, then -0.1 easing.
@@ -359,6 +364,7 @@ mod tests {
             widget_x: 200,
             widget_y: 150,
             eligible: true,
+            collectible: true,
         };
         actor.tick(&[coin], true, &mut |_| 1);
         assert_eq!(actor.vx, 0.0);
@@ -381,6 +387,7 @@ mod tests {
             widget_x: 102,
             widget_y: 102,
             eligible: true,
+            collectible: true,
         };
         actor.tick(&[coin], true, &mut |_| 1);
         assert!((actor.vx + 0.9).abs() < 1e-12);

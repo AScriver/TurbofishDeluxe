@@ -1,6 +1,6 @@
 # Adventure 2-5: Meryl and the second shell bonus
 
-After accepting [Destructor/Rufus2-4](adventure-2-4.md), select earned Meryl, complete2-5, hatch Wadsworth and execute2-6's shell bonus toward Tank3. This is a recovery/design contract; no2-5 implementation or runtime acceptance is claimed. Full scope remains in [requirements](requirements.md).
+After accepting [Destructor/Rufus2-4](adventure-2-4.md), select earned Meryl, complete2-5, hatch Wadsworth and execute2-6's shell bonus toward Tank3. The integrated source passed239checks and is frozen for native acceptance; first song/reload/pause and natural Gus execution are recorded in [STATUS](../STATUS.md). Complete earned2-5/bonus acceptance remains pending. Full scope remains in [requirements](requirements.md).
 
 ## Evidence and rules
 

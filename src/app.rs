@@ -35,6 +35,7 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_HUNGRYTURN",
     "IMAGE_FOOD",
     "IMAGE_MONEY",
+    "IMAGE_MISCITEMS",
     "IMAGE_EGGPIECES",
     "IMAGE_MENUBTNU",
     "IMAGE_MENUBTNO",
@@ -82,6 +83,8 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_RUFUS",
     "IMAGE_MERYL",
     "IMAGE_SCL_MERYL",
+    "IMAGE_WADSWORTH",
+    "IMAGE_SCL_WADSWORTH",
     "IMAGE_STARCATCHER",
     "IMAGE_SCL_STARCATCHER",
     "IMAGE_BONUSBUCKET",
@@ -113,6 +116,7 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_DIE",
     "SOUND_PUNCH",
     "SOUND_BABY",
+    "SOUND_SING",
     "SOUND_BONUSCOLLECT",
     "SOUND_BONUSCOUNT",
 ];
@@ -329,6 +333,7 @@ impl Presentation {
                 Event::MissileRemoved { .. } => "SOUND_EXPLODE",
                 Event::MissileImpacted { .. } => "SOUND_DIE",
                 Event::PregoBirth { .. } => "SOUND_BABY",
+                Event::MerylNoteDropped { .. } => "SOUND_SING",
                 Event::HatchOpened { .. } => "SOUND_HATCH",
                 Event::Invasion { event, .. } => match event {
                     InvasionEvent::WarningStarted(_) => "SOUND_AWOOGA",
@@ -512,13 +517,14 @@ impl Presentation {
         let aliens_present = state
             .invasion
             .as_ref()
-            .is_some_and(|wave| wave.alien.is_some());
+            .is_some_and(|wave| wave.has_live_alien());
         for pet in &state.fish_pets {
             let image = match pet.kind {
                 FishPetKind::Itchy => "IMAGE_ITCHY",
                 FishPetKind::Prego => "IMAGE_PREGO",
                 FishPetKind::Zorf => "IMAGE_ZORF",
                 FishPetKind::Vert => "IMAGE_VERT",
+                FishPetKind::Meryl => "IMAGE_MERYL",
             };
             self.sprite(
                 image,
@@ -580,7 +586,7 @@ impl Presentation {
             );
         }
         if let Some(wave) = &state.invasion {
-            if let Some(warp) = &wave.warp {
+            for warp in &wave.warps {
                 // WinFish Warp::Draw computes 17 - counter/2, which can
                 // exceed both 17-column sheets at its endpoints. The
                 // installed renderer's handling is not yet established.
@@ -606,9 +612,10 @@ impl Presentation {
                     );
                 }
             }
-            if let Some(alien) = &wave.alien
-                && alien.spawn_ticks <= 9
-            {
+            for alien in &wave.actors {
+                if alien.spawn_ticks > 9 {
+                    continue;
+                }
                 let inset = if alien.spawn_ticks > 0 {
                     (f32::from(alien.spawn_ticks) / 10.0 * 160.0) as i32
                 } else {
@@ -703,8 +710,10 @@ impl Presentation {
                     }
                 }
             }
-            if let Some(body) = &wave.dead_alien
-                && body.kind != SylvesterKind::Gus
+            for body in wave
+                .dead_aliens
+                .iter()
+                .filter(|body| body.kind != SylvesterKind::Gus)
             {
                 self.sprite(
                     match body.kind {
@@ -821,6 +830,17 @@ impl Presentation {
                 false,
                 1.0,
                 alpha,
+            );
+        }
+        for note in &state.notes {
+            self.sprite(
+                "IMAGE_MISCITEMS",
+                note.x as f32,
+                note.y as f32,
+                Some(Rect::new(72.0, 0.0, 72.0, 72.0)),
+                false,
+                1.0,
+                1.0,
             );
         }
         self.sprite("IMAGE_MENUBAR", 0.0, 0.0, None, false, 1.0, 1.0);
@@ -1127,7 +1147,19 @@ impl Presentation {
     }
 
     fn draw_bonus(&self, bonus: &BonusState) {
-        self.sprite("IMAGE_AQUARIUM1", 0.0, 0.0, None, false, 1.0, 1.0);
+        self.sprite(
+            if bonus.origin_tank == 2 {
+                "IMAGE_AQUARIUM2"
+            } else {
+                "IMAGE_AQUARIUM1"
+            },
+            0.0,
+            0.0,
+            None,
+            false,
+            1.0,
+            1.0,
+        );
         let timer = bonus.tick.saturating_sub(bonus.initial_count);
         let bucket_y = if bonus.started_at.is_some() {
             Some(265.0)
@@ -1353,6 +1385,7 @@ impl Presentation {
                 }
                 PetKind::Rufus => ("IMAGE_RUFUS", 90.0, updates % 20 / 2),
                 PetKind::Meryl => ("IMAGE_MERYL", 90.0, updates % 20 / 2),
+                PetKind::Wadsworth => ("IMAGE_WADSWORTH", 90.0, updates % 20 / 2),
             };
             self.sprite(
                 id,
@@ -1364,7 +1397,11 @@ impl Presentation {
                 1.0,
             );
             self.centered_text(
-                "JungleFever15outline",
+                if pet == PetKind::Wadsworth {
+                    "JungleFever12outline"
+                } else {
+                    "JungleFever15outline"
+                },
                 match pet {
                     PetKind::Stinky => "STINKY the Snail",
                     PetKind::Niko => "NIKO the Oyster",
@@ -1375,6 +1412,7 @@ impl Presentation {
                     PetKind::Vert => "VERT the Skeleton",
                     PetKind::Rufus => "RUFUS the Fiddler Crab",
                     PetKind::Meryl => "MERYL the Mermaid",
+                    PetKind::Wadsworth => "WADSWORTH the Whale",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -1423,6 +1461,11 @@ impl Presentation {
                     "MERYL's song cheers up all the",
                     "guppies in the tank, making",
                     "them drop coins faster.",
+                ],
+                PetKind::Wadsworth => [
+                    "WADSWORTH helps by sheltering",
+                    "your baby and medium guppies",
+                    "from hungry aliens.",
                 ],
             };
             for (index, line) in description.iter().enumerate() {
@@ -1505,6 +1548,7 @@ impl Presentation {
                 PetKind::Vert => "IMAGE_SCL_VERT",
                 PetKind::Rufus => "IMAGE_SCL_RUFUS",
                 PetKind::Meryl => "IMAGE_SCL_MERYL",
+                PetKind::Wadsworth => "IMAGE_SCL_WADSWORTH",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
@@ -1625,6 +1669,16 @@ impl Presentation {
                         "MERYL's song cheers up all the",
                         "guppies in the tank, making",
                         "them drop coins faster.",
+                    ],
+                    90.0,
+                ),
+                PetKind::Wadsworth => (
+                    "IMAGE_WADSWORTH",
+                    "WADSWORTH the Whale",
+                    [
+                        "WADSWORTH helps by sheltering",
+                        "your baby and medium guppies",
+                        "from hungry aliens.",
                     ],
                     90.0,
                 ),
@@ -2220,9 +2274,10 @@ pub async fn run(
                     // An out-of-range Gus press still belongs to the Gus
                     // route. It must not borrow another click's FoodDropped.
                     let gus_initial_attempt = session.board.as_ref().is_some_and(|board| {
-                        board.invasion.as_ref().is_some_and(|wave| {
-                            wave.kind == SylvesterKind::Gus && wave.has_live_alien()
-                        })
+                        board
+                            .invasion
+                            .as_ref()
+                            .is_some_and(|wave| wave.has_registered_kind(SylvesterKind::Gus))
                     });
                     let gus_click =
                         gus_initial_attempt.then_some((pointer.x as i32, pointer.y as i32));
@@ -2323,7 +2378,8 @@ pub async fn run(
                             .as_ref()
                             .and_then(|board| board.invasion.as_ref())
                             .is_some_and(|wave| {
-                                wave.has_live_alien() && wave.kind != SylvesterKind::Gus
+                                wave.has_live_alien()
+                                    && !wave.has_registered_kind(SylvesterKind::Gus)
                             })
                     {
                         step_actions.push(Action::HoldFeed {
@@ -2503,6 +2559,26 @@ mod feed_input_tests {
         assert_eq!(
             pet_at_pointer(&unlocked, vec2(165.333_33, 165.0)),
             Some(PetKind::Vert)
+        );
+    }
+
+    #[test]
+    fn tenth_pet_uses_the_source_second_column_fifth_row() {
+        let unlocked = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+            PetKind::Clyde,
+            PetKind::Vert,
+            PetKind::Rufus,
+            PetKind::Meryl,
+            PetKind::Wadsworth,
+        ];
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(165.0, 414.0)),
+            Some(PetKind::Wadsworth)
         );
     }
 

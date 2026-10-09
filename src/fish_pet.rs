@@ -12,6 +12,7 @@ pub enum FishPetKind {
     Prego,
     Zorf,
     Vert,
+    Meryl,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,6 +30,8 @@ pub struct FishPetUpdate {
     pub free_food: Option<ZorfFoodRequest>,
     /// Gold appears at the prior integer widget, before this pet moves.
     pub gold_at: Option<(i32, i32)>,
+    /// Meryl's zero-value note is emitted at the prior integer widget.
+    pub note_at: Option<(i32, i32)>,
     /// The board applies its shared eleven-update punch sound delay.
     pub punch_sound: bool,
 }
@@ -72,6 +75,7 @@ pub struct FishPetState {
     #[serde(default)]
     pub food_timer: i32,
     pub coin_timer: u16,
+    pub meryl_blink: bool,
     speed_mod: f64,
     previous_vx: f64,
     movement_state: u8,
@@ -118,6 +122,7 @@ impl FishPetState {
             birth_threshold: 930,
             food_timer: 0,
             coin_timer: 0,
+            meryl_blink: true,
             speed_mod: if kind == FishPetKind::Zorf {
                 3.0
             } else {
@@ -168,7 +173,10 @@ impl FishPetState {
             || (self.kind == FishPetKind::Zorf && self.food_timer < -10)
             || (self.kind != FishPetKind::Zorf && self.food_timer != 0)
             || (self.kind == FishPetKind::Vert && self.coin_timer >= 216)
-            || (self.kind != FishPetKind::Vert && self.coin_timer != 0)
+            || (self.kind == FishPetKind::Meryl && self.coin_timer >= 1400)
+            || (!matches!(self.kind, FishPetKind::Vert | FishPetKind::Meryl)
+                && self.coin_timer != 0)
+            || (self.kind != FishPetKind::Meryl && !self.meryl_blink)
         {
             return Err("invalid ordinary fish pet save state".into());
         }
@@ -218,7 +226,24 @@ impl FishPetState {
                 }
             }
             FishPetKind::Vert => u8::from(self.turn_ticks != 0),
+            FishPetKind::Meryl => {
+                if self.turn_ticks != 0 {
+                    2
+                } else if self.coin_timer > 1300 {
+                    1
+                } else if self.frame < 5 && self.meryl_blink {
+                    3
+                } else {
+                    0
+                }
+            }
         }
+    }
+
+    /// Fish updates precede fish-pet updates, so this reflects the song for
+    /// the next ordinary fish production call.
+    pub fn song_active(&self) -> bool {
+        self.kind == FishPetKind::Meryl && (1300..1400).contains(&self.coin_timer)
     }
 
     pub fn sprite_frame(&self) -> u8 {
@@ -319,6 +344,14 @@ impl FishPetState {
                 update.gold_at = Some((self.widget_x + 15, self.widget_y + 10));
             }
         }
+        if self.kind == FishPetKind::Meryl && aliens.is_empty() {
+            self.coin_timer += 1;
+            if self.coin_timer == 1300 {
+                update.note_at = Some((self.widget_x + 15, self.widget_y - 5));
+            } else if self.coin_timer >= 1400 {
+                self.coin_timer = 0;
+            }
+        }
         match self.vx {
             0.0 => self.y += 1.0 / self.speed_mod,
             1.0 => self.y += 0.75 / self.speed_mod,
@@ -344,6 +377,17 @@ impl FishPetState {
             self.vx += 0.1;
         }
         self.animate();
+        // FishTypePet::Animate performs this only in its ordinary swim
+        // branch, after decrementing the turn counter. A turn ending 1→0
+        // enters that branch; turn ±19→±18 can display frame zero but must
+        // not consume the blink RNG draw.
+        if self.kind == FishPetKind::Meryl && self.turn_ticks == 0 && self.frame == 0 {
+            if self.meryl_blink {
+                self.meryl_blink = false;
+            } else {
+                self.meryl_blink = rand_range(10) == 0;
+            }
+        }
         self.x += self.vx / self.speed_mod;
         self.y += self.vy / self.speed_mod;
         self.widget_x = self.x as i32;
@@ -524,6 +568,64 @@ impl FishPetState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn meryl_note_clock_freezes_on_registration_and_song_ends_at_1400() {
+        let mut pet = actor(FishPetKind::Meryl);
+        pet.coin_timer = 1299;
+        let alien = [PetAlienView {
+            id: 7,
+            widget_x: 100,
+            widget_y: 100,
+            healing: false,
+        }];
+        assert_eq!(pet.tick(&alien, 0, &mut |_| 1).note_at, None);
+        assert_eq!(pet.coin_timer, 1299);
+        let old_widget = (pet.widget_x, pet.widget_y);
+        assert_eq!(
+            pet.tick(&[], 0, &mut |_| 1).note_at,
+            Some((old_widget.0 + 15, old_widget.1 - 5))
+        );
+        assert!(pet.song_active());
+        assert_ne!(pet.sprite_row(false), 1); // Draw row is strictly after 1300.
+        pet.coin_timer = 1399;
+        assert_eq!(pet.tick(&[], 0, &mut |_| 1).note_at, None);
+        assert_eq!(pet.coin_timer, 0);
+        assert!(!pet.song_active());
+        pet.validate().unwrap();
+    }
+
+    #[test]
+    fn meryl_blink_rng_is_only_in_post_decrement_swim_branch() {
+        for turn in [19, -19] {
+            let mut pet = actor(FishPetKind::Meryl);
+            pet.turn_ticks = turn;
+            pet.special_timer = 0;
+            pet.vx = 0.0;
+            pet.meryl_blink = false;
+            pet.tick(&[], 0, &mut |_| {
+                panic!("a frame-zero turn cannot roll blink")
+            });
+            assert_eq!(pet.frame, 0);
+            assert!(!pet.meryl_blink);
+        }
+        let mut ending = actor(FishPetKind::Meryl);
+        ending.turn_ticks = 1;
+        ending.special_timer = 0;
+        ending.swim_counter = 19;
+        ending.vx = 0.0;
+        ending.meryl_blink = false;
+        let mut draws = 0;
+        ending.tick(&[], 0, &mut |_| {
+            draws += 1;
+            0
+        });
+        assert_eq!((ending.turn_ticks, ending.frame, draws), (0, 0, 1));
+        assert!(ending.meryl_blink);
+        ending.swim_counter = 19;
+        ending.tick(&[], 0, &mut |_| panic!("true blink clears without a draw"));
+        assert!(!ending.meryl_blink);
+    }
 
     fn actor(kind: FishPetKind) -> FishPetState {
         let mut rng = |_: u64| 0;

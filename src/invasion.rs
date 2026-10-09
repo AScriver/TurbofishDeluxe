@@ -40,6 +40,30 @@ pub struct WarningCoords {
     pub second_y: i32,
 }
 
+/// What the next warning will bring. Registered actors retain their own
+/// species after this expectation changes at spawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EncounterKind {
+    Single(SylvesterKind),
+    WeakBalrogPair,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WavePlan {
+    Fixed(SylvesterKind),
+    CyclingTank1Finale { next: EncounterKind },
+    CyclingTank2Finale { next: EncounterKind },
+}
+
+impl WavePlan {
+    pub fn expected(self) -> EncounterKind {
+        match self {
+            Self::Fixed(kind) => EncounterKind::Single(kind),
+            Self::CyclingTank1Finale { next } | Self::CyclingTank2Finale { next } => next,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum InvasionEvent {
     ModalOpened(InvasionTip),
@@ -137,21 +161,23 @@ pub struct DeadAlienEffect {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Invasion1_2 {
     pub origin: InvasionOrigin,
-    #[serde(default)] // Pre-format-5 stage-2 waves were necessarily weak.
-    pub kind: SylvesterKind,
+    pub plan: WavePlan,
     pub countdown: i32,
     pub danger_shown: bool,
     pub battle_tip_shown: bool,
     pub gus_warning_shown: bool,
     pub pending_modal: Option<InvasionTip>,
     pub warning: Option<WarningCoords>,
-    pub alien: Option<WeakSylvester>,
+    pub actors: Vec<WeakSylvester>,
+    /// Set by the spawn transaction and cleared only after the last alien
+    /// and missile leaves. It distinguishes a finished battle from peace.
+    pub battle_active: bool,
     pub food_delay: u8,
     pub last_laser: Option<(i32, i32)>,
     pub post_spawn_flash_ticks: u8,
-    pub warp: Option<WarpEffect>,
+    pub warps: Vec<WarpEffect>,
     pub lasers: Vec<LaserEffect>,
-    pub dead_alien: Option<DeadAlienEffect>,
+    pub dead_aliens: Vec<DeadAlienEffect>,
 }
 
 impl Invasion1_2 {
@@ -175,6 +201,26 @@ impl Invasion1_2 {
         Self::with_origin(InvasionOrigin::StageStart, SylvesterKind::Destructor)
     }
 
+    pub fn new_tank1_finale() -> Self {
+        let mut wave = Self::new_balrog();
+        wave.plan = WavePlan::CyclingTank1Finale {
+            next: EncounterKind::Single(SylvesterKind::Balrog),
+        };
+        wave
+    }
+
+    pub fn new_tank2_finale(first: SylvesterKind) -> Self {
+        assert!(matches!(
+            first,
+            SylvesterKind::Gus | SylvesterKind::Destructor
+        ));
+        let mut wave = Self::with_origin(InvasionOrigin::StageStart, first);
+        wave.plan = WavePlan::CyclingTank2Finale {
+            next: EncounterKind::Single(first),
+        };
+        wave
+    }
+
     pub fn legacy_v5_balrog_resume() -> Self {
         Self::with_origin(InvasionOrigin::LegacyV5Resume, SylvesterKind::Balrog)
     }
@@ -190,7 +236,7 @@ impl Invasion1_2 {
     fn with_origin(origin: InvasionOrigin, kind: SylvesterKind) -> Self {
         Self {
             origin,
-            kind,
+            plan: WavePlan::Fixed(kind),
             countdown: if kind == SylvesterKind::Weak {
                 1750
             } else {
@@ -201,13 +247,14 @@ impl Invasion1_2 {
             gus_warning_shown: false,
             pending_modal: None,
             warning: None,
-            alien: None,
+            actors: Vec::new(),
+            battle_active: false,
             food_delay: 0,
             last_laser: None,
             post_spawn_flash_ticks: 0,
-            warp: None,
+            warps: Vec::new(),
             lasers: Vec::new(),
-            dead_alien: None,
+            dead_aliens: Vec::new(),
         }
     }
 
@@ -216,7 +263,19 @@ impl Invasion1_2 {
     }
 
     pub fn has_live_alien(&self) -> bool {
-        self.alien.is_some()
+        !self.actors.is_empty()
+    }
+
+    pub fn has_registered_kind(&self, kind: SylvesterKind) -> bool {
+        self.actors.iter().any(|actor| actor.kind == kind)
+    }
+
+    pub fn actor_by_id(&self, id: u64) -> Option<&WeakSylvester> {
+        self.actors.iter().find(|actor| actor.id == id)
+    }
+
+    pub fn actor_by_id_mut(&mut self, id: u64) -> Option<&mut WeakSylvester> {
+        self.actors.iter_mut().find(|actor| actor.id == id)
     }
 
     /// Board::Update reduces food delay before its first pause return at
@@ -258,7 +317,7 @@ impl Invasion1_2 {
             return Vec::new();
         }
         self.post_spawn_flash_ticks = self.post_spawn_flash_ticks.saturating_sub(1);
-        if self.alien.is_some() || missiles_present {
+        if self.has_live_alien() || missiles_present {
             return Vec::new();
         }
         if self.countdown <= 0 {
@@ -269,7 +328,7 @@ impl Invasion1_2 {
 
         self.countdown -= 1;
         match self.countdown {
-            276 if self.kind == SylvesterKind::Weak => {
+            276 if self.plan == WavePlan::Fixed(SylvesterKind::Weak) => {
                 let tip = if !self.danger_shown {
                     self.danger_shown = true;
                     Some(InvasionTip::Danger)
@@ -286,7 +345,7 @@ impl Invasion1_2 {
                     Vec::new()
                 }
             }
-            276 if self.kind == SylvesterKind::Gus && !self.gus_warning_shown => {
+            276 if self.plan == WavePlan::Fixed(SylvesterKind::Gus) && !self.gus_warning_shown => {
                 self.gus_warning_shown = true;
                 self.pending_modal = Some(InvasionTip::GusWarning);
                 vec![InvasionEvent::ModalOpened(InvasionTip::GusWarning)]
@@ -309,29 +368,73 @@ impl Invasion1_2 {
                     self.countdown = 0;
                     return Vec::new();
                 };
-                let id = next_id();
-                let actor = WeakSylvester::spawn_kind(
-                    self.kind,
-                    id,
-                    coords.first_x,
-                    coords.first_y,
-                    next_random(),
-                    next_random(),
-                );
-                let spawn_y = actor.widget_y;
-                self.warp = Some(WarpEffect {
-                    x: coords.first_x + 30,
-                    y: spawn_y - 40,
-                    remaining_ticks: 36,
-                });
-                self.alien = Some(actor);
+                let encounter = self.plan.expected();
+                let mut events = Vec::new();
+                let mut spawn = |kind, x, y| {
+                    let id = next_id();
+                    let actor =
+                        WeakSylvester::spawn_kind(kind, id, x, y, next_random(), next_random());
+                    let spawn_y = actor.widget_y;
+                    self.warps.push(WarpEffect {
+                        x: x + 30,
+                        y: spawn_y - 40,
+                        remaining_ticks: 36,
+                    });
+                    self.actors.push(actor);
+                    events.push(InvasionEvent::AlienSpawned { id, x, y: spawn_y });
+                };
+                match encounter {
+                    EncounterKind::Single(kind) => {
+                        spawn(kind, coords.first_x, coords.first_y);
+                    }
+                    EncounterKind::WeakBalrogPair => {
+                        spawn(SylvesterKind::Weak, coords.first_x, coords.first_y);
+                        spawn(SylvesterKind::Balrog, coords.second_x, coords.second_y);
+                    }
+                }
+                // Board::Update selects the next encounter after every actor
+                // constructor. Its else-if suppresses the %20 draw on a
+                // successful %10 toggle.
+                self.plan = match self.plan {
+                    WavePlan::Fixed(kind) => WavePlan::Fixed(kind),
+                    WavePlan::CyclingTank1Finale { .. } => WavePlan::CyclingTank1Finale {
+                        next: if !next_random().is_multiple_of(2) {
+                            EncounterKind::Single(SylvesterKind::Balrog)
+                        } else {
+                            EncounterKind::WeakBalrogPair
+                        },
+                    },
+                    WavePlan::CyclingTank2Finale { .. } => {
+                        let mut next = if encounter == EncounterKind::WeakBalrogPair {
+                            if !next_random().is_multiple_of(2) {
+                                SylvesterKind::Gus
+                            } else {
+                                SylvesterKind::Destructor
+                            }
+                        } else if let EncounterKind::Single(kind) = encounter {
+                            kind
+                        } else {
+                            unreachable!()
+                        };
+                        let next = if next_random().is_multiple_of(10) {
+                            next = if next == SylvesterKind::Destructor {
+                                SylvesterKind::Gus
+                            } else {
+                                SylvesterKind::Destructor
+                            };
+                            EncounterKind::Single(next)
+                        } else if next_random().is_multiple_of(20) {
+                            EncounterKind::WeakBalrogPair
+                        } else {
+                            EncounterKind::Single(next)
+                        };
+                        WavePlan::CyclingTank2Finale { next }
+                    }
+                };
                 self.post_spawn_flash_ticks = 35;
                 self.countdown = 3000;
-                vec![InvasionEvent::AlienSpawned {
-                    id,
-                    x: coords.first_x,
-                    y: spawn_y,
-                }]
+                self.battle_active = true;
+                events
             }
             _ => Vec::new(),
         }
@@ -363,72 +466,98 @@ impl Invasion1_2 {
         &mut self,
         prey: &[PreyView],
         food: &[AlienFoodView],
+        mut runtime: impl FnMut(AlienRuntimeRequest) -> u32,
+    ) -> Vec<InvasionEvent> {
+        if self.pending_modal.is_some() {
+            return Vec::new();
+        }
+        assert!(
+            self.actors.len() <= 1,
+            "paired aliens require per-actor Board settlement"
+        );
+        let mut events = Vec::new();
+        let ids: Vec<_> = self.actors.iter().map(|actor| actor.id).collect();
+        for id in ids {
+            events.extend(self.update_actor_with_runtime(id, prey, food, &mut runtime));
+        }
+        events.extend(self.update_effects());
+        events.extend(self.finish_if_no_threats(false));
+        events
+    }
+
+    /// Board calls this for each registered actor in source list order, then
+    /// commits prey/food removal before preparing the next actor's view.
+    pub fn update_actor_with_runtime(
+        &mut self,
+        id: u64,
+        prey: &[PreyView],
+        food: &[AlienFoodView],
         runtime: impl FnMut(AlienRuntimeRequest) -> u32,
     ) -> Vec<InvasionEvent> {
         if self.pending_modal.is_some() {
             return Vec::new();
         }
+        let Some(actor) = self.actor_by_id_mut(id) else {
+            return Vec::new();
+        };
+        let update = actor.update_with_runtime(prey, food, runtime);
         let mut events = Vec::new();
-        let mut defeated_on_update = false;
-        if let Some(actor) = self.alien.as_mut() {
-            let update = actor.update_with_runtime(prey, food, runtime);
-            if let Some((food_id, damage)) = update.food_eaten {
-                events.push(InvasionEvent::GusAteFood {
-                    alien_id: actor.id,
-                    food_id,
-                    damage,
-                });
-            }
-            if let Some(prey_id) = update.prey_eaten {
-                events.push(InvasionEvent::PreyEaten {
-                    alien_id: actor.id,
-                    prey_id,
-                });
-            }
-            defeated_on_update = update.defeated;
+        if let Some((food_id, damage)) = update.food_eaten {
+            events.push(InvasionEvent::GusAteFood {
+                alien_id: id,
+                food_id,
+                damage,
+            });
         }
-        if let Some(warp) = self.warp.as_mut() {
-            if warp.remaining_ticks == 0 {
-                self.warp = None;
-            } else {
-                warp.remaining_ticks -= 1;
-            }
+        if let Some(prey_id) = update.prey_eaten {
+            events.push(InvasionEvent::PreyEaten {
+                alien_id: id,
+                prey_id,
+            });
+        }
+        if update.defeated {
+            events.extend(self.remove_registered_alien(id));
+        }
+        events
+    }
+
+    pub fn update_effects(&mut self) -> Vec<InvasionEvent> {
+        if self.pending_modal.is_some() {
+            return Vec::new();
+        }
+        let mut events = Vec::new();
+        self.warps.retain(|warp| warp.remaining_ticks > 0);
+        for warp in &mut self.warps {
+            warp.remaining_ticks -= 1;
         }
         for laser in &mut self.lasers {
             laser.age_ticks += 1;
         }
         self.lasers.retain(|laser| laser.age_ticks <= 14);
-
-        if let Some(body) = self.dead_alien.as_mut() {
-            if body.remaining_ticks == 0 {
-                self.dead_alien = None;
-            } else {
-                body.remaining_ticks -= 1;
-                if body.remaining_ticks < 105 {
-                    body.opacity = (body.opacity - 0.02).max(0.0);
-                }
-                if body.remaining_ticks % 7 == 0 && body.remaining_ticks > 50 {
-                    events.push(InvasionEvent::DeathBurstDue {
-                        x: body.widget_x,
-                        y: body.widget_y,
-                    });
-                }
-                if body.vx <= 0.0 {
-                    body.vx += 0.03;
-                } else {
-                    body.vx -= 0.03;
-                }
-                if body.vy < 2.0 {
-                    body.vy += 0.05;
-                }
-                body.x = body.x.clamp(-10.0, 490.0) + body.vx;
-                body.y += body.vy;
-                body.widget_x = body.x as i32;
-                body.widget_y = body.y as i32;
+        self.dead_aliens.retain(|body| body.remaining_ticks > 0);
+        for body in &mut self.dead_aliens {
+            body.remaining_ticks -= 1;
+            if body.remaining_ticks < 105 {
+                body.opacity = (body.opacity - 0.02).max(0.0);
             }
-        }
-        if defeated_on_update {
-            events.extend(self.remove_registered_alien());
+            if body.remaining_ticks % 7 == 0 && body.remaining_ticks > 50 {
+                events.push(InvasionEvent::DeathBurstDue {
+                    x: body.widget_x,
+                    y: body.widget_y,
+                });
+            }
+            if body.vx <= 0.0 {
+                body.vx += 0.03;
+            } else {
+                body.vx -= 0.03;
+            }
+            if body.vy < 2.0 {
+                body.vy += 0.05;
+            }
+            body.x = body.x.clamp(-10.0, 490.0) + body.vx;
+            body.y += body.vy;
+            body.widget_x = body.x as i32;
+            body.widget_y = body.y as i32;
         }
         events
     }
@@ -453,37 +582,36 @@ impl Invasion1_2 {
             events.push(InvasionEvent::FoodDelayCleared);
         }
         let mut result = InvasionClick {
-            suppress_food: self.alien.is_some() || self.food_delay > 0,
+            suppress_food: self.has_live_alien() || self.food_delay > 0,
             events,
         };
         if y <= 40 {
             return result;
         }
-        let Some((alien_id, shot_result)) = self
-            .alien
-            .as_mut()
-            .map(|actor| (actor.id, actor.shot_with_weapon(x, y, weapon)))
-        else {
+        if !self.has_live_alien() {
             return result;
-        };
-        match shot_result {
-            ShotResult::Miss => {}
-            ShotResult::Hit { health } => result.events.push(InvasionEvent::AlienHit {
-                id: alien_id,
-                health,
-            }),
-            ShotResult::Defeated { .. } => {
-                let health = self
-                    .alien
-                    .as_ref()
-                    .expect("shot alien was registered")
-                    .health;
-                // The input-time impact precedes the shared removal path.
-                result.events.push(InvasionEvent::AlienHit {
-                    id: alien_id,
-                    health,
-                });
-                result.events.extend(self.remove_registered_alien());
+        }
+        for index in 0..self.actors.len() {
+            let alien_id = self.actors[index].id;
+            let shot_result = self.actors[index].shot_with_weapon(x, y, weapon);
+            match shot_result {
+                ShotResult::Miss => continue,
+                ShotResult::Hit { health } => {
+                    result.events.push(InvasionEvent::AlienHit {
+                        id: alien_id,
+                        health,
+                    });
+                    break;
+                }
+                ShotResult::Defeated { .. } => {
+                    let health = self.actors[index].health;
+                    result.events.push(InvasionEvent::AlienHit {
+                        id: alien_id,
+                        health,
+                    });
+                    result.events.extend(self.remove_registered_alien(alien_id));
+                    break;
+                }
             }
         }
         self.lasers.push(LaserEffect {
@@ -499,42 +627,113 @@ impl Invasion1_2 {
     /// Both a player shot and a completed alien update transfer ownership
     /// through this one removal path. The registered list is cleared before
     /// any subsequent pet contact, wave check, or click can reward it again.
-    fn remove_registered_alien(&mut self) -> Vec<InvasionEvent> {
-        let dead = self
-            .alien
-            .take()
+    fn remove_registered_alien(&mut self, id: u64) -> Vec<InvasionEvent> {
+        let index = self
+            .actors
+            .iter()
+            .position(|actor| actor.id == id)
             .expect("alien removal requires registration");
+        let dead = self.actors.remove(index);
         let body_x = dead.x as i32;
         let body_y = dead.y as i32;
-        self.dead_alien = (dead.kind != SylvesterKind::Gus).then_some(DeadAlienEffect {
-            kind: dead.kind,
-            x: f64::from(body_x),
-            y: f64::from(body_y),
-            widget_x: body_x,
-            widget_y: body_y,
-            vx: 0.0,
-            vy: 0.0,
-            frame: dead.frame,
-            facing_right: dead.vx > 0.0,
-            opacity: 1.0,
-            remaining_ticks: 125,
-        });
-        let mut events = vec![
+        if dead.kind != SylvesterKind::Gus {
+            self.dead_aliens.push(DeadAlienEffect {
+                kind: dead.kind,
+                x: f64::from(body_x),
+                y: f64::from(body_y),
+                widget_x: body_x,
+                widget_y: body_y,
+                vx: 0.0,
+                vy: 0.0,
+                frame: dead.frame,
+                facing_right: dead.vx > 0.0,
+                opacity: 1.0,
+                remaining_ticks: 125,
+            });
+        }
+        vec![
             InvasionEvent::AlienDefeated { id: dead.id },
             InvasionEvent::DiamondDropped {
                 alien_id: dead.id,
                 x: dead.widget_x + 25,
                 y: dead.widget_y + 25,
             },
-        ];
-        if dead.kind != SylvesterKind::Destructor {
+        ]
+    }
+
+    /// The board calls this after alien and missile transactions. Peaceful
+    /// empty waves do not synthesize another end event.
+    pub fn finish_if_no_threats(&mut self, missiles_present: bool) -> Vec<InvasionEvent> {
+        if self.battle_active && self.actors.is_empty() && !missiles_present {
+            self.battle_active = false;
             self.food_delay = 36;
-            events.push(InvasionEvent::BattleEnded);
+            vec![InvasionEvent::BattleEnded]
+        } else {
+            Vec::new()
         }
-        events
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        let fixed = match self.plan {
+            WavePlan::Fixed(kind) => Some(kind),
+            _ => None,
+        };
+        let fixed_weak = fixed == Some(SylvesterKind::Weak);
+        let fixed_gus = fixed == Some(SylvesterKind::Gus);
+        let actor_kinds_valid = match self.plan {
+            WavePlan::Fixed(kind) => {
+                self.actors.len() <= 1 && self.actors.iter().all(|actor| actor.kind == kind)
+            }
+            WavePlan::CyclingTank1Finale { next } => {
+                matches!(
+                    next,
+                    EncounterKind::Single(SylvesterKind::Balrog) | EncounterKind::WeakBalrogPair
+                ) && matches!(
+                    self.actors.as_slice(),
+                    [] | [WeakSylvester {
+                        kind: SylvesterKind::Balrog,
+                        ..
+                    }] | [WeakSylvester {
+                        kind: SylvesterKind::Weak,
+                        ..
+                    }] | [
+                        WeakSylvester {
+                            kind: SylvesterKind::Weak,
+                            ..
+                        },
+                        WeakSylvester {
+                            kind: SylvesterKind::Balrog,
+                            ..
+                        }
+                    ]
+                )
+            }
+            WavePlan::CyclingTank2Finale { next } => {
+                matches!(
+                    next,
+                    EncounterKind::Single(SylvesterKind::Gus | SylvesterKind::Destructor)
+                        | EncounterKind::WeakBalrogPair
+                ) && matches!(
+                    self.actors.as_slice(),
+                    [] | [WeakSylvester {
+                        kind: SylvesterKind::Gus
+                            | SylvesterKind::Destructor
+                            | SylvesterKind::Weak
+                            | SylvesterKind::Balrog,
+                        ..
+                    }] | [
+                        WeakSylvester {
+                            kind: SylvesterKind::Weak,
+                            ..
+                        },
+                        WeakSylvester {
+                            kind: SylvesterKind::Balrog,
+                            ..
+                        }
+                    ]
+                )
+            }
+        };
         if !(0..=3000).contains(&self.countdown)
             || self.food_delay > 36
             || self.post_spawn_flash_ticks > 35
@@ -545,32 +744,26 @@ impl Invasion1_2 {
             || self.countdown == 0
             || (1..=275).contains(&self.countdown) && self.warning.is_none()
             || self.warning.is_some() && !(1..=275).contains(&self.countdown)
-            || self.alien.is_some() && self.countdown != 3000
-            || self.alien.as_ref().is_some_and(|actor| !actor.alive)
-            || self
-                .alien
-                .as_ref()
-                .is_some_and(|actor| actor.kind != self.kind)
-            || self.kind != SylvesterKind::Weak && (self.danger_shown || self.battle_tip_shown)
-            || self.kind != SylvesterKind::Gus && self.gus_warning_shown
-            || self.kind != SylvesterKind::Weak
-                && self.kind != SylvesterKind::Gus
-                && self.pending_modal.is_some()
-            || self.kind == SylvesterKind::Weak
-                && self.pending_modal == Some(InvasionTip::GusWarning)
-            || self.kind == SylvesterKind::Gus
+            || !self.actors.is_empty() && self.countdown != 3000
+            || !self.actors.is_empty() && !self.battle_active
+            || self.actors.iter().any(|actor| !actor.alive)
+            || !actor_kinds_valid
+            || !fixed_weak && (self.danger_shown || self.battle_tip_shown)
+            || !fixed_gus && self.gus_warning_shown
+            || !fixed_weak && !fixed_gus && self.pending_modal.is_some()
+            || fixed_weak && self.pending_modal == Some(InvasionTip::GusWarning)
+            || fixed_gus
                 && matches!(
                     self.pending_modal,
                     Some(InvasionTip::Danger | InvasionTip::BattleTip)
                 )
-            || self.kind == SylvesterKind::Gus && self.dead_alien.is_some()
-            || self
-                .warp
-                .as_ref()
-                .is_some_and(|warp| warp.remaining_ticks > 36)
+            || self.warps.len() > 2
+            || self.warps.iter().any(|warp| warp.remaining_ticks > 36)
             || self.lasers.iter().any(|laser| laser.age_ticks > 14)
-            || self.dead_alien.as_ref().is_some_and(|body| {
-                body.kind != self.kind
+            || self.dead_aliens.len() > 2
+            || self.dead_aliens.iter().any(|body| {
+                body.kind == SylvesterKind::Gus
+                    || fixed.is_some_and(|kind| body.kind != kind)
                     || body.remaining_ticks > 125
                     || body.frame > 9
                     || !body.x.is_finite()
@@ -589,7 +782,7 @@ impl Invasion1_2 {
         {
             return Err("invalid Adventure 1-2 invasion state".into());
         }
-        if let Some(actor) = &self.alien {
+        for actor in &self.actors {
             actor.validate()?;
         }
         Ok(())
@@ -655,8 +848,8 @@ mod tests {
                 y: 280
             }]
         );
-        assert_eq!(wave.alien.as_ref().unwrap().widget_y, 280);
-        assert_eq!(wave.warp.as_ref().unwrap().y, 240);
+        assert_eq!(wave.actors[0].widget_y, 280);
+        assert_eq!(wave.warps[0].y, 240);
     }
 
     #[test]
@@ -689,7 +882,8 @@ mod tests {
         actor.spawn_ticks = 0;
         actor.chase_ticks = 0;
         actor.health = 4.0;
-        wave.alien = Some(actor);
+        wave.actors.push(actor);
+        wave.battle_active = true;
         let food = [AlienFoodView {
             id: 78,
             widget_x: 120,
@@ -720,8 +914,8 @@ mod tests {
                 InvasionEvent::BattleEnded,
             ]
         ));
-        assert!(wave.alien.is_none());
-        assert!(wave.dead_alien.is_none());
+        assert!(wave.actors.is_empty());
+        assert!(wave.dead_aliens.is_empty());
         assert!(
             !wave
                 .objects_update_with_food(&prey, &food, || 1)
@@ -757,11 +951,8 @@ mod tests {
         assert_eq!(draws.next(), None);
         assert_eq!(ids.next(), None);
         assert_eq!(wave.countdown, 3000);
-        assert_eq!(wave.alien.as_ref().unwrap().spawn_ticks, 15);
-        assert_eq!(
-            (wave.warp.as_ref().unwrap().x, wave.warp.as_ref().unwrap().y),
-            (131, 127)
-        );
+        assert_eq!(wave.actors[0].spawn_ticks, 15);
+        assert_eq!((wave.warps[0].x, wave.warps[0].y), (131, 127));
         assert!(
             wave.board_update(|| panic!("live freezes timer"), || panic!("live"))
                 .is_empty()
@@ -796,14 +987,16 @@ mod tests {
         actor.health = 6.0;
         actor.x = 100.75;
         actor.y = 120.9;
-        wave.alien = Some(actor);
+        wave.actors.push(actor);
+        wave.battle_active = true;
         let miss = wave.click(10, 41);
         assert!(miss.suppress_food);
         assert_eq!(
             miss.events,
             vec![InvasionEvent::LaserFired { x: 10, y: 41 }]
         );
-        let kill = wave.click(180, 200);
+        let mut kill = wave.click(180, 200);
+        kill.events.extend(wave.finish_if_no_threats(false));
         assert!(kill.suppress_food);
         assert_eq!(
             kill.events,
@@ -815,13 +1008,13 @@ mod tests {
                     x: 125,
                     y: 145
                 },
-                InvasionEvent::BattleEnded,
                 InvasionEvent::LaserFired { x: 180, y: 200 },
+                InvasionEvent::BattleEnded,
             ]
         );
         assert!(!wave.has_live_alien());
         assert_eq!(wave.food_delay, 36);
-        let body = wave.dead_alien.as_ref().unwrap();
+        let body = &wave.dead_aliens[0];
         assert_eq!((body.x, body.y), (100.0, 120.0));
         assert_eq!((body.widget_x, body.widget_y), (100, 120));
         let near = wave.click(180, 200);
@@ -846,7 +1039,7 @@ mod tests {
         assert_eq!(wave.food_delay, 35);
         assert_eq!(wave.post_spawn_flash_ticks, 35);
         assert_eq!(wave.countdown, 276);
-        assert!(wave.alien.is_none());
+        assert!(wave.actors.is_empty());
         wave.board_update(|| panic!("paused"), || panic!("paused"));
         assert_eq!(wave.food_delay, 34);
         assert_eq!(wave.post_spawn_flash_ticks, 35);
@@ -860,7 +1053,8 @@ mod tests {
         let mut actor = WeakSylvester::spawn(9, 100, 120, 1, 1);
         actor.spawn_ticks = 0;
         actor.chase_ticks = 0;
-        wave.alien = Some(actor);
+        wave.actors.push(actor);
+        wave.battle_active = true;
         let prey = [PreyView {
             id: 77,
             widget_x: 140,
@@ -881,7 +1075,7 @@ mod tests {
     #[test]
     fn effect_counters_survive_save_and_expire_on_source_boundaries() {
         let mut wave = Invasion1_2::new();
-        wave.warp = Some(WarpEffect {
+        wave.warps.push(WarpEffect {
             x: 130,
             y: 100,
             remaining_ticks: 36,
@@ -903,16 +1097,16 @@ mod tests {
         for _ in 0..21 {
             resumed.objects_update(&[], || panic!("no actor"));
         }
-        assert_eq!(resumed.warp.as_ref().unwrap().remaining_ticks, 0);
+        assert_eq!(resumed.warps[0].remaining_ticks, 0);
         resumed.objects_update(&[], || panic!("no actor"));
-        assert!(resumed.warp.is_none());
+        assert!(resumed.warps.is_empty());
     }
 
     #[test]
     fn strong_stage_starts_at_3000_without_first_stage_two_modals() {
         let mut wave = Invasion1_2::new_strong();
         assert_eq!(wave.countdown, 3000);
-        assert_eq!(wave.kind, SylvesterKind::Strong);
+        assert_eq!(wave.plan, WavePlan::Fixed(SylvesterKind::Strong));
         wave.countdown = 277;
         assert!(
             wave.board_update(|| panic!("modal needs no RNG"), || panic!("no spawn"))
@@ -934,8 +1128,8 @@ mod tests {
             spawned.as_slice(),
             [InvasionEvent::AlienSpawned { id: 99, .. }]
         ));
-        assert_eq!(wave.alien.as_ref().unwrap().kind, SylvesterKind::Strong);
-        assert_eq!(wave.alien.as_ref().unwrap().health, 60.0);
+        assert_eq!(wave.actors[0].kind, SylvesterKind::Strong);
+        assert_eq!(wave.actors[0].health, 60.0);
     }
 
     #[test]
@@ -947,7 +1141,8 @@ mod tests {
         actor.spawn_ticks = 0;
         actor.chase_ticks = 0;
         actor.health = 0.0; // Itchy contact leaves this actor registered.
-        wave.alien = Some(actor);
+        wave.actors.push(actor);
+        wave.battle_active = true;
         let prey = [PreyView {
             id: 77,
             widget_x: 140,
@@ -964,7 +1159,7 @@ mod tests {
                 prey_id: 77
             })
         ));
-        let body = wave.dead_alien.as_ref().unwrap();
+        let body = &wave.dead_aliens[0];
         assert_eq!(body.kind, SylvesterKind::Balrog);
         assert!(body.widget_x > 100);
         assert!(events.iter().any(|event| matches!(
@@ -975,7 +1170,7 @@ mod tests {
                 y: 145
             }
         )));
-        assert!(wave.alien.is_none());
+        assert!(wave.actors.is_empty());
         assert_eq!(wave.food_delay, 36);
         assert!(
             !wave
@@ -991,20 +1186,21 @@ mod tests {
         let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Balrog, 45, 100, 120, 1, 1);
         actor.health = 0.0;
         actor.hit_ticks = 5;
-        wave.alien = Some(actor);
+        wave.actors.push(actor);
+        wave.battle_active = true;
         for _ in 0..6 {
             assert!(
                 wave.objects_update(&[], || panic!("emergence needs no RNG"))
                     .is_empty()
             );
         }
-        assert_eq!(wave.alien.as_ref().unwrap().hit_ticks, 5);
+        assert_eq!(wave.actors[0].hit_ticks, 5);
         wave.pending_modal = Some(InvasionTip::Danger);
         assert!(
             wave.objects_update(&[], || panic!("pause needs no RNG"))
                 .is_empty()
         );
-        assert!(wave.alien.is_some());
+        assert!(!wave.actors.is_empty());
         wave.pending_modal = None;
         // Positive flash blocks a shot even at zero HP; the next active
         // alien update removes it through the shared transaction.
@@ -1027,7 +1223,8 @@ mod tests {
         let mut pending = WeakSylvester::spawn_kind(SylvesterKind::Balrog, 46, 100, 120, 1, 1);
         pending.health = 0.0;
         pending.hit_ticks = 0;
-        race.alien = Some(pending);
+        race.actors.push(pending);
+        race.battle_active = true;
         assert_eq!(
             race.click(180, 200)
                 .events
@@ -1036,7 +1233,7 @@ mod tests {
                 .count(),
             1
         );
-        assert!(race.alien.is_none());
+        assert!(race.actors.is_empty());
         assert!(
             !race
                 .objects_update(&[], || 1)
@@ -1050,17 +1247,18 @@ mod tests {
         let mut wave = Invasion1_2::new_balrog();
         let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Balrog, 47, 100, 120, 1, 1);
         actor.spawn_ticks = 0;
-        wave.alien = Some(actor);
+        wave.actors.push(actor);
+        wave.battle_active = true;
         for hit in 1..=21 {
-            wave.alien.as_mut().unwrap().hit_ticks = 0;
+            wave.actors[0].hit_ticks = 0;
             let events = wave.click_with_weapon(180, 200, 2).events;
             assert!(
                 events.iter().any(|event| matches!(event,
                 InvasionEvent::AlienHit { id: 47, health } if *health == f64::from(130 - 6 * hit)))
             );
-            assert!(wave.alien.is_some());
+            assert!(!wave.actors.is_empty());
         }
-        wave.alien.as_mut().unwrap().hit_ticks = 0;
+        wave.actors[0].hit_ticks = 0;
         assert_eq!(
             wave.click_with_weapon(180, 200, 2)
                 .events
@@ -1069,5 +1267,86 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn tank2_pair_registers_weak_then_balrog_before_conditional_future_draws() {
+        let mut wave = Invasion1_2::new_tank2_finale(SylvesterKind::Gus);
+        wave.plan = WavePlan::CyclingTank2Finale {
+            next: EncounterKind::WeakBalrogPair,
+        };
+        wave.warning = Some(WarningCoords {
+            first_x: 100,
+            first_y: 120,
+            second_x: 300,
+            second_y: 200,
+        });
+        wave.countdown = 1;
+        // Two constructor draws per actor, then the old type-9 low bit,
+        // failed %10 toggle and successful %20 pair roll.
+        let mut draws = [1, 1, 1, 1, 1, 1, 0].into_iter();
+        let mut ids = [40, 41].into_iter();
+        let events = wave.board_update(|| draws.next().unwrap(), || ids.next().unwrap());
+        assert_eq!(draws.next(), None);
+        assert_eq!(ids.next(), None);
+        assert!(matches!(
+            events.as_slice(),
+            [
+                InvasionEvent::AlienSpawned { id: 40, .. },
+                InvasionEvent::AlienSpawned { id: 41, .. }
+            ]
+        ));
+        assert_eq!(
+            wave.actors
+                .iter()
+                .map(|actor| actor.kind)
+                .collect::<Vec<_>>(),
+            [SylvesterKind::Weak, SylvesterKind::Balrog]
+        );
+        assert_eq!(wave.warps.len(), 2);
+        assert_eq!(wave.plan.expected(), EncounterKind::WeakBalrogPair);
+        wave.validate().unwrap();
+    }
+
+    #[test]
+    fn pair_first_death_does_not_end_battle_or_discard_second_corpse() {
+        let mut wave = Invasion1_2::new_tank2_finale(SylvesterKind::Gus);
+        wave.plan = WavePlan::CyclingTank2Finale {
+            next: EncounterKind::Single(SylvesterKind::Gus),
+        };
+        let mut first = WeakSylvester::spawn_kind(SylvesterKind::Weak, 40, 100, 120, 1, 1);
+        let mut second = WeakSylvester::spawn_kind(SylvesterKind::Balrog, 41, 300, 200, 1, 1);
+        first.spawn_ticks = 0;
+        second.spawn_ticks = 0;
+        first.health = 6.0;
+        second.health = 6.0;
+        wave.actors = vec![first, second];
+        wave.battle_active = true;
+        let first_events = wave.click(180, 200).events;
+        assert!(
+            first_events
+                .iter()
+                .any(|event| matches!(event, InvasionEvent::DiamondDropped { alien_id: 40, .. }))
+        );
+        assert!(
+            !first_events
+                .iter()
+                .any(|event| matches!(event, InvasionEvent::BattleEnded))
+        );
+        assert!(wave.finish_if_no_threats(false).is_empty());
+        assert_eq!(wave.actors.len(), 1);
+        assert_eq!(wave.dead_aliens.len(), 1);
+        let second_events = wave.click(380, 280).events;
+        assert!(
+            second_events
+                .iter()
+                .any(|event| matches!(event, InvasionEvent::DiamondDropped { alien_id: 41, .. }))
+        );
+        assert_eq!(wave.dead_aliens.len(), 2);
+        assert_eq!(
+            wave.finish_if_no_threats(false),
+            [InvasionEvent::BattleEnded]
+        );
+        assert!(wave.finish_if_no_threats(false).is_empty());
     }
 }

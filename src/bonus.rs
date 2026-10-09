@@ -1,4 +1,4 @@
-//! Tank-one shell bonus. W1 f919b3c supplies the rules; PB25/PB26 confirm
+//! Adventure shell bonuses. W1 f919b3c supplies the rules; PB25/PB26 confirm
 //! flight arithmetic and Board timing in the installed payload. The controlled
 //! project PRNG does not reproduce the original's separate random streams.
 
@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 pub const MAX_SHELL_BALANCE: u32 = 9_999_999;
-const DURATION_SECONDS: u32 = 15;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ShellKind {
@@ -123,6 +122,8 @@ pub struct BonusUpdate {
 /// This record only drives the count-up shown after that commit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BonusResult {
+    /// Completed bonus identity, retained after the profile advances.
+    pub origin_tank: u8,
     pub earned: u32,
     pub previous_balance: u32,
     pub updates: u32,
@@ -149,7 +150,10 @@ impl BonusResult {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.previous_balance > MAX_SHELL_BALANCE || self.earned > MAX_SHELL_BALANCE {
+        if !matches!(self.origin_tank, 1 | 2)
+            || self.previous_balance > MAX_SHELL_BALANCE
+            || self.earned > MAX_SHELL_BALANCE
+        {
             return Err("invalid bonus result balance or award".into());
         }
         Ok(())
@@ -158,6 +162,8 @@ impl BonusResult {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BonusState {
+    /// Immutable scenario identity; duration/background derive from this field.
+    pub origin_tank: u8,
     pub tick: u64,
     pub initial_count: u64,
     pub started_at: Option<u64>,
@@ -177,7 +183,15 @@ pub struct BonusState {
 
 impl BonusState {
     pub fn new(seed: u64) -> Self {
-        Self {
+        Self::new_for_tank(seed, 1).expect("tank-one bonus is supported")
+    }
+
+    pub fn new_for_tank(seed: u64, origin_tank: u8) -> Result<Self, String> {
+        if !matches!(origin_tank, 1 | 2) {
+            return Err("unsupported bonus origin tank".into());
+        }
+        Ok(Self {
+            origin_tank,
             tick: 0,
             initial_count: 0,
             started_at: None,
@@ -191,7 +205,12 @@ impl BonusState {
             shells_earned: 0,
             next_id: 1,
             rng_state: AdventureState::initial_rng(seed),
-        }
+        })
+    }
+
+    pub fn duration_seconds(&self) -> u32 {
+        // W1 Board::InitBonusLevel: Tank1 base10/Tank2 base15 + level6 - 1.
+        10 + u32::from(self.origin_tank) * 5
     }
 
     pub fn transition_seed(&self) -> u64 {
@@ -205,7 +224,8 @@ impl BonusState {
                 .saturating_mul(u64::from(TICK_MS))
                 / 1000
         });
-        DURATION_SECONDS.saturating_sub(elapsed.min(u64::from(u32::MAX)) as u32)
+        self.duration_seconds()
+            .saturating_sub(elapsed.min(u64::from(u32::MAX)) as u32)
     }
 
     pub fn click(&mut self, x: f32, y: f32) -> Vec<BonusEvent> {
@@ -300,7 +320,7 @@ impl BonusState {
                 .tick
                 .saturating_sub(start)
                 .saturating_mul(u64::from(TICK_MS));
-            if elapsed_ms / 1000 > u64::from(DURATION_SECONDS) {
+            if elapsed_ms / 1000 > u64::from(self.duration_seconds()) {
                 if !self.timed_out {
                     self.timed_out = true;
                     events.push(BonusEvent::TimedOut);
@@ -392,7 +412,8 @@ impl BonusState {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.tick < self.initial_count
+        if !matches!(self.origin_tank, 1 | 2)
+            || self.tick < self.initial_count
             || self.tick == u64::MAX
             || self
                 .started_at
@@ -417,7 +438,7 @@ impl BonusState {
                 .saturating_sub(1)
                 .saturating_sub(start)
                 .saturating_mul(u64::from(TICK_MS));
-            if self.timed_out != (elapsed / 1000 > u64::from(DURATION_SECONDS)) {
+            if self.timed_out != (elapsed / 1000 > u64::from(self.duration_seconds())) {
                 return Err("bonus timeout disagrees with elapsed clock".into());
             }
         }
@@ -896,6 +917,7 @@ mod tests {
     #[test]
     fn results_count_up_only_after_thirty_updates_and_caps_presentation() {
         let mut result = BonusResult {
+            origin_tank: 1,
             earned: 125,
             previous_balance: 9_999_900,
             updates: 30,
@@ -908,5 +930,38 @@ mod tests {
         assert!(result.validate().is_ok());
         result.previous_balance = MAX_SHELL_BALANCE + 1;
         assert!(result.validate().is_err());
+    }
+
+    #[test]
+    fn tank_two_bonus_uses_integer_seconds_and_waits_for_old_empty_counter() {
+        // A25-08: budget20, strict integer elapsed>20. Relative old tick749
+        // is20seconds; tick750 is21seconds. This is a controlled boundary
+        // fixture, independent of the native normal-speed earning scenario.
+        let mut state = BonusState::new_for_tank(42, 2).unwrap();
+        assert_eq!(state.duration_seconds(), 20);
+        state.click(0.0, 0.0);
+        state.tick = 749;
+        assert_eq!(state.remaining_seconds(), 0);
+        let before = state.update();
+        assert!(!before.events.contains(&BonusEvent::TimedOut));
+        assert!(!state.timed_out);
+        let expired = state.update();
+        assert_eq!(expired.events, vec![BonusEvent::TimedOut]);
+        assert!(!expired.completed);
+        assert_eq!(state.empty_updates, 1);
+        state.validate().unwrap();
+        for _ in 0..100 {
+            let update = state.update();
+            assert!(!update.completed);
+            assert!(!update.events.contains(&BonusEvent::TimedOut));
+        }
+        assert_eq!(state.empty_updates, 101);
+        let final_tick = state.tick;
+        assert!(state.update().completed);
+        assert_eq!(state.empty_updates, 102);
+        assert_eq!(state.tick, final_tick);
+        assert!(BonusState::new_for_tank(42, 3).is_err());
+        state.origin_tank = 0;
+        assert!(state.validate().is_err());
     }
 }

@@ -72,7 +72,7 @@ impl MusicCue {
             | AdventurePhase::InvasionTutorial { .. } => {
                 let board = session.board.as_ref()?;
                 if let Some(wave) = &board.invasion {
-                    if wave.alien.is_some() || !board.missiles.is_empty() {
+                    if wave.has_live_alien() || !board.missiles.is_empty() {
                         return Some(Self::AlienBattle);
                     }
                     if wave.countdown == 1 {
