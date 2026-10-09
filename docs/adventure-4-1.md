@@ -1,10 +1,10 @@
 # Adventure4-1: Breeders and live Rhubarb
 
-Next integrated increment after [3-5](adventure-3-5.md) is accepted and committed. This document records the contract; no4-1 runtime implementation or native execution is claimed. The full [requirements](requirements.md) remain active, with4-2 chosen automatically after this increment is validated.
+Implemented after [3-5](adventure-3-5.md) accepted commit`e9a8da16fb64e55b504611f6449947d4188cd230`. The repaired current16 build passed its370-check gate and [eight independently audited native runs](playtests/2026-10-09-adventure-4-1-breeder-rhubarb-nimbus-01.md), including earned Nimbus/selector/reload and Board pause. [STATUS](../STATUS.md) owns current identities/results. The full [requirements](requirements.md) remain active;4-2/live Nimbus/Bilaterus is next automatically.
 
 ## Evidence and required outcome
 
-Installed PB05 is authoritative. PB55–56 in the [behavior ledger](behavior-contract.md) own primary setup/reward/raw14 details. Pinned W1 in [provenance](provenance.md) supplies expressly labelled remaining lifecycle, ordering and draw rules.
+Installed PB05 is authoritative. PB55–58 in the [behavior ledger](behavior-contract.md) own primary setup/reward/raw14, birth/growth/corpse and review adjudication. Pinned W1 in [provenance](provenance.md) supplies expressly labelled remaining lifecycle, ordering and draw rules.
 
 | ID | Required outcome | Evidence and limits |
 |---|---|---|
@@ -12,22 +12,23 @@ Installed PB05 is authoritative. PB55–56 in the [behavior ledger](behavior-con
 | A31-02 | Feed/grow/purchase Breeders; Medium and Large breeders naturally produce guppies at prior widget position, with real IDs/RNG/list membership | W1 Breeder531–601/682–955 and Board5209–5219. Small does not produce; Medium's initial threshold differs from Large. No scripted birth/coin substitute or virtual-only immunity |
 | A31-03 | Preserve hunger, bought entrance, food contact, turn/eat/swim, death/corpse and Board last-fish/combat transactions | W1 Breeder52–414/739–858/956–1096 and existing actor/Board rules. Hunger/production freezes on registered aliens; an orphan projectile alone is a distinct condition. A due birth may survive the same update's hunger death tail |
 | A31-04 | Selected live Rhubarb seeks eligible fish and performs its actual timed upward push | PB56 plus W1 OtherTypePet. Selection and effect caps differ; Board owns ordered target writes/RNG, while Rhubarb owns its specialty clock/motion. Merely unlocked Rhubarb has no effect |
-| A31-05 | Render owned Tank4/Breeder/corpse/Rhubarb assets and real mapped shop entries with ordinary input | W1 draw rules and installed manifest dimensions. Breeder's Blip icon offset differs from guppy's; protect Small/Medium Breeders under Wadsworth. Rhubarb's sprite is unmirrored. Pixels are not retail-proven |
+| A31-05 | Render owned Tank4/Breeder/corpse/Rhubarb assets and real mapped shop entries with ordinary input | W1 draw rules and installed manifest dimensions. Breeder's Blip icon offset differs from guppy's. PB58 withdraws the Breeder/Wadsworth hiding attribution. Rhubarb's sprite is unmirrored. Pixels are not retail-proven |
 | A31-06 | Three paid eggs settle only claimed currency once, unlock Nimbus once, advance4-2 and present its canonical sixteen-card selector | PB55. Preserve progress versus current-Board ownership, hatch readiness/reload/selection and temporary4-2entry gate until its actual systems exist |
 
 ## Ownership and design
 
 Extend the existing explicit actors and Board transactions. Breeder offspring are ordinary guppies and use the existing constructor; Board must register their IDs and commit RNG before subsequent actors. Do not treat Breeder as a money-producing guppy variant. Rhubarb is a live OtherTypePet path; preserve its position in the checked update order and its effects on supported target classes. Existing fish/pets/reward/history/earned checkpoints remain intact.
 
-Root owns session/progression, schema/integration tests, records, gates and commits. Actor owner handles Breeder/Rhubarb and narrow Board/prey integration; presentation owner handles app projection. No4-1 source/test/build edits during A30's frozen acceptance. The concrete actor/field/current16 decision is authoritative in [DESIGN](DESIGN.md#first-tank4-integration); add no new legacy backfill or reconstruction. Current saves must reject missing or inconsistent fields and retain typed continuation.
+Root owns session/progression, schema/integration tests, records, gates and commits. Actor owner handles Breeder/Rhubarb and narrow Board/prey/Niko integration; presentation owner handles app projection. A30's tested bundle stays private and immutable while current source advances. The concrete actor/field/current16 decision is authoritative in [DESIGN](DESIGN.md#first-tank4-integration); add no new legacy backfill or reconstruction. Current saves must reject missing or inconsistent fields and retain typed continuation.
 
 Bounded review establishes these integration constraints before edits:
 
 - Tank4 has no guppy purchase slot. A newborn guppy reaching Medium must not reveal or authorize BuyGuppy. Medium Breeder growth reveals Breeder; Large guppy growth reveals food quality/quantity/Oscar; buying Oscar reveals egg without weapon. Blip reveals mapped entries only, including Breeder rather than guppy, and cannot create the hidden Ultra/weapon slots. Test transactions as well as visible buttons.
-- Medium Breeder growth sets birth clock900. Ordinary Large growth changes its threshold to500..699 but preserves that clock, so the same update may produce immediately. Birth constructs/registers the guppy and commits RNG before later actors; a hunger death's pre-tail corpse and due offspring can both exist. Last-fish membership includes Breeders. Retain actual Gumbo steering, Zorf feeding and Wadsworth protection where the source includes this actor.
+- Medium Breeder growth sets birth clock900. Ordinary Large growth changes its threshold to500..699 but preserves its accumulated clock, so the same update may produce immediately; registered aliens can instead retain a pending clock through1398. Birth constructs/registers the guppy and commits RNG before later actors; a hunger death's pre-steering corpse and due offspring can both exist. Last-fish membership includes Breeders. Retain actual Gumbo steering and Zorf feeding. PB58 establishes that the first non-Gus alien permits food seeking despite frozen hunger advancement/production, and that special steering is a dword counter.
+- Keep the separate Breeder special-coordinate channel unconnected in ordinary Board until its producer is established. PB58 corrects the earlier Wadsworth attribution; do not hide/attract/suppress hunger or exclude Breeders from enemy targets through the guppy-specific ward path. Existing guppy Wadsworth behavior remains separately supported.
 - Rhubarb selects a nearest chase target, then its contact routine iterates every supported fish category. At old specialty5, every strict overlap gets bought timer50 and its own low-bit velocity draw in list order; the timer decrements afterward. Arming20 becomes19 that update. This does not write prey immunity. Preserve distinct target-selection and specialty caps.
 
-These detailed growth, shop and order expectations remain secondary under pinned W1; PB55–56 support the narrower primary paths. Review also keeps current-field rejection, claimed-only settlement, one Nimbus award, sixteen cards and both4-2entry gates open until implementation. Full retail widget ordering stays unknown.
+PB55–58 support the identified primary paths; remaining movement, detailed shop unlock and cross-list ordering expectations remain secondary under pinned W1. Current-field rejection and ownership boundaries retain regression evidence; E78 now observes claimed-only settlement, one Nimbus award, sixteen cards and actual Locked4-2/reopen. Full retail widget ordering stays unknown.
 
 ## Acceptance
 

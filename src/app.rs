@@ -28,6 +28,7 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_AQUARIUM1",
     "IMAGE_AQUARIUM2",
     "IMAGE_AQUARIUM4",
+    "IMAGE_AQUARIUM5",
     "IMAGE_MENUBAR",
     "IMAGE_SMALLSWIM",
     "IMAGE_SMALLEAT",
@@ -108,6 +109,11 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_BLIP",
     "IMAGE_RHUBARB",
     "IMAGE_SCL_RHUBARB",
+    "IMAGE_NIMBUS",
+    "IMAGE_SCL_NIMBUS",
+    "IMAGE_BREEDER",
+    "IMAGE_HUNGRYBREEDER",
+    "IMAGE_SCL_BREEDER",
     "IMAGE_ULYSSES",
     "IMAGE_ENERGYBALL",
     "IMAGE_HEALTHBAR",
@@ -146,6 +152,7 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_DIE",
     "SOUND_PUNCH",
     "SOUND_BABY",
+    "SOUND_SFX",
     "SOUND_SING",
     "SOUND_BONUSCOLLECT",
     "SOUND_BONUSCOUNT",
@@ -461,11 +468,12 @@ impl Presentation {
                 Event::FoodDropped { potion: false, .. } => "SOUND_DROPFOOD",
                 Event::PotionExploded { .. } => "SOUND_EXPLOSION1",
                 Event::FoodEaten { .. }
+                | Event::BreederAteFood { .. }
                 | Event::Invasion {
                     event: InvasionEvent::GusAteFood { .. },
                     ..
                 } => "SOUND_SLURP",
-                Event::FishGrew { .. } => "SOUND_GROW",
+                Event::FishGrew { .. } | Event::BreederGrew { .. } => "SOUND_GROW",
                 Event::CoinCollectionStarted {
                     kind: CoinKind::Pearl,
                     ..
@@ -514,6 +522,7 @@ impl Presentation {
                 {
                     continue;
                 }
+                Event::BreederDied { sound: true, .. } => "SOUND_DIE",
                 Event::OscarDied { .. }
                 | Event::StarcatcherDied { .. }
                 | Event::GrubberDied { .. }
@@ -530,6 +539,7 @@ impl Presentation {
                 | Event::EnergyBallAlienHit { .. } => continue,
                 Event::EnergyBallRemoved { .. } => "SOUND_EXPLOSION4",
                 Event::PregoBirth { .. } => "SOUND_BABY",
+                Event::BreederBornGuppy { .. } => "SOUND_SFX",
                 Event::MerylNoteDropped { .. } => "SOUND_SING",
                 Event::ShrapnelBombDropped { .. } => "SOUND_UNLEASH",
                 Event::ShrapnelBombExploded { .. } => "SOUND_EXPLODE",
@@ -583,6 +593,7 @@ impl Presentation {
             match state.tank {
                 2 => "IMAGE_AQUARIUM2",
                 3 => "IMAGE_AQUARIUM4",
+                4 => "IMAGE_AQUARIUM5",
                 _ => "IMAGE_AQUARIUM1",
             },
             0.0,
@@ -697,6 +708,61 @@ impl Presentation {
                     "IMAGE_MISCITEMS",
                     fish.x,
                     fish.y - 5.0,
+                    Some(Rect::new(144.0, 0.0, 72.0, 72.0)),
+                    false,
+                    1.0,
+                    1.0,
+                );
+            }
+        }
+        for breeder in &state.breeders {
+            let image = if breeder.hunger_visible {
+                "IMAGE_HUNGRYBREEDER"
+            } else {
+                "IMAGE_BREEDER"
+            };
+            let frame_x = f32::from(breeder.sprite_frame()) * 80.0;
+            // W1 Breeder::DrawBreeder truncates the growth offset to an int,
+            // then expands both sides of the 80px destination rectangle.
+            let inset = ((breeder.growth_scale() - 1.0) * 80.0) as i32;
+            let x = (breeder.widget_x - inset) as f32;
+            let y = (breeder.widget_y - inset) as f32;
+            let scale = (80 + 2 * inset) as f32 / 80.0;
+            self.sprite(
+                image,
+                x,
+                y,
+                Some(Rect::new(
+                    frame_x,
+                    f32::from(breeder.sprite_row()) * 80.0,
+                    80.0,
+                    80.0,
+                )),
+                breeder.facing_right(),
+                scale,
+                1.0,
+            );
+            if breeder.hunger_overlay_alpha() > 0 {
+                self.sprite(
+                    "IMAGE_HUNGRYBREEDER",
+                    x,
+                    y,
+                    Some(Rect::new(
+                        frame_x,
+                        f32::from(breeder.hungry_sprite_row()) * 80.0,
+                        80.0,
+                        80.0,
+                    )),
+                    breeder.facing_right(),
+                    scale,
+                    f32::from(breeder.hunger_overlay_alpha()) / 255.0,
+                );
+            }
+            if state.blip_breeder_icon_visible(breeder) {
+                self.sprite(
+                    "IMAGE_MISCITEMS",
+                    breeder.widget_x as f32,
+                    breeder.widget_y as f32,
                     Some(Rect::new(144.0, 0.0, 72.0, 72.0)),
                     false,
                     1.0,
@@ -889,6 +955,22 @@ impl Presentation {
                 fish.facing_right,
                 1.0,
                 fish.opacity,
+            );
+        }
+        for corpse in &state.dead_breeders {
+            self.sprite(
+                "IMAGE_HUNGRYBREEDER",
+                corpse.widget_x as f32,
+                corpse.widget_y as f32,
+                Some(Rect::new(
+                    f32::from(corpse.frame) * 80.0,
+                    f32::from(corpse.sprite_row()) * 80.0,
+                    80.0,
+                    80.0,
+                )),
+                corpse.facing_right,
+                1.0,
+                corpse.opacity,
             );
         }
         for corpse in &state.dead_oscars {
@@ -1196,6 +1278,22 @@ impl Presentation {
                 1.0,
             );
         }
+        if let Some(rhubarb) = &state.rhubarb {
+            self.sprite(
+                "IMAGE_RHUBARB",
+                rhubarb.widget_x as f32,
+                rhubarb.widget_y as f32,
+                Some(Rect::new(
+                    f32::from(rhubarb.sprite_frame()) * 80.0,
+                    f32::from(rhubarb.sprite_row()) * 80.0,
+                    80.0,
+                    80.0,
+                )),
+                false,
+                1.0,
+                1.0,
+            );
+        }
         if let Some(niko) = &state.niko {
             let (column, row) = niko.frame();
             self.sprite(
@@ -1347,7 +1445,7 @@ impl Presentation {
             );
         }
         self.sprite("IMAGE_MENUBAR", 0.0, 0.0, None, false, 1.0, 1.0);
-        if state.guppy_unlocked {
+        if state.tank != 4 && state.guppy_unlocked {
             self.sprite("IMAGE_MENUBTNU", 18.0, 3.0, None, false, 1.0, 1.0);
             self.sprite(
                 "IMAGE_SMALLSWIM",
@@ -1364,6 +1462,24 @@ impl Presentation {
                 1.0,
             );
             self.fonts["Pix118"].text("100", 33.0, 58.0, Color::from_rgba(110, 250, 110, 255));
+        }
+        if state.tank == 4 && state.breeder_unlocked {
+            self.sprite("IMAGE_MENUBTNU", 18.0, 3.0, None, false, 1.0, 1.0);
+            self.sprite(
+                "IMAGE_SCL_BREEDER",
+                26.0,
+                5.0,
+                Some(Rect::new(
+                    ((state.tick / 2) % 10) as f32 * 40.0,
+                    0.0,
+                    40.0,
+                    40.0,
+                )),
+                false,
+                1.0,
+                1.0,
+            );
+            self.fonts["Pix118"].text("200", 33.0, 58.0, Color::from_rgba(110, 250, 110, 255));
         }
         if state.upgrades.quality_unlocked {
             self.sprite("IMAGE_MENUBTNU", 87.0, 3.0, None, false, 1.0, 1.0);
@@ -1930,6 +2046,7 @@ impl Presentation {
                 PetKind::Gumbo => ("IMAGE_GUMBO", 90.0, updates % 20 / 2),
                 PetKind::Blip => ("IMAGE_BLIP", 90.0, updates % 20 / 2),
                 PetKind::Rhubarb => ("IMAGE_RHUBARB", 90.0, updates % 40 / 4),
+                PetKind::Nimbus => ("IMAGE_NIMBUS", 90.0, updates % 20 / 2),
             };
             self.sprite(
                 id,
@@ -1965,6 +2082,7 @@ impl Presentation {
                     PetKind::Gumbo => "GUMBO the Angler",
                     PetKind::Blip => "BLIP the Porpoise",
                     PetKind::Rhubarb => "RHUBARB the Hermit Crab",
+                    PetKind::Nimbus => "NIMBUS the Manta Ray",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -2043,6 +2161,11 @@ impl Presentation {
                     "RHUBARB snaps his claws at",
                     "fish, keeping them off the",
                     "bottom of your tank.",
+                ],
+                PetKind::Nimbus => [
+                    "NIMBUS tosses any coins or",
+                    "food he catches back up",
+                    "toward the top of the tank.",
                 ],
             };
             for (index, line) in description.iter().enumerate() {
@@ -2131,6 +2254,7 @@ impl Presentation {
                 PetKind::Gumbo => "IMAGE_SCL_GUMBO",
                 PetKind::Blip => "IMAGE_SCL_BLIP",
                 PetKind::Rhubarb => "IMAGE_SCL_RHUBARB",
+                PetKind::Nimbus => "IMAGE_SCL_NIMBUS",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
@@ -2314,6 +2438,16 @@ impl Presentation {
                         "RHUBARB snaps his claws at",
                         "fish, keeping them off the",
                         "bottom of your tank.",
+                    ],
+                    90.0,
+                ),
+                PetKind::Nimbus => (
+                    "IMAGE_NIMBUS",
+                    "NIMBUS the Manta Ray",
+                    [
+                        "NIMBUS tosses any coins or",
+                        "food he catches back up",
+                        "toward the top of the tank.",
                     ],
                     90.0,
                 ),
@@ -2868,7 +3002,20 @@ pub async fn run(
                         Action::Continue
                     }
                     AdventurePhase::Playing
-                        if Rect::new(18.0, 3.0, 58.0, 60.0).contains(pointer) =>
+                        if session
+                            .board
+                            .as_ref()
+                            .is_some_and(|board| board.tank == 4 && board.breeder_unlocked)
+                            && Rect::new(18.0, 3.0, 58.0, 60.0).contains(pointer) =>
+                    {
+                        Action::BuyBreeder
+                    }
+                    AdventurePhase::Playing
+                        if session
+                            .board
+                            .as_ref()
+                            .is_some_and(|board| board.tank != 4 && board.guppy_unlocked)
+                            && Rect::new(18.0, 3.0, 58.0, 60.0).contains(pointer) =>
                     {
                         Action::BuyGuppy
                     }
@@ -3417,6 +3564,37 @@ mod feed_input_tests {
         assert_eq!(
             pet_at_pointer(&unlocked, vec2(470.0, 331.0)),
             Some(PetKind::Blip)
+        );
+    }
+
+    #[test]
+    fn nimbus_starts_the_next_column_without_displacing_rhubarb() {
+        let unlocked = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+            PetKind::Clyde,
+            PetKind::Vert,
+            PetKind::Rufus,
+            PetKind::Meryl,
+            PetKind::Wadsworth,
+            PetKind::Seymour,
+            PetKind::Shrapnel,
+            PetKind::Gumbo,
+            PetKind::Blip,
+            PetKind::Rhubarb,
+            PetKind::Nimbus,
+        ];
+        assert_eq!(pet_card_rect(15), Rect::new(519.0, 41.0, 90.0, 83.0));
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(560.0, 82.0)),
+            Some(PetKind::Nimbus)
+        );
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(470.0, 414.0)),
+            Some(PetKind::Rhubarb)
         );
     }
 

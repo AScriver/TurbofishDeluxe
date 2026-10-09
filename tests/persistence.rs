@@ -173,6 +173,270 @@ fn tank_three_fifth_session(pets: &[PetKind]) -> AdventureSession {
     session
 }
 
+fn tank_four_first_session(pets: &[PetKind]) -> AdventureSession {
+    let mut session = tank_three_fifth_session(&[]);
+    session.progress.tank = 4;
+    session.progress.level = 1;
+    session.progress.unlocked_pets.push(PetKind::Rhubarb);
+    session.progress.selected_pets = pets.to_vec();
+    session.board = Some(AdventureState::new_tank4_first_stage(42, pets).unwrap());
+    session
+}
+
+#[test]
+fn current_tank_four_accepts_fifteen_pet_rosters_and_rejects_unearned_nimbus() {
+    let canonical = tank_four_first_session(&[]).progress.unlocked_pets;
+    assert_eq!(canonical.len(), 15);
+    for pet in canonical {
+        let session = tank_four_first_session(&[pet]);
+        session.validate().unwrap();
+        let bytes = serde_json::to_vec(&cli::ProjectSave {
+            format_version: cli::SAVE_FORMAT_VERSION,
+            session: session.clone(),
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(cli::decode_save(&bytes).unwrap()).unwrap(),
+            serde_json::to_value(session).unwrap()
+        );
+    }
+    assert!(AdventureState::new_tank4_first_stage(42, &[PetKind::Nimbus]).is_err());
+}
+
+#[test]
+fn current_tank_four_requires_all_breeder_and_rhubarb_state_without_backfill() {
+    let current = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: tank_four_first_session(&[PetKind::Rhubarb]),
+    })
+    .unwrap();
+    for field in ["breeder_unlocked", "breeders", "dead_breeders", "rhubarb"] {
+        let mut missing = current.clone();
+        missing["session"]["board"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("Incomplete format-sixteen"),
+            "missing {field}"
+        );
+    }
+    for field in [
+        "birth_clock",
+        "birth_threshold",
+        "food_points",
+        "bought_timer",
+    ] {
+        let mut missing = current.clone();
+        missing["session"]["board"]["breeders"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "missing Breeder {field}"
+        );
+    }
+    for field in ["specialty_ticks", "chase_timer", "movement_animation_timer"] {
+        let mut missing = current.clone();
+        missing["session"]["board"]["rhubarb"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "missing Rhubarb {field}"
+        );
+    }
+}
+
+#[test]
+fn current_tank_four_pending_birth_and_rhubarb_push_continue_identically_after_reload() {
+    use turbofish_deluxe::{breeder::BreederSize, sim::Event};
+    // Controlled current-format boundary, not native earning evidence.
+    let mut uninterrupted = tank_four_first_session(&[PetKind::Rhubarb]);
+    let board = uninterrupted.board.as_mut().unwrap();
+    let rhubarb = board.rhubarb.as_mut().unwrap();
+    rhubarb.specialty_ticks = 5;
+    let breeder = &mut board.breeders[0];
+    breeder.size = BreederSize::Medium;
+    breeder.food_points = 0;
+    breeder.food_needed_to_grow = 7;
+    breeder.birth_clock = 999;
+    breeder.birth_threshold = 1000;
+    breeder.x = rhubarb.x + 5.0;
+    breeder.y = 300.0;
+    breeder.widget_x = breeder.x as i32;
+    breeder.widget_y = 300;
+    breeder.hunger = 300;
+    board.breeder_unlocked = true;
+    uninterrupted.validate().unwrap();
+    let bytes = serde_json::to_vec(&cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: uninterrupted.clone(),
+    })
+    .unwrap();
+    let mut resumed = cli::decode_save(&bytes).unwrap();
+    let mut birth_count = 0;
+    let mut push_count = 0;
+    for _ in 0..120 {
+        let expected = uninterrupted.step(&[]);
+        let actual = resumed.step(&[]);
+        birth_count += actual
+            .iter()
+            .filter(|event| matches!(event, Event::BreederBornGuppy { .. }))
+            .count();
+        push_count += actual
+            .iter()
+            .filter(|event| matches!(event, Event::RhubarbPushed { .. }))
+            .count();
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&uninterrupted).unwrap()
+        );
+        resumed.validate().unwrap();
+    }
+    assert_eq!(birth_count, 1);
+    assert!(push_count >= 1);
+    assert!(!resumed.board.as_ref().unwrap().fish.is_empty());
+}
+
+#[test]
+fn current_nimbus_hatch_and_both_sixteen_pet_entry_gates_survive_reload() {
+    use turbofish_deluxe::sim::{Event, Rejection};
+    let mut session = tank_four_first_session(&[PetKind::Rhubarb]);
+    session.progress.level = 2;
+    session.progress.unlocked_pets.push(PetKind::Nimbus);
+    session.board = None;
+    session.phase = AdventurePhase::Hatch {
+        pet: PetKind::Nimbus,
+        updates: 171,
+    };
+    session.validate().unwrap();
+    let bytes = serde_json::to_vec(&cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    let mut loaded = cli::decode_save(&bytes).unwrap();
+    loaded.apply_actions(&[
+        Action::Continue,
+        Action::TogglePet {
+            pet: PetKind::Nimbus,
+        },
+    ]);
+    assert_eq!(loaded.progress.unlocked_pets.len(), 16);
+    let before = serde_json::to_value(&loaded).unwrap();
+    assert!(
+        loaded
+            .apply_actions(&[Action::Continue])
+            .iter()
+            .any(|event| matches!(
+                event,
+                Event::Rejected {
+                    reason: Rejection::Locked,
+                    ..
+                }
+            ))
+    );
+    assert_eq!(serde_json::to_value(&loaded).unwrap(), before);
+    loaded.progress.selected_pets = vec![PetKind::Nimbus];
+    loaded.phase = AdventurePhase::PetSelectionConfirmation {
+        selected: vec![PetKind::Nimbus],
+    };
+    let bytes = serde_json::to_vec(&cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: loaded,
+    })
+    .unwrap();
+    let mut reopened = cli::decode_save(&bytes).unwrap();
+    let before = serde_json::to_value(&reopened).unwrap();
+    assert!(
+        reopened
+            .apply_actions(&[Action::ConfirmPetSelection { accept: true }])
+            .iter()
+            .any(|event| matches!(
+                event,
+                Event::Rejected {
+                    reason: Rejection::Locked,
+                    ..
+                }
+            ))
+    );
+    assert_eq!(serde_json::to_value(&reopened).unwrap(), before);
+    assert!(reopened.board.is_none());
+    reopened.validate().unwrap();
+}
+
+#[test]
+fn current_tank_four_reloads_long_gumbo_counter_and_invasion_pending_large_birth() {
+    use turbofish_deluxe::alien::{SylvesterKind, WeakSylvester};
+    // Explicit current-format boundary fixture, independently specified by
+    // PB05's dword timer, ordinary growth and registered-alien pause rules.
+    let mut fixture = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: tank_four_first_session(&[PetKind::Gumbo]),
+    })
+    .unwrap();
+    let board = &mut fixture["session"]["board"];
+    let next_id = board["next_id"].as_u64().unwrap();
+    board["next_id"] = (next_id + 1).into();
+    board["invasion"]["battle_active"] = true.into();
+    board["invasion"]["actors"] = serde_json::to_value(vec![WeakSylvester::spawn_kind(
+        SylvesterKind::Balrog,
+        next_id,
+        450,
+        105,
+        0,
+        0,
+    )])
+    .unwrap();
+    board["breeder_unlocked"] = true.into();
+    let breeder = &mut board["breeders"][0];
+    breeder["size"] = "Large".into();
+    breeder["hunger"] = 550.into();
+    breeder["food_points"] = 0.into();
+    breeder["food_needed_to_grow"] = 7.into();
+    breeder["birth_clock"] = 1398.into();
+    breeder["birth_threshold"] = 500.into();
+    breeder["steering_timer"] = 342.into();
+    breeder["x"] = 200.0.into();
+    breeder["y"] = 200.0.into();
+    breeder["widget_x"] = 200.into();
+    breeder["widget_y"] = 200.into();
+    let mut uninterrupted = cli::decode_save(&serde_json::to_vec(&fixture).unwrap()).unwrap();
+    let encoded = serde_json::to_vec(&cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: uninterrupted.clone(),
+    })
+    .unwrap();
+    let mut resumed = cli::decode_save(&encoded).unwrap();
+    for _ in 0..30 {
+        assert_eq!(
+            serde_json::to_value(resumed.step(&[])).unwrap(),
+            serde_json::to_value(uninterrupted.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&uninterrupted).unwrap()
+        );
+        resumed.validate().unwrap();
+    }
+    let breeder = &resumed.board.as_ref().unwrap().breeders[0];
+    assert_eq!(
+        (breeder.hunger, breeder.birth_clock, breeder.birth_threshold),
+        (550, 1398, 500)
+    );
+    assert_eq!(breeder.steering_timer, 372);
+}
+
 #[test]
 fn current_finale_accepts_fourteen_rosters_and_rejects_unearned_rhubarb() {
     // PB52 canonical unlocks: Rhubarb is the reward, not an initial live pet.
@@ -319,7 +583,7 @@ fn current_tank_three_bonus_flight_and_immutable_results_survive_reload() {
         loaded.step(&[]);
     }
     assert_eq!(loaded.progress.shell_balance, 1564);
-    loaded.apply_actions(&[Action::Continue, Action::Continue]);
+    loaded.apply_actions(&[Action::Continue]);
     assert!(matches!(loaded.phase, AdventurePhase::PetSelection { .. }));
     assert!(loaded.board.is_none());
     assert_eq!(loaded.progress.unlocked_pets.len(), 15);

@@ -11,6 +11,9 @@ pub const NIKO_TANK2_Y: i32 = 163;
 /// PB41 maps ordinary Tank3 to background4; W1 OtherTypePet.cpp agrees.
 pub const NIKO_TANK3_X: i32 = 145;
 pub const NIKO_TANK3_Y: i32 = 260;
+/// W1 `OtherTypePet::UpdateNikoPosition`, background 5 (ordinary Tank 4).
+pub const NIKO_TANK4_X: i32 = 67;
+pub const NIKO_TANK4_Y: i32 = 185;
 const fn tank1_x() -> i32 {
     NIKO_X
 }
@@ -59,6 +62,10 @@ impl NikoState {
         Self::spawn_at(owner_id, NIKO_TANK3_X, NIKO_TANK3_Y, rand_range)
     }
 
+    pub fn spawn_tank4(owner_id: u64, rand_range: &mut impl FnMut(u64) -> u64) -> Self {
+        Self::spawn_at(owner_id, NIKO_TANK4_X, NIKO_TANK4_Y, rand_range)
+    }
+
     fn spawn_at(
         owner_id: u64,
         anchor_x: i32,
@@ -87,7 +94,10 @@ impl NikoState {
             || self.movement_change_timer > 20
             || !matches!(
                 (self.anchor_x, self.anchor_y),
-                (NIKO_X, NIKO_Y) | (NIKO_TANK2_X, NIKO_TANK2_Y) | (NIKO_TANK3_X, NIKO_TANK3_Y)
+                (NIKO_X, NIKO_Y)
+                    | (NIKO_TANK2_X, NIKO_TANK2_Y)
+                    | (NIKO_TANK3_X, NIKO_TANK3_Y)
+                    | (NIKO_TANK4_X, NIKO_TANK4_Y)
             )
         {
             return Err("invalid ordinary Niko save state".into());
@@ -313,6 +323,18 @@ mod tests {
         });
         assert_eq!(draws, [265, 520, 10, 250]);
         assert_eq!((niko.anchor_x, niko.anchor_y), (145, 260));
+        niko.validate().unwrap();
+    }
+
+    #[test]
+    fn fourth_background_anchor_keeps_the_same_constructor_draw_schedule() {
+        let mut draws = Vec::new();
+        let niko = NikoState::spawn_tank4(18, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(draws, [265, 520, 10, 250]);
+        assert_eq!((niko.anchor_x, niko.anchor_y), (67, 185));
         niko.validate().unwrap();
     }
 

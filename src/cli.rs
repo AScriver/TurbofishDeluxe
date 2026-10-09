@@ -95,7 +95,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 15;
+pub const SAVE_FORMAT_VERSION: u32 = 16;
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -202,7 +202,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=15) => {
+        Some(version @ 5..=16) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -257,6 +257,10 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                 .any(|field| !board.contains_key(*field)))
                         || (version >= 11 && !board.contains_key("notes"))
                         || (version >= 14 && !board.contains_key("bomb_shots"))
+                        || (version >= 16
+                            && ["breeder_unlocked", "breeders", "dead_breeders", "rhubarb"]
+                                .iter()
+                                .any(|field| !board.contains_key(*field)))
                         || (version >= 15
                             && board
                                 .get("missiles")
@@ -425,7 +429,8 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     12 => "twelve",
                     13 => "thirteen",
                     14 => "fourteen",
-                    _ => "fifteen",
+                    15 => "fifteen",
+                    _ => "sixteen",
                 };
                 return Err(format!(
                     "Incomplete format-{label} save; required state fields are missing"
