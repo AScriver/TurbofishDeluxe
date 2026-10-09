@@ -518,6 +518,20 @@ impl WeakSylvester {
         Some(self.health)
     }
 
+    /// PB71: Gash bypasses shot immunity and halves only raw4/5 damage.
+    /// The encounter owner commits lethal removal synchronously.
+    pub fn gash_hit(&mut self) -> Option<f64> {
+        if !self.alive || self.healing {
+            return None;
+        }
+        self.health -= if matches!(self.kind, SylvesterKind::Gus | SylvesterKind::Destructor) {
+            0.5
+        } else {
+            3.0
+        };
+        Some(self.health)
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if ![
             self.x,

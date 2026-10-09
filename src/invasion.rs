@@ -51,6 +51,7 @@ pub enum EncounterKind {
     Single(SylvesterKind),
     WeakBalrogPair,
     PsychosquidBalrogPair,
+    DestructorUlyssesPair,
     Bilaterus,
 }
 
@@ -63,6 +64,7 @@ pub enum WavePlan {
     CyclingTank3Second { next: SylvesterKind },
     CyclingTank3Finale { next: SylvesterKind },
     CyclingTank4Third { next: EncounterKind },
+    CyclingTank4Fourth { next: EncounterKind },
 }
 
 impl WavePlan {
@@ -72,7 +74,8 @@ impl WavePlan {
             Self::FixedBilaterus => EncounterKind::Bilaterus,
             Self::CyclingTank1Finale { next }
             | Self::CyclingTank2Finale { next }
-            | Self::CyclingTank4Third { next } => next,
+            | Self::CyclingTank4Third { next }
+            | Self::CyclingTank4Fourth { next } => next,
             Self::CyclingTank3Second { next } | Self::CyclingTank3Finale { next } => {
                 EncounterKind::Single(next)
             }
@@ -327,6 +330,14 @@ impl Invasion1_2 {
         wave
     }
 
+    pub fn new_tank4_fourth_stage() -> Self {
+        let mut wave = Self::new_bilaterus();
+        wave.plan = WavePlan::CyclingTank4Fourth {
+            next: EncounterKind::Bilaterus,
+        };
+        wave
+    }
+
     pub fn legacy_v5_balrog_resume() -> Self {
         Self::with_origin(InvasionOrigin::LegacyV5Resume, SylvesterKind::Balrog)
     }
@@ -547,6 +558,18 @@ impl Invasion1_2 {
         Some((health, events))
     }
 
+    /// Gash's contact calls the ordinary Alien death route immediately at
+    /// zero HP, unlike the next-update death left by Itchy and Rufus contact.
+    pub fn gash_hit_alien(&mut self, id: u64) -> Option<(f64, Vec<InvasionEvent>)> {
+        let health = self.actor_by_id_mut(id)?.gash_hit()?;
+        let events = if health <= 0.0 {
+            self.remove_registered_alien(id)
+        } else {
+            Vec::new()
+        };
+        Some((health, events))
+    }
+
     /// Board::Update reduces food delay before its first pause return at
     /// Board.cpp:610–615. Call this once for an already-paused board update;
     /// ordinary `board_update` calls it itself.
@@ -689,6 +712,10 @@ impl Invasion1_2 {
                                 spawn(SylvesterKind::Psychosquid, coords.first_x, coords.first_y);
                                 spawn(SylvesterKind::Balrog, coords.second_x, coords.second_y);
                             }
+                            EncounterKind::DestructorUlyssesPair => {
+                                spawn(SylvesterKind::Destructor, coords.first_x, coords.first_y);
+                                spawn(SylvesterKind::Ulysses, coords.second_x, coords.second_y);
+                            }
                             EncounterKind::Bilaterus => unreachable!(),
                         }
                     }
@@ -759,6 +786,15 @@ impl Invasion1_2 {
                             EncounterKind::PsychosquidBalrogPair
                         } else {
                             EncounterKind::Single(SylvesterKind::Gus)
+                        },
+                    },
+                    WavePlan::CyclingTank4Fourth { .. } => WavePlan::CyclingTank4Fourth {
+                        // PB69: raw8 or raw11 is chosen after constructing
+                        // the current group or both ordered ordinary actors.
+                        next: if next_random().is_multiple_of(2) {
+                            EncounterKind::DestructorUlyssesPair
+                        } else {
+                            EncounterKind::Bilaterus
                         },
                     },
                 };
@@ -1192,6 +1228,30 @@ impl Invasion1_2 {
                         ]
                     )
             }
+            WavePlan::CyclingTank4Fourth { next } => {
+                matches!(
+                    next,
+                    EncounterKind::Bilaterus | EncounterKind::DestructorUlyssesPair
+                ) && self.bilaterus.len() <= 1
+                    && self.fragments.len() <= 8
+                    && (self.bilaterus.is_empty() || self.actors.is_empty())
+                    && matches!(
+                        self.actors.as_slice(),
+                        [] | [WeakSylvester {
+                            kind: SylvesterKind::Destructor | SylvesterKind::Ulysses,
+                            ..
+                        }] | [
+                            WeakSylvester {
+                                kind: SylvesterKind::Destructor,
+                                ..
+                            },
+                            WeakSylvester {
+                                kind: SylvesterKind::Ulysses,
+                                ..
+                            }
+                        ]
+                    )
+            }
         };
         if !(0..=3000).contains(&self.countdown)
             || self.food_delay > 36
@@ -1523,6 +1583,217 @@ mod tests {
         );
         assert!(wave.finish_if_no_threats(false).is_empty());
         wave.validate().unwrap();
+    }
+
+    #[test]
+    fn tank4_fourth_spawns_bilaterus_before_one_next_choice_draw() {
+        for (bit, expected_next) in [
+            (0, EncounterKind::DestructorUlyssesPair),
+            (1, EncounterKind::Bilaterus),
+        ] {
+            let mut wave = Invasion1_2::new_tank4_fourth_stage();
+            assert_eq!(wave.plan.expected(), EncounterKind::Bilaterus);
+            wave.warning = Some(WarningCoords {
+                first_x: 105,
+                first_y: 160,
+                second_x: 410,
+                second_y: 290,
+            });
+            wave.countdown = 1;
+            let mut draws = 0;
+            let events = wave.board_update(
+                || {
+                    draws += 1;
+                    if draws == 12 { bit } else { 1 }
+                },
+                || 91,
+            );
+            assert_eq!(draws, 12); // Eleven group draws, then PB69's choice.
+            assert_eq!(
+                events,
+                [InvasionEvent::BilaterusSpawned {
+                    id: 91,
+                    x: 105,
+                    y: 160
+                }]
+            );
+            assert_eq!(wave.plan.expected(), expected_next);
+            assert_eq!(wave.countdown, 3000);
+            assert!(wave.has_live_bilaterus());
+            wave.validate().unwrap();
+
+            let mut group = wave.bilaterus.pop().unwrap();
+            group.first_head_lost = true;
+            group.heads[0] = None;
+            group.active_head = 1;
+            group.emergence_ticks = 0;
+            group.heads[1].as_mut().unwrap().health = 0.0;
+            wave.bilaterus.push(group);
+            let transition = wave.bilaterus[0].finish_update().unwrap();
+            let mut fragment_id = 100;
+            let end = wave.commit_bilaterus_transition(
+                91,
+                transition,
+                || 1,
+                || {
+                    fragment_id += 1;
+                    fragment_id
+                },
+            );
+            assert_eq!(
+                end.iter()
+                    .filter(|event| matches!(
+                        event,
+                        InvasionEvent::DiamondDropped { alien_id: 91, .. }
+                    ))
+                    .count(),
+                1
+            );
+            assert!(!wave.has_live_alien());
+            assert!(wave.finish_if_no_threats(true).is_empty());
+            assert!(
+                wave.advance_with_threats(
+                    true,
+                    || panic!("missiles hold countdown"),
+                    || panic!("missiles cannot spawn actors")
+                )
+                .is_empty()
+            );
+            assert_eq!(wave.countdown, 3000);
+            assert_eq!(
+                wave.finish_if_no_threats(false),
+                [InvasionEvent::BattleEnded]
+            );
+            assert!(wave.finish_if_no_threats(false).is_empty());
+            wave.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn tank4_fourth_pair_keeps_constructor_order_rewards_and_survivor_liveness() {
+        let mut wave = Invasion1_2::new_tank4_fourth_stage();
+        wave.plan = WavePlan::CyclingTank4Fourth {
+            next: EncounterKind::DestructorUlyssesPair,
+        };
+        wave.warning = Some(WarningCoords {
+            first_x: 100,
+            first_y: 140,
+            second_x: 300,
+            second_y: 220,
+        });
+        wave.countdown = 1;
+        let mut draws = [1, 4, 2, 5, 1].into_iter();
+        let mut ids = [71, 72].into_iter();
+        let events = wave.board_update(
+            || draws.next().expect("both constructors then one choice"),
+            || ids.next().expect("one ID per actor"),
+        );
+        assert_eq!(draws.next(), None);
+        assert_eq!(ids.next(), None);
+        assert_eq!(wave.plan.expected(), EncounterKind::Bilaterus);
+        assert!(matches!(
+            events.as_slice(),
+            [
+                InvasionEvent::AlienSpawned {
+                    id: 71,
+                    x: 100,
+                    y: 280
+                },
+                InvasionEvent::AlienSpawned {
+                    id: 72,
+                    x: 300,
+                    y: 280
+                }
+            ]
+        ));
+        assert_eq!(
+            wave.actors
+                .iter()
+                .map(|actor| actor.kind)
+                .collect::<Vec<_>>(),
+            [SylvesterKind::Destructor, SylvesterKind::Ulysses]
+        );
+        let encoded = serde_json::to_vec(&wave).unwrap();
+        let restored: Invasion1_2 = serde_json::from_slice(&encoded).unwrap();
+        restored.validate().unwrap();
+        let mut reversed = restored.clone();
+        reversed.actors.swap(0, 1);
+        assert!(reversed.validate().is_err());
+        let mut wrong_next = restored.clone();
+        wrong_next.plan = WavePlan::CyclingTank4Fourth {
+            next: EncounterKind::Single(SylvesterKind::Gus),
+        };
+        assert!(wrong_next.validate().is_err());
+        let mut mixed = restored;
+        mixed
+            .bilaterus
+            .push(BilaterusState::spawn(73, 110, 160, &mut || 1));
+        assert!(mixed.validate().is_err());
+
+        assert!(wave.finish_if_no_threats(false).is_empty());
+        let first = wave.remove_registered_alien(71);
+        assert!(
+            first
+                .iter()
+                .any(|event| matches!(event, InvasionEvent::DiamondDropped { alien_id: 71, .. }))
+        );
+        assert_eq!(wave.actors[0].id, 72);
+        assert!(wave.finish_if_no_threats(false).is_empty());
+        wave.validate().unwrap();
+        let second = wave.remove_registered_alien(72);
+        assert!(
+            second
+                .iter()
+                .any(|event| matches!(event, InvasionEvent::DiamondDropped { alien_id: 72, .. }))
+        );
+        assert_eq!(wave.dead_aliens.len(), 2);
+        assert!(wave.finish_if_no_threats(true).is_empty());
+        assert_eq!(
+            wave.finish_if_no_threats(false),
+            [InvasionEvent::BattleEnded]
+        );
+        assert!(wave.finish_if_no_threats(false).is_empty());
+        wave.validate().unwrap();
+    }
+
+    #[test]
+    fn gash_contact_removes_only_lethal_ordinary_alien_once() {
+        let mut wave = Invasion1_2::new_tank4_fourth_stage();
+        let mut destructor =
+            WeakSylvester::spawn_kind(SylvesterKind::Destructor, 81, 100, 140, 1, 1);
+        destructor.health = 1.0;
+        destructor.spawn_ticks = 0;
+        wave.actors.push(destructor);
+        wave.battle_active = true;
+        assert_eq!(wave.gash_hit_alien(81), Some((0.5, Vec::new())));
+        assert_eq!(wave.actors.len(), 1);
+        let (health, events) = wave.gash_hit_alien(81).unwrap();
+        assert_eq!(health, 0.0);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, InvasionEvent::AlienDefeated { id: 81 }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, InvasionEvent::DiamondDropped { alien_id: 81, .. }))
+                .count(),
+            1
+        );
+        assert!(wave.actors.is_empty());
+        assert_eq!(wave.dead_aliens.len(), 1);
+        assert_eq!(wave.gash_hit_alien(81), None);
+
+        let mut healing = WeakSylvester::spawn_kind(SylvesterKind::Psychosquid, 82, 200, 160, 1, 1);
+        healing.healing = true;
+        let before = healing.health;
+        let mut healing_wave = Invasion1_2::new_psychosquid();
+        healing_wave.actors.push(healing);
+        assert_eq!(healing_wave.gash_hit_alien(82), None);
+        assert_eq!(healing_wave.actors[0].health, before);
     }
 
     #[test]

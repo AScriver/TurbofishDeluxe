@@ -118,6 +118,8 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_AMP",
     "IMAGE_GASH",
     "IMAGE_SCL_GASH",
+    "IMAGE_ANGIE",
+    "IMAGE_SCL_ANGIE",
     "IMAGE_ULTRA",
     "IMAGE_SCL_ULTRA",
     "IMAGE_BILATERUS",
@@ -571,7 +573,8 @@ impl Presentation {
                 Event::OscarAteGuppy { .. }
                 | Event::GrubberAteGuppy { .. }
                 | Event::GekkoAtePrey { .. }
-                | Event::UltraAteOscar { .. } => "SOUND_CHOMP",
+                | Event::UltraAteOscar { .. }
+                | Event::GashAteGuppy { .. } => "SOUND_CHOMP",
                 Event::OscarDied { tick, oscar_id }
                     if death_has_missile_impact(events, *tick, *oscar_id) =>
                 {
@@ -1037,6 +1040,7 @@ impl Presentation {
                 FishPetKind::Blip => "IMAGE_BLIP",
                 FishPetKind::Nimbus => "IMAGE_NIMBUS",
                 FishPetKind::Amp => "IMAGE_AMP",
+                FishPetKind::Gash => "IMAGE_GASH",
             };
             let (cell_width, cell_height) = if pet.kind == FishPetKind::Amp {
                 (160.0, 60.0)
@@ -2423,6 +2427,7 @@ impl Presentation {
                 PetKind::Nimbus => ("IMAGE_NIMBUS", 90.0, updates % 20 / 2),
                 PetKind::Amp => ("IMAGE_AMP", 100.0, updates % 20 / 2),
                 PetKind::Gash => ("IMAGE_GASH", 90.0, updates % 20 / 2),
+                PetKind::Angie => ("IMAGE_ANGIE", 90.0, updates % 20 / 2),
             };
             let (preview_x, preview_width, preview_height) = if pet == PetKind::Amp {
                 (236.0, 160.0, 60.0)
@@ -2471,6 +2476,7 @@ impl Presentation {
                     PetKind::Nimbus => "NIMBUS the Manta Ray",
                     PetKind::Amp => "AMP the Electric Eel",
                     PetKind::Gash => "GASH the Shark",
+                    PetKind::Angie => "ANGIE the Angelfish",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -2565,6 +2571,7 @@ impl Presentation {
                     "He occasionally eats a guppy",
                     "while the tank is peaceful.",
                 ],
+                PetKind::Angie => ["ANGIE can resurrect", "dead fish.", ""],
             };
             for (index, line) in description.iter().enumerate() {
                 self.centered_text(
@@ -2655,6 +2662,7 @@ impl Presentation {
                 PetKind::Nimbus => "IMAGE_SCL_NIMBUS",
                 PetKind::Amp => "IMAGE_SCL_AMP",
                 PetKind::Gash => "IMAGE_SCL_GASH",
+                PetKind::Angie => "IMAGE_SCL_ANGIE",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
@@ -2869,6 +2877,12 @@ impl Presentation {
                         "He occasionally eats a guppy",
                         "while the tank is peaceful.",
                     ],
+                    90.0,
+                ),
+                PetKind::Angie => (
+                    "IMAGE_ANGIE",
+                    "ANGIE the Angelfish",
+                    ["ANGIE can resurrect", "dead fish.", ""],
                     90.0,
                 ),
             };

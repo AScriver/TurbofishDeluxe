@@ -141,7 +141,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 18;
+pub const SAVE_FORMAT_VERSION: u32 = 19;
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -248,7 +248,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=18) => {
+        Some(version @ 5..=19) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -352,6 +352,10 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                 .is_some_and(|pets| {
                                     pets.iter().any(|pet| {
                                         pet.get("coin_timer").is_none()
+                                            || (version >= 19
+                                                && ["gash_timer", "gash_eating_ticks"]
+                                                    .iter()
+                                                    .any(|field| pet.get(*field).is_none()))
                                             || (version >= 18
                                                 && ["amp_timer", "amp_threshold", "amp_charge"]
                                                     .iter()
@@ -483,7 +487,8 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     15 => "fifteen",
                     16 => "sixteen",
                     17 => "seventeen",
-                    _ => "eighteen",
+                    18 => "eighteen",
+                    _ => "nineteen",
                 };
                 return Err(format!(
                     "Incomplete format-{label} save; required state fields are missing"

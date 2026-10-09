@@ -6,6 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
+const GASH_MEAL_THRESHOLD: i32 = 1570;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FishPetKind {
     Itchy,
@@ -20,6 +22,7 @@ pub enum FishPetKind {
     Blip,
     Nimbus,
     Amp,
+    Gash,
 }
 
 /// A direct Amp handler result. The Board owns whether normal input reaches it.
@@ -35,6 +38,15 @@ pub struct WardFishView {
     pub widget_x: i32,
     pub widget_y: i32,
     pub small_or_medium: bool,
+}
+
+/// Board supplies only live ordinary Fish. Their installed class identity is
+/// -1 (PB70/PB71); no other Fish variant is represented by Rust's Fish list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GashFishView {
+    pub id: u64,
+    pub widget_x: i32,
+    pub widget_y: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,6 +117,8 @@ pub struct FishPetUpdate {
     pub nimbus_food: Option<NimbusFoodRequest>,
     /// The Board may play the ready sound after this source clock transition.
     pub amp_became_ready: bool,
+    /// Board must commit removal, missile detachment and chomp before reset.
+    pub gash_guppy_remove: Option<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -112,6 +126,13 @@ struct NimbusViews<'a> {
     coins: &'a [NimbusCoinView],
     foods: &'a [NimbusFoodView],
     enemies_registered: bool,
+}
+
+/// Only one pet subtype supplies an extra target list per update.
+enum PetTargetViews<'a> {
+    None,
+    Nimbus(NimbusViews<'a>),
+    Gash(&'a [GashFishView]),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -157,6 +178,8 @@ pub struct FishPetState {
     pub amp_timer: i32,
     pub amp_threshold: i32,
     pub amp_charge: u8,
+    pub gash_timer: i32,
+    pub gash_eating_ticks: u8,
     pub bomb_threshold: u16,
     pub glint_phase: f64,
     pub meryl_blink: bool,
@@ -215,6 +238,8 @@ impl FishPetState {
             amp_timer: if kind == FishPetKind::Amp { 300 } else { 0 },
             amp_threshold: if kind == FishPetKind::Amp { 3000 } else { 0 },
             amp_charge: 0,
+            gash_timer: if kind == FishPetKind::Gash { -1550 } else { 0 },
+            gash_eating_ticks: 0,
             bomb_threshold: if kind == FishPetKind::Shrapnel {
                 rand_range(20) as u16 + 633
             } else {
@@ -304,6 +329,9 @@ impl FishPetState {
             || (self.kind == FishPetKind::Amp && self.amp_charge > 2)
             || (self.kind != FishPetKind::Amp
                 && (self.amp_timer != 0 || self.amp_threshold != 0 || self.amp_charge != 0))
+            || (self.kind == FishPetKind::Gash && self.gash_eating_ticks > 10)
+            || (self.kind != FishPetKind::Gash
+                && (self.gash_timer != 0 || self.gash_eating_ticks != 0))
             || (self.kind == FishPetKind::Gumbo
                 && (self.bomb_threshold != 0 || !(-1.0..1.0).contains(&self.glint_phase)))
             || (self.kind == FishPetKind::Amp && !(-1.0..1.0).contains(&self.glint_phase))
@@ -399,6 +427,13 @@ impl FishPetState {
             FishPetKind::Blip => u8::from(self.turn_ticks != 0),
             FishPetKind::Nimbus => u8::from(self.turn_ticks != 0),
             FishPetKind::Amp => u8::from(self.turn_ticks != 0),
+            FishPetKind::Gash => {
+                if self.turn_ticks != 0 {
+                    1
+                } else {
+                    u8::from(self.gash_eating_ticks > 0) * 2
+                }
+            }
         }
     }
 
@@ -490,7 +525,50 @@ impl FishPetState {
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> FishPetUpdate {
         assert_eq!(self.kind, FishPetKind::Amp);
-        self.tick_inner(&[], 0, &[], None, charge_clock_allowed, rand_range)
+        self.tick_inner(
+            &[],
+            0,
+            &[],
+            PetTargetViews::None,
+            charge_clock_allowed,
+            rand_range,
+        )
+    }
+
+    /// W1 supplies steering and target order; this returns requests rather
+    /// than mutating Board-owned health or fish membership. The Board applies
+    /// contacts before calling finish_gash_clock with fresh threat membership.
+    pub fn tick_gash(
+        &mut self,
+        aliens: &[PetAlienView],
+        fish: &[GashFishView],
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> FishPetUpdate {
+        assert_eq!(self.kind, FishPetKind::Gash);
+        self.tick_inner(
+            aliens,
+            0,
+            &[],
+            PetTargetViews::Gash(fish),
+            false,
+            rand_range,
+        )
+    }
+
+    /// Only call after the Board's requested ordinary-Fish removal succeeds.
+    /// Source contact resets the timer before DropCoin runs in this update.
+    pub fn commit_gash_meal(&mut self) {
+        assert_eq!(self.kind, FishPetKind::Gash);
+        self.gash_timer = 0;
+    }
+
+    /// PB70: DropCoin executes after Hungry/contact and tests current Board
+    /// pause, Tank5 and registered-threat state. The Board owns that predicate.
+    pub fn finish_gash_clock(&mut self, clock_allowed: bool) {
+        assert_eq!(self.kind, FishPetKind::Gash);
+        if clock_allowed {
+            self.gash_timer = self.gash_timer.wrapping_add(1);
+        }
     }
 
     pub fn tick(
@@ -502,11 +580,18 @@ impl FishPetState {
         assert!(
             !matches!(
                 self.kind,
-                FishPetKind::Zorf | FishPetKind::Nimbus | FishPetKind::Amp
+                FishPetKind::Zorf | FishPetKind::Nimbus | FishPetKind::Amp | FishPetKind::Gash
             ),
-            "Zorf, Nimbus and Amp need their subtype updates"
+            "Zorf, Nimbus, Amp and Gash need their subtype updates"
         );
-        self.tick_inner(aliens, guppy_count, &[], None, false, rand_range)
+        self.tick_inner(
+            aliens,
+            guppy_count,
+            &[],
+            PetTargetViews::None,
+            false,
+            rand_range,
+        )
     }
 
     pub fn tick_zorf(
@@ -516,7 +601,7 @@ impl FishPetState {
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> FishPetUpdate {
         assert_eq!(self.kind, FishPetKind::Zorf, "tick_zorf requires Zorf");
-        self.tick_inner(aliens, 0, hungry, None, false, rand_range)
+        self.tick_inner(aliens, 0, hungry, PetTargetViews::None, false, rand_range)
     }
 
     pub fn tick_nimbus(
@@ -531,7 +616,7 @@ impl FishPetState {
             &[],
             0,
             &[],
-            Some(NimbusViews {
+            PetTargetViews::Nimbus(NimbusViews {
                 coins,
                 foods,
                 enemies_registered,
@@ -581,7 +666,7 @@ impl FishPetState {
                 (self.widget_x + 4, self.widget_y + 2),
             ]);
         }
-        let _motion = self.tick_inner(&[], 0, &[], None, false, rand_range);
+        let _motion = self.tick_inner(&[], 0, &[], PetTargetViews::None, false, rand_range);
         ward
     }
 
@@ -590,22 +675,28 @@ impl FishPetState {
         aliens: &[PetAlienView],
         guppy_count: usize,
         hungry: &[ZorfHungryView],
-        nimbus: Option<NimbusViews<'_>>,
+        targets: PetTargetViews<'_>,
         amp_charge_clock_allowed: bool,
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> FishPetUpdate {
         let mut update = FishPetUpdate::default();
         let hunting = self.kind == FishPetKind::Itchy && !aliens.is_empty();
-        if let Some(views) = nimbus {
-            if !self.hunt_nimbus(views, &mut update) {
-                self.wander();
+        match targets {
+            PetTargetViews::Nimbus(views) => {
+                if !self.hunt_nimbus(views, &mut update) {
+                    self.wander();
+                }
             }
-        } else if self.kind == FishPetKind::Gumbo && !aliens.is_empty() {
-            self.hunt_gumbo(aliens);
-        } else if hunting {
-            self.hunt(aliens, &mut update);
-        } else {
-            self.wander();
+            PetTargetViews::Gash(fish) => {
+                if !self.hunt_gash(aliens, fish, &mut update) {
+                    self.wander();
+                }
+            }
+            PetTargetViews::None if self.kind == FishPetKind::Gumbo && !aliens.is_empty() => {
+                self.hunt_gumbo(aliens);
+            }
+            PetTargetViews::None if hunting => self.hunt(aliens, &mut update),
+            PetTargetViews::None => self.wander(),
         }
         self.special_timer = self.special_timer.saturating_add(1);
         self.movement_timer += 1;
@@ -886,6 +977,111 @@ impl FishPetState {
         }
     }
 
+    /// PB70/PB71 target classes and contact; W1 supplies nearest ties,
+    /// steering and the near-eat animation. The Board applies each request.
+    fn hunt_gash(
+        &mut self,
+        aliens: &[PetAlienView],
+        fish: &[GashFishView],
+        update: &mut FishPetUpdate,
+    ) -> bool {
+        let enemies_registered = !aliens.is_empty();
+        let peaceful_hunt =
+            !enemies_registered && self.gash_timer > GASH_MEAL_THRESHOLD && !fish.is_empty();
+        if !enemies_registered && !peaceful_hunt {
+            return false;
+        }
+        let cx = self.x + 40.0;
+        let cy = self.y + 40.0;
+        let mut nearest = None;
+        let mut best_distance = 10_000;
+        if enemies_registered {
+            for alien in aliens
+                .iter()
+                .filter(|alien| alien.bilaterus)
+                .chain(aliens.iter().filter(|alien| !alien.bilaterus))
+                .filter(|alien| !alien.healing)
+            {
+                let tx = alien.widget_x + alien.center_offset();
+                let ty = alien.widget_y + alien.center_offset();
+                let dx = (cx - f64::from(tx)) as i32;
+                let dy = (cy - f64::from(ty)) as i32;
+                let distance = ((f64::from(dx * dx + dy * dy)).sqrt()) as i32;
+                if distance < best_distance {
+                    best_distance = distance;
+                    nearest = Some((tx, ty));
+                }
+            }
+        } else {
+            for target in fish {
+                let tx = target.widget_x + 40;
+                let ty = target.widget_y + 40;
+                let dx = (cx - f64::from(tx)) as i32;
+                let dy = (cy - f64::from(ty)) as i32;
+                let distance = ((f64::from(dx * dx + dy * dy)).sqrt()) as i32;
+                if distance < best_distance {
+                    best_distance = distance;
+                    nearest = Some((tx, ty));
+                }
+            }
+        }
+        if let Some((tx, ty)) = nearest.filter(|_| self.special_timer >= 5) {
+            self.special_timer = 0;
+            let x_limit = if enemies_registered { 9.0 } else { 8.0 };
+            if cx < f64::from(tx) && self.vx < x_limit {
+                self.vx += 2.5;
+            } else if cx > f64::from(tx) && self.vx > -x_limit {
+                self.vx -= 2.5;
+            }
+            if cy < f64::from(ty) && self.vy < 4.0 {
+                self.vy += 1.5;
+            } else if cy > f64::from(ty) && self.vy > -4.0 {
+                self.vy -= 1.5;
+            }
+            if self.vx_abs < 5 {
+                self.vx_abs += 1;
+            }
+        }
+        // HungryBehavior only calls CollideWithFood when FindNearestFood
+        // produced a target. A healing-only alien list still suppresses wander.
+        if nearest.is_none() {
+            return true;
+        }
+        if enemies_registered {
+            for alien in aliens
+                .iter()
+                .filter(|alien| alien.bilaterus)
+                .chain(aliens.iter().filter(|alien| !alien.bilaterus))
+            {
+                let dx = (cx - f64::from(alien.widget_x + alien.center_offset())).abs();
+                let dy = (cy - f64::from(alien.widget_y + alien.center_offset())).abs();
+                if dx < 20.0 && dy < 20.0 && !alien.healing {
+                    update.damaged_alien = Some(alien.id);
+                    update.punch_sound = true;
+                    break;
+                }
+                if dx < 30.0 && dy < 30.0 && self.gash_eating_ticks == 0 {
+                    self.gash_eating_ticks = 10;
+                    break;
+                }
+            }
+        } else if peaceful_hunt {
+            for target in fish {
+                let dx = (cx - f64::from(target.widget_x + 40)).abs();
+                let dy = (cy - f64::from(target.widget_y + 40)).abs();
+                if dx < 20.0 && dy < 20.0 {
+                    update.gash_guppy_remove = Some(target.id);
+                    break;
+                }
+                if dx < 30.0 && dy < 30.0 && self.gash_eating_ticks == 0 {
+                    self.gash_eating_ticks = 10;
+                    break;
+                }
+            }
+        }
+        true
+    }
+
     /// W1 FishTypePet::HungryBehavior selects the nearest non-healing alien,
     /// then flees its widget pose; this stage has no Bilaterus target.
     fn hunt_gumbo(&mut self, aliens: &[PetAlienView]) {
@@ -1016,6 +1212,9 @@ impl FishPetState {
             } else {
                 (9 + self.turn_ticks / 2) as u8
             };
+        } else if self.kind == FishPetKind::Gash && self.gash_eating_ticks > 0 {
+            self.gash_eating_ticks -= 1;
+            self.frame = self.gash_eating_ticks;
         } else {
             self.swim_counter += if matches!(self.kind, FishPetKind::Zorf | FishPetKind::Amp)
                 || self.kind == FishPetKind::Shrapnel && self.vx_abs < 3
@@ -1070,6 +1269,224 @@ impl FishPetState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn gash_at(x: i32, y: i32) -> FishPetState {
+        let mut pet = actor(FishPetKind::Gash);
+        pet.x = f64::from(x);
+        pet.y = f64::from(y);
+        pet.widget_x = x;
+        pet.widget_y = y;
+        pet.published_x = x;
+        pet.published_y = y;
+        pet.vx = 0.0;
+        pet.previous_vx = 0.0;
+        pet
+    }
+
+    #[test]
+    fn gash_signed_clock_obeys_strict_peaceful_hunt_and_enemy_freeze() {
+        let mut pet = gash_at(100, 100);
+        let prey = [GashFishView {
+            id: 7,
+            widget_x: 100,
+            widget_y: 100,
+        }];
+        assert_eq!(pet.gash_timer, -1550);
+        pet.gash_timer = GASH_MEAL_THRESHOLD;
+        assert_eq!(
+            pet.tick_gash(&[], &prey, &mut |_| 1).gash_guppy_remove,
+            None
+        );
+        assert_eq!(pet.gash_timer, GASH_MEAL_THRESHOLD);
+        pet.finish_gash_clock(false);
+        assert_eq!(pet.gash_timer, GASH_MEAL_THRESHOLD);
+        assert_eq!(
+            pet.tick_gash(&[], &prey, &mut |_| 1).gash_guppy_remove,
+            None
+        );
+        pet.finish_gash_clock(true);
+        assert_eq!(pet.gash_timer, GASH_MEAL_THRESHOLD + 1);
+        assert_eq!(
+            pet.tick_gash(&[], &prey, &mut |_| 1).gash_guppy_remove,
+            Some(7)
+        );
+        let enemy = [PetAlienView {
+            id: 9,
+            widget_x: 300,
+            widget_y: 100,
+            healing: false,
+            bilaterus: false,
+        }];
+        pet.tick_gash(&enemy, &prey, &mut |_| 1);
+        pet.finish_gash_clock(false);
+        assert_eq!(pet.gash_timer, GASH_MEAL_THRESHOLD + 1);
+        let last_enemy = [PetAlienView {
+            id: 10,
+            widget_x: pet.widget_x - 40,
+            widget_y: pet.widget_y - 40,
+            ..enemy[0]
+        }];
+        let hit = pet.tick_gash(&last_enemy, &prey, &mut |_| 1);
+        assert_eq!(hit.damaged_alien, Some(10));
+        pet.finish_gash_clock(true); // Board removed the last alien after contact.
+        assert_eq!(pet.gash_timer, GASH_MEAL_THRESHOLD + 2);
+        pet.gash_timer = i32::MAX;
+        pet.tick_gash(&[], &[], &mut |_| 1);
+        pet.finish_gash_clock(true);
+        assert_eq!(pet.gash_timer, i32::MIN);
+    }
+
+    #[test]
+    fn gash_guppy_request_precedes_motion_and_board_commits_timer_reset() {
+        let mut pet = gash_at(100, 100);
+        pet.gash_timer = 1571;
+        let prey = [GashFishView {
+            id: 42,
+            widget_x: 119,
+            widget_y: 100,
+        }];
+        let update = pet.tick_gash(&[], &prey, &mut |_| 1);
+        assert_eq!(update.gash_guppy_remove, Some(42));
+        assert_eq!(pet.gash_timer, 1571);
+        pet.commit_gash_meal();
+        pet.finish_gash_clock(false);
+        assert_eq!(pet.gash_timer, 0);
+        pet.gash_timer = 1571;
+        let again = pet.tick_gash(&[], &prey, &mut |_| 1);
+        assert_eq!(again.gash_guppy_remove, Some(42));
+        pet.commit_gash_meal();
+        pet.finish_gash_clock(true);
+        assert_eq!(pet.gash_timer, 1);
+        let mut boundary = gash_at(100, 100);
+        boundary.gash_timer = 1571;
+        let outside = [GashFishView {
+            id: 43,
+            widget_x: 120,
+            widget_y: 100,
+        }];
+        assert_eq!(
+            boundary
+                .tick_gash(&[], &outside, &mut |_| 1)
+                .gash_guppy_remove,
+            None
+        );
+        assert_eq!(boundary.gash_eating_ticks, 9);
+        assert_eq!(
+            (boundary.sprite_row(false), boundary.sprite_frame()),
+            (2, 9)
+        );
+    }
+
+    #[test]
+    fn gash_contact_prioritizes_group_and_excludes_healing_damage() {
+        let mut pet = gash_at(100, 100);
+        let group = PetAlienView {
+            id: 71,
+            widget_x: 100,
+            widget_y: 100,
+            healing: false,
+            bilaterus: true,
+        };
+        let ordinary = PetAlienView {
+            id: 72,
+            widget_x: 60,
+            widget_y: 60,
+            healing: false,
+            bilaterus: false,
+        };
+        let hit = pet.tick_gash(&[ordinary, group], &[], &mut |_| 1);
+        assert_eq!(hit.damaged_alien, Some(71));
+        assert!(hit.punch_sound);
+        let mut healing = gash_at(100, 100);
+        let healer = PetAlienView {
+            id: 73,
+            healing: true,
+            ..ordinary
+        };
+        let no_hit = healing.tick_gash(&[healer], &[], &mut |_| 1);
+        assert_eq!(no_hit.damaged_alien, None);
+        assert_eq!(healing.gash_eating_ticks, 0);
+        let far_live = PetAlienView {
+            id: 74,
+            widget_x: 300,
+            healing: false,
+            ..ordinary
+        };
+        healing.tick_gash(&[healer, far_live], &[], &mut |_| 1);
+        assert_eq!(healing.gash_eating_ticks, 9); // Eligible far target enables contact scan.
+        let mut ordinary_hit = gash_at(100, 100);
+        let hit = ordinary_hit.tick_gash(&[ordinary], &[], &mut |_| 1);
+        assert_eq!(hit.damaged_alien, Some(72));
+        let mut edge = gash_at(100, 100);
+        let at_twenty = PetAlienView {
+            widget_x: 80,
+            widget_y: 60,
+            ..ordinary
+        };
+        assert_eq!(
+            edge.tick_gash(&[at_twenty], &[], &mut |_| 1).damaged_alien,
+            None
+        );
+    }
+
+    #[test]
+    fn gash_steers_toward_nearest_nonhealing_enemy_on_fifth_step() {
+        let mut pet = gash_at(100, 100);
+        pet.special_timer = 4;
+        let enemies = [
+            PetAlienView {
+                id: 81,
+                widget_x: 200,
+                widget_y: 60,
+                healing: false,
+                bilaterus: true,
+            },
+            PetAlienView {
+                id: 82,
+                widget_x: 0,
+                widget_y: 60,
+                healing: false,
+                bilaterus: false,
+            },
+            PetAlienView {
+                id: 83,
+                widget_x: 60,
+                widget_y: 60,
+                healing: true,
+                bilaterus: false,
+            },
+        ];
+        pet.tick_gash(&enemies, &[], &mut |_| 1);
+        assert_eq!(pet.vx, 0.0);
+        assert_eq!(pet.special_timer, 5);
+        pet.tick_gash(&enemies, &[], &mut |_| 1);
+        assert_eq!(pet.vx, -2.5); // The closer ordinary Alien beats the group.
+        assert_eq!(pet.special_timer, 1);
+    }
+
+    #[test]
+    fn gash_eat_animation_and_durable_subtype_state_are_bounded() {
+        let mut pet = gash_at(100, 100);
+        pet.gash_timer = 1571;
+        let near = [GashFishView {
+            id: 20,
+            widget_x: 125,
+            widget_y: 100,
+        }];
+        pet.tick_gash(&[], &near, &mut |_| 1);
+        assert_eq!(
+            (pet.gash_eating_ticks, pet.sprite_row(false), pet.frame),
+            (9, 2, 9)
+        );
+        pet.turn_ticks = 3;
+        assert_eq!(pet.sprite_row(false), 1);
+        pet.validate().unwrap();
+        pet.gash_eating_ticks = 11;
+        assert!(pet.validate().is_err());
+        let mut other = actor(FishPetKind::Itchy);
+        other.gash_timer = -1550;
+        assert!(other.validate().is_err());
+    }
 
     #[test]
     fn amp_factory_charge_clock_and_three_taps_follow_primary_boundaries() {

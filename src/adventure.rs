@@ -227,7 +227,7 @@ impl AdventureSession {
     pub fn validate(&self) -> Result<(), String> {
         if !matches!(
             (self.progress.tank, self.progress.level),
-            (1, 1..=6) | (2, 1..=6) | (3, 1..=6) | (4, 1..=4)
+            (1, 1..=6) | (2, 1..=6) | (3, 1..=6) | (4, 1..=5)
         ) || self.progress.shell_balance > MAX_SHELL_BALANCE
         {
             return Err("unsupported Adventure progress".into());
@@ -432,6 +432,27 @@ impl AdventureSession {
                 PetKind::Amp,
                 PetKind::Gash,
             ],
+            (4, 5) => &[
+                PetKind::Stinky,
+                PetKind::Niko,
+                PetKind::Itchy,
+                PetKind::Prego,
+                PetKind::Zorf,
+                PetKind::Clyde,
+                PetKind::Vert,
+                PetKind::Rufus,
+                PetKind::Meryl,
+                PetKind::Wadsworth,
+                PetKind::Seymour,
+                PetKind::Shrapnel,
+                PetKind::Gumbo,
+                PetKind::Blip,
+                PetKind::Rhubarb,
+                PetKind::Nimbus,
+                PetKind::Amp,
+                PetKind::Gash,
+                PetKind::Angie,
+            ],
             _ => unreachable!("progress checked above"),
         };
         if self.progress.unlocked_pets != expected_pets {
@@ -453,7 +474,7 @@ impl AdventureSession {
         for result in &self.progress.later_stage_best_seconds {
             if !matches!(
                 (result.tank, result.level),
-                (1, 2..=5) | (2, 1..=5) | (3, 1..=5) | (4, 1..=3)
+                (1, 2..=5) | (2, 1..=5) | (3, 1..=5) | (4, 1..=4)
             ) || (self.progress.tank, self.progress.level) <= (result.tank, result.level)
                 || recorded_stages.contains(&(result.tank, result.level))
             {
@@ -536,6 +557,7 @@ impl AdventureSession {
                         | (4, 2, PetKind::Nimbus)
                         | (4, 3, PetKind::Amp)
                         | (4, 4, PetKind::Gash)
+                        | (4, 5, PetKind::Angie)
                 ) =>
             {
                 Ok(())
@@ -792,7 +814,7 @@ impl AdventureSession {
                             });
                             self.phase = AdventurePhase::PetSelection { selected };
                         }
-                        Action::Continue if (self.progress.tank, self.progress.level) != (4, 4) => {
+                        Action::Continue if (self.progress.tank, self.progress.level) != (4, 5) => {
                             self.progress.selected_pets = selected.clone();
                             if selected.len() < self.progress.selection_capacity() {
                                 events.push(Event::PetSelectionConfirmation {
@@ -826,7 +848,7 @@ impl AdventureSession {
                     });
                     match action {
                         Action::ConfirmPetSelection { accept: true }
-                            if (self.progress.tank, self.progress.level) != (4, 4) =>
+                            if (self.progress.tank, self.progress.level) != (4, 5) =>
                         {
                             events.push(Event::PetSelectionAccepted {
                                 tick: self.ticks,
@@ -1072,6 +1094,10 @@ impl AdventureSession {
                 AdventureState::new_tank4_third_stage(self.next_seed, &self.progress.selected_pets)
                     .expect("session selection is validated before starting a board")
             }
+            (4, 4) => {
+                AdventureState::new_tank4_fourth_stage(self.next_seed, &self.progress.selected_pets)
+                    .expect("session selection is validated before starting a board")
+            }
             _ => unreachable!("supported progress validated at load"),
         };
         self.next_seed = board.transition_seed();
@@ -1121,6 +1147,7 @@ impl AdventureSession {
             (4, 1) => PetKind::Nimbus,
             (4, 2) => PetKind::Amp,
             (4, 3) => PetKind::Gash,
+            (4, 4) => PetKind::Angie,
             _ => unreachable!("stage not yet completable"),
         };
         self.progress.level = board.level + 1;
@@ -1944,7 +1971,7 @@ mod tests {
     }
 
     #[test]
-    fn tank_four_third_three_paid_eggs_award_gash_once_and_lock_fourth() {
+    fn tank_four_third_three_paid_eggs_award_gash_once_and_enter_fourth() {
         // Controlled terminal fixture; native earning and Amp play remain separate.
         let mut session = tank_four_first_session();
         session.progress.level = 3;
@@ -2029,6 +2056,134 @@ mod tests {
             AdventurePhase::PetSelection { .. }
         ));
         restored.apply_actions(&[Action::TogglePet { pet: PetKind::Gash }]);
+        assert!(
+            restored
+                .apply_actions(&[Action::Continue])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::PetSelectionConfirmation { selected, .. }
+                        if selected == &vec![PetKind::Gash]
+                ))
+        );
+        assert!(
+            restored
+                .apply_actions(&[Action::ConfirmPetSelection { accept: true }])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::StageStarted {
+                        tank: 4,
+                        level: 4,
+                        ..
+                    }
+                ))
+        );
+        let board = restored.board.as_ref().unwrap();
+        assert_eq!(
+            (board.tank, board.level, board.balance, board.egg_price),
+            (4, 4, 200, 75000)
+        );
+        assert_eq!(board.pets, vec![PetKind::Gash]);
+        assert_eq!(
+            board.invasion.as_ref().unwrap().plan.expected(),
+            crate::invasion::EncounterKind::Bilaterus
+        );
+        restored.validate().unwrap();
+        let encoded = serde_json::to_vec(&restored).unwrap();
+        let reopened: AdventureSession = serde_json::from_slice(&encoded).unwrap();
+        reopened.validate().unwrap();
+        assert_eq!(reopened.phase, restored.phase);
+    }
+
+    #[test]
+    fn tank_four_fourth_three_paid_eggs_award_angie_once_and_lock_fifth() {
+        // Controlled terminal fixture; earned Gash gameplay remains separate.
+        let mut session = tank_four_first_session();
+        session.progress.level = 4;
+        session
+            .progress
+            .unlocked_pets
+            .extend([PetKind::Nimbus, PetKind::Amp, PetKind::Gash]);
+        session.progress.selected_pets = vec![PetKind::Gash];
+        session.board = Some(
+            AdventureState::new_tank4_fourth_stage(42, &session.progress.selected_pets).unwrap(),
+        );
+        let board = session.board.as_mut().unwrap();
+        board.balance = 225000;
+        board.breeder_unlocked = true;
+        board.upgrades.quality_unlocked = true;
+        board.upgrades.quantity_unlocked = true;
+        board.oscar_unlocked = true;
+        board.ultra_unlocked = true;
+        board.weapon_unlocked = true;
+        board.egg_unlocked = true;
+        session.validate().unwrap();
+        let mut events = Vec::new();
+        for pieces in 1..=3 {
+            let purchase = session.apply_actions(&[Action::BuyEgg]);
+            assert!(purchase.iter().any(|event| matches!(event,
+                Event::EggBought { pieces: count, balance, .. }
+                    if *count == pieces && *balance == 225000 - 75000 * i32::from(pieces))));
+            events.extend(purchase);
+        }
+        events.extend(session.apply_actions(&[Action::BuyEgg]));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, Event::EggBought { .. }))
+                .count(),
+            3
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::PetUnlocked {
+                        pet: PetKind::Angie,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::StageResultRecorded {
+                tank: 4,
+                level: 4,
+                final_balance: 0,
+                ..
+            }
+        )));
+        assert_eq!((session.progress.tank, session.progress.level), (4, 5));
+        assert_eq!(session.progress.unlocked_pets.len(), 19);
+        assert_eq!(session.progress.unlocked_pets.last(), Some(&PetKind::Angie));
+        assert_eq!(
+            session.phase,
+            AdventurePhase::Hatch {
+                pet: PetKind::Angie,
+                updates: 0
+            }
+        );
+        assert!(session.board.is_none());
+        session.validate().unwrap();
+        let encoded = serde_json::to_vec(&session).unwrap();
+        let mut restored: AdventureSession = serde_json::from_slice(&encoded).unwrap();
+        restored.validate().unwrap();
+        restored.phase = AdventurePhase::Hatch {
+            pet: PetKind::Angie,
+            updates: 171,
+        };
+        restored.apply_actions(&[Action::Continue]);
+        assert!(matches!(
+            restored.phase,
+            AdventurePhase::PetSelection { .. }
+        ));
+        restored.apply_actions(&[Action::TogglePet {
+            pet: PetKind::Angie,
+        }]);
         let before = serde_json::to_value(&restored).unwrap();
         assert!(
             restored

@@ -684,6 +684,14 @@ impl BilaterusState {
         head.health
     }
 
+    /// PB71: Gash calls the head-death route immediately, including emergence.
+    /// Itchy/Rufus retain their existing deferred update path.
+    pub fn gash_hit(&mut self) -> (f64, Option<BilaterusTransition>) {
+        let health = self.pet_damage(3.0);
+        let transition = (health <= 0.0).then(|| self.transition());
+        (health, transition)
+    }
+
     pub fn shoot(&mut self, x: i32, y: i32, weapon: u8) -> BilaterusShot {
         let head = self.active_mut();
         if head.hit_ticks > 0
