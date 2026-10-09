@@ -6,6 +6,7 @@ param(
     [string]$SourceSavePath,
     [string]$SourceSaveSha256,
     [string]$GameDirectory,
+    [ValidateRange(1, 8)][int]$TestSpeed = 1,
     [switch]$Mute,
     [switch]$ExerciseFoodClick
 )
@@ -14,7 +15,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Playtest-Helpers.ps1')
 
-$launchParameters = @{ ExecutablePath = $ExecutablePath; ExecutableSha256 = $ExecutableSha256; QuitAfterSeconds = 45; Mute = $Mute }
+$launchParameters = @{ ExecutablePath = $ExecutablePath; ExecutableSha256 = $ExecutableSha256; QuitAfterSeconds = 45; Mute = $Mute; TestSpeed = $TestSpeed }
 foreach ($parameterName in @('RunDirectory', 'SourceSavePath', 'SourceSaveSha256', 'GameDirectory')) {
     if ($PSBoundParameters.ContainsKey($parameterName)) { $launchParameters[$parameterName] = $PSBoundParameters[$parameterName] }
 }
@@ -33,7 +34,7 @@ try {
     }
     if ($ExerciseFoodClick) {
         $originalFoodCount = @($before.state.food).Count
-        Send-TurbofishClick -Playtest $playtest -X 320 -Y 250 -Reason 'normal-speed food input'
+        Send-TurbofishClick -Playtest $playtest -X 320 -Y 250 -Reason "ordinary food input at ${TestSpeed}x"
         $before = Wait-TurbofishState -Playtest $playtest -AfterSessionTick $before.session_tick -Description 'ordinary food drop from logical click' -Predicate {
             param($sample) @($sample.state.food).Count -gt $originalFoodCount
         }
@@ -72,6 +73,7 @@ try {
         result = 'passed'; scope = 'helper native pause/reload smoke; gameplay acceptance remains separate'
         process_id = $playtest.Process.Id; executable_sha256 = $identity.rust_executable_sha256
         food_click_exercised = [bool]$ExerciseFoodClick
+        test_speed = $TestSpeed; time_mode = $(if ($identity.Contains('time_mode')) { $identity.time_mode } else { 'unrecorded' })
         initial_reload = $reloadCheck; final_save_comparison = $saveCheck
         paused = $paused; held = $held; resumed = $resumed; paused_frame = $pausedFrame; resumed_frame = $resumedFrame
         format_version = $saved.format_version; game_unchanged = $final.game_unchanged; cleanup = $cleanup

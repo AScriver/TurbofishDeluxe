@@ -63,6 +63,17 @@ function New-TestPlaytest {
 try {
     New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
 
+    Test-Case 'accelerated launch requires mute before process or directory allocation' {
+        $unusedRunPath = Join-Path $testRoot 'must-not-launch'
+        Require-Throws { Start-TurbofishPlaytest -ExecutablePath 'missing.exe' -ExecutableSha256 ('A' * 64) -RunDirectory $unusedRunPath -TestSpeed 4 } 'Accelerated playtests require -Mute'
+        Require-True (-not (Test-Path -LiteralPath $unusedRunPath)) 'Rejected acceleration allocated a run directory.'
+    }
+    Test-Case 'test speed rejects unsupported factors before launch' {
+        foreach ($invalidSpeed in @(0, 9)) {
+            Require-Throws { Start-TurbofishPlaytest -ExecutablePath 'missing.exe' -ExecutableSha256 ('A' * 64) -TestSpeed $invalidSpeed -Mute } 'TestSpeed'
+        }
+    }
+
     Test-Case 'fresh state schema accepts required keys' {
         Assert-TurbofishSnapshot -Snapshot (New-TestSnapshot)
     }

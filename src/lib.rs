@@ -23,4 +23,5 @@ pub mod rhubarb;
 pub mod rufus;
 pub mod sim;
 pub mod starcatcher;
+pub mod timing;
 pub mod ultra;

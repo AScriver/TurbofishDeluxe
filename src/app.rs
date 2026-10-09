@@ -12,6 +12,7 @@ use crate::{
     music::{MusicOwner, MusicReport},
     oscar::OscarPose,
     sim::{Action, AdventureState, CoinKind, Event, FishPose, FishSize, PetKind, TICK_MS},
+    timing::{InputPress, StepClock, wall_deadline_reached},
     ultra::UltraPose,
 };
 use macroquad::miniquad::{BlendFactor, BlendState, BlendValue, Equation};
@@ -3105,12 +3106,35 @@ fn pcm_wav(sample_rate: u32, samples: &[i16]) -> Vec<u8> {
     bytes
 }
 
+#[derive(Clone, Copy)]
+struct EventStamp {
+    session_tick: u64,
+    wall_elapsed_seconds: f64,
+    observation_context: &'static str,
+}
+
+fn stamp_events(
+    stamps: &mut Vec<EventStamp>,
+    events: &[Event],
+    session_tick: u64,
+    wall_elapsed_seconds: f64,
+    observation_context: &'static str,
+) {
+    stamps.extend(events.iter().map(|_| EventStamp {
+        session_tick,
+        wall_elapsed_seconds,
+        observation_context,
+    }));
+}
+
 struct Evidence {
     root: PathBuf,
     events: BufWriter<File>,
     last_state_tick: u64,
     snapshot_deferred: bool,
     last_paused: bool,
+    test_speed: u8,
+    start_session_tick: u64,
 }
 
 impl Evidence {
@@ -3119,11 +3143,17 @@ impl Evidence {
         identity: &InstallIdentity,
         session: &AdventureSession,
         seed: u64,
+        test_speed: u8,
     ) -> Result<Self, Box<dyn Error>> {
         fs::create_dir_all(root)?;
+        let time_mode = if test_speed == 1 {
+            "normal"
+        } else {
+            "accelerated-test"
+        };
         cli::write_json(
             &root.join("identity.local.json"),
-            &serde_json::json!({"game": identity, "rust_executable_sha256": install::sha256(&fs::read(std::env::current_exe()?)?), "seed": seed, "tick_ms": TICK_MS, "retail_rng_equivalent": false, "start": session}),
+            &serde_json::json!({"game": identity, "rust_executable_sha256": install::sha256(&fs::read(std::env::current_exe()?)?), "seed": seed, "tick_ms": TICK_MS, "test_speed": test_speed, "time_mode": time_mode, "session_elapsed_seconds": 0.0, "session_elapsed_policy": "run-start session tick delta * 28 ms, including paused session updates", "wall_elapsed_policy": "wall time observed after each accelerated step or accepted-actions boundary; state and music observed after the physical frame", "hold_input_clock": if test_speed == 1 { "wall time at each consumed step" } else { "28 ms per consumed unpaused step; press origin is the last consumed step" }, "connector_observation_policy": "once per actual rendered frame after the update batch, including pause; accelerated traces may differ", "retail_rng_equivalent": false, "start": session}),
         )?;
         Ok(Self {
             root: root.into(),
@@ -3131,35 +3161,53 @@ impl Evidence {
             last_state_tick: u64::MAX,
             snapshot_deferred: false,
             last_paused: false,
+            test_speed,
+            start_session_tick: session.ticks,
         })
+    }
+    fn time_mode(&self) -> &'static str {
+        if self.test_speed == 1 {
+            "normal"
+        } else {
+            "accelerated-test"
+        }
+    }
+    fn session_elapsed_seconds(&self, session: &AdventureSession) -> f64 {
+        session.ticks.saturating_sub(self.start_session_tick) as f64 * f64::from(TICK_MS) / 1000.0
     }
     fn record(
         &mut self,
         events: &[Event],
+        event_stamps: &[EventStamp],
         session: &AdventureSession,
         elapsed: f64,
         paused: bool,
     ) -> Result<(), Box<dyn Error>> {
-        for event in events {
-            serde_json::to_writer(
-                &mut self.events,
-                &serde_json::json!({"elapsed_seconds": elapsed,"session_tick":session.ticks,"event":event}),
-            )?;
-            writeln!(&mut self.events)?;
-        }
+        let session_elapsed_seconds = self.session_elapsed_seconds(session);
+        let time_mode = self.time_mode();
+        let test_speed = self.test_speed;
+        Self::write_event_rows(
+            &mut self.events,
+            events,
+            event_stamps,
+            session.ticks,
+            self.start_session_tick,
+            elapsed,
+            test_speed,
+        )?;
         self.events.flush()?;
         if self.last_state_tick != session.ticks || self.last_paused != paused || !events.is_empty()
         {
             let publication = cli::write_json(
                 &self.root.join("state.local.json"),
-                &serde_json::json!({"elapsed_seconds":elapsed, "paused":paused, "session_tick":session.ticks, "phase":session.phase, "progress":session.progress, "state":session.board}),
+                &serde_json::json!({"elapsed_seconds":elapsed, "session_elapsed_seconds":session_elapsed_seconds, "test_speed":test_speed, "time_mode":time_mode, "paused":paused, "session_tick":session.ticks, "phase":session.phase, "progress":session.progress, "state":session.board}),
             );
             match publication {
                 Ok(()) => {
                     if self.snapshot_deferred {
                         serde_json::to_writer(
                             &mut self.events,
-                            &serde_json::json!({"diagnostic":"snapshot_publication_recovered","tick":session.ticks,"elapsed_seconds":elapsed}),
+                            &serde_json::json!({"diagnostic":"snapshot_publication_recovered","tick":session.ticks,"elapsed_seconds":elapsed,"session_elapsed_seconds":session_elapsed_seconds,"test_speed":test_speed,"time_mode":time_mode}),
                         )?;
                         writeln!(&mut self.events)?;
                         self.events.flush()?;
@@ -3181,7 +3229,7 @@ impl Evidence {
                     if !self.snapshot_deferred {
                         serde_json::to_writer(
                             &mut self.events,
-                            &serde_json::json!({"diagnostic":"snapshot_publication_deferred","tick":session.ticks,"elapsed_seconds":elapsed,"error":error.to_string()}),
+                            &serde_json::json!({"diagnostic":"snapshot_publication_deferred","tick":session.ticks,"elapsed_seconds":elapsed,"session_elapsed_seconds":session_elapsed_seconds,"test_speed":test_speed,"time_mode":time_mode,"error":error.to_string()}),
                         )?;
                         writeln!(&mut self.events)?;
                         self.events.flush()?;
@@ -3190,6 +3238,44 @@ impl Evidence {
                 }
                 Err(error) => return Err(error),
             }
+        }
+        Ok(())
+    }
+    fn write_event_rows(
+        writer: &mut impl Write,
+        events: &[Event],
+        event_stamps: &[EventStamp],
+        frame_session_tick: u64,
+        start_session_tick: u64,
+        frame_wall_elapsed: f64,
+        test_speed: u8,
+    ) -> Result<(), Box<dyn Error>> {
+        if test_speed > 1 && events.len() != event_stamps.len() {
+            return Err("Accelerated event timing lost its event-to-step mapping".into());
+        }
+        for (index, event) in events.iter().enumerate() {
+            let stamp = if test_speed > 1 {
+                event_stamps[index]
+            } else {
+                EventStamp {
+                    session_tick: frame_session_tick,
+                    wall_elapsed_seconds: frame_wall_elapsed,
+                    observation_context: "physical_frame",
+                }
+            };
+            let session_elapsed_seconds =
+                stamp.session_tick.saturating_sub(start_session_tick) as f64 * f64::from(TICK_MS)
+                    / 1000.0;
+            let time_mode = if test_speed == 1 {
+                "normal"
+            } else {
+                "accelerated-test"
+            };
+            serde_json::to_writer(
+                &mut *writer,
+                &serde_json::json!({"elapsed_seconds":stamp.wall_elapsed_seconds,"session_elapsed_seconds":session_elapsed_seconds,"test_speed":test_speed,"time_mode":time_mode,"session_tick":stamp.session_tick,"observation_context":stamp.observation_context,"event":event}),
+            )?;
+            writeln!(writer)?;
         }
         Ok(())
     }
@@ -3202,17 +3288,90 @@ impl Evidence {
         &mut self,
         reports: &[MusicReport],
         elapsed: f64,
-        tick: u64,
+        session: &AdventureSession,
     ) -> Result<(), Box<dyn Error>> {
+        let session_elapsed_seconds = self.session_elapsed_seconds(session);
+        let time_mode = self.time_mode();
+        let test_speed = self.test_speed;
         for report in reports {
             serde_json::to_writer(
                 &mut self.events,
-                &serde_json::json!({"elapsed_seconds": elapsed, "session_tick": tick, "music": report}),
+                &serde_json::json!({"elapsed_seconds": elapsed, "session_elapsed_seconds":session_elapsed_seconds,"test_speed":test_speed,"time_mode":time_mode,"session_tick":session.ticks,"observation_context":"physical_frame", "music": report}),
             )?;
             writeln!(&mut self.events)?;
         }
         self.events.flush()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod accelerated_event_timing_tests {
+    use super::*;
+
+    #[test]
+    fn early_batch_and_no_step_exit_events_keep_their_own_session_time() {
+        let mut session = AdventureSession::new(17);
+        let mut events = Vec::new();
+        let mut stamps = Vec::new();
+        for step in 1..=5 {
+            let step_events = if step == 1 {
+                session.step(&[Action::BuyEgg])
+            } else {
+                session.step(&[])
+            };
+            stamp_events(&mut stamps, &step_events, session.ticks, 1.0, "step");
+            events.extend(step_events);
+        }
+        let accepted_on_exit = session.apply_actions(&[Action::BuyEgg]);
+        stamp_events(
+            &mut stamps,
+            &accepted_on_exit,
+            session.ticks,
+            1.1,
+            "accepted_actions",
+        );
+        events.extend(accepted_on_exit);
+        assert!(events.len() > 2);
+
+        let mut written = Vec::new();
+        Evidence::write_event_rows(&mut written, &events, &stamps, session.ticks, 0, 2.0, 8)
+            .unwrap();
+        let rows: Vec<serde_json::Value> = std::str::from_utf8(&written)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(rows.len(), events.len());
+        assert_eq!(rows[0]["session_tick"], 1);
+        assert_eq!(rows[0]["session_elapsed_seconds"], 0.028);
+        assert_eq!(rows[0]["elapsed_seconds"], 1.0);
+        assert_eq!(rows[0]["observation_context"], "step");
+        assert_eq!(rows.last().unwrap()["session_tick"], 5);
+        assert_eq!(rows.last().unwrap()["session_elapsed_seconds"], 0.14);
+        assert_eq!(rows.last().unwrap()["elapsed_seconds"], 1.1);
+        assert_eq!(
+            rows.last().unwrap()["observation_context"],
+            "accepted_actions"
+        );
+
+        let mut normal_written = Vec::new();
+        Evidence::write_event_rows(&mut normal_written, &events, &[], session.ticks, 0, 2.0, 1)
+            .unwrap();
+        let normal_first: serde_json::Value = serde_json::from_str(
+            std::str::from_utf8(&normal_written)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(normal_first["session_tick"], 5);
+        assert_eq!(normal_first["elapsed_seconds"], 2.0);
+        assert!(
+            Evidence::write_event_rows(&mut Vec::new(), &events, &[], session.ticks, 0, 2.0, 8)
+                .is_err()
+        );
     }
 }
 
@@ -3235,17 +3394,18 @@ pub async fn run(
     let mut evidence = options
         .evidence_dir
         .as_ref()
-        .map(|root| Evidence::open(root, &identity, &session, options.seed))
+        .map(|root| Evidence::open(root, &identity, &session, options.seed, options.test_speed))
         .transpose()?;
     let started = get_time();
-    let mut accumulator = 0.0_f64;
+    let start_session_tick = session.ticks;
+    let mut clock = StepClock::new(options.test_speed);
     let mut pending_actions = Vec::new();
     let mut paused = false;
     let mut hatch_pointer_owned = false;
     let mut hatch_background_down = false;
-    let mut feed_press_at = None::<(f64, Option<(i32, i32)>)>;
-    let mut held_feed_at = None::<f64>;
-    let mut held_fire_at = None::<f64>;
+    let mut feed_press_at = None::<(InputPress, Option<(i32, i32)>)>;
+    let mut held_feed_at = None::<InputPress>;
+    let mut held_fire_at = None::<InputPress>;
     let mut healing_warning_until_tick = None::<u64>;
     prevent_quit();
     loop {
@@ -3259,7 +3419,7 @@ pub async fn run(
         let pointer = (vec2(mouse_x, mouse_y) - offset) / scale;
         if is_key_pressed(KeyCode::Escape) {
             paused = !paused;
-            accumulator = 0.0;
+            clock.clear_backlog();
             feed_press_at = None;
             held_feed_at = None;
             held_fire_at = None;
@@ -3289,7 +3449,7 @@ pub async fn run(
                     pending_actions.push(Action::OpenMenu);
                 } else {
                     paused = !paused;
-                    accumulator = 0.0;
+                    clock.clear_backlog();
                 }
                 feed_press_at = None;
                 held_feed_at = None;
@@ -3492,7 +3652,7 @@ pub async fn run(
                     });
                     let gus_click =
                         gus_initial_attempt.then_some((pointer.x as i32, pointer.y as i32));
-                    feed_press_at = Some((get_time(), gus_click));
+                    feed_press_at = Some((clock.press(get_time()), gus_click));
                 }
                 if matches!(action, Action::Click { .. })
                     && pointer.y > 40.0
@@ -3505,7 +3665,7 @@ pub async fn run(
                                 || !board.missiles.is_empty())
                     })
                 {
-                    held_fire_at = Some(get_time());
+                    held_fire_at = Some(clock.press(get_time()));
                 }
                 pending_actions.push(action);
             }
@@ -3551,10 +3711,11 @@ pub async fn run(
             }
         }
         let save_requested = is_key_pressed(KeyCode::S);
-        let exit_requested = is_quit_requested()
+        let mut exit_requested = is_quit_requested()
             || (paused && is_key_pressed(KeyCode::Q))
-            || options.quit_after.is_some_and(|limit| elapsed >= limit);
+            || wall_deadline_reached(elapsed, options.quit_after);
         let mut events = Vec::new();
+        let mut event_stamps = Vec::new();
         let mut phase_transitioned = false;
         if let Some(owner) = music.as_mut() {
             owner.sync(&session, paused);
@@ -3562,7 +3723,17 @@ pub async fn run(
         if save_requested || exit_requested {
             // Inputs already accepted by this window belong to the checkpoint.
             // Apply them without inventing an extra simulation tick on save/exit.
-            events.extend(session.apply_actions(&pending_actions));
+            let accepted_events = session.apply_actions(&pending_actions);
+            if options.test_speed > 1 {
+                stamp_events(
+                    &mut event_stamps,
+                    &accepted_events,
+                    session.ticks,
+                    get_time() - started,
+                    "accepted_actions",
+                );
+            }
+            events.extend(accepted_events);
             pending_actions.clear();
             if feed_press_at.is_some_and(|(_, gus_click)| arms_held_feed(&events, gus_click))
                 && is_mouse_button_down(MouseButton::Left)
@@ -3571,8 +3742,26 @@ pub async fn run(
             }
         }
         if !exit_requested {
-            accumulator += f64::from(get_frame_time()).min(0.2);
-            while accumulator >= f64::from(TICK_MS) / 1000.0 {
+            clock.add_frame(get_frame_time(), paused);
+            while clock.step_due() {
+                if options.test_speed > 1
+                    && wall_deadline_reached(get_time() - started, options.quit_after)
+                {
+                    exit_requested = true;
+                    // This frame's accepted input is checkpointed without a
+                    // fabricated simulation step, as for a normal exit.
+                    let accepted_events = session.apply_actions(&pending_actions);
+                    stamp_events(
+                        &mut event_stamps,
+                        &accepted_events,
+                        session.ticks,
+                        get_time() - started,
+                        "accepted_actions",
+                    );
+                    events.extend(accepted_events);
+                    pending_actions.clear();
+                    break;
+                }
                 if paused {
                     session.paused_step();
                 } else {
@@ -3596,7 +3785,7 @@ pub async fn run(
                         step_actions.push(Action::HoldFeed {
                             x: pointer.x,
                             y: pointer.y,
-                            elapsed_ms: ((get_time() - press_at) * 1000.0).max(0.0) as u32,
+                            elapsed_ms: clock.held_elapsed_ms(press_at, get_time()),
                         });
                     }
                     if let Some(press_at) = held_fire_at
@@ -3606,7 +3795,7 @@ pub async fn run(
                         step_actions.push(Action::HoldFire {
                             x: pointer.x,
                             y: pointer.y,
-                            elapsed_ms: ((get_time() - press_at) * 1000.0).max(0.0) as u32,
+                            elapsed_ms: clock.held_elapsed_ms(press_at, get_time()),
                         });
                     }
                     let previous_phase = std::mem::discriminant(&session.phase);
@@ -3639,15 +3828,24 @@ pub async fn run(
                         held_feed_at = None;
                         held_fire_at = None;
                     }
+                    if options.test_speed > 1 {
+                        stamp_events(
+                            &mut event_stamps,
+                            &step_events,
+                            session.ticks,
+                            get_time() - started,
+                            "step",
+                        );
+                    }
                     events.extend(step_events);
                 }
-                accumulator -= f64::from(TICK_MS) / 1000.0;
+                clock.consume_step(paused);
                 if phase_transitioned
                     || events
                         .iter()
                         .any(|event| matches!(event, Event::HatchStarted { .. }))
                 {
-                    accumulator = 0.0;
+                    clock.clear_backlog();
                     break;
                 }
             }
@@ -3719,8 +3917,13 @@ pub async fn run(
             }
         }
         if let Some(evidence) = evidence.as_mut() {
-            evidence.record(&events, &session, elapsed, paused)?;
-            evidence.record_music(&music_reports, elapsed, session.ticks)?;
+            let evidence_elapsed = if options.test_speed > 1 && exit_requested {
+                get_time() - started
+            } else {
+                elapsed
+            };
+            evidence.record(&events, &event_stamps, &session, evidence_elapsed, paused)?;
+            evidence.record_music(&music_reports, evidence_elapsed, &session)?;
         }
         if exit_requested {
             break;
@@ -3738,6 +3941,16 @@ pub async fn run(
         ));
         set_camera(&camera);
         presentation.draw(&session, paused, pointer, healing_warning_until_tick);
+        if options.test_speed > 1 {
+            draw_rectangle(8.0, 449.0, 132.0, 22.0, Color::new(0.0, 0.0, 0.0, 0.8));
+            draw_text(
+                format!("Test speed {}x", options.test_speed),
+                12.0,
+                465.0,
+                18.0,
+                YELLOW,
+            );
+        }
         if music_unavailable.is_some() {
             draw_text("Music unavailable", 425.0, 470.0, 18.0, YELLOW);
         }
@@ -3759,10 +3972,10 @@ pub async fn run(
         return Err("Owned installation changed during run; inspect before continuing".into());
     }
     if let Some(evidence) = evidence.as_mut() {
-        evidence.record(&[], &session, get_time() - started, paused)?;
+        evidence.record(&[], &[], &session, get_time() - started, paused)?;
         cli::write_json(
             &evidence.root.join("final.local.json"),
-            &serde_json::json!({"session":session,"game_after":after,"elapsed_seconds":get_time()-started,"game_unchanged":true}),
+            &serde_json::json!({"session":session,"game_after":after,"elapsed_seconds":get_time()-started,"session_elapsed_seconds":session.ticks.saturating_sub(start_session_tick) as f64 * f64::from(TICK_MS) / 1000.0,"test_speed":options.test_speed,"time_mode":options.time_mode(),"game_unchanged":true}),
         )?;
     }
     Ok(())

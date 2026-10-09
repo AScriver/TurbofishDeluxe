@@ -96,6 +96,18 @@ $validatorPath = Join-Path $env:USERPROFILE '.codex\tools\Invoke-CodexPowerShell
 & $validatorPath -Path .\scripts\Test-Runtime.ps1 -Execute -ArgumentList @('-Check', 'Format')
 ```
 
+### Accelerated gameplay tests
+
+Use `--test-speed <1..8>` for explicitly accelerated exploratory/stress runs. Default gameplay remains 1x. Above 1x requires a dedicated `--save-dir`, a separate `--evidence-dir`, `--mute` and a positive wall-clock `--quit-after` limit. The save format and game rules are unchanged. For example, from an already prepared build:
+
+```powershell
+.\target\debug\turbofish-deluxe.exe --new-game --seed 42 --test-speed 4 --save-dir .scratch/speed-example/save --evidence-dir .scratch/speed-example/evidence --mute --quit-after 30
+```
+
+Prefer `Start-TurbofishPlaytest -TestSpeed 4 -Mute` or `Test-Playtest.ps1 -TestSpeed 4 -Mute` for fresh isolated runs with owned-window input and cleanup; [the helper guide](docs/playtest-helpers.md) owns usage. The visible banner and telemetry identify the factor. `elapsed_seconds` remains wall time; `session_elapsed_seconds` is the run's fixed-step session time, including paused session updates. Global pause continues at 1x.
+
+The 28ms updates remain intact, but more updates between physical rendered frames can change Bilaterus connector observations and later motion. Accelerated tests do not establish identical 1x traces, normal-speed playability, audio or retail fidelity. Keep the [normal-speed acceptance gate](docs/DESIGN.md#m1-execution-acceptance), and record the actual factor/inputs/observation limits in each report.
+
 ## Evidence bookkeeping
 
 Successful launcher builds now create immutable build identities automatically. [Evidence tooling](docs/evidence-tooling.md) documents explicit output paths, single-run manifests, artifact/source readback, private scenario inputs and generated playtest drafts. Raw receipts stay ignored; generated behavioral verdicts remain **not tested** until reviewed. Readback checks a run's referenced build as well as its own artifacts, and `-CheckSources` identifies exactly which inputs changed.

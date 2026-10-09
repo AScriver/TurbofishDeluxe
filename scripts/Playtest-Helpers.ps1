@@ -82,9 +82,11 @@ function Start-TurbofishPlaytest {
         [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$SourceSaveSha256,
         [uint64]$Seed = 42,
         [ValidateRange(5, 3600)][int]$QuitAfterSeconds = 30,
+        [ValidateRange(1, 8)][int]$TestSpeed = 1,
         [string]$GameDirectory,
         [switch]$Mute
     )
+    if ($TestSpeed -gt 1 -and -not $Mute) { throw 'Accelerated playtests require -Mute; audio fidelity is not exercised.' }
     Initialize-TurbofishPlaytestNative
     $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
     $executable = (Resolve-Path -LiteralPath $ExecutablePath -ErrorAction Stop).ProviderPath
@@ -120,6 +122,7 @@ function Start-TurbofishPlaytest {
     if (-not $SourceSavePath) { $nativeArguments += '--new-game' }
     if ($GameDirectory) { $nativeArguments += @('--game-dir', (Resolve-Path -LiteralPath $GameDirectory -ErrorAction Stop).ProviderPath) }
     if ($Mute) { $nativeArguments += '--mute' }
+    if ($TestSpeed -gt 1) { $nativeArguments += @('--test-speed', $TestSpeed.ToString()) }
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new($executable)
     $startInfo.UseShellExecute = $false
     $startInfo.WorkingDirectory = $repositoryRoot
@@ -131,12 +134,14 @@ function Start-TurbofishPlaytest {
         Process = $ownedProcess; RunDirectory = $runRoot; EvidenceDirectory = $evidenceRoot
         SavePath = (Join-Path $saveRoot 'adventure.json'); StatePath = (Join-Path $evidenceRoot 'state.local.json')
         InputLogPath = (Join-Path $runRoot 'inputs.local.jsonl'); Cleanup = $null
+        TestSpeed = $TestSpeed
     }
     try {
         if (-not $ownedProcess.Start()) { throw 'Project process did not start.' }
         $processStarted = $true
         [ordered]@{ process_id = $ownedProcess.Id; executable = $executable; executable_sha256 = $ExecutableSha256
             arguments = $nativeArguments; source_save = $SourceSavePath; source_save_sha256 = $SourceSaveSha256
+            test_speed = $TestSpeed; time_mode = $(if ($TestSpeed -eq 1) { 'normal' } else { 'accelerated-test' })
             helper_sha256 = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash; started_utc = [DateTime]::UtcNow.ToString('o')
         } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $runRoot 'launch.local.json') -Encoding utf8NoBOM
         $windowWait = [System.Diagnostics.Stopwatch]::StartNew()

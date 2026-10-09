@@ -2,6 +2,14 @@
 
 Product scope: [requirements](requirements.md). Current evidence and environment: [STATUS](../STATUS.md). Implementation is authorized through the full runtime scope. Recovered rules are authoritative in [behavior contract](behavior-contract.md).
 
+## Explicit accelerated test runs
+
+The user requested faster gameplay tests on 2026-10-09. Add an opt-in integer `--test-speed` factor from 1 through 8; default gameplay remains exactly 1. This is an engineering bound, not a recovered original-game setting. Acceleration requires explicit isolated project saves, evidence output and muted audio. Run identity, telemetry, manifests, report drafts and captures must identify the factor and distinguish wall elapsed time from fixed-step session time. Speed is transient process configuration, never a saved gameplay field.
+
+Retain the 28ms simulation update and ordinary game rules, RNG, transaction order and transition barriers. Apply the existing 200ms wall-frame clamp before the factor. Keep global pause at 1x and reset backlog/held input as before. Accelerated held-input age advances with each consumed fixed step; the default path retains its wall-clock behavior. Quit deadlines remain wall-based and are checked within accelerated batches.
+
+Bilaterus connector observation remains once per actual rendered frame. More updates per frame can therefore change its durable observation history and later movement. Accelerated runs are exploratory/stress evidence, not claims of identical traces or normal-speed/audio/retail acceptance. Trace comparisons require matching input and connector-observation schedules. Keep the active A32 frozen bundle and normal-speed acceptance lineage intact; adopt a newly identified build only at an explicit run boundary.
+
 ## Chosen route
 
 Use route 5, engine recreation: one standalone Rust program reads the player's own game data and owns simulation, presentation, input, and project persistence. The route comes from the guides recorded in [provenance](provenance.md#primary-reference). There is no host/guest bridge or loader requirement.

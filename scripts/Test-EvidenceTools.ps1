@@ -179,6 +179,46 @@ $quietManifestPath = Join-Path $fixtureRoot 'quiet-run.local.json'
 $quietManifest = Read-EvidenceJson -Path $quietManifestPath
 Assert-EvidenceTest ($quietManifest['runtime']['event_rows'] -eq 0 -and @($quietManifest['bookkeeping']['issues']).Count -eq 0) 'Quiet empty-event run is explicit and does not invent events'
 Assert-EvidenceTest ($quietManifest['review']['behavior'] -eq 'not tested') 'Quiet complete records still require behavior review'
+Assert-EvidenceTest ($quietManifest['runtime']['time_mode'] -eq 'unrecorded' -and $null -eq $quietManifest['runtime']['test_speed']) 'Historical telemetry never invents a normal-speed claim'
+
+$speedIdentity = $quietIdentity | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable -Depth 20
+$speedFinal = $quietFinal | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable -Depth 20
+$speedIdentity['test_speed'] = 4; $speedIdentity['time_mode'] = 'accelerated-test'; $speedIdentity['session_elapsed_seconds'] = 0.0
+$speedFinal['test_speed'] = 4; $speedFinal['time_mode'] = 'accelerated-test'; $speedFinal['session_elapsed_seconds'] = 0.112
+Write-EvidenceFixture -RelativePath 'speed-run/identity.local.json' -Content ($speedIdentity | ConvertTo-Json -Depth 20) | Out-Null
+Write-EvidenceFixture -RelativePath 'speed-run/final.local.json' -Content ($speedFinal | ConvertTo-Json -Depth 20) | Out-Null
+$speedEvent = '{"elapsed_seconds":0.028,"session_tick":4,"session_elapsed_seconds":0.112,"test_speed":4,"time_mode":"accelerated-test","event":{"Fixture":true}}'
+Write-EvidenceFixture -RelativePath 'speed-run/events.local.jsonl' -Content $speedEvent | Out-Null
+$speedRunDirectory = Join-Path $fixtureRoot 'speed-run'
+$speedManifestPath = Join-Path $fixtureRoot 'speed-run.local.json'
+& (Join-Path $PSScriptRoot 'New-RunManifest.ps1') -RunDirectory $speedRunDirectory -BuildIdentityPath $buildPath -OutputPath $speedManifestPath | Out-Null
+$speedManifest = Read-EvidenceJson -Path $speedManifestPath
+Assert-EvidenceTest ($speedManifest['runtime']['test_speed'] -eq 4 -and $speedManifest['runtime']['time_mode'] -eq 'accelerated-test' -and @($speedManifest['bookkeeping']['issues']).Count -eq 0) 'Accelerated timing is explicitly retained'
+$speedReportPath = Join-Path $fixtureRoot 'speed-draft.md'
+& (Join-Path $PSScriptRoot 'New-PlaytestReport.ps1') -RunManifestPath $speedManifestPath -OutputPath $speedReportPath | Out-Null
+$speedReportText = Get-Content -LiteralPath $speedReportPath -Raw
+Assert-EvidenceTest ($speedReportText.Contains('Test speed: 4x') -and $speedReportText.Contains('normal-speed acceptance remains separate') -and $speedReportText.Contains('Result: not tested')) 'Accelerated draft cannot silently promote normal-speed acceptance'
+$speedFinal['test_speed'] = 1; $speedFinal['time_mode'] = 'normal'
+Write-EvidenceFixture -RelativePath 'speed-run/final.local.json' -Content ($speedFinal | ConvertTo-Json -Depth 20) | Out-Null
+$speedMismatchPath = Join-Path $fixtureRoot 'speed-mismatch.local.json'
+& (Join-Path $PSScriptRoot 'New-RunManifest.ps1') -RunDirectory $speedRunDirectory -BuildIdentityPath $buildPath -OutputPath $speedMismatchPath | Out-Null
+$speedMismatch = Read-EvidenceJson -Path $speedMismatchPath
+Assert-EvidenceTest (@($speedMismatch['bookkeeping']['issues'] | Where-Object { $_ -like '*timing differs from identity*' }).Count -eq 1) 'Mixed normal/accelerated final timing is retained as an issue'
+$speedFinal['test_speed'] = 4; $speedFinal['time_mode'] = 'accelerated-test'
+Write-EvidenceFixture -RelativePath 'speed-run/final.local.json' -Content ($speedFinal | ConvertTo-Json -Depth 20) | Out-Null
+Write-EvidenceFixture -RelativePath 'speed-run/events.local.jsonl' -Content ($speedEvent.Replace('"test_speed":4', '"test_speed":"4"')) | Out-Null
+$invalidSpeedPath = Join-Path $fixtureRoot 'invalid-speed.local.json'
+& (Join-Path $PSScriptRoot 'New-RunManifest.ps1') -RunDirectory $speedRunDirectory -BuildIdentityPath $buildPath -OutputPath $invalidSpeedPath | Out-Null
+$invalidSpeed = Read-EvidenceJson -Path $invalidSpeedPath
+Assert-EvidenceTest (@($invalidSpeed['bookkeeping']['issues'] | Where-Object { $_ -like '*Invalid test speed in event*' }).Count -eq 1) 'String-valued speed cannot validate as an integer'
+Write-EvidenceFixture -RelativePath 'speed-run/events.local.jsonl' -Content $speedEvent | Out-Null
+$speedFinal.Remove('time_mode'); $speedFinal.Remove('test_speed'); $speedFinal.Remove('session_elapsed_seconds')
+Write-EvidenceFixture -RelativePath 'speed-run/final.local.json' -Content ($speedFinal | ConvertTo-Json -Depth 20) | Out-Null
+$missingSpeedPath = Join-Path $fixtureRoot 'missing-speed.local.json'
+& (Join-Path $PSScriptRoot 'New-RunManifest.ps1') -RunDirectory $speedRunDirectory -BuildIdentityPath $buildPath -OutputPath $missingSpeedPath | Out-Null
+$missingSpeed = Read-EvidenceJson -Path $missingSpeedPath
+Assert-EvidenceTest (@($missingSpeed['bookkeeping']['issues']).Count -gt 0) 'Identified accelerated runs require timing labels in final telemetry'
+
 $testReceiptPath = Join-Path $fixtureRoot 'tests.local.json'
 $testReceipt = [ordered]@{ result = 'passed'; contracts = $script:EvidenceTestCount; captured_utc = [DateTimeOffset]::UtcNow.ToString('o'); fixture_directory = Get-EvidenceRelativePath -Path $fixtureRoot; scope = 'synthetic bookkeeping only; no gameplay or native execution' }
 Write-EvidenceJson -Path $testReceiptPath -Record $testReceipt | Out-Null

@@ -21,6 +21,10 @@ $parameters = @{
 
 The default run directory is a fresh `.scratch/playtests/helpers-<UUID>/`, containing separate `save/`, `evidence/`, launch/input/cleanup and result or failure receipts. `-RunDirectory` accepts a new directory inside this repository's `.scratch/`; existing directories and reparse-point parents are rejected. `-SourceSavePath` and `-SourceSaveSha256` must be supplied together. The source is byte-copied and verified, without schema conversion or gameplay edits. `-GameDirectory` overrides normal owned-install discovery. Argument arrays preserve spaces in all paths.
 
+For an explicitly accelerated exploratory/stress run, add `TestSpeed = 4` and `Mute = $true` to the parameters. `-TestSpeed` accepts integers 1–8 and defaults to 1; above 1 requires `-Mute` before any process or run-directory allocation. The helper supplies dedicated save/evidence directories and a wall safety deadline. Use a newly identified executable that supports the flag. The default 1x path also remains compatible with older frozen executables. Native snapshots and launch receipts identify the factor; the maintained smoke still does not earn or accept a gameplay milestone.
+
+Acceleration consumes ordinary 28 ms updates faster; it never supplies debug currency, health, skipped encounters or victories. Global pause uses 1x scheduling. Held inputs above 1x use consumed-step age; physical input sampling and Bilaterus connector observation remain at rendered-frame cadence. This can change accelerated traces. Tune a scenario's input/polling schedule to the requested speed and assess real losses honestly. Native rate, pause, input and reload checks remain separate from normal-speed/audio/retail acceptance. [Native verification](playtests/2026-10-09-accelerated-tests-01.md) records the measured rates, pause, deadline, path-guard and reopen checks.
+
 Validate the helper, scenario and regression script before execution:
 
 ```powershell

@@ -16,29 +16,43 @@ pub struct Options {
     pub inspect_assets: bool,
     pub quit_after: Option<f64>,
     pub muted: bool,
+    pub test_speed: u8,
 }
 
 impl Options {
+    pub fn time_mode(&self) -> &'static str {
+        if self.test_speed == 1 {
+            "normal"
+        } else {
+            "accelerated-test"
+        }
+    }
+
     pub fn parse() -> Result<Option<Self>, Box<dyn Error>> {
+        Self::parse_from(env::args().skip(1))
+    }
+
+    fn parse_from(
+        arguments: impl IntoIterator<Item = String>,
+    ) -> Result<Option<Self>, Box<dyn Error>> {
         let mut options = Self {
             game_dir: None,
-            save_dir: env::var_os("LOCALAPPDATA")
-                .map(PathBuf::from)
-                .unwrap_or_else(env::temp_dir)
-                .join("TurbofishDeluxe"),
+            save_dir: default_save_dir(),
             evidence_dir: None,
             seed: SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u64,
             new_game: false,
             inspect_assets: false,
             quit_after: None,
             muted: false,
+            test_speed: 1,
         };
-        let mut arguments = env::args().skip(1);
+        let mut arguments = arguments.into_iter();
+        let mut explicit_save_dir = false;
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
                 "--help" | "-h" => {
                     println!(
-                        "Turbofish Deluxe\n\nReads your owned Insaniquarium Deluxe installation.\n\n--game-dir <directory>  Override Steam discovery\n--save-dir <directory>  Separate project saves (default: LOCALAPPDATA/TurbofishDeluxe)\n--new-game              Start a fresh project first tank\n--seed <integer>        Reproducible Rust PRNG (not retail replay parity)\n--evidence-dir <dir>    Write runtime events, state, identity and requested captures\n--inspect-assets       Decode all manifest images/effects without opening a window\n--quit-after <seconds>  Bound a normal-speed runtime check\n--mute                 Disable effect playback\n\nEscape pauses; click Menu or press S to save. F12 captures when evidence is enabled."
+                        "Turbofish Deluxe\n\nReads your owned Insaniquarium Deluxe installation.\n\n--game-dir <directory>  Override Steam discovery\n--save-dir <directory>  Separate project saves (default: LOCALAPPDATA/TurbofishDeluxe)\n--new-game              Start a fresh project first tank\n--seed <integer>        Reproducible Rust PRNG (not retail replay parity)\n--evidence-dir <dir>    Write runtime events, state, identity and requested captures\n--inspect-assets       Decode all manifest images/effects without opening a window\n--quit-after <seconds>  Wall-clock run limit (required above 1x)\n--test-speed <1..8>    Opt-in accelerated test simulation\n--mute                 Disable effect playback\n\nAbove 1x requires explicit isolated --save-dir, --evidence-dir, --mute and --quit-after.\nEscape pauses; click Menu or press S to save. F12 captures when evidence is enabled."
                     );
                     return Ok(None);
                 }
@@ -47,7 +61,8 @@ impl Options {
                         Some(arguments.next().ok_or("--game-dir requires a path")?.into())
                 }
                 "--save-dir" => {
-                    options.save_dir = arguments.next().ok_or("--save-dir requires a path")?.into()
+                    options.save_dir = arguments.next().ok_or("--save-dir requires a path")?.into();
+                    explicit_save_dir = true;
                 }
                 "--evidence-dir" => {
                     options.evidence_dir = Some(
@@ -74,13 +89,44 @@ impl Options {
                     options.quit_after = Some(seconds);
                 }
                 "--new-game" => options.new_game = true,
+                "--test-speed" => {
+                    let factor: u8 = arguments
+                        .next()
+                        .ok_or("--test-speed requires an integer from 1 through 8")?
+                        .parse()
+                        .map_err(|_| "--test-speed requires an integer from 1 through 8")?;
+                    if !(1..=8).contains(&factor) {
+                        return Err("--test-speed must be from 1 through 8".into());
+                    }
+                    options.test_speed = factor;
+                }
                 "--inspect-assets" => options.inspect_assets = true,
                 "--mute" => options.muted = true,
                 _ => return Err(format!("Unknown argument {argument}; use --help").into()),
             }
         }
+        if options.test_speed > 1
+            && (!explicit_save_dir
+                || options.evidence_dir.is_none()
+                || !options.muted
+                || options.quit_after.is_none()
+                || options.save_dir.as_os_str().is_empty()
+                || options
+                    .evidence_dir
+                    .as_ref()
+                    .is_some_and(|path| path.as_os_str().is_empty()))
+        {
+            return Err("Accelerated tests require explicit --save-dir, --evidence-dir, --mute and --quit-after".into());
+        }
         Ok(Some(options))
     }
+}
+
+fn default_save_dir() -> PathBuf {
+    env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(env::temp_dir)
+        .join("TurbofishDeluxe")
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -750,5 +796,243 @@ pub fn validate_destinations(
     if let Some(path) = options.evidence_dir.as_mut() {
         *path = install::project_destination(path, game_root)?;
     }
+    if options.test_speed > 1 {
+        if !options.muted || options.evidence_dir.is_none() || options.quit_after.is_none() {
+            return Err("Accelerated tests require --evidence-dir, --mute and --quit-after".into());
+        }
+        let default = resolved_destination(&default_save_dir())?;
+        let save = resolved_destination(&options.save_dir)?;
+        let evidence = resolved_destination(options.evidence_dir.as_deref().unwrap())?;
+        let working_directory = env::current_dir()?.canonicalize()?;
+        let owned_install = resolved_destination(game_root)?;
+        validate_accelerated_paths(
+            &save,
+            &evidence,
+            &default,
+            &working_directory,
+            &owned_install,
+        )?;
+    }
     Ok(())
+}
+
+fn resolved_destination(path: &std::path::Path) -> Result<PathBuf, Box<dyn Error>> {
+    let mut ancestor = path;
+    let mut missing = Vec::new();
+    while !ancestor.exists() {
+        missing.push(
+            ancestor
+                .file_name()
+                .ok_or("Invalid write destination")?
+                .to_os_string(),
+        );
+        ancestor = ancestor.parent().ok_or("Invalid write destination")?;
+    }
+    let mut resolved = ancestor.canonicalize()?;
+    for component in missing.into_iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved)
+}
+
+fn same_output_path(left: &std::path::Path, right: &std::path::Path) -> bool {
+    let mut left = left.components();
+    let mut right = right.components();
+    loop {
+        match (left.next(), right.next()) {
+            (None, None) => return true,
+            (Some(left), Some(right)) if same_output_component(left, right) => {}
+            _ => return false,
+        }
+    }
+}
+
+fn output_within(path: &std::path::Path, parent: &std::path::Path) -> bool {
+    let mut path = path.components();
+    for component in parent.components() {
+        if !path
+            .next()
+            .is_some_and(|part| same_output_component(part, component))
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn same_output_component(left: std::path::Component<'_>, right: std::path::Component<'_>) -> bool {
+    #[cfg(windows)]
+    {
+        left.as_os_str().to_string_lossy().to_lowercase()
+            == right.as_os_str().to_string_lossy().to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
+fn validate_accelerated_paths(
+    save: &std::path::Path,
+    evidence: &std::path::Path,
+    default: &std::path::Path,
+    working_directory: &std::path::Path,
+    owned_install: &std::path::Path,
+) -> Result<(), Box<dyn Error>> {
+    for path in [save, evidence] {
+        if !path
+            .components()
+            .any(|component| matches!(component, std::path::Component::Normal(_)))
+            || same_output_path(path, working_directory)
+        {
+            return Err("Accelerated output requires dedicated directories".into());
+        }
+        if output_within(path, default) {
+            return Err(
+                "Accelerated output must be separate from the default project save directory"
+                    .into(),
+            );
+        }
+        if output_within(path, owned_install) {
+            return Err(
+                "Accelerated output must be separate from the owned game installation".into(),
+            );
+        }
+    }
+    if same_output_path(save, evidence) {
+        return Err("Accelerated save and evidence directories must be separate".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod test_speed_tests {
+    use super::*;
+
+    fn parse(arguments: &[&str]) -> Result<Options, Box<dyn Error>> {
+        Options::parse_from(arguments.iter().map(|argument| argument.to_string()))?
+            .ok_or_else(|| "Unexpected help request".into())
+    }
+
+    #[test]
+    fn default_and_explicit_one_preserve_normal_mode_without_extra_flags() {
+        let default = parse(&[]).unwrap();
+        let explicit = parse(&["--test-speed", "1"]).unwrap();
+        assert_eq!((default.test_speed, default.time_mode()), (1, "normal"));
+        assert_eq!(
+            (
+                default.save_dir,
+                default.evidence_dir,
+                default.quit_after,
+                default.muted
+            ),
+            (
+                explicit.save_dir,
+                explicit.evidence_dir,
+                explicit.quit_after,
+                explicit.muted
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_missing_invalid_and_out_of_range_factors() {
+        for arguments in [
+            vec!["--test-speed"],
+            vec!["--test-speed", "0"],
+            vec!["--test-speed", "9"],
+            vec!["--test-speed", "-1"],
+            vec!["--test-speed", "1.5"],
+            vec!["--test-speed", "nope"],
+        ] {
+            assert!(parse(&arguments).is_err(), "accepted {arguments:?}");
+        }
+    }
+
+    #[test]
+    fn acceleration_requires_every_safety_argument() {
+        let required = [
+            "--save-dir",
+            "isolated-save",
+            "--evidence-dir",
+            "isolated-evidence",
+            "--mute",
+            "--quit-after",
+            "1",
+        ];
+        for missing in [0, 2, 4, 5] {
+            let mut arguments = vec!["--test-speed", "8"];
+            for (index, argument) in required.iter().enumerate() {
+                if index != missing
+                    && !(missing == 0 && index == 1)
+                    && !(missing == 2 && index == 3)
+                    && !(missing == 5 && index == 6)
+                {
+                    arguments.push(argument);
+                }
+            }
+            assert!(
+                parse(&arguments).is_err(),
+                "accepted missing index {missing}"
+            );
+        }
+        let mut valid = vec!["--test-speed", "8"];
+        valid.extend(required);
+        assert_eq!(parse(&valid).unwrap().time_mode(), "accelerated-test");
+        for invalid in ["0", "NaN", "inf", "-1"] {
+            let mut arguments = valid.clone();
+            *arguments.last_mut().unwrap() = invalid;
+            assert!(parse(&arguments).is_err());
+        }
+    }
+
+    #[test]
+    fn accelerated_destinations_reject_default_and_owned_install() {
+        let game_root = env::current_dir().unwrap().canonicalize().unwrap();
+        let mut options = parse(&[
+            "--test-speed",
+            "2",
+            "--save-dir",
+            "isolated-save",
+            "--evidence-dir",
+            "isolated-evidence",
+            "--mute",
+            "--quit-after",
+            "1",
+        ])
+        .unwrap();
+        options.save_dir = env::temp_dir().join("turbofish-test-speed-save");
+        options.evidence_dir = Some(env::temp_dir().join("turbofish-test-speed-evidence"));
+        assert!(validate_destinations(&mut options, &game_root).is_ok());
+        options.save_dir = default_save_dir();
+        assert!(validate_destinations(&mut options, &game_root).is_err());
+        options.save_dir = env::temp_dir().join("turbofish-test-speed-save");
+        options.evidence_dir = Some(default_save_dir().join("evidence"));
+        assert!(validate_destinations(&mut options, &game_root).is_err());
+        options.evidence_dir = Some(game_root.join("private-evidence"));
+        assert!(validate_destinations(&mut options, &game_root).is_err());
+        options.save_dir = game_root.join("private-save");
+        options.evidence_dir = Some(env::temp_dir().join("turbofish-test-speed-evidence"));
+        assert!(validate_destinations(&mut options, &game_root).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn missing_leaf_case_aliases_and_drive_root_are_not_isolated() {
+        use std::path::Path;
+
+        let default = Path::new(r"C:\Users\Sample\AppData\Local\TurbofishDeluxe");
+        let working = Path::new(r"C:\Work\Turbofish");
+        let owned = Path::new(r"D:\Steam\Insaniquarium");
+        let save = Path::new(r"C:\Users\Sample\AppData\Local\TURBOFISHDELUXE\run1");
+        let evidence = Path::new(r"C:\Scratch\evidence");
+        assert!(validate_accelerated_paths(save, evidence, default, working, owned).is_err());
+        let save = Path::new(r"C:\Scratch\Foo");
+        let evidence = Path::new(r"C:\Scratch\foo");
+        assert!(validate_accelerated_paths(save, evidence, default, working, owned).is_err());
+        let evidence = Path::new(r"D:\steam\INSANIQUARIUM\run1");
+        assert!(validate_accelerated_paths(save, evidence, default, working, owned).is_err());
+        let evidence = Path::new(r"C:\");
+        assert!(validate_accelerated_paths(save, evidence, default, working, owned).is_err());
+    }
 }

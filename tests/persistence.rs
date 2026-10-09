@@ -2770,6 +2770,7 @@ fn format_three_migration_preserves_old_state_and_rewrites_before_play() {
         inspect_assets: false,
         quit_after: None,
         muted: true,
+        test_speed: 1,
     };
     let migrated = cli::load_session(&options).unwrap();
     let board = migrated.board.as_ref().unwrap();
@@ -3075,6 +3076,7 @@ fn format_five_fourth_board_gets_explicit_new_support_without_rewriting_earned_s
         inspect_assets: false,
         quit_after: None,
         muted: true,
+        test_speed: 1,
     };
     let migrated = cli::load_session(&options).unwrap();
     let board = migrated.board.as_ref().unwrap();

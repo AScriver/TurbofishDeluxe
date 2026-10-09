@@ -10,6 +10,25 @@ param(
     [Nullable[int]]$RunProcessId
 )
 . (Join-Path $PSScriptRoot 'Evidence.Common.ps1')
+function Get-RunTimingIssues {
+    param([System.Collections.IDictionary]$Record, [System.Collections.IDictionary]$RuntimeIdentity,
+        [string]$Label, [switch]$IdentityRecord)
+    $hasTiming = $Record.Contains('test_speed') -or $Record.Contains('time_mode') -or
+        ($null -ne $RuntimeIdentity -and ($RuntimeIdentity.Contains('test_speed') -or $RuntimeIdentity.Contains('time_mode')))
+    if (-not $hasTiming) { return }
+    $timingIssues = [System.Collections.Generic.List[string]]::new()
+    $factor = $Record['test_speed']
+    $factorValid = (Test-EvidenceNumber -Value $factor -Minimum 1 -Integer) -and $factor -le 8
+    if (-not $factorValid) { $timingIssues.Add("Invalid test speed in $Label") }
+    $expectedMode = if ($factorValid -and $factor -eq 1) { 'normal' } else { 'accelerated-test' }
+    if ($Record['time_mode'] -cne $expectedMode) { $timingIssues.Add("Invalid time mode in $Label") }
+    if (-not (Test-EvidenceNumber -Value $Record['session_elapsed_seconds'])) { $timingIssues.Add("Invalid session elapsed time in $Label") }
+    if (-not $IdentityRecord -and $null -ne $RuntimeIdentity -and
+        ($Record['test_speed'] -ne $RuntimeIdentity['test_speed'] -or $Record['time_mode'] -cne $RuntimeIdentity['time_mode'])) {
+        $timingIssues.Add("Runtime timing differs from identity in $Label")
+    }
+    return @($timingIssues)
+}
 if (-not $OutputPath) { $OutputPath = New-EvidenceOutputName -Kind 'run' }
 Assert-EvidenceOutputPath -Path $OutputPath | Out-Null
 $fullRunDirectory = Get-EvidenceFullPath -Path $RunDirectory
@@ -49,6 +68,7 @@ foreach ($runtimeFile in @('identity.local.json', 'events.local.jsonl', 'final.l
                 if (-not (Test-EvidenceNumber -Value $eventRecord['elapsed_seconds']) -or
                     (-not (Test-EvidenceNumber -Value $eventRecord['session_tick'] -Integer) -and
                      -not (Test-EvidenceNumber -Value $eventRecord['tick'] -Integer))) { throw 'Invalid event time/tick.' }
+                foreach ($timingIssue in @(Get-RunTimingIssues -Record $eventRecord -RuntimeIdentity $runtimeRecords['identity.local.json'] -Label "event line $eventLineNumber")) { $issues.Add($timingIssue) }
                 $eventCount++
             } catch { $issues.Add("Malformed events.local.jsonl line $eventLineNumber") }
         }
@@ -68,6 +88,11 @@ if ($ScenarioPath) {
 foreach ($additionalPath in $AdditionalArtifacts) { $artifacts += Get-EvidenceFile -Path $additionalPath -Role 'additional-evidence' }
 $runtimeIdentity = $runtimeRecords['identity.local.json']
 $runtimeFinal = $runtimeRecords['final.local.json']
+foreach ($timingRecordName in @('identity.local.json', 'final.local.json', 'state.local.json')) {
+    if ($runtimeRecords.ContainsKey($timingRecordName)) {
+        foreach ($timingIssue in @(Get-RunTimingIssues -Record $runtimeRecords[$timingRecordName] -RuntimeIdentity $runtimeIdentity -Label $timingRecordName -IdentityRecord:($timingRecordName -eq 'identity.local.json'))) { $issues.Add($timingIssue) }
+    }
+}
 $executableMatch = 'unknown'
 $installationCheck = 'unknown'
 if ($runtimeIdentity) {
@@ -116,6 +141,9 @@ $runRecord = [ordered]@{
         tick_ms = if ($runtimeIdentity) { $runtimeIdentity['tick_ms'] } else { $null }
         retail_rng_equivalent = if ($runtimeIdentity) { $runtimeIdentity['retail_rng_equivalent'] } else { $null }
         elapsed_seconds = if ($runtimeFinal) { $runtimeFinal['elapsed_seconds'] } else { $null }
+        test_speed = if ($runtimeIdentity -and $runtimeIdentity.Contains('test_speed')) { $runtimeIdentity['test_speed'] } else { $null }
+        time_mode = if ($runtimeIdentity -and $runtimeIdentity.Contains('time_mode')) { $runtimeIdentity['time_mode'] } else { 'unrecorded' }
+        session_elapsed_seconds = if ($runtimeFinal -and $runtimeFinal.Contains('session_elapsed_seconds')) { $runtimeFinal['session_elapsed_seconds'] } else { $null }
         executable_match = $executableMatch
         installation = $installationCheck
         supplied_process_id = $RunProcessId

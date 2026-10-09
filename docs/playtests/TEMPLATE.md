@@ -28,6 +28,7 @@ Prefer the [maintained evidence generator](../evidence-tooling.md#commands) to f
 - Exact launch command and relevant asset/settings configuration: unknown; redact private paths/credentials.
 - Project save/reset fixture and initial state: unknown. Never silently reuse an original save.
 - Input sequence, seed/RNG state, time source, tick/update cadence, event-order instrumentation: unknown.
+- Test speed, timing mode, wall elapsed and fixed-step session elapsed: unknown. Accelerated runs are exploratory/stress checks; normal-speed acceptance remains separate.
 - Approximate/unsupported behavior and toggled debug features: unknown. Acceptance uses normal gameplay without forced outcomes.
 
 ## Shared test conditions
