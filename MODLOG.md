@@ -2,6 +2,14 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-09 — Shorten the current handoff and archive superseded directions
+
+Replaced the cumulative 60,587-byte STATUS with a compact current handoff: paused A32/current17, committed source and executable/gate/checkpoint identities, native acceptance gap, ownership, evidence links and one explicit-resume sequence. The complete former handoff, E1-E79, setup/failure details and obsolete next-step directions are preserved in the [closed historical snapshot](docs/history/2026-10-09-status-a32.md). Only its relative document links were rebased; reversing those substitutions reproduced the original text exactly. Existing STATUS anchors remain usable, and completed MODLOG/playtest entries were not rewritten.
+
+The validated private archive script rechecked all 37 maintained A32 build inputs, five checkpoint artifacts and the checkpoint hash against `4b2d53f`; all matched. Original STATUS SHA-256 `15D3BE6229247F7BA388EE04176C68A34ECCE3DC30562284CFDA3E9A91EC9C0D` and the round-trip proof are retained in `.scratch/handoff-shortening/archive-proof.local.json`. No runtime source, earned save or product scope changed; A32 remains paused/native **not tested**, with no launch, freeze or acceptance work performed. Actionables was not updated because no workItemId was supplied.
+
+Documentation workflow passed: 20 required files, 53 documents, 472 local links, 69 anchors, 30 included/29 excluded path checks and 96 eligible files. PowerShell parser/automatic-variable and working diff-whitespace checks passed. STATUS is now 6,899 bytes (about 6.7 KiB, 89 percent smaller). Concurrent README/DESIGN/tooling edits remain outside this handoff change. The earlier 407-check runtime gate remains identified historical execution evidence; it is not a new result from this documentation edit. Next runtime action remains explicit resume followed by A32 native acceptance in STATUS.
+
 ## 2026-10-09 — Gate A32 and pause before native acceptance
 
 The user requested a good pause point. Complete the corrected source/build checkpoint, retain all work, and pause before native A32 acceptance. Integrated `bilaterus.rs`/`ultra.rs`, actual Board consumers/shop, live Nimbus conversion, group/pet/input/render state, Amp reward/4-3 gate and required current17 continuation. README/coverage/DESIGN/contract/provenance/STATUS distinguish implemented/regression-checked behavior from unperformed native gameplay. No new migrations/backfill/import; existing codecs/tests/history and genuine earned saves remain preserved.
