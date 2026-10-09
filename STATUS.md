@@ -21,6 +21,8 @@ Updated: 2026-10-09, America/Phoenix. **Paused at the user's request after the A
 
 The checkpoint identifies base `38c65be` plus A32 inputs now committed in `4b2d53f`. All 37 build-input hashes, 5 artifact hashes and the checkpoint hash matched during this handoff edit. These documentation changes leave that runtime identity intact; the gate was not rerun. Commands: [README](README.md#workflow-checks).
 
+Focused runtime validation commands are available in the [README](README.md#focused-runtime-checks). All selectors and filter/input guards passed 17 CLI scenarios; the default full gate reran successfully with all 407 checks including owned music and the unchanged E79 executable digest. See [MODLOG](MODLOG.md#2026-10-09--add-focused-runtime-validation-commands) for the tooling receipt. A32 native gameplay remains paused and untested.
+
 ## Gaps and blockers
 
 - No missing access or information currently requires user input. The explicit pause remains in effect; it is not completion or a technical blocker.

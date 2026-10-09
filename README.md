@@ -63,6 +63,38 @@ $validatorPath = Join-Path $env:USERPROFILE '.codex\tools\Invoke-CodexPowerShell
 
 The maintained runtime check preflights native files, runs workspace formatting/lint/tests, then builds and stages DLLs/notices. Invoke `Test-Runtime.ps1 -GameDirectory <owned-install-directory>` to include installed MO3 decoding; without that parameter it explicitly reports those checks skipped. `--inspect-assets` checks actual installed images/effects/fonts without a window;246 declared images,65 effects and15 bitmap fonts passed. Original save compatibility is not required.
 
+### Focused runtime checks
+
+Use `-Check` for faster feedback while editing. The default `All` remains the complete milestone build/regression gate; focused checks do not replace it or the required normal-speed gameplay acceptance.
+
+| Check | Runs |
+|---|---|
+| `Format` | Workspace formatting check, without native preflight |
+| `Lint` | Strict workspace Clippy for all targets |
+| `Tests` | All workspace test targets, without formatting/lint or runtime staging |
+| `Unit` | Runtime library unit tests |
+| `Assets`, `Fonts`, `Persistence` | The named runtime integration test suite |
+| `Binding` | Native decoder binding tests; owned music cases remain ignored |
+| `OwnedMusic` | Ignored installed MO3 decoder tests; requires `-GameDirectory` |
+| `Build` | Native build and DLL/notice staging, without launching |
+
+```powershell
+.\scripts\Test-Runtime.ps1 -Check Format
+.\scripts\Test-Runtime.ps1 -Check Unit -TestFilter 'bilaterus::tests::'
+.\scripts\Test-Runtime.ps1 -Check Persistence -TestFilter 'current_tank_four_second'
+.\scripts\Test-Runtime.ps1 -Check Assets
+.\scripts\Test-Runtime.ps1 -Check Build
+```
+
+`-TestFilter` is a test-name substring supported by `Unit`, `Assets`, `Fonts`, `Persistence`, `Binding` and `OwnedMusic`. It is rejected for `All`, so the complete gate always runs unfiltered. Check Cargo's reported test count when filtering. All checks except `Format` verify the native audio package and configure its import library/DLL path; only `All` and `Build` stage the executable. `-GameDirectory` is supported by `All` and `OwnedMusic` only.
+
+After changing a PowerShell script, run the host validator first; its `-ArgumentList` forwards focused options:
+
+```powershell
+$validatorPath = Join-Path $env:USERPROFILE '.codex\tools\Invoke-CodexPowerShell.ps1'
+& $validatorPath -Path .\scripts\Test-Runtime.ps1 -Execute -ArgumentList @('-Check', 'Format')
+```
+
 ## Local data and licensing
 
 Keep reference downloads and probes under `.scratch/`, local paths/configuration under `local/`, and proprietary content/captures under `private/`; all are ignored. Keep these directories out of attachments and releases. No machine-local configuration is needed to run the workflow checker.
