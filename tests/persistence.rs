@@ -47,7 +47,7 @@ fn atomic_save_replaces_complete_snapshot_and_retains_seeded_state() {
     )
     .unwrap();
     let loaded: cli::ProjectSave = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    assert_eq!(loaded.format_version, 3);
+    assert_eq!(loaded.format_version, cli::SAVE_FORMAT_VERSION);
     let board = loaded.session.board.as_ref().unwrap();
     assert_eq!(board.tick, 20);
     assert_eq!(board.balance, 200);
@@ -179,6 +179,168 @@ fn old_v2_hatch_retains_unknown_score_and_level_two_gets_one_explicit_pet_migrat
     );
     old_board["session"]["board"]["stinky"] = serde_json::Value::Null;
     assert!(cli::decode_save(&serde_json::to_vec(&old_board).unwrap()).is_err());
+}
+
+fn second_stage_session() -> AdventureSession {
+    let mut session = AdventureSession::new(42);
+    let board = session.board.as_mut().unwrap();
+    board.egg_unlocked = true;
+    board.balance = 450;
+    session.apply_actions(&[Action::BuyEgg, Action::BuyEgg, Action::BuyEgg]);
+    for _ in 0..171 {
+        session.step(&[]);
+    }
+    session.apply_actions(&[Action::Continue]);
+    session
+}
+
+#[test]
+fn format_three_migration_preserves_old_state_and_rewrites_before_play() {
+    let root = temporary_root("v3-migration");
+    let path = root.join("adventure.json");
+    let mut session = second_stage_session();
+    session.ticks = 4000;
+    let board = session.board.as_mut().unwrap();
+    board.tick = 1500;
+    board.balance = 319;
+    // The old implementation opened the egg gate at Large growth. Migration
+    // keeps that evidence as the food-quality gate, without free upgrades.
+    board.egg_unlocked = true;
+    let expected_stinky = serde_json::to_value(&board.stinky).unwrap();
+    let expected_rng = serde_json::to_value(&*board).unwrap()["rng_state"].clone();
+    let first_best = session.progress.first_stage_best_seconds;
+    let mut legacy = serde_json::to_value(cli::ProjectSave {
+        format_version: 3,
+        session,
+    })
+    .unwrap();
+    legacy["session"]["progress"]
+        .as_object_mut()
+        .unwrap()
+        .remove("later_stage_best_seconds");
+    let old_board = legacy["session"]["board"].as_object_mut().unwrap();
+    for field in ["upgrades", "invasion", "niko", "pearls"] {
+        old_board.remove(field);
+    }
+    for fish in old_board["fish"].as_array_mut().unwrap() {
+        fish.as_object_mut()
+            .unwrap()
+            .remove("cannot_be_eaten_ticks");
+    }
+    cli::write_json(&path, &legacy).unwrap();
+    let options = cli::Options {
+        game_dir: None,
+        save_dir: root.clone(),
+        evidence_dir: None,
+        seed: 99,
+        new_game: false,
+        inspect_assets: false,
+        quit_after: None,
+        muted: true,
+    };
+    let migrated = cli::load_session(&options).unwrap();
+    let board = migrated.board.as_ref().unwrap();
+    assert_eq!(
+        (migrated.ticks, board.tick, board.balance),
+        (4000, 1500, 319)
+    );
+    assert_eq!(migrated.progress.first_stage_best_seconds, first_best);
+    assert_eq!(
+        serde_json::to_value(&board.stinky).unwrap(),
+        expected_stinky
+    );
+    assert_eq!(
+        serde_json::to_value(board).unwrap()["rng_state"],
+        expected_rng
+    );
+    assert!(board.upgrades.quality_unlocked);
+    assert_eq!((board.upgrades.quality, board.upgrades.quantity), (0, 1));
+    assert!(!board.egg_unlocked);
+    let wave = board.invasion.as_ref().unwrap();
+    assert_eq!(
+        wave.origin,
+        turbofish_deluxe::invasion::InvasionOrigin::LegacyV3Resume
+    );
+    assert_eq!(wave.countdown, 1750);
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(saved["format_version"], cli::SAVE_FORMAT_VERSION);
+    assert_eq!(
+        serde_json::to_value(cli::decode_save(&fs::read(&path).unwrap()).unwrap()).unwrap(),
+        serde_json::to_value(migrated).unwrap()
+    );
+    assert!(!path.with_extension("pending").exists());
+    fs::remove_file(path).unwrap();
+    fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn format_four_does_not_repair_missing_or_null_modern_state() {
+    let modern = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: second_stage_session(),
+    })
+    .unwrap();
+    for field in ["stinky", "upgrades", "invasion", "niko", "pearls"] {
+        let mut incomplete = modern.clone();
+        incomplete["session"]["board"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&incomplete).unwrap()).is_err(),
+            "{field}"
+        );
+    }
+    let mut null_wave = modern.clone();
+    null_wave["session"]["board"]["invasion"] = serde_json::Value::Null;
+    assert!(cli::decode_save(&serde_json::to_vec(&null_wave).unwrap()).is_err());
+    let mut missing_fish_field = modern.clone();
+    missing_fish_field["session"]["board"]["fish"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("cannot_be_eaten_ticks");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing_fish_field).unwrap()).is_err());
+    let mut missing_later_score = modern;
+    missing_later_score["session"]["progress"]
+        .as_object_mut()
+        .unwrap()
+        .remove("later_stage_best_seconds");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing_later_score).unwrap()).is_err());
+}
+
+#[test]
+fn saved_invasion_modal_preserves_pause_and_does_not_repeat_warning() {
+    let mut session = second_stage_session();
+    session
+        .board
+        .as_mut()
+        .unwrap()
+        .invasion
+        .as_mut()
+        .unwrap()
+        .countdown = 277;
+    session.step(&[]);
+    let mut restored = cli::decode_save(
+        &serde_json::to_vec(&cli::ProjectSave {
+            format_version: cli::SAVE_FORMAT_VERSION,
+            session: session.clone(),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        restored.phase,
+        AdventurePhase::InvasionTutorial {
+            tip: turbofish_deluxe::invasion::InvasionTip::Danger,
+        }
+    );
+    for actions in [&[][..], &[Action::Continue][..], &[][..]] {
+        assert_eq!(restored.step(actions), session.step(actions));
+    }
+    assert_eq!(
+        serde_json::to_value(restored).unwrap(),
+        serde_json::to_value(session).unwrap()
+    );
 }
 
 #[test]

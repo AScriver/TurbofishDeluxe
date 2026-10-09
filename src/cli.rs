@@ -95,7 +95,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 3;
+pub const SAVE_FORMAT_VERSION: u32 = 4;
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -112,29 +112,79 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                 true,
             )
         }
-        Some(2) => {
+        Some(version @ (2 | 3)) => {
             let missing_pet_state = value
                 .pointer("/session/board")
                 .and_then(serde_json::Value::as_object)
                 .is_some_and(|board| !board.contains_key("stinky"));
+            if version == 3
+                && (!value
+                    .pointer("/session/progress")
+                    .and_then(serde_json::Value::as_object)
+                    .is_some_and(|progress| progress.contains_key("first_stage_best_seconds"))
+                    || missing_pet_state)
+            {
+                return Err(
+                    "Incomplete format-three save; required state fields are missing".into(),
+                );
+            }
+            let missing_invasion = value
+                .pointer("/session/board")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|board| !board.contains_key("invasion"));
             let mut session = serde_json::from_value::<ProjectSave>(value)?.session;
-            if missing_pet_state && let Some(board) = &mut session.board {
+            if session.progress.level > 2 {
+                return Err(
+                    "Legacy project save contains a stage its format never supported".into(),
+                );
+            }
+            if version == 2
+                && missing_pet_state
+                && let Some(board) = &mut session.board
+            {
                 board.initialize_missing_stinky();
+            }
+            if missing_invasion && let Some(board) = &mut session.board {
+                if board.level == 2 && board.eggs != 0 {
+                    return Err("Legacy second-stage save contains unsupported purchases".into());
+                }
+                board.initialize_legacy_invasion();
             }
             (session, true)
         }
-        Some(3) => {
+        Some(4) => {
             let has_score_field = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
-                .is_some_and(|progress| progress.contains_key("first_stage_best_seconds"));
-            let missing_pet_field = value
+                .is_some_and(|progress| {
+                    ["first_stage_best_seconds", "later_stage_best_seconds"]
+                        .iter()
+                        .all(|field| progress.contains_key(*field))
+                });
+            let missing_board_field = value
                 .pointer("/session/board")
                 .and_then(serde_json::Value::as_object)
-                .is_some_and(|board| !board.contains_key("stinky"));
-            if !has_score_field || missing_pet_field {
+                .is_some_and(|board| {
+                    ["stinky", "upgrades", "invasion", "niko", "pearls"]
+                        .iter()
+                        .any(|field| !board.contains_key(*field))
+                        || board
+                            .get("food")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|food| {
+                                food.iter().any(|pellet| pellet.get("quality").is_none())
+                            })
+                        || board
+                            .get("fish")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|fish| {
+                                fish.iter()
+                                    .any(|entity| entity.get("cannot_be_eaten_ticks").is_none())
+                            })
+                });
+            if !has_score_field || missing_board_field {
                 return Err(
-                    "Incomplete format-three save; required state fields are missing".into(),
+                    "Incomplete format-four save; required state fields are missing".into(),
                 );
             }
             (serde_json::from_value::<ProjectSave>(value)?.session, false)

@@ -2,6 +2,16 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-08 — Integrate Adventure1-2 upgrades, invasion and Niko
+
+**Changed:** Preserved the existing loop while adding food upgrades/held feeding, weak Sylvester and its warning/modal/laser/diamond lifecycle, Game Over/reentry, Niko reward/live pearl, separate later-stage times and strict format4 migration. Pure actor/wave/pet modules feed the existing simulation and renderer; project saves remain separate. Source contract and deliberate adaptations are in [Adventure1-2](docs/adventure-1-2.md).
+
+**Evidence/checks:** Installed payload PB13–PB17 confirms strict double shot geometry/cooldown/damage fields, world-coordinate collectible forwarding, raw pearl owner marking and exact Alien RTTI/weak/strong constructor stats; virtual-call/retail limits retained. Current integrated build passed formatting, strict Clippy,85 all-target tests and native build. [Actual normal-speed report](docs/playtests/2026-10-08-adventure-1-2-01.md) records three natural weak fights/diamonds, earned upgrades/eggs/Niko, exact f64 pearl flight reload/one credit and separate starvation/Game Over/reentry. One guppy was eaten; that loss is retained. Three owned processes exited0, installation unchanged. Root visually inspected relevant frames.
+
+**Failures/corrections:** Focused alien test expected emergence on update8; source branch showed7, so corrected the expectation. Review caught fast-to-slow animation counter reset, fractional death-body construction, paused flash decrement and omitted lethal hit event; corrected. Initial integrated gate found test closure borrows, two collapsible conditions and an external test calling a private method; fixed narrowly. The retained pearl round-trip assertion then caught a real one-bit f64 parse loss. Enabled pinned serde_json's exact float parser and reran the full gate successfully. Stage1-3 quality cannot unlock its egg: source requires Oscar purchase, so the premature gate was corrected.
+
+**Limits/next:** Initial death particles, bubbles, additive/warp endpoints, full menu/hatch artwork, audible music/effects and original/human comparison remain missing or unverified. A late optional capture watcher failed on an already exited PID; needed frames existed from the main driver. Complete workflow checks, commit the coherent result, then implement Oscar/strong Sylvester and1-3 automatically. No original game execution or modification.
+
 ## 2026-10-08 — Implement Stinky and first-stage score bookkeeping
 
 **Changed:** Added serializable live Stinky motion/animation/collection, first-stage active-clock personal best, silent collecting-coin retirement settlement, aggregate claimed-value purchasing and atomic format3 saves/migrations. Corrected rescue clock boundaries while retaining prior execution records. Added the [identified execution report](docs/playtests/2026-10-08-stinky-score-01.md) and next [Adventure1-2 contract](docs/adventure-1-2.md); coverage/handoff/provenance remain current.

@@ -2,12 +2,11 @@
 //! and rescue rules follow WinFish f919b3c (secondary source evidence); their
 //! timing and presentation have not been checked against the installed build.
 
+use crate::{invasion::InvasionTip, niko::PearlPhase};
 use serde::{Deserialize, Serialize};
 
 pub use crate::sim::PetKind;
-use crate::sim::{
-    Action, AdventureState, EGG_PRICE, Event, Rejection, SECOND_STAGE_EGG_PRICE, TICK_MS,
-};
+use crate::sim::{Action, AdventureState, EGG_PRICE, Event, Rejection, TICK_MS};
 
 const HATCH_OPEN_CHECK: u32 = 141;
 const HATCH_READY_CHECK: u32 = 170;
@@ -21,6 +20,15 @@ pub struct AdventureProgress {
     /// so its active time cannot be reconstructed from the session clock.
     #[serde(default)]
     pub first_stage_best_seconds: Option<u64>,
+    #[serde(default)]
+    pub later_stage_best_seconds: Vec<StageBestTime>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StageBestTime {
+    pub tank: u8,
+    pub level: u8,
+    pub seconds: u64,
 }
 
 impl AdventureProgress {
@@ -35,12 +43,37 @@ impl AdventureProgress {
         self.first_stage_best_seconds = Some(best);
         best
     }
+
+    fn record_stage_time(&mut self, tank: u8, level: u8, seconds: u64) -> u64 {
+        if (tank, level) == (1, 1) {
+            return self.record_first_stage_time(seconds);
+        }
+        if let Some(previous) = self
+            .later_stage_best_seconds
+            .iter_mut()
+            .find(|entry| (entry.tank, entry.level) == (tank, level))
+        {
+            previous.seconds = previous.seconds.min(seconds);
+            previous.seconds
+        } else {
+            self.later_stage_best_seconds.push(StageBestTime {
+                tank,
+                level,
+                seconds,
+            });
+            seconds
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AdventurePhase {
     Playing,
     FirstTankRescue,
+    InvasionTutorial { tip: InvasionTip },
+    GameOver { updates: u32 },
+    GameSelector,
+    HelpScreen,
     Hatch { pet: PetKind, updates: u32 },
 }
 
@@ -74,6 +107,7 @@ impl AdventureSession {
                 level: 1,
                 unlocked_pets: Vec::new(),
                 first_stage_best_seconds: None,
+                later_stage_best_seconds: Vec::new(),
             },
             board: Some(board),
             phase: AdventurePhase::Playing,
@@ -95,6 +129,7 @@ impl AdventureSession {
         if board.egg_price != EGG_PRICE || !board.pets.is_empty() || board.stinky.is_some() {
             return Err(MigrationError::InvalidBoard);
         }
+        board.validate().map_err(|_| MigrationError::InvalidBoard)?;
         let next_seed = board.transition_seed();
         let ticks = board.tick;
         if board.victory {
@@ -108,6 +143,7 @@ impl AdventureSession {
                     level: 2,
                     unlocked_pets: vec![PetKind::Stinky],
                     first_stage_best_seconds: Some(seconds),
+                    later_stage_best_seconds: Vec::new(),
                 },
                 board: None,
                 phase: AdventurePhase::Hatch {
@@ -129,6 +165,7 @@ impl AdventureSession {
                 level: 1,
                 unlocked_pets: Vec::new(),
                 first_stage_best_seconds: None,
+                later_stage_best_seconds: Vec::new(),
             },
             board: Some(board),
             phase: AdventurePhase::Playing,
@@ -144,17 +181,27 @@ impl AdventureSession {
 
     /// Reject a decoded session whose board, profile, and screen disagree.
     pub fn validate(&self) -> Result<(), String> {
-        if self.progress.tank != 1 || !(1..=2).contains(&self.progress.level) {
+        if self.progress.tank != 1 || !(1..=3).contains(&self.progress.level) {
             return Err("unsupported Adventure progress".into());
         }
-        if self.progress.unlocked_pets.len() > 1 {
-            return Err("duplicate or unsupported pet unlock".into());
+        let expected_pets: &[PetKind] = match self.progress.level {
+            1 => &[],
+            2 => &[PetKind::Stinky],
+            3 => &[PetKind::Stinky, PetKind::Niko],
+            _ => unreachable!("progress checked above"),
+        };
+        if self.progress.unlocked_pets != expected_pets {
+            return Err("Adventure pet unlocks disagree with completed stages".into());
         }
-        if self.progress.level == 1 && self.progress.has_pet(PetKind::Stinky) {
-            return Err("Stinky unlocked before first-stage completion".into());
-        }
-        if self.progress.level == 2 && !self.progress.has_pet(PetKind::Stinky) {
-            return Err("missing first-stage pet reward".into());
+        let mut recorded_stages = Vec::new();
+        for result in &self.progress.later_stage_best_seconds {
+            if (result.tank, result.level) != (1, 2)
+                || self.progress.level < 3
+                || recorded_stages.contains(&(result.tank, result.level))
+            {
+                return Err("invalid or duplicate completed-stage time".into());
+            }
+            recorded_stages.push((result.tank, result.level));
         }
         match (&self.phase, &self.board) {
             (AdventurePhase::Playing, Some(board)) => {
@@ -165,26 +212,14 @@ impl AdventureSession {
                 {
                     return Err("playing board disagrees with Adventure progress".into());
                 }
-                if board.level == 1 && (!board.pets.is_empty() || board.stinky.is_some()) {
-                    return Err("invalid first-stage board".into());
-                }
-                let expected_egg_price = if board.level == 1 {
-                    EGG_PRICE
-                } else {
-                    SECOND_STAGE_EGG_PRICE
-                };
-                if board.egg_price != expected_egg_price {
-                    return Err("wrong egg price for Adventure stage".into());
-                }
-                if board.level == 2
-                    && (board.pets.as_slice() != [PetKind::Stinky] || board.stinky.is_none())
+                if board
+                    .invasion
+                    .as_ref()
+                    .is_some_and(|wave| wave.pending_modal.is_some())
                 {
-                    return Err("second-stage roster and live Stinky disagree".into());
+                    return Err("playing board has an unacknowledged invasion modal".into());
                 }
-                if let Some(stinky) = &board.stinky {
-                    stinky.validate()?;
-                }
-                Ok(())
+                board.validate()
             }
             (AdventurePhase::FirstTankRescue, Some(board)) => {
                 if (board.tank, board.level) != (1, 1)
@@ -199,13 +234,38 @@ impl AdventureSession {
                 {
                     return Err("rescue board disagrees with Adventure progress".into());
                 }
-                Ok(())
+                board.validate()
+            }
+            (AdventurePhase::InvasionTutorial { tip }, Some(board)) => {
+                if (board.tank, board.level) != (self.progress.tank, self.progress.level)
+                    || board.victory
+                    || board.eggs >= 3
+                    || board.tick > self.ticks
+                    || board.invasion.as_ref().and_then(|wave| wave.pending_modal) != Some(*tip)
+                {
+                    return Err("invasion tutorial and board disagree".into());
+                }
+                board.validate()
+            }
+            (AdventurePhase::GameOver { .. }, Some(board)) => {
+                if board.level == 1
+                    || (board.tank, board.level) != (self.progress.tank, self.progress.level)
+                    || board.has_live_fish()
+                    || board.victory
+                    || board.eggs >= 3
+                    || board.tick > self.ticks
+                {
+                    return Err("Game Over and failed board disagree".into());
+                }
+                board.validate()
             }
             (AdventurePhase::Hatch { pet, .. }, None)
-                if self.progress.level == 2 && self.progress.has_pet(*pet) =>
+                if (self.progress.level, *pet) == (2, PetKind::Stinky)
+                    || (self.progress.level, *pet) == (3, PetKind::Niko) =>
             {
                 Ok(())
             }
+            (AdventurePhase::GameSelector | AdventurePhase::HelpScreen, None) => Ok(()),
             _ => Err("Adventure phase and board disagree".into()),
         }
     }
@@ -228,7 +288,7 @@ impl AdventureSession {
                     };
                     events.extend(board.apply(action.clone()));
                     if board.victory {
-                        self.finish_first_stage(&mut events);
+                        self.finish_stage(&mut events);
                         entered_hatch = true;
                     }
                 }
@@ -252,25 +312,91 @@ impl AdventureSession {
                         });
                     }
                 }
+                AdventurePhase::InvasionTutorial { .. } => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    if *action == Action::Continue {
+                        self.board
+                            .as_mut()
+                            .expect("tutorial retains board")
+                            .invasion
+                            .as_mut()
+                            .expect("tutorial retains wave")
+                            .acknowledge_modal();
+                        self.phase = AdventurePhase::Playing;
+                    } else {
+                        events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        });
+                    }
+                }
+                AdventurePhase::GameOver { updates } => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    if *action == Action::Continue && updates > 30 {
+                        let board = self
+                            .board
+                            .take()
+                            .expect("Game Over retains failed board until dismissal");
+                        self.next_seed = board.transition_seed();
+                        self.phase = AdventurePhase::GameSelector;
+                        events.push(Event::GameSelectorOpened { tick: self.ticks });
+                    } else {
+                        events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        });
+                    }
+                }
+                AdventurePhase::GameSelector => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    if *action == Action::PlayAdventure {
+                        self.phase = AdventurePhase::HelpScreen;
+                    } else {
+                        events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        });
+                    }
+                }
+                AdventurePhase::HelpScreen => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    if *action == Action::Continue {
+                        self.start_current_stage(&mut events);
+                        entered_playing = true;
+                    } else {
+                        events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        });
+                    }
+                }
                 AdventurePhase::Hatch { updates, .. } => {
                     events.push(Event::Action {
                         tick: self.ticks,
                         action: action.clone(),
                     });
-                    if let Action::HatchHold { down } = action {
+                    if *action == Action::OpenMenu {
+                        self.phase = AdventurePhase::GameSelector;
+                        self.hatch_held = false;
+                        events.push(Event::GameSelectorOpened { tick: self.ticks });
+                    } else if let Action::HatchHold { down } = action {
                         self.hatch_held = *down;
                     } else if *action == Action::Continue && updates > HATCH_READY_CHECK {
-                        let board = AdventureState::new_second_stage(self.next_seed);
-                        self.next_seed = board.transition_seed();
-                        self.board = Some(board);
-                        self.phase = AdventurePhase::Playing;
+                        self.start_current_stage(&mut events);
                         self.hatch_held = false;
                         entered_playing = true;
-                        events.push(Event::StageStarted {
-                            tick: self.ticks,
-                            tank: 1,
-                            level: 2,
-                        });
                     } else {
                         events.push(Event::Rejected {
                             tick: self.ticks,
@@ -291,16 +417,32 @@ impl AdventureSession {
         match &mut self.phase {
             AdventurePhase::Playing if !entered_playing => {
                 if let Some(board) = &mut self.board {
-                    if board.level == 1 && !board.has_live_fish() {
+                    events.extend(board.begin_tick());
+                    if !board.has_live_fish() {
                         // Board::Update increments the active clock before it
                         // discovers the empty live list and pauses the widgets.
-                        board.advance_board_clock();
-                        self.phase = AdventurePhase::FirstTankRescue;
-                        events.push(Event::FirstTankRescueStarted { tick: self.ticks });
+                        if board.level == 1 {
+                            self.phase = AdventurePhase::FirstTankRescue;
+                            events.push(Event::FirstTankRescueStarted { tick: self.ticks });
+                        } else {
+                            settle_collecting_coins(board);
+                            self.phase = AdventurePhase::GameOver { updates: 0 };
+                            events.push(Event::GameOverStarted { tick: self.ticks });
+                        }
+                    } else if let Some(tip) =
+                        board.invasion.as_ref().and_then(|wave| wave.pending_modal)
+                    {
+                        self.phase = AdventurePhase::InvasionTutorial { tip };
                     } else {
-                        events.extend(board.tick());
+                        events.extend(board.update_objects());
                     }
                 }
+            }
+            AdventurePhase::GameOver { updates } => {
+                if let Some(board) = &mut self.board {
+                    board.paused_board_update();
+                }
+                *updates = updates.saturating_add(1);
             }
             AdventurePhase::Hatch { pet, updates } if !entered_hatch => {
                 // HatchScreen::Update tests the old counter, then increments it.
@@ -324,16 +466,65 @@ impl AdventureSession {
             }
             AdventurePhase::Playing
             | AdventurePhase::FirstTankRescue
+            | AdventurePhase::InvasionTutorial { .. }
+            | AdventurePhase::GameSelector
+            | AdventurePhase::HelpScreen
             | AdventurePhase::Hatch { .. } => {}
+        }
+        if matches!(
+            self.phase,
+            AdventurePhase::FirstTankRescue | AdventurePhase::InvasionTutorial { .. }
+        ) && let Some(board) = &mut self.board
+        {
+            // A newly opened modal already received this update's pre-pause
+            // work. Subsequent modal updates keep only the pre-pause delay.
+            if !events.iter().any(|event| {
+                matches!(
+                    event,
+                    Event::FirstTankRescueStarted { .. }
+                        | Event::Invasion {
+                            event: crate::invasion::InvasionEvent::ModalOpened(_),
+                            ..
+                        }
+                )
+            }) {
+                board.paused_board_update();
+            }
         }
         events
     }
 
-    fn finish_first_stage(&mut self, events: &mut Vec<Event>) {
+    pub fn paused_step(&mut self) {
+        self.ticks += 1;
+        if let Some(board) = &mut self.board {
+            board.paused_board_update();
+        }
+    }
+
+    fn start_current_stage(&mut self, events: &mut Vec<Event>) {
+        let board = match self.progress.level {
+            1 => AdventureState::new_adventure(self.next_seed),
+            2 => AdventureState::new_second_stage(self.next_seed),
+            3 => AdventureState::new_third_stage(self.next_seed),
+            _ => unreachable!("supported progress validated at load"),
+        };
+        self.next_seed = board.transition_seed();
+        self.board = Some(board);
+        self.phase = AdventurePhase::Playing;
+        events.push(Event::StageStarted {
+            tick: self.ticks,
+            tank: self.progress.tank,
+            level: self.progress.level,
+        });
+    }
+
+    fn finish_stage(&mut self, events: &mut Vec<Event>) {
         let mut board = self.board.take().expect("completion retains its board");
         let seconds = elapsed_seconds(&board);
         let (settled_coin_ids, settled_amount) = settle_collecting_coins(&mut board);
-        let personal_best_seconds = self.progress.record_first_stage_time(seconds);
+        let personal_best_seconds =
+            self.progress
+                .record_stage_time(board.tank, board.level, seconds);
         events.push(Event::StageResultRecorded {
             tick: self.ticks,
             tank: board.tank,
@@ -345,20 +536,24 @@ impl AdventureSession {
             personal_best_seconds,
         });
         self.next_seed = board.transition_seed();
-        self.progress.level = 2;
-        self.progress.unlocked_pets.push(PetKind::Stinky);
-        self.phase = AdventurePhase::Hatch {
-            pet: PetKind::Stinky,
-            updates: 0,
+        let pet = match board.level {
+            1 => PetKind::Stinky,
+            2 => PetKind::Niko,
+            _ => unreachable!("stage not yet completable"),
         };
+        self.progress.level = board.level + 1;
+        if !self.progress.has_pet(pet) {
+            self.progress.unlocked_pets.push(pet);
+        }
+        self.phase = AdventurePhase::Hatch { pet, updates: 0 };
         self.hatch_held = false;
         events.push(Event::PetUnlocked {
             tick: self.ticks,
-            pet: PetKind::Stinky,
+            pet,
         });
         events.push(Event::HatchStarted {
             tick: self.ticks,
-            pet: PetKind::Stinky,
+            pet,
         });
     }
 }
@@ -377,6 +572,15 @@ fn settle_collecting_coins(board: &mut AdventureState) -> (Vec<u64>, i32) {
         if coin.collecting {
             ids.push(coin.id);
             amount += coin.kind.value();
+            false
+        } else {
+            true
+        }
+    });
+    board.pearls.retain(|pearl| {
+        if pearl.phase == PearlPhase::Collecting {
+            ids.push(pearl.id);
+            amount += crate::niko::PEARL_VALUE;
             false
         } else {
             true
@@ -538,6 +742,189 @@ mod tests {
             session.step(&[Action::BuyEgg]);
         }
         session
+    }
+
+    fn second_stage_session() -> AdventureSession {
+        let mut session = buy_three_eggs();
+        for _ in 0..171 {
+            session.step(&[]);
+        }
+        session.apply_actions(&[Action::Continue]);
+        session
+    }
+
+    #[test]
+    fn invasion_modal_freezes_objects_until_acknowledged_without_time() {
+        // W1 Board::Update opens the warning tutorial at 276 before widgets
+        // update; its pause return still runs the food-delay decrement.
+        let mut session = second_stage_session();
+        let board = session.board.as_mut().unwrap();
+        let wave = board.invasion.as_mut().unwrap();
+        wave.countdown = 277;
+        wave.food_delay = 3;
+        let fish_before = serde_json::to_value(&board.fish).unwrap();
+        let opened = session.step(&[]);
+        assert!(opened.iter().any(|event| matches!(
+            event,
+            Event::Invasion {
+                event: crate::invasion::InvasionEvent::ModalOpened(InvasionTip::Danger),
+                ..
+            }
+        )));
+        assert_eq!(
+            session.phase,
+            AdventurePhase::InvasionTutorial {
+                tip: InvasionTip::Danger
+            }
+        );
+        let board = session.board.as_ref().unwrap();
+        assert_eq!(board.tick, 1);
+        assert_eq!(board.invasion.as_ref().unwrap().food_delay, 2);
+        assert_eq!(serde_json::to_value(&board.fish).unwrap(), fish_before);
+        let random_before = board.transition_seed();
+        for _ in 0..20 {
+            session.step(&[]);
+        }
+        let board = session.board.as_ref().unwrap();
+        assert_eq!(board.tick, 1);
+        assert_eq!(board.invasion.as_ref().unwrap().countdown, 276);
+        assert_eq!(board.transition_seed(), random_before);
+        assert_eq!(serde_json::to_value(&board.fish).unwrap(), fish_before);
+        session.validate().unwrap();
+        session.apply_actions(&[Action::Continue]);
+        assert_eq!(session.phase, AdventurePhase::Playing);
+        assert_eq!(session.board.as_ref().unwrap().tick, 1);
+        let warning = session.step(&[]);
+        assert!(warning.iter().any(|event| matches!(
+            event,
+            Event::Invasion {
+                event: crate::invasion::InvasionEvent::WarningStarted(_),
+                ..
+            }
+        )));
+        assert_eq!(session.board.as_ref().unwrap().tick, 2);
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn later_tank_game_over_waits_thirty_updates_then_reenters_fresh_stage() {
+        // W1 MoneyDialog accepts the footer only when its old count >30;
+        // dismissal removes the failed board but retains Adventure progress.
+        let mut session = second_stage_session();
+        let original_progress = session.progress.clone();
+        let board = session.board.as_mut().unwrap();
+        board.fish.clear();
+        board.balance = 987;
+        session.step(&[]);
+        assert_eq!(session.phase, AdventurePhase::GameOver { updates: 0 });
+        assert_eq!(session.board.as_ref().unwrap().tick, 1);
+        for _ in 0..30 {
+            session.step(&[]);
+        }
+        assert_eq!(session.phase, AdventurePhase::GameOver { updates: 30 });
+        session.apply_actions(&[Action::Continue]);
+        assert_eq!(session.phase, AdventurePhase::GameOver { updates: 30 });
+        assert_eq!(session.board.as_ref().unwrap().balance, 987);
+        session.step(&[]);
+        session.apply_actions(&[Action::Continue]);
+        assert_eq!(session.phase, AdventurePhase::GameSelector);
+        assert!(session.board.is_none());
+        assert_eq!(session.progress, original_progress);
+        session.validate().unwrap();
+        session.apply_actions(&[Action::PlayAdventure]);
+        assert_eq!(session.phase, AdventurePhase::HelpScreen);
+        session.step(&[Action::Continue]);
+        let board = session.board.as_ref().unwrap();
+        assert_eq!(
+            (board.level, board.tick, board.balance, board.eggs),
+            (2, 0, 200, 0)
+        );
+        assert_eq!((board.upgrades.quality, board.upgrades.quantity), (0, 1));
+        assert_eq!(board.invasion.as_ref().unwrap().countdown, 1750);
+        assert_eq!(board.pets, vec![PetKind::Stinky]);
+        assert_eq!(session.progress, original_progress);
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn manual_pause_decreases_only_pre_pause_delay_and_keeps_board_clock() {
+        let mut session = second_stage_session();
+        let wave = session.board.as_mut().unwrap().invasion.as_mut().unwrap();
+        wave.food_delay = 2;
+        wave.post_spawn_flash_ticks = 3;
+        let before = serde_json::to_value(session.board.as_ref().unwrap()).unwrap();
+        let ticks_before = session.ticks;
+        session.paused_step();
+        session.paused_step();
+        let mut expected = before;
+        expected["invasion"]["food_delay"] = serde_json::json!(0);
+        assert_eq!(
+            serde_json::to_value(session.board.as_ref().unwrap()).unwrap(),
+            expected
+        );
+        assert_eq!(session.ticks, ticks_before + 2);
+    }
+
+    #[test]
+    fn second_stage_reward_records_separate_time_and_starts_niko_once() {
+        // W1 Board third-egg transaction uses 500 per piece and advances to
+        // 1-3 with Niko; its result must not overwrite the first-stage best.
+        let mut session = second_stage_session();
+        let first_best = session.progress.first_stage_best_seconds;
+        session.ticks = 2000;
+        let board = session.board.as_mut().unwrap();
+        board.tick = 1000;
+        board.upgrades.quality_unlocked = true;
+        board.balance = 1700;
+        let events = session.apply_actions(&[
+            Action::BuyFoodQuality,
+            Action::BuyEgg,
+            Action::BuyEgg,
+            Action::BuyEgg,
+        ]);
+        assert_eq!(session.progress.first_stage_best_seconds, first_best);
+        assert_eq!(
+            session.progress.later_stage_best_seconds,
+            vec![StageBestTime {
+                tank: 1,
+                level: 2,
+                seconds: 28,
+            }]
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::PetUnlocked {
+                        pet: PetKind::Niko,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            session.phase,
+            AdventurePhase::Hatch {
+                pet: PetKind::Niko,
+                updates: 0
+            }
+        );
+        session.validate().unwrap();
+        for _ in 0..171 {
+            session.step(&[]);
+        }
+        session.step(&[Action::Continue]);
+        let board = session.board.as_ref().unwrap();
+        assert_eq!(
+            (board.level, board.tick, board.balance, board.egg_price),
+            (3, 0, 200, 2000)
+        );
+        assert_eq!(board.pets, vec![PetKind::Stinky, PetKind::Niko]);
+        assert!(board.niko.is_some());
+        assert!(!board.egg_unlocked);
+        session.validate().unwrap();
     }
 
     #[test]

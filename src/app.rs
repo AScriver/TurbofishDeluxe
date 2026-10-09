@@ -4,7 +4,8 @@ use crate::{
     cli::{self, Options},
     font::BitmapFont,
     install::{self, InstallIdentity},
-    sim::{Action, AdventureState, CoinKind, Event, FishPose, FishSize, TICK_MS},
+    invasion::{InvasionEvent, InvasionTip},
+    sim::{Action, AdventureState, CoinKind, Event, FishPose, FishSize, PetKind, TICK_MS},
 };
 use macroquad::{
     audio::{PlaySoundParams, Sound, load_sound_from_bytes, play_sound},
@@ -42,6 +43,12 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_EGGCRACK2",
     "IMAGE_EGGSHARDS",
     "IMAGE_STINKY",
+    "IMAGE_NIKO",
+    "IMAGE_PEARL",
+    "IMAGE_SYLV",
+    "IMAGE_LASERS",
+    "IMAGE_WARPHOLE",
+    "IMAGE_WARPGLOW",
 ];
 const SOUND_IDS: &[&str] = &[
     "SOUND_DROPFOOD",
@@ -51,6 +58,14 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_BUY",
     "SOUND_BUTTONCLICK",
     "SOUND_HATCH",
+    "SOUND_AWOOGA",
+    "SOUND_ROAR",
+    "SOUND_HIT",
+    "SOUND_EXPLOSION1",
+    "SOUND_ZAP",
+    "SOUND_NIKOOPEN",
+    "SOUND_NIKOCLOSE",
+    "SOUND_PEARL",
 ];
 
 pub struct Presentation {
@@ -205,8 +220,25 @@ impl Presentation {
                 Event::FoodEaten { .. } => "SOUND_SLURP",
                 Event::FishGrew { .. } => "SOUND_GROW",
                 Event::CoinCredited { .. } => "SOUND_POINTS",
-                Event::GuppyBought { .. } | Event::EggBought { .. } => "SOUND_BUY",
+                Event::GuppyBought { .. }
+                | Event::EggBought { .. }
+                | Event::FoodQualityBought { .. }
+                | Event::FoodQuantityBought { .. } => "SOUND_BUY",
                 Event::HatchOpened { .. } => "SOUND_HATCH",
+                Event::Invasion { event, .. } => match event {
+                    InvasionEvent::WarningStarted(_) => "SOUND_AWOOGA",
+                    InvasionEvent::AlienSpawned { .. } => "SOUND_ROAR",
+                    InvasionEvent::AlienHit { .. } => "SOUND_HIT",
+                    InvasionEvent::AlienDefeated { .. } => "SOUND_EXPLOSION1",
+                    InvasionEvent::LaserFired { .. } => "SOUND_ZAP",
+                    _ => continue,
+                },
+                Event::Niko { event, .. } => match event {
+                    crate::niko::NikoEvent::OpenSound => "SOUND_NIKOOPEN",
+                    crate::niko::NikoEvent::CloseSound => "SOUND_NIKOCLOSE",
+                    _ => continue,
+                },
+                Event::PearlCollectionStarted { .. } => "SOUND_PEARL",
                 Event::StageStarted { .. } | Event::RescueGuppyGranted { .. } => {
                     "SOUND_BUTTONCLICK"
                 }
@@ -233,7 +265,7 @@ impl Presentation {
                 food.y - 4.0,
                 Some(Rect::new(
                     (food.frame / 3 % 10) as f32 * 40.0,
-                    0.0,
+                    f32::from(food.quality) * 40.0,
                     40.0,
                     40.0,
                 )),
@@ -292,6 +324,107 @@ impl Presentation {
                 fish.opacity,
             );
         }
+        if let Some(wave) = &state.invasion {
+            if let Some(warp) = &wave.warp {
+                // WinFish Warp::Draw computes 17 - counter/2, which can
+                // exceed both 17-column sheets at its endpoints. The
+                // installed renderer's handling is not yet established.
+                let frame = 17_i32 - i32::from(warp.remaining_ticks) / 2;
+                if (0..17).contains(&frame) {
+                    self.sprite(
+                        "IMAGE_WARPHOLE",
+                        (warp.x + 20) as f32,
+                        warp.y as f32,
+                        Some(Rect::new(frame as f32 * 60.0, 0.0, 60.0, 220.0)),
+                        false,
+                        1.0,
+                        1.0,
+                    );
+                    self.sprite(
+                        "IMAGE_WARPGLOW",
+                        warp.x as f32,
+                        warp.y as f32,
+                        Some(Rect::new(frame as f32 * 100.0, 0.0, 100.0, 220.0)),
+                        false,
+                        1.0,
+                        0.7,
+                    );
+                }
+            }
+            if let Some(alien) = &wave.alien
+                && alien.spawn_ticks <= 9
+            {
+                let inset = if alien.spawn_ticks > 0 {
+                    (f32::from(alien.spawn_ticks) / 10.0 * 160.0) as i32
+                } else {
+                    0
+                };
+                let size = 160 - inset;
+                if size > 0 {
+                    let source = Rect::new(
+                        f32::from(alien.frame) * 160.0,
+                        f32::from(alien.sprite_row()) * 160.0,
+                        160.0,
+                        160.0,
+                    );
+                    let x = alien.widget_x as f32 + (inset / 2) as f32;
+                    let y = alien.widget_y as f32 + (inset / 2) as f32;
+                    let scale = size as f32 / 160.0;
+                    self.sprite(
+                        "IMAGE_SYLV",
+                        x,
+                        y,
+                        Some(source),
+                        alien.facing_right(),
+                        scale,
+                        1.0,
+                    );
+                    if alien.hit_flash() && alien.spawn_ticks == 0 {
+                        self.sprite(
+                            "IMAGE_SYLV",
+                            x,
+                            y,
+                            Some(source),
+                            alien.facing_right(),
+                            scale,
+                            (f32::from(alien.hit_ticks) * 25.0 / 255.0).min(1.0),
+                        );
+                    }
+                }
+            }
+            for laser in &wave.lasers {
+                let frame = laser.frame();
+                if frame < 10 {
+                    for row in 0..2 {
+                        self.sprite(
+                            "IMAGE_LASERS",
+                            laser.x as f32,
+                            laser.y as f32,
+                            Some(Rect::new(
+                                f32::from(frame) * 80.0,
+                                row as f32 * 80.0,
+                                80.0,
+                                80.0,
+                            )),
+                            false,
+                            1.0,
+                            1.0,
+                        );
+                    }
+                }
+            }
+            if let Some(body) = &wave.dead_alien {
+                self.sprite(
+                    "IMAGE_SYLV",
+                    body.widget_x as f32,
+                    body.widget_y as f32,
+                    Some(Rect::new(f32::from(body.frame) * 160.0, 0.0, 160.0, 160.0)),
+                    body.facing_right,
+                    1.0,
+                    body.opacity,
+                );
+            }
+        }
         if let Some(stinky) = &state.stinky {
             self.sprite(
                 "IMAGE_STINKY",
@@ -308,11 +441,41 @@ impl Presentation {
                 1.0,
             );
         }
+        if let Some(niko) = &state.niko {
+            let (column, row) = niko.frame();
+            self.sprite(
+                "IMAGE_NIKO",
+                crate::niko::NIKO_X as f32,
+                crate::niko::NIKO_Y as f32,
+                Some(Rect::new(
+                    f32::from(column) * 80.0,
+                    f32::from(row) * 80.0,
+                    80.0,
+                    80.0,
+                )),
+                false,
+                1.0,
+                1.0,
+            );
+        }
+        for pearl in &state.pearls {
+            if pearl.should_draw_separately() {
+                self.sprite(
+                    "IMAGE_PEARL",
+                    pearl.widget_x as f32,
+                    pearl.widget_y as f32,
+                    None,
+                    false,
+                    1.0,
+                    1.0,
+                );
+            }
+        }
         for coin in &state.coins {
-            let row = if coin.kind == CoinKind::Silver {
-                0.0
-            } else {
-                1.0
+            let row = match coin.kind {
+                CoinKind::Silver => 0.0,
+                CoinKind::Gold => 1.0,
+                CoinKind::Diamond => 3.0,
             };
             let alpha = if coin.fade_ticks > 0 {
                 f32::from(coin.fade_ticks) / 5.0
@@ -352,6 +515,47 @@ impl Presentation {
                 1.0,
             );
             self.fonts["Pix118"].text("100", 33.0, 58.0, Color::from_rgba(110, 250, 110, 255));
+        }
+        if state.upgrades.quality_unlocked {
+            self.sprite("IMAGE_MENUBTNU", 87.0, 3.0, None, false, 1.0, 1.0);
+            if state.upgrades.quality < 2 {
+                self.sprite(
+                    "IMAGE_FOOD",
+                    96.0,
+                    6.0,
+                    Some(Rect::new(
+                        0.0,
+                        f32::from(state.upgrades.quality + 1) * 40.0,
+                        40.0,
+                        40.0,
+                    )),
+                    false,
+                    1.0,
+                    1.0,
+                );
+                self.fonts["Pix118"].text("200", 100.0, 58.0, Color::from_rgba(110, 250, 110, 255));
+            } else {
+                self.fonts["Pix118"].text("MAX", 100.0, 58.0, Color::from_rgba(110, 250, 110, 255));
+            }
+        }
+        if state.upgrades.quantity_unlocked {
+            self.sprite("IMAGE_MENUBTNU", 144.0, 3.0, None, false, 1.0, 1.0);
+            self.fonts["JungleFever17outline"].text(
+                &state.upgrades.quantity.saturating_add(1).min(9).to_string(),
+                165.0,
+                37.0,
+                YELLOW,
+            );
+            self.fonts["Pix118"].text(
+                if state.upgrades.quantity < 9 {
+                    "300"
+                } else {
+                    "MAX"
+                },
+                157.0,
+                58.0,
+                Color::from_rgba(110, 250, 110, 255),
+            );
         }
         if state.egg_unlocked {
             self.sprite("IMAGE_MENUBTNU", 436.0, 3.0, None, false, 1.0, 1.0);
@@ -476,7 +680,7 @@ impl Presentation {
         );
     }
 
-    fn draw_hatch(&self, updates: u32) {
+    fn draw_hatch(&self, pet: PetKind, updates: u32) {
         self.sprite("IMAGE_HATCHSCREEN", 0.0, 0.0, None, false, 1.0, 1.0);
         let title = &self.images["IMAGE_SCREENTITLE"];
         self.image_box(
@@ -513,42 +717,58 @@ impl Presentation {
                 1.0,
             );
         } else {
+            let (id, y, column) = match pet {
+                PetKind::Stinky => ("IMAGE_STINKY", 100.0, updates % 20 / 2),
+                PetKind::Niko => {
+                    let phase = updates % 20;
+                    (
+                        "IMAGE_NIKO",
+                        70.0,
+                        if phase > 9 { 19 - phase } else { phase },
+                    )
+                }
+            };
             self.sprite(
-                "IMAGE_STINKY",
+                id,
                 278.0,
-                100.0,
-                Some(Rect::new((updates % 20 / 2) as f32 * 80.0, 0.0, 80.0, 80.0)),
+                y,
+                Some(Rect::new(column as f32 * 80.0, 0.0, 80.0, 80.0)),
                 false,
                 1.0,
                 1.0,
             );
             self.centered_text(
                 "JungleFever15outline",
-                "STINKY the Snail",
+                match pet {
+                    PetKind::Stinky => "STINKY the Snail",
+                    PetKind::Niko => "NIKO the Oyster",
+                },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
             );
         }
         self.sprite("IMAGE_HATCHREFLECTION", 240.0, 60.0, None, false, 1.0, 1.0);
         if updates > 170 {
-            self.centered_text(
-                "JungleFever10outline",
-                "STINKY roams around the",
-                300.0,
-                WHITE,
-            );
-            self.centered_text(
-                "JungleFever10outline",
-                "bottom of your tank, catching",
-                320.0,
-                WHITE,
-            );
-            self.centered_text(
-                "JungleFever10outline",
-                "any coins you may have missed.",
-                340.0,
-                WHITE,
-            );
+            let description = match pet {
+                PetKind::Stinky => [
+                    "STINKY roams around the",
+                    "bottom of your tank, catching",
+                    "any coins you may have missed.",
+                ],
+                PetKind::Niko => [
+                    "NIKO produces pearls that",
+                    "you can click on for a",
+                    "hefty sum of money.",
+                ],
+            };
+            for (index, line) in description.iter().enumerate() {
+                self.centered_text(
+                    "JungleFever10outline",
+                    line,
+                    300.0 + index as f32 * 20.0,
+                    WHITE,
+                );
+            }
             self.fonts["JungleFever10outline"].text(
                 "Your game has been saved.",
                 221.0,
@@ -570,11 +790,17 @@ impl Presentation {
 
     fn draw(&self, session: &AdventureSession, paused: bool) {
         match session.phase {
-            AdventurePhase::Hatch { updates, .. } => self.draw_hatch(updates),
-            AdventurePhase::Playing | AdventurePhase::FirstTankRescue => {
+            AdventurePhase::Hatch { pet, updates } => self.draw_hatch(pet, updates),
+            AdventurePhase::Playing
+            | AdventurePhase::FirstTankRescue
+            | AdventurePhase::InvasionTutorial { .. }
+            | AdventurePhase::GameOver { .. } => {
                 if let Some(board) = &session.board {
                     self.draw_board(board);
                 }
+            }
+            AdventurePhase::GameSelector | AdventurePhase::HelpScreen => {
+                self.sprite("IMAGE_HATCHSCREEN", 0.0, 0.0, None, false, 1.0, 1.0);
             }
         }
         if session.phase == AdventurePhase::FirstTankRescue {
@@ -605,6 +831,88 @@ impl Presentation {
                     self.images["IMAGE_MAINBUTTON"].height(),
                 ),
                 "Click to Continue",
+            );
+        }
+        if let AdventurePhase::InvasionTutorial { tip } = session.phase {
+            draw_rectangle(72.0, 123.0, 496.0, 252.0, Color::new(0.02, 0.1, 0.15, 0.96));
+            let (title, lines) = match tip {
+                InvasionTip::Danger => (
+                    "DANGER!",
+                    [
+                        "Aliens are approaching your tank!",
+                        "Click on them to defend your fish.",
+                    ],
+                ),
+                InvasionTip::BattleTip => (
+                    "ALIEN ATTACK!",
+                    [
+                        "Click an alien repeatedly to defeat it.",
+                        "Keep your fish safe!",
+                    ],
+                ),
+            };
+            self.centered_text("JungleFever17outline", title, 174.0, YELLOW);
+            for (index, line) in lines.iter().enumerate() {
+                self.centered_text(
+                    "JungleFever10outline",
+                    line,
+                    220.0 + index as f32 * 28.0,
+                    WHITE,
+                );
+            }
+            self.main_button(
+                Rect::new(
+                    186.0,
+                    310.0,
+                    264.0,
+                    self.images["IMAGE_MAINBUTTON"].height(),
+                ),
+                "Click to Continue",
+            );
+        }
+        if let AdventurePhase::GameOver { updates } = session.phase {
+            draw_rectangle(72.0, 123.0, 496.0, 252.0, Color::new(0.02, 0.1, 0.15, 0.96));
+            self.centered_text("JungleFever17outline", "GAME OVER", 182.0, YELLOW);
+            if updates > 30 {
+                self.main_button(
+                    Rect::new(
+                        186.0,
+                        310.0,
+                        264.0,
+                        self.images["IMAGE_MAINBUTTON"].height(),
+                    ),
+                    "Click to Continue",
+                );
+            }
+        }
+        if session.phase == AdventurePhase::GameSelector {
+            self.centered_text("JungleFever17outline", "INSANIQUARIUM", 112.0, YELLOW);
+            self.main_button(
+                Rect::new(
+                    186.0,
+                    250.0,
+                    264.0,
+                    self.images["IMAGE_MAINBUTTON"].height(),
+                ),
+                "Adventure",
+            );
+        }
+        if session.phase == AdventurePhase::HelpScreen {
+            self.centered_text("JungleFever17outline", "ADVENTURE", 112.0, YELLOW);
+            self.centered_text(
+                "JungleFever10outline",
+                "Feed your fish, collect coins, and defend the tank.",
+                210.0,
+                WHITE,
+            );
+            self.main_button(
+                Rect::new(
+                    186.0,
+                    310.0,
+                    264.0,
+                    self.images["IMAGE_MAINBUTTON"].height(),
+                ),
+                "Start",
             );
         }
         if paused {
@@ -756,6 +1064,8 @@ pub async fn run(
     let mut paused = false;
     let mut hatch_pointer_owned = false;
     let mut hatch_background_down = false;
+    let mut feed_press_at = None::<f64>;
+    let mut held_feed_at = None::<f64>;
     prevent_quit();
     loop {
         let elapsed = get_time() - started;
@@ -769,6 +1079,8 @@ pub async fn run(
         if is_key_pressed(KeyCode::Escape) {
             paused = !paused;
             accumulator = 0.0;
+            feed_press_at = None;
+            held_feed_at = None;
         }
         let button_height = presentation.images["IMAGE_MAINBUTTON"].height();
         let menu_rect = if matches!(session.phase, AdventurePhase::Hatch { .. }) {
@@ -777,9 +1089,20 @@ pub async fn run(
             Rect::new(525.0, 3.0, 101.0, 29.0)
         };
         if is_mouse_button_pressed(MouseButton::Left) {
-            if menu_rect.contains(pointer) {
-                paused = !paused;
-                accumulator = 0.0;
+            if menu_rect.contains(pointer)
+                && matches!(
+                    session.phase,
+                    AdventurePhase::Playing | AdventurePhase::Hatch { .. }
+                )
+            {
+                if matches!(session.phase, AdventurePhase::Hatch { .. }) {
+                    pending_actions.push(Action::OpenMenu);
+                } else {
+                    paused = !paused;
+                    accumulator = 0.0;
+                }
+                feed_press_at = None;
+                held_feed_at = None;
             } else if !paused {
                 let action = match session.phase {
                     AdventurePhase::Hatch { updates, .. }
@@ -800,10 +1123,49 @@ pub async fn run(
                     {
                         Action::Continue
                     }
+                    AdventurePhase::InvasionTutorial { .. }
+                        if Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
+                    {
+                        Action::Continue
+                    }
+                    AdventurePhase::GameOver { updates }
+                        if updates > 30
+                            && Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
+                    {
+                        Action::Continue
+                    }
+                    AdventurePhase::GameSelector
+                        if Rect::new(186.0, 250.0, 264.0, button_height).contains(pointer) =>
+                    {
+                        Action::PlayAdventure
+                    }
+                    AdventurePhase::HelpScreen
+                        if Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
+                    {
+                        Action::Continue
+                    }
                     AdventurePhase::Playing
                         if Rect::new(18.0, 3.0, 58.0, 60.0).contains(pointer) =>
                     {
                         Action::BuyGuppy
+                    }
+                    AdventurePhase::Playing
+                        if session
+                            .board
+                            .as_ref()
+                            .is_some_and(|board| board.upgrades.quality_unlocked)
+                            && Rect::new(87.0, 3.0, 58.0, 60.0).contains(pointer) =>
+                    {
+                        Action::BuyFoodQuality
+                    }
+                    AdventurePhase::Playing
+                        if session
+                            .board
+                            .as_ref()
+                            .is_some_and(|board| board.upgrades.quantity_unlocked)
+                            && Rect::new(144.0, 3.0, 58.0, 60.0).contains(pointer) =>
+                    {
+                        Action::BuyFoodQuantity
                     }
                     AdventurePhase::Playing
                         if Rect::new(436.0, 3.0, 58.0, 60.0).contains(pointer) =>
@@ -815,11 +1177,20 @@ pub async fn run(
                         y: pointer.y,
                     },
                 };
+                if matches!(action, Action::Click { .. })
+                    && matches!(session.phase, AdventurePhase::Playing)
+                    && (31.0..=586.0).contains(&pointer.x)
+                    && (61.0..=399.0).contains(&pointer.y)
+                {
+                    feed_press_at = Some(get_time());
+                }
                 pending_actions.push(action);
             }
         }
         if is_mouse_button_released(MouseButton::Left) {
             hatch_pointer_owned = false;
+            feed_press_at = None;
+            held_feed_at = None;
         }
         if matches!(session.phase, AdventurePhase::Hatch { .. }) {
             let held = hatch_pointer_owned && is_mouse_button_down(MouseButton::Left);
@@ -831,13 +1202,14 @@ pub async fn run(
             hatch_pointer_owned = false;
             hatch_background_down = false;
         }
-        if !paused
-            && is_key_pressed(KeyCode::Enter)
-            && matches!(
-                session.phase,
-                AdventurePhase::FirstTankRescue | AdventurePhase::Hatch { .. }
-            )
-        {
+        let enter_continues = matches!(
+            session.phase,
+            AdventurePhase::FirstTankRescue
+                | AdventurePhase::InvasionTutorial { .. }
+                | AdventurePhase::HelpScreen
+                | AdventurePhase::Hatch { .. }
+        ) || matches!(session.phase, AdventurePhase::GameOver { updates } if updates > 30);
+        if !paused && is_key_pressed(KeyCode::Enter) && enter_continues {
             pending_actions.push(Action::Continue);
         }
         let save_requested = is_key_pressed(KeyCode::S);
@@ -850,12 +1222,69 @@ pub async fn run(
             // Apply them without inventing an extra simulation tick on save/exit.
             events.extend(session.apply_actions(&pending_actions));
             pending_actions.clear();
+            if feed_press_at.is_some()
+                && events
+                    .iter()
+                    .any(|event| matches!(event, Event::FoodDropped { .. }))
+                && is_mouse_button_down(MouseButton::Left)
+            {
+                held_feed_at = feed_press_at.take();
+            }
         }
-        if !paused && !exit_requested {
+        if !exit_requested {
             accumulator += f64::from(get_frame_time()).min(0.2);
             while accumulator >= f64::from(TICK_MS) / 1000.0 {
-                events.extend(session.step(&pending_actions));
-                pending_actions.clear();
+                if paused {
+                    session.paused_step();
+                } else {
+                    let mut step_actions = std::mem::take(&mut pending_actions);
+                    let pressed_feed = feed_press_at.is_some()
+                        && step_actions
+                            .iter()
+                            .any(|action| matches!(action, Action::Click { .. }));
+                    if let Some(press_at) = held_feed_at
+                        && is_mouse_button_down(MouseButton::Left)
+                        && matches!(session.phase, AdventurePhase::Playing)
+                        && !session
+                            .board
+                            .as_ref()
+                            .and_then(|board| board.invasion.as_ref())
+                            .is_some_and(|wave| wave.has_live_alien())
+                    {
+                        step_actions.push(Action::HoldFeed {
+                            x: pointer.x,
+                            y: pointer.y,
+                            elapsed_ms: ((get_time() - press_at) * 1000.0).max(0.0) as u32,
+                        });
+                    }
+                    let step_events = session.step(&step_actions);
+                    if feed_press_at.is_some()
+                        && step_events
+                            .iter()
+                            .any(|event| matches!(event, Event::FoodDropped { .. }))
+                        && is_mouse_button_down(MouseButton::Left)
+                    {
+                        held_feed_at = feed_press_at.take();
+                    }
+                    if pressed_feed {
+                        feed_press_at = None;
+                    }
+                    if step_events.iter().any(|event| {
+                        matches!(
+                            event,
+                            Event::Invasion {
+                                event: InvasionEvent::AlienSpawned { .. }
+                                    | InvasionEvent::BattleEnded,
+                                ..
+                            }
+                        )
+                    }) || !matches!(session.phase, AdventurePhase::Playing)
+                    {
+                        feed_press_at = None;
+                        held_feed_at = None;
+                    }
+                    events.extend(step_events);
+                }
                 accumulator -= f64::from(TICK_MS) / 1000.0;
                 if events
                     .iter()
@@ -872,6 +1301,12 @@ pub async fn run(
                 matches!(
                     event,
                     Event::FirstTankRescueStarted { .. }
+                        | Event::GameOverStarted { .. }
+                        | Event::GameSelectorOpened { .. }
+                        | Event::Invasion {
+                            event: InvasionEvent::ModalOpened(_),
+                            ..
+                        }
                         | Event::HatchStarted { .. }
                         | Event::StageStarted { .. }
                         | Event::RescueGuppyGranted { .. }

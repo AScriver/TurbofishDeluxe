@@ -2,6 +2,11 @@
 //! WinFish f919b3c (see docs/behavior-contract.md); retail parity is untested.
 //! Positions are logical 640x480 coordinates and advance in 28 ms ticks.
 
+use crate::{
+    alien::PreyView,
+    invasion::{Invasion1_2, InvasionEvent},
+    niko::{NikoEvent, NikoPearl, NikoState, PEARL_VALUE, PearlPhase, PearlUpdate},
+};
 use serde::{Deserialize, Serialize};
 
 pub const TICK_MS: u32 = 28;
@@ -11,6 +16,9 @@ pub const FOOD_PRICE: i32 = 5;
 pub const GUPPY_PRICE: i32 = 100;
 pub const EGG_PRICE: i32 = 150;
 pub const SECOND_STAGE_EGG_PRICE: i32 = 500;
+pub const THIRD_STAGE_EGG_PRICE: i32 = 2000;
+pub const FOOD_QUALITY_PRICE: i32 = 200;
+pub const FOOD_QUANTITY_PRICE: i32 = 300;
 const FIRST_STAGE_COIN_BOTTOM_TICKS: u16 = 150;
 const SECOND_STAGE_COIN_BOTTOM_TICKS: u16 = 20;
 
@@ -21,6 +29,7 @@ const fn first_stage_egg_price() -> i32 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PetKind {
     Stinky,
+    Niko,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,7 +103,9 @@ impl StinkyState {
     }
 
     pub fn facing_right(&self) -> bool {
-        if self.turn_animation_timer != 0 {
+        if self.specialty_timer > 0 {
+            self.previous_vx >= 0.0
+        } else if self.turn_animation_timer != 0 {
             self.turn_animation_timer > 0
         } else if self.vx.abs() >= 1.0 {
             self.vx >= 0.0
@@ -122,6 +133,7 @@ pub enum FishPose {
 pub enum CoinKind {
     Silver,
     Gold,
+    Diamond,
 }
 
 impl CoinKind {
@@ -129,6 +141,7 @@ impl CoinKind {
         match self {
             Self::Silver => 15,
             Self::Gold => 35,
+            Self::Diamond => 200,
         }
     }
 }
@@ -154,6 +167,8 @@ pub struct Fish {
     pub coin_timer: u16,
     pub coin_threshold: u16,
     pub alive: bool,
+    #[serde(default)]
+    pub cannot_be_eaten_ticks: u8,
     speed_mod: f32,
     movement_state: u8,
     movement_timer: u8,
@@ -232,6 +247,9 @@ pub enum TutorialCue {
     BuyEgg,
     CollectCoin,
     EggsRemaining,
+    BuyFoodQuality,
+    BuyFoodQuantity,
+    HoldToFeed,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -250,6 +268,8 @@ pub struct Food {
     pub frame: u8,
     pub ineligible_ticks: u8,
     pub removal_ticks: u8,
+    #[serde(default)]
+    pub quality: u8,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -269,6 +289,11 @@ pub enum Action {
     Click { x: f32, y: f32 },
     BuyGuppy,
     BuyEgg,
+    BuyFoodQuality,
+    BuyFoodQuantity,
+    HoldFeed { x: f32, y: f32, elapsed_ms: u32 },
+    OpenMenu,
+    PlayAdventure,
     Continue,
     HatchHold { down: bool },
 }
@@ -281,10 +306,41 @@ pub enum Rejection {
     Locked,
     Completed,
     UnsupportedStage,
+    MaximumUpgrade,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Event {
+    Invasion {
+        tick: u64,
+        event: InvasionEvent,
+    },
+    Niko {
+        tick: u64,
+        event: NikoEvent,
+    },
+    PearlCollectionStarted {
+        tick: u64,
+        pearl_id: u64,
+        owner_id: u64,
+    },
+    PearlExpired {
+        tick: u64,
+        pearl_id: u64,
+    },
+    PearlCredited {
+        tick: u64,
+        pearl_id: u64,
+        owner_id: u64,
+        amount: i32,
+        balance: i32,
+    },
+    GameOverStarted {
+        tick: u64,
+    },
+    GameSelectorOpened {
+        tick: u64,
+    },
     Action {
         tick: u64,
         action: Action,
@@ -326,11 +382,26 @@ pub enum Event {
         fish_id: u64,
         balance: i32,
     },
+    FoodQualityBought {
+        tick: u64,
+        quality: u8,
+        balance: i32,
+    },
+    FoodQuantityBought {
+        tick: u64,
+        quantity: u8,
+        balance: i32,
+    },
     CoinDropped {
         tick: u64,
         coin_id: u64,
         fish_id: u64,
         kind: CoinKind,
+    },
+    AlienDiamondDropped {
+        tick: u64,
+        alien_id: u64,
+        coin_id: u64,
     },
     CoinCollectionStarted {
         tick: u64,
@@ -403,7 +474,7 @@ pub enum Event {
     },
 }
 
-/// Adventure tank 1, level 1. The PRNG is controlled for repeatable Rust runs,
+/// Adventure board. The PRNG is controlled for repeatable Rust runs,
 /// but its sequence is deliberately not claimed to match the original game.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AdventureState {
@@ -426,8 +497,37 @@ pub struct AdventureState {
     pub food: Vec<Food>,
     pub coins: Vec<Coin>,
     pub tutorial: TutorialState,
+    #[serde(default)]
+    pub upgrades: FoodUpgrades,
+    #[serde(default)]
+    pub invasion: Option<Invasion1_2>,
+    #[serde(default)]
+    pub niko: Option<NikoState>,
+    #[serde(default)]
+    pub pearls: Vec<NikoPearl>,
     next_id: u64,
     rng_state: u64,
+    #[serde(skip)]
+    held_feed: Option<(f32, f32, u32)>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FoodUpgrades {
+    pub quality: u8,
+    pub quantity: u8,
+    pub quality_unlocked: bool,
+    pub quantity_unlocked: bool,
+}
+
+impl Default for FoodUpgrades {
+    fn default() -> Self {
+        Self {
+            quality: 0,
+            quantity: 1,
+            quality_unlocked: false,
+            quantity_unlocked: false,
+        }
+    }
 }
 
 impl AdventureState {
@@ -455,12 +555,17 @@ impl AdventureState {
             food: Vec::new(),
             coins: Vec::new(),
             tutorial: TutorialState::default(),
+            upgrades: FoodUpgrades::default(),
+            invasion: None,
+            niko: None,
+            pearls: Vec::new(),
             next_id: 1,
             rng_state: if seed == 0 {
                 0x9e37_79b9_7f4a_7c15
             } else {
                 seed
             },
+            held_feed: None,
         }
     }
 
@@ -480,10 +585,40 @@ impl AdventureState {
         let mut state = Self::empty_board(seed);
         state.level = 2;
         state.egg_price = SECOND_STAGE_EGG_PRICE;
+        state.invasion = Some(Invasion1_2::new());
         state.pets.push(PetKind::Stinky);
         state.stinky = Some(state.spawn_stinky(StinkyOrigin::StageStart));
         state.spawn_starter_guppies(false);
         state
+    }
+
+    pub fn new_third_stage(seed: u64) -> Self {
+        let mut state = Self::empty_board(seed);
+        state.level = 3;
+        state.egg_price = THIRD_STAGE_EGG_PRICE;
+        state.pets = vec![PetKind::Stinky, PetKind::Niko];
+        state.stinky = Some(state.spawn_stinky(StinkyOrigin::StageStart));
+        let owner_id = state.id();
+        state.niko = Some(NikoState::spawn_tank1(owner_id, &mut |upper| {
+            state.rand_range(upper)
+        }));
+        // Strong Sylvester is the following integration; do not reuse weak
+        // stats silently. Its live encounter is not yet implemented here.
+        state.spawn_starter_guppies(false);
+        state
+    }
+
+    pub fn initialize_legacy_invasion(&mut self) {
+        if self.level == 2 {
+            self.upgrades.quality_unlocked = self.egg_unlocked
+                || self.fish.iter().any(|fish| fish.size == FishSize::Large)
+                || self
+                    .dead_fish
+                    .iter()
+                    .any(|fish| fish.size == FishSize::Large);
+            self.egg_unlocked = false;
+            self.invasion = Some(Invasion1_2::legacy_v3_resume());
+        }
     }
 
     /// Old v2 project saves stored the roster but no live pet object. This
@@ -535,12 +670,96 @@ impl AdventureState {
     /// available, while the purchase still subtracts from raw balance.
     /// Confirmed by W1 Board::Buy and payload FUN_00540b30/FUN_0053a0b0.
     pub fn available_funds(&self) -> i32 {
-        self.coins
+        let coin_funds = self
+            .coins
             .iter()
             .filter(|coin| coin.collecting)
             .fold(self.balance, |funds, coin| {
                 funds.saturating_add(coin.kind.value())
-            })
+            });
+        self.pearls
+            .iter()
+            .filter(|pearl| pearl.phase == PearlPhase::Collecting)
+            .fold(coin_funds, |funds, _| funds.saturating_add(PEARL_VALUE))
+    }
+
+    /// Validate durable board relationships before accepting a project save.
+    /// The profile and screen phase are checked by AdventureSession separately.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.tank != 1
+            || !(1..=3).contains(&self.level)
+            || self.next_id == 0
+            || self.rng_state == 0
+            || self.eggs > 3
+            || self.victory != (self.eggs == 3)
+            || self.upgrades.quality > 2
+            || !(1..=9).contains(&self.upgrades.quantity)
+            || (!self.upgrades.quality_unlocked && self.upgrades.quality > 0)
+            || (!self.upgrades.quantity_unlocked && self.upgrades.quantity > 1)
+            || self.food.len() > usize::from(self.upgrades.quantity)
+            || self.food.iter().any(|food| food.quality > 2)
+        {
+            return Err("invalid Adventure board counters or upgrades".into());
+        }
+        let expected_price = match self.level {
+            1 => EGG_PRICE,
+            2 => SECOND_STAGE_EGG_PRICE,
+            3 => THIRD_STAGE_EGG_PRICE,
+            _ => unreachable!(),
+        };
+        if self.egg_price != expected_price {
+            return Err("wrong egg price for Adventure stage".into());
+        }
+        match self.level {
+            1 if !self.pets.is_empty()
+                || self.stinky.is_some()
+                || self.niko.is_some()
+                || self.invasion.is_some()
+                || !self.pearls.is_empty()
+                || self.upgrades.quality_unlocked
+                || self.upgrades.quantity_unlocked =>
+            {
+                return Err("first-stage roster or upgrades disagree".into());
+            }
+            2 if self.pets.as_slice() != [PetKind::Stinky]
+                || self.stinky.is_none()
+                || self.invasion.is_none()
+                || self.niko.is_some()
+                || !self.pearls.is_empty() =>
+            {
+                return Err("second-stage roster or wave disagree".into());
+            }
+            3 if self.pets.as_slice() != [PetKind::Stinky, PetKind::Niko]
+                || self.stinky.is_none()
+                || self.niko.is_none()
+                || self.invasion.is_some() =>
+            {
+                return Err("third-stage roster disagrees".into());
+            }
+            _ => {}
+        }
+        if self.level == 2
+            && ((self.upgrades.quantity_unlocked || self.egg_unlocked)
+                && self.upgrades.quality == 0)
+        {
+            return Err("upgrade unlock order disagrees".into());
+        }
+        if let Some(stinky) = &self.stinky {
+            stinky.validate()?;
+        }
+        if let Some(wave) = &self.invasion {
+            wave.validate()?;
+        }
+        if let Some(niko) = &self.niko {
+            niko.validate()?;
+            for pearl in &self.pearls {
+                pearl.validate()?;
+                if pearl.owner_id != niko.owner_id || pearl.phase == PearlPhase::Finished {
+                    return Err("pearl owner or lifecycle disagrees".into());
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The first-level rescue uses the bought-fish entrance without a purchase.
@@ -575,54 +794,8 @@ impl AdventureState {
                         tick: self.tick,
                         reason: Rejection::OutsideTank,
                     });
-                } else if let Some(coin) = self.coins.iter_mut().rev().find(|coin| {
-                    !coin.collecting
-                        && x >= coin.x
-                        && x < coin.x + 72.0
-                        && y >= coin.y
-                        && y < coin.y + 72.0
-                }) {
-                    coin.collecting = true;
-                    events.push(Event::CoinCollectionStarted {
-                        tick: self.tick,
-                        coin_id: coin.id,
-                    });
-                } else if x > 30.0 && x < 587.0 && y > 60.0 && y < 400.0 {
-                    if self.available_funds() < FOOD_PRICE {
-                        events.push(Event::Rejected {
-                            tick: self.tick,
-                            reason: Rejection::InsufficientFunds,
-                        });
-                    } else if !self.food.is_empty() {
-                        // Board::DropFood refunds the charge when the cap rejects a pellet.
-                        events.push(Event::Rejected {
-                            tick: self.tick,
-                            reason: Rejection::FoodCapacity,
-                        });
-                    } else {
-                        self.balance -= FOOD_PRICE;
-                        let id = self.id();
-                        self.food.push(Food {
-                            id,
-                            x: x - 10.0,
-                            y: y - 10.0,
-                            frame: 0,
-                            // Board::MouseDown passes override 0 to DropFood. The
-                            // Food constructor's 20-tick default does not apply here.
-                            ineligible_ticks: 0,
-                            removal_ticks: 0,
-                        });
-                        events.push(Event::FoodDropped {
-                            tick: self.tick,
-                            food_id: id,
-                            balance: self.balance,
-                        });
-                    }
                 } else {
-                    events.push(Event::Rejected {
-                        tick: self.tick,
-                        reason: Rejection::OutsideTank,
-                    });
+                    self.apply_world_click(x, y, &mut events);
                 }
             }
             Action::BuyGuppy => {
@@ -653,7 +826,7 @@ impl AdventureState {
                         tick: self.tick,
                         reason: Rejection::Locked,
                     });
-                } else if self.level != 1 {
+                } else if self.level > 2 {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::UnsupportedStage,
@@ -683,12 +856,22 @@ impl AdventureState {
                         events.push(Event::LevelCompleted {
                             tick: self.tick,
                             next_tank: 1,
-                            next_level: 2,
+                            next_level: self.level + 1,
                         });
                     }
                 }
             }
-            Action::Continue | Action::HatchHold { .. } => {
+            Action::BuyFoodQuality => self.buy_food_upgrade(true, &mut events),
+            Action::BuyFoodQuantity => self.buy_food_upgrade(false, &mut events),
+            Action::HoldFeed { x, y, elapsed_ms } => {
+                // Real held input belongs to the next board update. Do not
+                // create food at a no-time input/save boundary.
+                self.held_feed = Some((x, y, elapsed_ms));
+            }
+            Action::OpenMenu
+            | Action::PlayAdventure
+            | Action::Continue
+            | Action::HatchHold { .. } => {
                 events.push(Event::Rejected {
                     tick: self.tick,
                     reason: Rejection::Locked,
@@ -698,20 +881,300 @@ impl AdventureState {
         events
     }
 
-    /// One fixed 28 ms simulation update. Board::SortGameObjects places food
-    /// before ordinary guppies and coins after them. Newly spawned coins join
-    /// this tick's coin phase.
+    fn apply_world_click(&mut self, x: f32, y: f32, events: &mut Vec<Event>) {
+        let world_x = x as i32;
+        let world_y = y as i32;
+        // Niko pearls are sorted above ordinary coins. A collectible's mouse
+        // handler only forwards this click to the Board when its WORLD point
+        // overlaps an alien widget; PB05 Coin vtable +0xd8 confirms the
+        // origin-adjusted forwarding, correcting W1's raw-local expression.
+        let pearl_id = self
+            .pearls
+            .iter()
+            .rev()
+            .find(|pearl| {
+                pearl.phase == PearlPhase::Waiting && pearl.contains_world_point(world_x, world_y)
+            })
+            .map(|pearl| pearl.id);
+        let coin_id = if pearl_id.is_none() {
+            self.coins
+                .iter()
+                .rev()
+                .find(|coin| {
+                    !coin.collecting
+                        && world_x >= coin.x as i32
+                        && world_x < coin.x as i32 + 72
+                        && world_y >= coin.y as i32
+                        && world_y < coin.y as i32 + 72
+                })
+                .map(|coin| coin.id)
+        } else {
+            None
+        };
+
+        let on_collectible = pearl_id.is_some() || coin_id.is_some();
+        let on_alien_widget = self.invasion.as_ref().is_some_and(|wave| {
+            wave.alien.as_ref().is_some_and(|alien| {
+                world_x >= alien.widget_x
+                    && world_x < alien.widget_x + 160
+                    && world_y >= alien.widget_y
+                    && world_y < alien.widget_y + 160
+            })
+        });
+        if (!on_collectible || on_alien_widget) && self.invasion.is_some() {
+            let click = self.invasion.as_mut().unwrap().click(world_x, world_y);
+            let suppress_food = click.suppress_food;
+            self.record_invasion_events(click.events, events);
+            if !on_collectible && suppress_food {
+                return;
+            }
+        }
+
+        if let Some(pearl_id) = pearl_id {
+            let Some(owner_id) = self.niko.as_ref().map(|niko| niko.owner_id) else {
+                return;
+            };
+            if let Some(pearl) = self.pearls.iter_mut().find(|pearl| pearl.id == pearl_id)
+                && pearl.pick_up(owner_id)
+            {
+                if let Some(niko) = self.niko.as_mut() {
+                    niko.mark_pearl_taken(owner_id);
+                }
+                events.push(Event::PearlCollectionStarted {
+                    tick: self.tick,
+                    pearl_id,
+                    owner_id,
+                });
+            }
+            return;
+        }
+        if let Some(coin_id) = coin_id {
+            if let Some(coin) = self.coins.iter_mut().find(|coin| coin.id == coin_id)
+                && !coin.collecting
+            {
+                coin.collecting = true;
+                events.push(Event::CoinCollectionStarted {
+                    tick: self.tick,
+                    coin_id,
+                });
+            }
+            return;
+        }
+
+        if x > 30.0 && x < 587.0 && y > 60.0 && y < 400.0 {
+            if self
+                .invasion
+                .as_ref()
+                .is_some_and(|wave| wave.has_live_alien() || wave.food_delay > 0)
+            {
+                return;
+            }
+            self.drop_food(x, y, 0, events);
+        } else {
+            events.push(Event::Rejected {
+                tick: self.tick,
+                reason: Rejection::OutsideTank,
+            });
+        }
+    }
+
+    fn drop_food(&mut self, x: f32, y: f32, ineligible_ticks: u8, events: &mut Vec<Event>) {
+        let rejection = if self.available_funds() < FOOD_PRICE {
+            Some(Rejection::InsufficientFunds)
+        } else if self.food.len() >= usize::from(self.upgrades.quantity) {
+            // The original DropFood refunds the charge at capacity.
+            Some(Rejection::FoodCapacity)
+        } else {
+            None
+        };
+        if let Some(reason) = rejection {
+            events.push(Event::Rejected {
+                tick: self.tick,
+                reason,
+            });
+            return;
+        }
+        self.balance -= FOOD_PRICE;
+        let id = self.id();
+        self.food.push(Food {
+            id,
+            x: x - 10.0,
+            y: y - 10.0,
+            frame: 0,
+            ineligible_ticks,
+            removal_ticks: 0,
+            quality: self.upgrades.quality,
+        });
+        events.push(Event::FoodDropped {
+            tick: self.tick,
+            food_id: id,
+            balance: self.balance,
+        });
+    }
+
+    fn buy_food_upgrade(&mut self, quality: bool, events: &mut Vec<Event>) {
+        let unlocked = if quality {
+            self.upgrades.quality_unlocked
+        } else {
+            self.upgrades.quantity_unlocked
+        };
+        let maxed = if quality {
+            self.upgrades.quality >= 2
+        } else {
+            self.upgrades.quantity >= 9
+        };
+        let price = if quality {
+            FOOD_QUALITY_PRICE
+        } else {
+            FOOD_QUANTITY_PRICE
+        };
+        let rejection = if !unlocked {
+            Some(Rejection::Locked)
+        } else if maxed {
+            Some(Rejection::MaximumUpgrade)
+        } else if self.available_funds() < price {
+            Some(Rejection::InsufficientFunds)
+        } else {
+            None
+        };
+        if let Some(reason) = rejection {
+            events.push(Event::Rejected {
+                tick: self.tick,
+                reason,
+            });
+            return;
+        }
+        self.balance -= price;
+        if quality {
+            self.upgrades.quality += 1;
+            if self.level == 2 && !self.upgrades.quantity_unlocked {
+                self.upgrades.quantity_unlocked = true;
+                self.egg_unlocked = true;
+                events.push(Event::Tutorial {
+                    tick: self.tick,
+                    cue: TutorialCue::BuyFoodQuantity,
+                });
+            }
+            events.push(Event::FoodQualityBought {
+                tick: self.tick,
+                quality: self.upgrades.quality,
+                balance: self.balance,
+            });
+        } else {
+            self.upgrades.quantity += 1;
+            if self.upgrades.quantity == 2 {
+                events.push(Event::Tutorial {
+                    tick: self.tick,
+                    cue: TutorialCue::HoldToFeed,
+                });
+            }
+            events.push(Event::FoodQuantityBought {
+                tick: self.tick,
+                quantity: self.upgrades.quantity,
+                balance: self.balance,
+            });
+        }
+    }
+
+    /// One fixed 28 ms convenience update. The session uses the split calls
+    /// so it can detect an empty tank after Board::Update but before objects.
     pub fn tick(&mut self) -> Vec<Event> {
+        let mut events = self.begin_tick();
+        if self
+            .invasion
+            .as_ref()
+            .is_some_and(|wave| wave.pending_modal.is_some())
+        {
+            return events;
+        }
+        events.extend(self.update_objects());
+        events
+    }
+
+    /// Board::Update reduces food delay, checks held feeding with the old
+    /// board count, advances that count, then processes the invasion timer.
+    pub(crate) fn begin_tick(&mut self) -> Vec<Event> {
         if self.victory {
             return Vec::new();
         }
+        if let Some(wave) = self.invasion.as_mut() {
+            wave.update_before_pause();
+        }
+        if self
+            .invasion
+            .as_ref()
+            .is_some_and(|wave| wave.pending_modal.is_some())
+        {
+            self.held_feed = None;
+            return Vec::new();
+        }
+        let mut events = Vec::new();
+        if let Some((x, y, elapsed_ms)) = self.held_feed.take() {
+            let feeding_blocked = self
+                .invasion
+                .as_ref()
+                .is_some_and(|wave| wave.has_live_alien() || wave.food_delay > 0);
+            if !feeding_blocked
+                && elapsed_ms > 200
+                && self
+                    .tick
+                    .is_multiple_of(u64::from(16 - self.upgrades.quantity))
+                && x.is_finite()
+                && y.is_finite()
+                && (31.0..=586.0).contains(&x)
+                && (61.0..=399.0).contains(&y)
+            {
+                self.drop_food(x, y, 20, &mut events);
+            }
+        }
         self.advance_board_clock();
+        if let Some(wave) = self.invasion.as_mut() {
+            let mut rng_state = self.rng_state;
+            let mut next_id = self.next_id;
+            let wave_events = wave.advance_after_pre_pause(
+                || Self::advance_rng(&mut rng_state) as u32,
+                || {
+                    let id = next_id;
+                    next_id += 1;
+                    id
+                },
+            );
+            self.rng_state = rng_state;
+            self.next_id = next_id;
+            self.record_invasion_events(wave_events, &mut events);
+        }
+        events
+    }
+
+    /// The already-paused board still decreases its drop-food delay before
+    /// returning. The clock, flash, actors, and held-feeding check do not run.
+    pub(crate) fn paused_board_update(&mut self) {
+        self.held_feed = None;
+        if let Some(wave) = self.invasion.as_mut() {
+            wave.update_before_pause();
+        }
+    }
+
+    /// Board-sorted object update: food, fish, alien, Stinky, Niko, coins,
+    /// and the separately sorted Niko pearl list.
+    pub(crate) fn update_objects(&mut self) -> Vec<Event> {
+        if self.victory
+            || self
+                .invasion
+                .as_ref()
+                .is_some_and(|wave| wave.pending_modal.is_some())
+        {
+            return Vec::new();
+        }
         let mut events = Vec::new();
         self.update_dead_fish();
         self.update_food(&mut events);
         self.update_fish(&mut events);
+        self.update_invasion_objects(&mut events);
         self.update_stinky(&mut events);
+        self.update_niko(&mut events);
         self.update_coins(&mut events);
+        self.update_pearls(&mut events);
         events
     }
 
@@ -737,11 +1200,15 @@ impl AdventureState {
     }
 
     fn rand(&mut self) -> u64 {
-        let mut value = self.rng_state;
+        Self::advance_rng(&mut self.rng_state)
+    }
+
+    fn advance_rng(rng_state: &mut u64) -> u64 {
+        let mut value = *rng_state;
         value ^= value >> 12;
         value ^= value << 25;
         value ^= value >> 27;
-        self.rng_state = value;
+        *rng_state = value;
         value.wrapping_mul(0x2545_f491_4f6c_dd1d)
     }
 
@@ -781,6 +1248,7 @@ impl AdventureState {
             coin_timer: 0,
             coin_threshold,
             alive: true,
+            cannot_be_eaten_ticks: 0,
             speed_mod,
             movement_state,
             movement_timer: 0,
@@ -793,6 +1261,10 @@ impl AdventureState {
     }
 
     fn update_fish(&mut self, events: &mut Vec<Event>) {
+        let alien_live = self
+            .invasion
+            .as_ref()
+            .is_some_and(Invasion1_2::has_live_alien);
         for index in 0..self.fish.len() {
             if !self.fish[index].alive {
                 continue;
@@ -811,7 +1283,10 @@ impl AdventureState {
             let mut hunger_cue = None;
             {
                 let fish = &mut self.fish[index];
-                fish.hunger = (fish.hunger - 1).max(-1000);
+                fish.cannot_be_eaten_ticks = fish.cannot_be_eaten_ticks.saturating_sub(1);
+                if !alien_live {
+                    fish.hunger = (fish.hunger - 1).max(-1000);
+                }
                 if fish.beginner {
                     hunger_cue = match fish.hunger {
                         -1 => Some(TutorialCue::Hungry),
@@ -825,7 +1300,11 @@ impl AdventureState {
                     died = true;
                     // Fish::Hungry returns false after Die; this Update call
                     // still reaches DropCoin before deferred widget deletion.
-                    coin_drop = Self::coin_due(fish);
+                    coin_drop = if alien_live {
+                        None
+                    } else {
+                        Self::coin_due(fish)
+                    };
                 } else {
                     let fish_cx = fish.x + 40.0;
                     let fish_cy = fish.y + 40.0;
@@ -853,9 +1332,14 @@ impl AdventureState {
                             && fish_cy < food.y + 35.0
                         {
                             eaten_food = Some(food.id);
-                            fish.hunger =
-                                (fish.hunger + if fish.beginner { 700 } else { 500 }).min(800);
-                            fish.food_ate += 1;
+                            let (nutrition, cap, growth_units) = match food.quality {
+                                0 => (if fish.beginner { 700 } else { 500 }, 800, 1),
+                                1 => (700, 1000, 2),
+                                2 => (1100, 1400, 3),
+                                _ => unreachable!("ordinary pellet quality validated at load"),
+                            };
+                            fish.hunger = (fish.hunger + nutrition).min(cap);
+                            fish.food_ate = fish.food_ate.saturating_add(growth_units);
                             if fish.eating_ticks == 0 {
                                 fish.eating_ticks = 8;
                             }
@@ -896,7 +1380,11 @@ impl AdventureState {
                     }
                     // Fish.cpp::Update checks coin production before its final
                     // animation and position integration (lines 429, 519-533).
-                    coin_drop = Self::coin_due(fish);
+                    coin_drop = if alien_live {
+                        None
+                    } else {
+                        Self::coin_due(fish)
+                    };
                     if fish.bought_timer > 0 {
                         fish.bought_timer -= 1;
                         fish.vy *= 0.9;
@@ -959,14 +1447,28 @@ impl AdventureState {
                         cue: TutorialCue::BuyFish,
                     });
                 }
-                if size == FishSize::Large && !self.egg_unlocked {
-                    self.egg_unlocked = true;
-                    self.tutorial.buy_fish_hint = false;
-                    self.tutorial.buy_egg_hint = true;
-                    events.push(Event::Tutorial {
-                        tick: self.tick,
-                        cue: TutorialCue::BuyEgg,
-                    });
+                if size == FishSize::Large {
+                    if self.level == 1 && !self.egg_unlocked {
+                        self.egg_unlocked = true;
+                        self.tutorial.buy_fish_hint = false;
+                        self.tutorial.buy_egg_hint = true;
+                        events.push(Event::Tutorial {
+                            tick: self.tick,
+                            cue: TutorialCue::BuyEgg,
+                        });
+                    } else if self.level == 2 && !self.upgrades.quality_unlocked {
+                        self.upgrades.quality_unlocked = true;
+                        events.push(Event::Tutorial {
+                            tick: self.tick,
+                            cue: TutorialCue::BuyFoodQuality,
+                        });
+                    } else if self.level == 3 {
+                        // Fish::FishOnGrow unlocks quality, quantity and Oscar
+                        // together at 1-3. Oscar purchase later unlocks Egg;
+                        // that purchase and actor remain a separate milestone.
+                        self.upgrades.quality_unlocked = true;
+                        self.upgrades.quantity_unlocked = true;
+                    }
                 }
                 events.push(Event::FishGrew {
                     tick: self.tick,
@@ -1192,7 +1694,116 @@ impl AdventureState {
         }
     }
 
+    fn record_invasion_events(&mut self, wave_events: Vec<InvasionEvent>, events: &mut Vec<Event>) {
+        for event in wave_events {
+            match event {
+                InvasionEvent::PreyEaten { prey_id, .. } => {
+                    // Alien::CheckCollision removes the live prey directly;
+                    // there is no ordinary dead-fish corpse for this path.
+                    self.fish.retain(|fish| fish.id != prey_id);
+                }
+                InvasionEvent::DiamondDropped { alien_id, x, y } => {
+                    let coin_id = self.id();
+                    self.coins.push(Coin {
+                        id: coin_id,
+                        x: x as f32,
+                        y: y as f32,
+                        kind: CoinKind::Diamond,
+                        frame: 0,
+                        collecting: false,
+                        bottom_ticks: 0,
+                        fade_ticks: 0,
+                    });
+                    events.push(Event::AlienDiamondDropped {
+                        tick: self.tick,
+                        alien_id,
+                        coin_id,
+                    });
+                }
+                InvasionEvent::BattleEnded => {
+                    self.held_feed = None;
+                }
+                _ => {}
+            }
+            events.push(Event::Invasion {
+                tick: self.tick,
+                event,
+            });
+        }
+    }
+
+    fn update_invasion_objects(&mut self, events: &mut Vec<Event>) {
+        let prey = self
+            .fish
+            .iter()
+            .filter(|fish| fish.alive)
+            .map(|fish| PreyView {
+                id: fish.id,
+                widget_x: fish.x as i32,
+                widget_y: fish.y as i32,
+                width: 80,
+                height: 80,
+                eligible: fish.cannot_be_eaten_ticks == 0,
+            })
+            .collect::<Vec<_>>();
+        if let Some(wave) = self.invasion.as_mut() {
+            let mut rng_state = self.rng_state;
+            let wave_events =
+                wave.objects_update(&prey, || Self::advance_rng(&mut rng_state) as u32);
+            self.rng_state = rng_state;
+            self.record_invasion_events(wave_events, events);
+        }
+    }
+
+    fn update_niko(&mut self, events: &mut Vec<Event>) {
+        let Some(mut niko) = self.niko.take() else {
+            return;
+        };
+        let mut rng_state = self.rng_state;
+        let niko_events = niko.tick(&mut |upper| Self::advance_rng(&mut rng_state) % upper);
+        self.rng_state = rng_state;
+        for event in niko_events {
+            if let NikoEvent::PearlSpawn { owner_id, x, y } = event {
+                let pearl_id = self.id();
+                self.pearls.push(NikoPearl::spawn(pearl_id, owner_id, x, y));
+            }
+            events.push(Event::Niko {
+                tick: self.tick,
+                event,
+            });
+        }
+        self.niko = Some(niko);
+    }
+
+    fn update_pearls(&mut self, events: &mut Vec<Event>) {
+        for pearl in &mut self.pearls {
+            match pearl.tick() {
+                PearlUpdate::Expired => events.push(Event::PearlExpired {
+                    tick: self.tick,
+                    pearl_id: pearl.id,
+                }),
+                PearlUpdate::Credited { owner_id, amount } => {
+                    self.balance = (self.balance + amount).min(9_999_999);
+                    events.push(Event::PearlCredited {
+                        tick: self.tick,
+                        pearl_id: pearl.id,
+                        owner_id,
+                        amount,
+                        balance: self.balance,
+                    });
+                }
+                PearlUpdate::Alive | PearlUpdate::Finished => {}
+            }
+        }
+        self.pearls
+            .retain(|pearl| pearl.phase != PearlPhase::Finished);
+    }
+
     fn update_stinky(&mut self, events: &mut Vec<Event>) {
+        let alien_live = self
+            .invasion
+            .as_ref()
+            .is_some_and(Invasion1_2::has_live_alien);
         let Some(mut stinky) = self.stinky.take() else {
             return;
         };
@@ -1200,7 +1811,7 @@ impl AdventureState {
         // The installed payload ranks integer coin centers by squared distance
         // from Stinky's double center. W1's recovered source expression differs;
         // equal-distance candidates retain their original coin-list order.
-        if !self.coins.is_empty() {
+        if !alien_live && !self.coins.is_empty() {
             let center_x = stinky.x + 40.0;
             let center_y = stinky.y + 40.0;
             if let Some(target_index) = Self::stinky_target_index(&stinky, &self.coins) {
@@ -1265,17 +1876,24 @@ impl AdventureState {
                 }
             }
         } else {
-            stinky.target_vx = match stinky.movement_state {
-                0 => 0.0,
-                1 => -0.5,
-                2 => 0.5,
-                _ => stinky.target_vx,
+            stinky.target_vx = if stinky.specialty_timer > 0 {
+                0.0
+            } else {
+                match stinky.movement_state {
+                    0 => 0.0,
+                    1 => -0.5,
+                    2 => 0.5,
+                    _ => stinky.target_vx,
+                }
             };
             if stinky.vx < stinky.target_vx {
                 stinky.vx = (stinky.vx + 0.1).min(stinky.target_vx);
             } else if stinky.vx > stinky.target_vx {
                 stinky.vx = (stinky.vx - 0.1).max(stinky.target_vx);
             }
+        }
+        if stinky.specialty_timer > 0 {
+            stinky.vx = 0.0;
         }
 
         stinky.movement_state_change_timer += 1;
@@ -1288,6 +1906,13 @@ impl AdventureState {
             if self.rand_range(10) == 0 {
                 stinky.movement_state = self.rand_range(3) as u8;
             }
+        }
+
+        if alien_live {
+            stinky.specialty_timer = (stinky.specialty_timer + 1).min(9);
+            stinky.angry_timer = 0;
+        } else {
+            stinky.specialty_timer = stinky.specialty_timer.saturating_sub(1);
         }
 
         stinky.x = stinky.x.clamp(10.0, 550.0);
@@ -1317,7 +1942,14 @@ impl AdventureState {
         } else {
             stinky.frame = (9 + stinky.turn_animation_timer / 2) as u8;
         }
-        if stinky.vx != stinky.previous_vx && stinky.vx != 0.0 && stinky.previous_vx != 0.0 {
+        if stinky.specialty_timer > 0 {
+            stinky.frame = stinky.specialty_timer;
+        }
+        if stinky.vx != stinky.previous_vx
+            && stinky.vx != 0.0
+            && stinky.previous_vx != 0.0
+            && stinky.specialty_timer == 0
+        {
             stinky.previous_vx = stinky.vx;
         }
         stinky.x += stinky.vx / 1.2;
@@ -1346,7 +1978,7 @@ impl AdventureState {
     fn update_coins(&mut self, events: &mut Vec<Event>) {
         let bottom_limit = match (self.tank, self.level) {
             (1, 1) => FIRST_STAGE_COIN_BOTTOM_TICKS,
-            (1, 2) => SECOND_STAGE_COIN_BOTTOM_TICKS,
+            (1, 2 | 3) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             _ => unreachable!("coin lifetime for this Adventure stage is not implemented"),
         };
         let mut credited = Vec::new();
@@ -1585,6 +2217,7 @@ mod tests {
             frame: 0,
             ineligible_ticks: 0,
             removal_ticks: 0,
+            quality: 0,
         });
         state.coins.push(Coin {
             id: 51,
@@ -2181,5 +2814,409 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, Event::CoinCredited { coin_id: 44, .. }))
         );
+    }
+
+    #[test]
+    fn second_stage_growth_unlocks_quality_then_quantity_and_egg() {
+        let mut state = AdventureState::new_second_stage(0xa12);
+        state.validate().unwrap();
+        assert!(!state.upgrades.quality_unlocked);
+        assert!(!state.egg_unlocked);
+        state.fish[0].size = FishSize::Medium;
+        state.fish[0].food_ate = state.fish[0].food_needed_to_grow - 1;
+        state.fish[0].x = 100.0;
+        state.fish[0].y = 100.0;
+        state.fish[0].hunger = 400;
+        state.fish[1].x = 500.0;
+        state.fish[1].y = 300.0;
+        state.apply(Action::Click { x: 130.0, y: 130.0 });
+        assert!(state.tick().iter().any(|event| matches!(
+            event,
+            Event::FishGrew {
+                size: FishSize::Large,
+                ..
+            }
+        )));
+        assert!(state.upgrades.quality_unlocked);
+        assert!(!state.upgrades.quantity_unlocked);
+        assert!(!state.egg_unlocked);
+        state.balance = 200;
+        assert!(
+            state
+                .apply(Action::BuyFoodQuality)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::FoodQualityBought {
+                        quality: 1,
+                        balance: 0,
+                        ..
+                    }
+                ))
+        );
+        assert!(state.upgrades.quantity_unlocked);
+        assert!(state.egg_unlocked);
+        state.balance = 300;
+        assert!(
+            state
+                .apply(Action::BuyFoodQuantity)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::FoodQuantityBought {
+                        quantity: 2,
+                        balance: 0,
+                        ..
+                    }
+                ))
+        );
+        state.balance = 20;
+        state.apply(Action::Click { x: 300.0, y: 200.0 });
+        state.apply(Action::Click { x: 350.0, y: 200.0 });
+        assert_eq!(state.food.len(), 2);
+        assert!(
+            state
+                .apply(Action::Click { x: 400.0, y: 200.0 })
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::FoodCapacity,
+                        ..
+                    }
+                ))
+        );
+    }
+
+    #[test]
+    fn third_stage_large_growth_unlocks_both_food_slots_but_not_egg() {
+        // W1 Fish::FishOnGrow (1680-1715) takes a distinct tank-1 stage-3
+        // branch. Egg follows the Oscar purchase in Board.cpp:4152-4165.
+        let mut state = AdventureState::new_third_stage(0xa21);
+        assert!(!state.upgrades.quality_unlocked);
+        assert!(!state.upgrades.quantity_unlocked);
+        assert!(!state.egg_unlocked);
+        state.fish[0].size = FishSize::Medium;
+        state.fish[0].food_ate = state.fish[0].food_needed_to_grow - 1;
+        state.fish[0].x = 100.0;
+        state.fish[0].y = 100.0;
+        state.fish[0].hunger = 400;
+        state.fish[1].x = 500.0;
+        state.fish[1].y = 300.0;
+        state.apply(Action::Click { x: 130.0, y: 130.0 });
+        assert!(state.tick().iter().any(|event| matches!(
+            event,
+            Event::FishGrew {
+                size: FishSize::Large,
+                ..
+            }
+        )));
+        assert!(state.upgrades.quality_unlocked);
+        assert!(state.upgrades.quantity_unlocked);
+        assert!(!state.egg_unlocked);
+        state.validate().unwrap();
+        state.balance = 200;
+        state.apply(Action::BuyFoodQuality);
+        assert!(!state.egg_unlocked);
+    }
+
+    #[test]
+    fn held_food_uses_old_clock_after_delay_decrement_and_not_save_boundary() {
+        let mut allowed = AdventureState::new_second_stage(0xa13);
+        allowed.tick = 15; // Quantity one: old count divisible by 16 - 1.
+        allowed.invasion.as_mut().unwrap().food_delay = 1;
+        allowed.apply(Action::HoldFeed {
+            x: 320.0,
+            y: 200.0,
+            elapsed_ms: 201,
+        });
+        assert!(allowed.food.is_empty());
+        let saved = serde_json::to_vec(&allowed).unwrap();
+        let restored: AdventureState = serde_json::from_slice(&saved).unwrap();
+        assert!(restored.held_feed.is_none());
+        assert!(restored.food.is_empty());
+        assert!(
+            allowed
+                .begin_tick()
+                .iter()
+                .any(|event| matches!(event, Event::FoodDropped { .. }))
+        );
+        assert_eq!(allowed.tick, 16);
+        assert_eq!(allowed.food[0].ineligible_ticks, 20);
+
+        let mut blocked = AdventureState::new_second_stage(0xa14);
+        blocked.tick = 15;
+        blocked.invasion.as_mut().unwrap().food_delay = 2;
+        blocked.apply(Action::HoldFeed {
+            x: 320.0,
+            y: 200.0,
+            elapsed_ms: 201,
+        });
+        blocked.begin_tick();
+        assert_eq!(blocked.invasion.as_ref().unwrap().food_delay, 1);
+        assert!(blocked.food.is_empty());
+    }
+
+    #[test]
+    fn hidden_live_alien_freezes_hunger_coin_timer_and_stinky_collection() {
+        let mut state = AdventureState::new_second_stage(0xa15);
+        let wave = state.invasion.as_mut().unwrap();
+        wave.countdown = 1;
+        wave.warning = Some(crate::invasion::WarningCoords {
+            first_x: 20,
+            first_y: 105,
+            second_x: 469,
+            second_y: 299,
+        });
+        state.fish[0].size = FishSize::Medium;
+        state.fish[0].coin_timer = 10;
+        state.fish[0].coin_threshold = 11;
+        let hunger = state.fish[0].hunger;
+        let stinky_x = state.stinky.as_ref().unwrap().x as f32;
+        state.coins.push(Coin {
+            id: 700,
+            x: stinky_x,
+            y: 360.0,
+            kind: CoinKind::Silver,
+            frame: 0,
+            collecting: false,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+        });
+        assert!(state.begin_tick().iter().any(|event| matches!(
+            event,
+            Event::Invasion {
+                event: InvasionEvent::AlienSpawned { .. },
+                ..
+            }
+        )));
+        state.update_objects();
+        assert_eq!(
+            state
+                .invasion
+                .as_ref()
+                .unwrap()
+                .alien
+                .as_ref()
+                .unwrap()
+                .spawn_ticks,
+            14
+        );
+        assert_eq!(state.fish[0].hunger, hunger);
+        assert_eq!(state.fish[0].coin_timer, 10);
+        assert_eq!(state.coins.len(), 1);
+        assert_eq!(state.stinky.as_ref().unwrap().specialty_timer, 1);
+    }
+
+    #[test]
+    fn ordinary_coin_forwards_world_click_only_when_over_alien_widget() {
+        let mut state = AdventureState::new_second_stage(0xa16);
+        let wave = state.invasion.as_mut().unwrap();
+        wave.countdown = 3000;
+        wave.alien = Some(crate::alien::WeakSylvester::spawn(900, 100, 120, 1, 1));
+        state.coins.push(Coin {
+            id: 901,
+            x: 160.0,
+            y: 180.0,
+            kind: CoinKind::Silver,
+            frame: 0,
+            collecting: false,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+        });
+        let overlap = state.apply(Action::Click { x: 170.0, y: 190.0 });
+        assert!(overlap.iter().any(|event| matches!(
+            event,
+            Event::Invasion {
+                event: InvasionEvent::AlienHit {
+                    id: 900,
+                    health: 44
+                },
+                ..
+            }
+        )));
+        assert!(
+            overlap
+                .iter()
+                .any(|event| matches!(event, Event::CoinCollectionStarted { coin_id: 901, .. }))
+        );
+        state.coins.push(Coin {
+            id: 902,
+            x: 350.0,
+            y: 200.0,
+            kind: CoinKind::Silver,
+            frame: 0,
+            collecting: false,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+        });
+        let away = state.apply(Action::Click { x: 360.0, y: 210.0 });
+        assert!(
+            away.iter()
+                .any(|event| matches!(event, Event::CoinCollectionStarted { coin_id: 902, .. }))
+        );
+        assert!(!away.iter().any(|event| matches!(
+            event,
+            Event::Invasion {
+                event: InvasionEvent::LaserFired { .. },
+                ..
+            }
+        )));
+
+        // The integer widget includes its left/top edge for forwarding,
+        // while the alien's double-coordinate hit test excludes that edge.
+        state.coins.push(Coin {
+            id: 903,
+            x: 100.0,
+            y: 120.0,
+            kind: CoinKind::Silver,
+            frame: 0,
+            collecting: false,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+        });
+        let edge = state.apply(Action::Click { x: 100.0, y: 120.0 });
+        assert!(edge.iter().any(|event| matches!(
+            event,
+            Event::Invasion {
+                event: InvasionEvent::LaserFired { .. },
+                ..
+            }
+        )));
+        assert!(!edge.iter().any(|event| matches!(
+            event,
+            Event::Invasion {
+                event: InvasionEvent::AlienHit { .. },
+                ..
+            }
+        )));
+        assert!(
+            edge.iter()
+                .any(|event| matches!(event, Event::CoinCollectionStarted { coin_id: 903, .. }))
+        );
+    }
+
+    #[test]
+    fn alien_diamond_has_one_origin_and_player_or_stinky_credit() {
+        let mut player = AdventureState::new_second_stage(0xa17);
+        player.invasion.as_mut().unwrap().countdown = 3000;
+        let mut actor = crate::alien::WeakSylvester::spawn(910, 100, 120, 1, 1);
+        actor.health = 6;
+        player.invasion.as_mut().unwrap().alien = Some(actor);
+        let shot = player.apply(Action::Click { x: 180.0, y: 200.0 });
+        let coin_id = shot
+            .iter()
+            .find_map(|event| match event {
+                Event::AlienDiamondDropped {
+                    alien_id: 910,
+                    coin_id,
+                    ..
+                } => Some(*coin_id),
+                _ => None,
+            })
+            .unwrap();
+        assert!(!player.invasion.as_ref().unwrap().has_live_alien());
+        assert_eq!(player.balance, 200);
+        assert_eq!(
+            player
+                .coins
+                .iter()
+                .filter(|coin| coin.id == coin_id && coin.kind == CoinKind::Diamond)
+                .count(),
+            1
+        );
+        let claim = player.apply(Action::Click { x: 130.0, y: 150.0 });
+        assert!(claim.iter().any(|event| matches!(event, Event::CoinCollectionStarted { coin_id: id, .. } if *id == coin_id)));
+        let mut credits = 0;
+        for _ in 0..100 {
+            credits += player.tick().iter().filter(|event| matches!(event, Event::CoinCredited { coin_id: id, amount: 200, .. } if *id == coin_id)).count();
+        }
+        assert_eq!(credits, 1);
+        assert_eq!(player.balance, 400);
+
+        let mut pet = AdventureState::new_second_stage(0xa18);
+        pet.invasion.as_mut().unwrap().countdown = 3000;
+        let mut actor = crate::alien::WeakSylvester::spawn(920, 100, 120, 1, 1);
+        actor.health = 6;
+        pet.invasion.as_mut().unwrap().alien = Some(actor);
+        pet.apply(Action::Click { x: 180.0, y: 200.0 });
+        let stinky = pet.stinky.as_mut().unwrap();
+        stinky.x = 125.0;
+        stinky.y = 145.0;
+        let collected = pet.update_objects();
+        assert!(collected.iter().any(|event| matches!(
+            event,
+            Event::PetCollectedCoin {
+                pet: PetKind::Stinky,
+                amount: 200,
+                ..
+            }
+        )));
+        assert_eq!(pet.balance, 400);
+        assert!(pet.coins.is_empty());
+    }
+
+    #[test]
+    fn niko_pearl_stays_out_of_stinky_list_and_credits_once_after_flight() {
+        let mut state = AdventureState::new_third_stage(0xa19);
+        state.validate().unwrap();
+        state.niko.as_mut().unwrap().cycle = 1232;
+        state.stinky.as_mut().unwrap().x = 96.0;
+        state.stinky.as_mut().unwrap().y = 251.0;
+        assert!(state.update_objects().iter().any(|event| matches!(
+            event,
+            Event::Niko {
+                event: NikoEvent::PearlSpawn { .. },
+                ..
+            }
+        )));
+        assert_eq!(state.pearls.len(), 1);
+        state.update_objects();
+        assert_eq!(state.pearls.len(), 1);
+        assert!(state.coins.is_empty());
+        state.balance = 0;
+        state.guppy_unlocked = true;
+        let pearl_id = state.pearls[0].id;
+        assert!(state.apply(Action::Click { x: 100.0, y: 260.0 }).iter().any(|event| matches!(event, Event::PearlCollectionStarted { pearl_id: id, .. } if *id == pearl_id)));
+        assert!(state.niko.as_ref().unwrap().pearl_taken);
+        assert_eq!(state.available_funds(), 250);
+        assert!(
+            state
+                .apply(Action::BuyGuppy)
+                .iter()
+                .any(|event| matches!(event, Event::GuppyBought { balance: -100, .. }))
+        );
+        let mut credits = 0;
+        for _ in 0..100 {
+            credits += state.tick().iter().filter(|event| matches!(event, Event::PearlCredited { pearl_id: id, amount: 250, .. } if *id == pearl_id)).count();
+        }
+        assert_eq!(credits, 1);
+        assert_eq!(state.balance, 150);
+        assert!(state.pearls.is_empty());
+    }
+
+    #[test]
+    fn modal_pause_and_reload_preserve_wave_without_board_time() {
+        let mut state = AdventureState::new_second_stage(0xa20);
+        let wave = state.invasion.as_mut().unwrap();
+        wave.countdown = 276;
+        wave.danger_shown = true;
+        wave.pending_modal = Some(crate::invasion::InvasionTip::Danger);
+        wave.food_delay = 2;
+        wave.post_spawn_flash_ticks = 3;
+        state.apply(Action::HoldFeed {
+            x: 320.0,
+            y: 200.0,
+            elapsed_ms: 999,
+        });
+        let saved = serde_json::to_vec(&state).unwrap();
+        let mut resumed: AdventureState = serde_json::from_slice(&saved).unwrap();
+        resumed.validate().unwrap();
+        assert!(resumed.held_feed.is_none());
+        resumed.paused_board_update();
+        assert_eq!(resumed.tick, 0);
+        assert_eq!(resumed.invasion.as_ref().unwrap().countdown, 276);
+        assert_eq!(resumed.invasion.as_ref().unwrap().food_delay, 1);
+        assert_eq!(resumed.invasion.as_ref().unwrap().post_spawn_flash_ticks, 3);
     }
 }

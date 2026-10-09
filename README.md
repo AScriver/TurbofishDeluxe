@@ -4,7 +4,7 @@ An intended standalone Rust reimplementation of Insaniquarium Deluxe, targeting 
 
 The workflow is installed. Normal-speed Rust runs cover feeding/growth/coins, earned first-stage completion, Stinky collection and save/reload. Fish facing was corrected and visually checked. Full gameplay fidelity remains unverified. The installed game binaries are authoritative and WinFish is secondary. See [STATUS.md](STATUS.md) for current evidence and gaps.
 
-The complete runtime goal remains in [requirements](docs/requirements.md). The [coverage checklist](docs/compatibility.md) records missing systems; the next integrated task is [Adventure1-2 upgrades, combat and Niko](docs/adventure-1-2.md).
+The complete runtime goal remains in [requirements](docs/requirements.md). The [coverage checklist](docs/compatibility.md) records missing systems; the next integrated task is [Adventure1-3 Oscar, strong Sylvester and progression](docs/adventure-1-3.md).
 
 ## Start here
 
@@ -53,7 +53,7 @@ $runtimeArguments = @('--new-game', '--seed', '42')
 & $runtimeExecutable @runtimeArguments
 ```
 
-Steam discovery is automatic; pass `--game-dir <directory>` if needed. Project saves use `%LOCALAPPDATA%/TurbofishDeluxe`, separate from retail saves; use `--save-dir` for isolated checks. Escape pauses; S saves; Q while paused or closing the window saves/exits. Version1/2 project saves migrate atomically to format3; old missing Stinky motion is initialized explicitly, and unknown old scores stay unknown. Hatch/rescue Continue is clickable (Enter also works); holding the hatch background skips its intro. First-stage completion and Stinky's1-2 collection were exercised. Later-stage systems remain incomplete.
+Steam discovery is automatic; pass `--game-dir <directory>` if needed. Project saves use `%LOCALAPPDATA%/TurbofishDeluxe`, separate from retail saves; use `--save-dir` for isolated checks. Escape pauses; S saves; Q while paused or closing the window saves/exits. Versions1–3 project saves migrate atomically to format4; [migration rules](docs/adventure-1-2.md#persistence-and-current-validation) keep unknown historical state explicit. Continue is clickable (Enter also works); holding the hatch background skips its intro. The1-2 upgrades/combat/Niko build passes85 tests and [normal-speed earned play, pearl reload and Game Over/reentry](docs/playtests/2026-10-08-adventure-1-2-01.md). Later stages remain incomplete.
 
 `--evidence-dir` writes identity/events/captures and optional complete state snapshots. Current snapshots include `state` (board or null), `phase`, `progress` and `session_tick`; board ticks reset on a fresh stage while session ticks remain monotonic. The event log includes both time scopes. These observation files are private, separate from authoritative project saves.
 
