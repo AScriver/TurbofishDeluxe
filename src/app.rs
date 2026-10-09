@@ -106,8 +106,13 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_GUMBO",
     "IMAGE_BLIP",
     "IMAGE_SCL_BLIP",
+    "IMAGE_RHUBARB",
+    "IMAGE_SCL_RHUBARB",
     "IMAGE_ULYSSES",
     "IMAGE_ENERGYBALL",
+    "IMAGE_HEALTHBAR",
+    "IMAGE_HEALTHBARTUBE",
+    "IMAGE_CROSSHAIR",
     "IMAGE_ZZZ",
     "IMAGE_STARCATCHER",
     "IMAGE_SCL_STARCATCHER",
@@ -146,6 +151,7 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_BONUSCOUNT",
     "SOUND_UNLEASH",
     "SOUND_ROAR3",
+    "SOUND_SONAR",
 ];
 
 const ADDITIVE_VERTEX: &str = r#"#version 100
@@ -198,6 +204,10 @@ fn pet_at_pointer(unlocked_pets: &[PetKind], pointer: Vec2) -> Option<PetKind> {
         .enumerate()
         .find(|(index, _)| pet_card_rect(*index).contains(pointer))
         .map(|(_, pet)| *pet)
+}
+
+fn health_bar_visible_width(health: f64, starting_health: f64, image_width: f32) -> f32 {
+    ((f64::from(image_width) * health / starting_health) as i32).clamp(0, image_width as i32) as f32
 }
 
 fn arms_held_feed(events: &[Event], gus_click: Option<(i32, i32)>) -> bool {
@@ -523,6 +533,7 @@ impl Presentation {
                 Event::MerylNoteDropped { .. } => "SOUND_SING",
                 Event::ShrapnelBombDropped { .. } => "SOUND_UNLEASH",
                 Event::ShrapnelBombExploded { .. } => "SOUND_EXPLODE",
+                Event::BlipShopRevealed { .. } | Event::BlipSonar { .. } => "SOUND_SONAR",
                 Event::HatchOpened { .. } => "SOUND_HATCH",
                 Event::Invasion { event, .. } => match event {
                     InvasionEvent::WarningStarted(_) => "SOUND_AWOOGA",
@@ -680,6 +691,18 @@ impl Presentation {
                     200.0 / 255.0,
                 );
             }
+            if state.blip_hunger_icon_visible(fish) {
+                // Fish::Draw puts misc cel 2 at widget-local (0, -5).
+                self.sprite(
+                    "IMAGE_MISCITEMS",
+                    fish.x,
+                    fish.y - 5.0,
+                    Some(Rect::new(144.0, 0.0, 72.0, 72.0)),
+                    false,
+                    1.0,
+                    1.0,
+                );
+            }
         }
         for oscar in state.oscars.iter().filter(|oscar| oscar.alive) {
             let id = match (oscar.sprite_pose(), oscar.hunger_visible()) {
@@ -794,6 +817,7 @@ impl Presentation {
                 FishPetKind::Seymour => "IMAGE_SEYMOUR",
                 FishPetKind::Shrapnel => "IMAGE_SHRAPNEL",
                 FishPetKind::Gumbo => "IMAGE_GUMBO",
+                FishPetKind::Blip => "IMAGE_BLIP",
             };
             let source = Rect::new(
                 f32::from(pet.sprite_frame()) * 80.0,
@@ -1013,6 +1037,36 @@ impl Presentation {
                             facing_right,
                             scale,
                             f32::from(intensity) / 5.0,
+                        );
+                    }
+                    if alien.spawn_ticks == 0 && state.has_live_blip() && state.tank != 5 {
+                        // W1 Alien::DrawAlien clips only the bar; the tube keeps
+                        // its full image width. This ratio is source-derived.
+                        let bar = &self.images["IMAGE_HEALTHBAR"];
+                        let width = health_bar_visible_width(
+                            alien.health,
+                            alien.kind.starting_health(),
+                            bar.width(),
+                        );
+                        if width > 0.0 {
+                            self.sprite(
+                                "IMAGE_HEALTHBAR",
+                                alien.widget_x as f32 + 10.0,
+                                alien.widget_y as f32 + 157.0,
+                                Some(Rect::new(0.0, 0.0, width, bar.height())),
+                                false,
+                                1.0,
+                                1.0,
+                            );
+                        }
+                        self.sprite(
+                            "IMAGE_HEALTHBARTUBE",
+                            alien.widget_x as f32 + 10.0,
+                            alien.widget_y as f32 + 157.0,
+                            None,
+                            false,
+                            1.0,
+                            1.0,
                         );
                     }
                 }
@@ -1277,6 +1331,18 @@ impl Presentation {
                 Some(Rect::new(72.0, 0.0, 72.0, 72.0)),
                 false,
                 1.0,
+                1.0,
+            );
+        }
+        if let Some((x, y, frame)) = state.blip_crosshair() {
+            // W1 Board::DrawOverlay0 follows game-object drawing and uses
+            // additive blending. Board supplies the final draw position.
+            self.additive_sprite(
+                "IMAGE_CROSSHAIR",
+                x as f32,
+                y as f32,
+                Rect::new(f32::from(frame) * 80.0, 0.0, 80.0, 80.0),
+                false,
                 1.0,
             );
         }
@@ -1621,10 +1687,10 @@ impl Presentation {
 
     fn draw_bonus(&self, bonus: &BonusState) {
         self.sprite(
-            if bonus.origin_tank == 2 {
-                "IMAGE_AQUARIUM2"
-            } else {
-                "IMAGE_AQUARIUM1"
+            match bonus.origin_tank {
+                2 => "IMAGE_AQUARIUM2",
+                3 => "IMAGE_AQUARIUM4",
+                _ => "IMAGE_AQUARIUM1",
             },
             0.0,
             0.0,
@@ -1863,6 +1929,7 @@ impl Presentation {
                 PetKind::Shrapnel => ("IMAGE_SHRAPNEL", 90.0, updates % 40 / 4),
                 PetKind::Gumbo => ("IMAGE_GUMBO", 90.0, updates % 20 / 2),
                 PetKind::Blip => ("IMAGE_BLIP", 90.0, updates % 20 / 2),
+                PetKind::Rhubarb => ("IMAGE_RHUBARB", 90.0, updates % 40 / 4),
             };
             self.sprite(
                 id,
@@ -1874,7 +1941,10 @@ impl Presentation {
                 1.0,
             );
             self.centered_text(
-                if matches!(pet, PetKind::Wadsworth | PetKind::Shrapnel) {
+                if matches!(
+                    pet,
+                    PetKind::Wadsworth | PetKind::Shrapnel | PetKind::Rhubarb
+                ) {
                     "JungleFever12outline"
                 } else {
                     "JungleFever15outline"
@@ -1894,6 +1964,7 @@ impl Presentation {
                     PetKind::Shrapnel => "SHRAPNEL the Robot Fish",
                     PetKind::Gumbo => "GUMBO the Angler",
                     PetKind::Blip => "BLIP the Porpoise",
+                    PetKind::Rhubarb => "RHUBARB the Hermit Crab",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -1967,6 +2038,11 @@ impl Presentation {
                     "BLIP provides you with info",
                     "that helps you better combat",
                     "aliens and keep your fish fed.",
+                ],
+                PetKind::Rhubarb => [
+                    "RHUBARB snaps his claws at",
+                    "fish, keeping them off the",
+                    "bottom of your tank.",
                 ],
             };
             for (index, line) in description.iter().enumerate() {
@@ -2054,12 +2130,16 @@ impl Presentation {
                 PetKind::Shrapnel => "IMAGE_SCL_SHRAPNEL",
                 PetKind::Gumbo => "IMAGE_SCL_GUMBO",
                 PetKind::Blip => "IMAGE_SCL_BLIP",
+                PetKind::Rhubarb => "IMAGE_SCL_RHUBARB",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
                 let phase = session.ticks % 18;
                 if phase > 9 { 18 - phase } else { phase }
-            } else if matches!(*pet, PetKind::Clyde | PetKind::Seymour | PetKind::Shrapnel) {
+            } else if matches!(
+                *pet,
+                PetKind::Clyde | PetKind::Seymour | PetKind::Shrapnel | PetKind::Rhubarb
+            ) {
                 session.ticks / 4 % 10
             } else {
                 session.ticks / 2 % 10
@@ -2227,11 +2307,24 @@ impl Presentation {
                     ],
                     90.0,
                 ),
+                PetKind::Rhubarb => (
+                    "IMAGE_RHUBARB",
+                    "RHUBARB the Hermit Crab",
+                    [
+                        "RHUBARB snaps his claws at",
+                        "fish, keeping them off the",
+                        "bottom of your tank.",
+                    ],
+                    90.0,
+                ),
             };
             let column = if matches!(pet, PetKind::Niko | PetKind::Vert) {
                 let phase = session.ticks % 18;
                 if phase > 9 { 18 - phase } else { phase }
-            } else if matches!(pet, PetKind::Clyde | PetKind::Seymour | PetKind::Shrapnel) {
+            } else if matches!(
+                pet,
+                PetKind::Clyde | PetKind::Seymour | PetKind::Shrapnel | PetKind::Rhubarb
+            ) {
                 session.ticks / 4 % 10
             } else {
                 session.ticks % 20 / 2
@@ -3295,6 +3388,46 @@ mod feed_input_tests {
             pet_at_pointer(&unlocked, vec2(470.0, 248.0)),
             Some(PetKind::Gumbo)
         );
+    }
+
+    #[test]
+    fn rhubarb_uses_fifth_right_hand_card_and_preserves_blip_hit_area() {
+        let unlocked = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+            PetKind::Clyde,
+            PetKind::Vert,
+            PetKind::Rufus,
+            PetKind::Meryl,
+            PetKind::Wadsworth,
+            PetKind::Seymour,
+            PetKind::Shrapnel,
+            PetKind::Gumbo,
+            PetKind::Blip,
+            PetKind::Rhubarb,
+        ];
+        assert_eq!(pet_card_rect(14), Rect::new(425.0, 373.0, 90.0, 83.0));
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(470.0, 414.0)),
+            Some(PetKind::Rhubarb)
+        );
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(470.0, 331.0)),
+            Some(PetKind::Blip)
+        );
+    }
+
+    #[test]
+    fn alien_health_bar_clips_visual_width_without_changing_health() {
+        // W1 Alien::DrawAlien multiplies the image width by HP/max HP,
+        // truncates to an integer and bounds the source rectangle.
+        assert_eq!(health_bar_visible_width(-4.0, 100.0, 127.0), 0.0);
+        assert_eq!(health_bar_visible_width(50.0, 100.0, 127.0), 63.0);
+        assert_eq!(health_bar_visible_width(100.0, 100.0, 127.0), 127.0);
+        assert_eq!(health_bar_visible_width(150.0, 100.0, 127.0), 127.0);
     }
 
     #[test]

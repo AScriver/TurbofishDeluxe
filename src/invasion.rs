@@ -54,6 +54,7 @@ pub enum WavePlan {
     CyclingTank1Finale { next: EncounterKind },
     CyclingTank2Finale { next: EncounterKind },
     CyclingTank3Second { next: SylvesterKind },
+    CyclingTank3Finale { next: SylvesterKind },
 }
 
 impl WavePlan {
@@ -61,7 +62,9 @@ impl WavePlan {
         match self {
             Self::Fixed(kind) => EncounterKind::Single(kind),
             Self::CyclingTank1Finale { next } | Self::CyclingTank2Finale { next } => next,
-            Self::CyclingTank3Second { next } => EncounterKind::Single(next),
+            Self::CyclingTank3Second { next } | Self::CyclingTank3Finale { next } => {
+                EncounterKind::Single(next)
+            }
         }
     }
 }
@@ -247,6 +250,16 @@ impl Invasion1_2 {
         ));
         let mut wave = Self::with_origin(InvasionOrigin::StageStart, first);
         wave.plan = WavePlan::CyclingTank3Second { next: first };
+        wave
+    }
+
+    pub fn new_tank3_finale(first: SylvesterKind) -> Self {
+        assert!(matches!(
+            first,
+            SylvesterKind::Ulysses | SylvesterKind::Psychosquid
+        ));
+        let mut wave = Self::with_origin(InvasionOrigin::StageStart, first);
+        wave.plan = WavePlan::CyclingTank3Finale { next: first };
         wave
     }
 
@@ -483,6 +496,15 @@ impl Invasion1_2 {
                             }
                         } else {
                             next
+                        },
+                    },
+                    WavePlan::CyclingTank3Finale { .. } => WavePlan::CyclingTank3Finale {
+                        // PB51: the actor was constructed above; the next
+                        // expectation uses a separate inverted low-bit draw.
+                        next: if next_random().is_multiple_of(2) {
+                            SylvesterKind::Psychosquid
+                        } else {
+                            SylvesterKind::Ulysses
                         },
                     },
                 };
@@ -828,6 +850,16 @@ impl Invasion1_2 {
                         matches!(actor.kind, SylvesterKind::Gus | SylvesterKind::Destructor)
                     })
             }
+            WavePlan::CyclingTank3Finale { next } => {
+                matches!(next, SylvesterKind::Ulysses | SylvesterKind::Psychosquid)
+                    && self.actors.len() <= 1
+                    && self.actors.iter().all(|actor| {
+                        matches!(
+                            actor.kind,
+                            SylvesterKind::Ulysses | SylvesterKind::Psychosquid
+                        )
+                    })
+            }
         };
         if !(0..=3000).contains(&self.countdown)
             || self.food_delay > 36
@@ -893,6 +925,35 @@ impl Default for Invasion1_2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tank3_finale_spawns_current_kind_before_independent_inverted_bit() {
+        for (bit, expected_next) in [(0, SylvesterKind::Psychosquid), (1, SylvesterKind::Ulysses)] {
+            let mut wave = Invasion1_2::new_tank3_finale(SylvesterKind::Ulysses);
+            wave.warning = Some(WarningCoords {
+                first_x: 100,
+                first_y: 140,
+                second_x: 200,
+                second_y: 220,
+            });
+            wave.countdown = 1;
+            let mut draws = [1, 4, bit].into_iter();
+            let events = wave.board_update(|| draws.next().expect("exactly three draws"), || 7);
+            assert_eq!(draws.next(), None);
+            assert_eq!(
+                events,
+                [InvasionEvent::AlienSpawned {
+                    id: 7,
+                    x: 100,
+                    y: 280
+                }]
+            );
+            assert_eq!(wave.actors[0].kind, SylvesterKind::Ulysses);
+            assert_eq!(wave.plan.expected(), EncounterKind::Single(expected_next));
+            assert_eq!(wave.countdown, 3000);
+            wave.validate().unwrap();
+        }
+    }
 
     #[test]
     fn psychosquid_healing_shot_reports_only_heal_event_and_timed_exit_reports_phase() {

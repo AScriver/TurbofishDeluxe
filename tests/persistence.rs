@@ -164,6 +164,323 @@ fn ulysses_energyball_session(immunity_ticks: u8) -> AdventureSession {
     session
 }
 
+fn tank_three_fifth_session(pets: &[PetKind]) -> AdventureSession {
+    let mut session = tank_three_fourth_session(&[]);
+    session.progress.level = 5;
+    session.progress.unlocked_pets.push(PetKind::Blip);
+    session.progress.selected_pets = pets.to_vec();
+    session.board = Some(AdventureState::new_tank3_fifth_stage(42, pets).unwrap());
+    session
+}
+
+#[test]
+fn current_finale_accepts_fourteen_rosters_and_rejects_unearned_rhubarb() {
+    // PB52 canonical unlocks: Rhubarb is the reward, not an initial live pet.
+    for pet in [
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Clyde,
+        PetKind::Vert,
+        PetKind::Rufus,
+        PetKind::Meryl,
+        PetKind::Wadsworth,
+        PetKind::Seymour,
+        PetKind::Shrapnel,
+        PetKind::Gumbo,
+        PetKind::Blip,
+    ] {
+        let session = tank_three_fifth_session(&[pet]);
+        session.validate().unwrap();
+        let bytes = serde_json::to_vec(&cli::ProjectSave {
+            format_version: cli::SAVE_FORMAT_VERSION,
+            session: session.clone(),
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(cli::decode_save(&bytes).unwrap()).unwrap(),
+            serde_json::to_value(session).unwrap()
+        );
+    }
+    assert!(AdventureState::new_tank3_fifth_stage(42, &[PetKind::Rhubarb]).is_err());
+}
+
+#[test]
+fn current_blip_reveal_boundary_and_typed_continuation_survive_reload() {
+    use turbofish_deluxe::sim::Event;
+    // PB52 ordinary flag0 reveals only after Board update200. Existing flags
+    // are the durable authority; there is no duplicate saved reveal boolean.
+    let mut uninterrupted = tank_three_fifth_session(&[PetKind::Blip]);
+    uninterrupted.ticks = 200;
+    uninterrupted.board.as_mut().unwrap().tick = 200;
+    uninterrupted.validate().unwrap();
+    let bytes = serde_json::to_vec(&cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: uninterrupted.clone(),
+    })
+    .unwrap();
+    let mut resumed = cli::decode_save(&bytes).unwrap();
+    let mut reveal_count = 0;
+    for _ in 0..120 {
+        let expected = uninterrupted.step(&[]);
+        let actual = resumed.step(&[]);
+        reveal_count += actual
+            .iter()
+            .filter(|event| matches!(event, Event::BlipShopRevealed { .. }))
+            .count();
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&uninterrupted).unwrap()
+        );
+        resumed.validate().unwrap();
+    }
+    assert_eq!(reveal_count, 1);
+    assert_eq!(resumed.board.as_ref().unwrap().balance, 200);
+    let mut missing_actor = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: resumed,
+    })
+    .unwrap();
+    missing_actor["session"]["board"]["fish_pets"] = serde_json::json!([]);
+    assert!(cli::decode_save(&serde_json::to_vec(&missing_actor).unwrap()).is_err());
+}
+
+#[test]
+fn current_tank_three_bonus_flight_and_immutable_results_survive_reload() {
+    use turbofish_deluxe::bonus::{BonusResult, BonusState, ShellPhase};
+    let mut session = tank_three_fifth_session(&[PetKind::Blip]);
+    session.progress.level = 6;
+    session.progress.unlocked_pets.push(PetKind::Rhubarb);
+    session.board = None;
+    let mut bonus = BonusState::new_for_tank(42, 3).unwrap();
+    bonus.click(0.0, 0.0);
+    bonus.update();
+    let shell = &bonus.shells[0];
+    bonus.click(shell.x as f32 + 1.0, shell.y as f32 + 1.0);
+    bonus.update();
+    assert!(
+        bonus
+            .shells
+            .iter()
+            .any(|shell| matches!(&shell.phase, ShellPhase::Collecting { .. }))
+    );
+    session.ticks = bonus.tick;
+    session.phase = AdventurePhase::Bonus { state: bonus };
+    session.validate().unwrap();
+    let current = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: session.clone(),
+    })
+    .unwrap();
+    let mut resumed = cli::decode_save(&serde_json::to_vec(&current).unwrap()).unwrap();
+    for _ in 0..32 {
+        assert_eq!(
+            serde_json::to_value(resumed.step(&[])).unwrap(),
+            serde_json::to_value(session.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&session).unwrap()
+        );
+        resumed.validate().unwrap();
+    }
+    let mut missing = current;
+    missing["session"]["phase"]["Bonus"]["state"]
+        .as_object_mut()
+        .unwrap()
+        .remove("origin_tank");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+    // Result origin stays3 when the profile advances to4-1; balance is already
+    // committed and neither presentation nor repeated Continue can credit it.
+    session.progress.tank = 4;
+    session.progress.level = 1;
+    session.progress.shell_balance = 1564;
+    session.phase = AdventurePhase::BonusResults {
+        result: BonusResult {
+            origin_tank: 3,
+            earned: 217,
+            previous_balance: 1347,
+            updates: 8,
+        },
+    };
+    let results = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    let mut loaded = cli::decode_save(&serde_json::to_vec(&results).unwrap()).unwrap();
+    for _ in 0..40 {
+        loaded.step(&[]);
+    }
+    assert_eq!(loaded.progress.shell_balance, 1564);
+    loaded.apply_actions(&[Action::Continue, Action::Continue]);
+    assert!(matches!(loaded.phase, AdventurePhase::PetSelection { .. }));
+    assert!(loaded.board.is_none());
+    assert_eq!(loaded.progress.unlocked_pets.len(), 15);
+    assert_eq!(loaded.progress.shell_balance, 1564);
+    loaded.validate().unwrap();
+    for invalid in [0, 1, 2, 4, 255] {
+        let mut wrong = results.clone();
+        wrong["session"]["phase"]["BonusResults"]["result"]["origin_tank"] = invalid.into();
+        assert!(cli::decode_save(&serde_json::to_vec(&wrong).unwrap()).is_err());
+    }
+    let mut missing = results;
+    missing["session"]["phase"]["BonusResults"]["result"]
+        .as_object_mut()
+        .unwrap()
+        .remove("origin_tank");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+}
+
+#[test]
+fn current_finale_retains_live_ulysses_and_balls_independently_of_next_psychosquid() {
+    use turbofish_deluxe::{alien::SylvesterKind, invasion::WavePlan};
+    // Controlled mixed-stage continuation; the existing raw1 state came from
+    // the same identified actor constructor, not from the future wave kind.
+    let mut session = ulysses_energyball_session(0);
+    session.progress.level = 5;
+    session.progress.unlocked_pets.push(PetKind::Blip);
+    let board = session.board.as_mut().unwrap();
+    board.level = 5;
+    board.egg_price = 15000;
+    board.invasion.as_mut().unwrap().plan = WavePlan::CyclingTank3Finale {
+        next: SylvesterKind::Psychosquid,
+    };
+    session.validate().unwrap();
+    let current = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: session.clone(),
+    })
+    .unwrap();
+    let mut resumed = cli::decode_save(&serde_json::to_vec(&current).unwrap()).unwrap();
+    for _ in 0..60 {
+        assert_eq!(
+            serde_json::to_value(resumed.step(&[])).unwrap(),
+            serde_json::to_value(session.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&session).unwrap()
+        );
+        resumed.validate().unwrap();
+    }
+    let mut missing = current;
+    missing["session"]["board"]["missiles"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("kind");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+}
+
+#[test]
+fn current_blip_hunger_icon_is_independent_of_growth_food_progress() {
+    // PB53 and its writer adjudication: ordinary daily-fed count stays0.
+    // Growth's distinct mFoodAte can be2/3/large and must not suppress an icon.
+    let mut board = AdventureState::new_tank3_fifth_stage(42, &[PetKind::Blip]).unwrap();
+    board.fish[0].hunger = 499;
+    for growth_count in [2, 3, 25] {
+        board.fish[0].food_ate = growth_count;
+        assert!(
+            board.blip_hunger_icon_visible(&board.fish[0]),
+            "growth_count={growth_count}"
+        );
+    }
+    board.fish[0].hunger = 500;
+    assert!(!board.blip_hunger_icon_visible(&board.fish[0]));
+}
+
+#[test]
+fn current_finale_rejects_classic_projectile_with_psychosquid_or_alien_free_tail() {
+    use turbofish_deluxe::{
+        alien::{SylvesterKind, WeakSylvester},
+        invasion::WavePlan,
+        missile::ClassicMissile,
+    };
+    let mut rejections = Vec::new();
+    for with_psychosquid in [false, true] {
+        let mut session = ulysses_energyball_session(0);
+        session.progress.level = 5;
+        session.progress.unlocked_pets.push(PetKind::Blip);
+        let board = session.board.as_mut().unwrap();
+        board.level = 5;
+        board.egg_price = 15000;
+        let original = board.missiles[0].clone();
+        let wave = board.invasion.as_mut().unwrap();
+        wave.plan = WavePlan::CyclingTank3Finale {
+            next: SylvesterKind::Psychosquid,
+        };
+        let alien_id = wave.actors[0].id;
+        wave.actors.clear();
+        if with_psychosquid {
+            let mut actor =
+                WeakSylvester::spawn_kind(SylvesterKind::Psychosquid, alien_id, 460, 210, 1, 1);
+            actor.spawn_ticks = 0;
+            wave.actors.push(actor);
+        } else {
+            // A raw1-only tail is a valid starting control; neither branch
+            // justifies Classic, which neither finale species can launch.
+            session.validate().unwrap();
+        }
+        let board = session.board.as_mut().unwrap();
+        board.missiles[0] = ClassicMissile::launch(original.id, original.target_id, 100, 110, 3);
+        let invalid = cli::ProjectSave {
+            format_version: cli::SAVE_FORMAT_VERSION,
+            session,
+        };
+        rejections.push((
+            with_psychosquid,
+            cli::decode_save(&serde_json::to_vec(&invalid).unwrap()).is_err(),
+        ));
+    }
+    assert!(
+        rejections.iter().all(|(_, rejected)| *rejected),
+        "(with_psychosquid, rejected)={rejections:?}"
+    );
+}
+
+#[test]
+fn current_finale_rejects_energy_projectile_with_live_psychosquid() {
+    use turbofish_deluxe::{
+        alien::{SylvesterKind, WeakSylvester},
+        invasion::WavePlan,
+    };
+    let mut session = ulysses_energyball_session(0);
+    session.progress.level = 5;
+    session.progress.unlocked_pets.push(PetKind::Blip);
+    let board = session.board.as_mut().unwrap();
+    board.level = 5;
+    board.egg_price = 15000;
+    let wave = board.invasion.as_mut().unwrap();
+    wave.plan = WavePlan::CyclingTank3Finale {
+        next: SylvesterKind::Psychosquid,
+    };
+    let alien_id = wave.actors[0].id;
+    wave.actors.clear();
+    session.validate().unwrap(); // The orphan energy ball blocks the next wave.
+    let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Psychosquid, alien_id, 460, 210, 1, 1);
+    actor.spawn_ticks = 0;
+    session
+        .board
+        .as_mut()
+        .unwrap()
+        .invasion
+        .as_mut()
+        .unwrap()
+        .actors
+        .push(actor);
+    let invalid = cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    };
+    assert!(cli::decode_save(&serde_json::to_vec(&invalid).unwrap()).is_err());
+}
+
 #[test]
 fn current_fourth_tank_three_accepts_thirteen_rosters_but_rejects_unearned_blip() {
     for pet in [

@@ -150,7 +150,7 @@ impl BonusResult {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if !matches!(self.origin_tank, 1 | 2)
+        if !matches!(self.origin_tank, 1..=3)
             || self.previous_balance > MAX_SHELL_BALANCE
             || self.earned > MAX_SHELL_BALANCE
         {
@@ -187,7 +187,7 @@ impl BonusState {
     }
 
     pub fn new_for_tank(seed: u64, origin_tank: u8) -> Result<Self, String> {
-        if !matches!(origin_tank, 1 | 2) {
+        if !matches!(origin_tank, 1..=3) {
             return Err("unsupported bonus origin tank".into());
         }
         Ok(Self {
@@ -209,7 +209,7 @@ impl BonusState {
     }
 
     pub fn duration_seconds(&self) -> u32 {
-        // W1 Board::InitBonusLevel: Tank1 base10/Tank2 base15 + level6 - 1.
+        // PB52: Tank1/2/3 base10/15/20 + ordinary level6 - 1.
         10 + u32::from(self.origin_tank) * 5
     }
 
@@ -412,7 +412,7 @@ impl BonusState {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if !matches!(self.origin_tank, 1 | 2)
+        if !matches!(self.origin_tank, 1..=3)
             || self.tick < self.initial_count
             || self.tick == u64::MAX
             || self
@@ -960,8 +960,46 @@ mod tests {
         assert!(state.update().completed);
         assert_eq!(state.empty_updates, 102);
         assert_eq!(state.tick, final_tick);
-        assert!(BonusState::new_for_tank(42, 3).is_err());
+        assert!(BonusState::new_for_tank(42, 4).is_err());
         state.origin_tank = 0;
         assert!(state.validate().is_err());
+    }
+
+    #[test]
+    fn tank_three_bonus_keeps_origin_and_strict_integer_timeout_boundary() {
+        // PB52 base20 + level6 - 1. At old relative tick928 the integer
+        // elapsed clock is25; at929 it is26 and exceeds the budget.
+        let mut state = BonusState::new_for_tank(42, 3).unwrap();
+        assert_eq!(state.duration_seconds(), 25);
+        state.click(0.0, 0.0);
+        state.tick = 928;
+        assert!(!state.update().events.contains(&BonusEvent::TimedOut));
+        assert_eq!(state.origin_tank, 3);
+        let expired = state.update();
+        assert_eq!(expired.events, vec![BonusEvent::TimedOut]);
+        assert!(!expired.completed);
+        assert_eq!(state.empty_updates, 1);
+        let mut restored: BonusState =
+            serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        assert_eq!(restored.duration_seconds(), 25);
+        for _ in 0..101 {
+            let actual = restored.update();
+            let expected = state.update();
+            assert_eq!(actual.events, expected.events);
+            assert_eq!(actual.completed, expected.completed);
+            assert_eq!(restored, state);
+        }
+        state.validate().unwrap();
+        let result = BonusResult {
+            origin_tank: 3,
+            earned: 808,
+            previous_balance: 1347,
+            updates: 30,
+        };
+        result.validate().unwrap();
+        assert_eq!(result.origin_tank, 3);
+        assert!(BonusState::new_for_tank(42, 255).is_err());
+        restored.origin_tank = 255;
+        assert!(restored.validate().is_err());
     }
 }

@@ -17,6 +17,7 @@ pub enum FishPetKind {
     Seymour,
     Shrapnel,
     Gumbo,
+    Blip,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -311,6 +312,7 @@ impl FishPetState {
             FishPetKind::Seymour => u8::from(self.turn_ticks != 0),
             FishPetKind::Shrapnel => u8::from(self.turn_ticks != 0),
             FishPetKind::Gumbo => u8::from(self.turn_ticks != 0),
+            FishPetKind::Blip => u8::from(self.turn_ticks != 0),
         }
     }
 
