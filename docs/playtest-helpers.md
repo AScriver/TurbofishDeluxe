@@ -2,7 +2,7 @@
 
 Use [Playtest-Helpers.ps1](../scripts/Playtest-Helpers.ps1) for new experiments. Dot-source it from a scenario; keep machine-specific fixtures, scripts and raw receipts under ignored `.scratch/`. The old private tester scripts and completed reports remain historical. The October 9 inventory found 357 scripts: the original 355 plus the two newer A32 freeze/preparation scripts. Consolidation replaces repeated code in future scenarios, without rewriting those receipts.
 
-[Test-Playtest.ps1](../scripts/Test-Playtest.ps1) is the maintained replacement for the repeated live pause/reload mechanics. It runs an identified Playing Board at normal speed, optionally checks a genuine copied save against pre-loop identity, posts Escape and a paused logical click, holds selected simulation state while session time advances, resumes, captures both views, closes, and compares the final session against the persisted save. `-ExerciseFoodClick` additionally checks an ordinary active food drop; use a starting Board with food capacity for that option. This smoke checks tooling; it does not earn a milestone or establish retail fidelity. [Verification report](playtests/2026-10-09-playtest-helpers-01.md).
+[Test-Playtest.ps1](../scripts/Test-Playtest.ps1) is the maintained replacement for the repeated live pause/reload mechanics. It runs an identified Playing Board at the selected speed, optionally checks a genuine copied save against pre-loop identity, posts Escape and a paused logical click, holds selected simulation state while session time advances, resumes, captures both views, closes, and compares the final session against the persisted save. `-ExerciseFoodClick` additionally checks an ordinary active food drop; use a starting Board with food capacity for that option. This smoke checks tooling; it does not earn a milestone or establish retail fidelity. The [initial verification report](playtests/2026-10-09-playtest-helpers-01.md) records historical normal-speed runs.
 
 ## Run and validate
 
@@ -13,6 +13,7 @@ $repositoryRoot = 'C:\Code\TurbofishDeluxe'
 $parameters = @{
     ExecutablePath = Join-Path $repositoryRoot 'target/debug/turbofish-deluxe.exe'
     ExecutableSha256 = '<64 hexadecimal characters from the checked build receipt>'
+    TestSpeed = 8
     Mute = $true
     ExerciseFoodClick = $true
 }
@@ -21,7 +22,7 @@ $parameters = @{
 
 The default run directory is a fresh `.scratch/playtests/helpers-<UUID>/`, containing separate `save/`, `evidence/`, launch/input/cleanup and result or failure receipts. `-RunDirectory` accepts a new directory inside this repository's `.scratch/`; existing directories and reparse-point parents are rejected. `-SourceSavePath` and `-SourceSaveSha256` must be supplied together. The source is byte-copied and verified, without schema conversion or gameplay edits. `-GameDirectory` overrides normal owned-install discovery. Argument arrays preserve spaces in all paths.
 
-For an explicitly accelerated exploratory/stress run, add `TestSpeed = 4` and `Mute = $true` to the parameters. `-TestSpeed` accepts integers 1–8 and defaults to 1; above 1 requires `-Mute` before any process or run-directory allocation. The helper supplies dedicated save/evidence directories and a wall safety deadline. Use a newly identified executable that supports the flag. The default 1x path also remains compatible with older frozen executables. Native snapshots and launch receipts identify the factor; the maintained smoke still does not earn or accept a gameplay milestone.
+New automated gameplay scenarios explicitly supply `TestSpeed = 8` and `Mute = $true`, as the user requested. Use 4x when input/polling cannot keep up at 8x and record the reason. Reserve explicit `TestSpeed = 1` for normal-speed acceptance and checks that need normal timing, render/audio or retail comparison, with their purpose recorded. `-TestSpeed` accepts integers 1–8; its API default remains 1 for older frozen executable callers. Above 1 requires `-Mute` before any process or run-directory allocation. The helper supplies dedicated save/evidence directories and a wall safety deadline. Use a newly identified executable that supports the flag. Native snapshots and launch receipts identify the factor; the maintained smoke still does not earn or accept a gameplay milestone.
 
 Acceleration consumes ordinary 28 ms updates faster; it never supplies debug currency, health, skipped encounters or victories. Global pause uses 1x scheduling. Held inputs above 1x use consumed-step age; physical input sampling and Bilaterus connector observation remain at rendered-frame cadence. This can change accelerated traces. Tune a scenario's input/polling schedule to the requested speed and assess real losses honestly. Native rate, pause, input and reload checks remain separate from normal-speed/audio/retail acceptance. [Native verification](playtests/2026-10-09-accelerated-tests-01.md) records the measured rates, pause, deadline, path-guard and reopen checks.
 

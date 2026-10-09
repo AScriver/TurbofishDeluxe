@@ -101,10 +101,10 @@ $validatorPath = Join-Path $env:USERPROFILE '.codex\tools\Invoke-CodexPowerShell
 Use `--test-speed <1..8>` for explicitly accelerated exploratory/stress runs. Default gameplay remains 1x. Above 1x requires a dedicated `--save-dir`, a separate `--evidence-dir`, `--mute` and a positive wall-clock `--quit-after` limit. The save format and game rules are unchanged. For example, from an already prepared build:
 
 ```powershell
-.\target\debug\turbofish-deluxe.exe --new-game --seed 42 --test-speed 4 --save-dir .scratch/speed-example/save --evidence-dir .scratch/speed-example/evidence --mute --quit-after 30
+.\target\debug\turbofish-deluxe.exe --new-game --seed 42 --test-speed 8 --save-dir .scratch/speed-example/save --evidence-dir .scratch/speed-example/evidence --mute --quit-after 30
 ```
 
-Prefer `Start-TurbofishPlaytest -TestSpeed 4 -Mute` or `Test-Playtest.ps1 -TestSpeed 4 -Mute` for fresh isolated runs with owned-window input and cleanup; [the helper guide](docs/playtest-helpers.md) owns usage. The visible banner and telemetry identify the factor. `elapsed_seconds` remains wall time; `session_elapsed_seconds` is the run's fixed-step session time, including paused session updates. Global pause continues at 1x.
+Future automated gameplay tests explicitly select 8x: use `Start-TurbofishPlaytest -TestSpeed 8 -Mute` or `Test-Playtest.ps1 -TestSpeed 8 -Mute` for fresh isolated runs with owned-window input and cleanup. Use 4x when the scenario's input/polling cannot keep up at 8x and record why. Explicit 1x is reserved for checks that need normal timing, including milestone acceptance and render/audio/retail comparison. The [helper guide](docs/playtest-helpers.md) owns usage; the helper API retains its 1x default for older frozen executables, so new automated scenarios must supply the speed explicitly. The visible banner and telemetry identify the factor. `elapsed_seconds` remains wall time; `session_elapsed_seconds` is the run's fixed-step session time, including paused session updates. Global pause continues at 1x.
 
 The 28ms updates remain intact, but more updates between physical rendered frames can change Bilaterus connector observations and later motion. Accelerated tests do not establish identical 1x traces, normal-speed playability, audio or retail fidelity. Keep the [normal-speed acceptance gate](docs/DESIGN.md#m1-execution-acceptance), and record the actual factor/inputs/observation limits in each report.
 
