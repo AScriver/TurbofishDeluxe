@@ -12,6 +12,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).
 - Repeatable comparisons: [playtest template](docs/playtests/TEMPLATE.md).
+- Native input, state waits, pause/reload and cleanup: [maintained playtest helpers](docs/playtest-helpers.md).
 - Studied sources, attribution, licenses: [provenance](docs/provenance.md).
 - Workflow source mapping and adaptations: [setup note](docs/workflow-setup.md).
 - Existing reverse-engineering tools, invocation, and verified limits: [shared analysis tools](docs/analysis-tools.md).

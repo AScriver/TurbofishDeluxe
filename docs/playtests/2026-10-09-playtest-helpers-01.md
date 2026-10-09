@@ -1,0 +1,46 @@
+# Playtest helper consolidation verification (2026-10-09)
+
+**Result: passed for the maintained helper contracts and the identified first-tank tooling checks.** Four short, normal-speed project-window runs exercised input/pause/reload and a deliberate wait failure. The final helper passed 26 focused regressions. These are agent checks of tooling, not A32/Tank4-2 acceptance, retail fidelity, audio listening or human gameplay.
+
+## Identity and scope
+
+- Date/time: October 9, 2026, America/Phoenix; native cleanup receipts span18:15:34–18:22:45UTC (11:15–11:22 local).
+- Executor: primary agent for native runs/visual inspection; independent Tester for mock/file regressions and counterexamples. Investigator and Architect performed bounded, read-only source analyses. No human playtest.
+- Runtime: source checkpoint `4b2d53fd6c6711ad615d083b11f9d41f745ad22f`, E79 debug MSVC executable SHA-256 `06CB115C9DC4818B416DD17B166D3B22C2A304DE46111E86AE9080180A39D47A`. Rust/Cargo1.95.0, locked Rust2024 build. No Rust/crate/manifest/lockfile changes during consolidation; concurrent documentation/tooling edits remain separate. A new Rust gate was not required or claimed.
+- Final dirty helper SHA-256: `7BE0F3128AFE2E3FE60D27AB58F92E2E6DFDE6D4E88D3A59BD0B11D756BDF104`. Maintained scenario: `C443F6B7E28D3ABADB554B61B72D1C7E6EA8180EAFC53D0DA68C69D46C4169EA`. Regression script: `563B6352D317DA8AB364C2BD1918A6A82B86BE15914E284D0B420EF6C4AD97D1`. The first two runs predate the final predicate/session guards; their receipts remain historical. Ownership/failure and final reload runs exercise the final helper.
+- Owned reference: Steam3320/build250752, English1.1 x86; main EXE SHA-256 `F54C2C6EE54B00AE6DA7F4BDE15FEB90D0A867ABA6B4151B0277C1F81DA3FF66`. Every completed run's telemetry independently recomputed full installation contents before/after; all inventory hashes equal `6E03ACA251D24DC68B0E72E88E06BD50B40775EBE0A09F182E4C2D35FF32F0CA`. No retail executable/profile was launched, attached or edited.
+- CLI: project executable with `--seed 42 --save-dir <new-run>/save --evidence-dir <new-run>/evidence --quit-after 45 --mute`; fresh run also used `--new-game`. Ownership/failure run used the helper's30-second safety deadline. No speed, money, HP, RNG, save-state edits or forced outcomes.
+- All scenarios began Tank1-1 with separate project saves/current17. Reloads copied the first run's actual saved bytes, SHA-256 `C9752FA7A585A8AB85B564D1BC7B4B24DB5C9BA1112B47C5F97FDB75BF00B76B`; source digest was checked again after the final reload. This is a tooling fixture, not an earned adventure milestone.
+- Tracking: no workItemId supplied; Actionables was not queried, claimed or updated.
+
+## Evidence ledger
+
+| ID | Class/status | Evidence and conclusion | Limit |
+|---|---|---|---|
+| H1 | Observed source |357 private tester `.ps1` files; excluding two newer A32 freeze/preparation scripts gives355. Recent A31 scripts duplicate native input, coordinate mapping, snapshot polling and best-effort traps. | Historical scripts remain immutable; the maintained scenario replaces their common mechanics for future work. |
+| H2 | Strongly source-supported | Pinned miniquad0.4.11 Windows key translation uses lParam scan bits; Escape scan1/down65537/up3221291009. Live snapshot key is `state` (`app.rs3151–3155`); full sessions use `board`. | Window-local message success alone is not game input acceptance. Native paused/resumed frames supply the narrow observed check. |
+| H3 | Strongly source-supported | `adventure.rs957–961` advances session time during pause; `sim.rs4323–4331` and A32 rendering permit Board housekeeping. Explicit projections replace universal whole-Board freeze assertions. | Native smoke freezes only selected clock/fish/dead-fish/food/coins/RNG/IDs; other actors are not claimed. |
+| H4 | Reproduced/observed | Final26-case regression suite covers schema, scan bits/release errors, transient reads, freshness/deadlines/predicate errors, capture completion, strict/typed JSON and cleanup/idempotence. | Mock process/message boundaries and private scratch files; forced cleanup has mock coverage only. |
+| H5 | Reproduced/observed | Final native reload PID45460: correct logical food click; pause Board38→38 while session57→71, resume44; exact session reconstruction and final save, with only declared f32 bit equivalents. | Short1-1 tooling run, no milestone/fidelity claim. |
+| H6 | Reproduced/observed | Native ownership/failure PID41536: real HWND deliberately paired with a different PID was rejected; false predicate timed out with expectation/sample retained; finally cleanup exited0. | No message sent through the rejected target; no second process needed. |
+
+## Executed scenarios
+
+| Private run under `.scratch/playtests/` | Actual input/state/result | Cleanup and evidence |
+|---|---|---|
+| `helper-consolidation-current-01` | Fresh1-1; Escape, paused logical320/240 click, Escape. Session10→23 while selected Board tick8 stays8; resumed14. Paused/resumed frames11/31 visually inspected. Final/save match,7 f32 decimal differences equal by bits. | PID14120, exit0, graceful. Result SHA-256 `19A6DBC371647E8B197DC7E5F6B37EA4C244BE41A6D918C26E3688E5781C7950`. Historical pre-guard scenario. |
+| `helper consolidation current reload 01` | Verified current17 byte copy; active logical320/250 click produced food, then pause/paused click/resume. Session57→70, Board38→38→43. Source/identity7 and final/save5 declared f32 equivalents; all other fields exact. Path spaces exercised. | PID1980, exit0, graceful. Result SHA-256 `13737F7CFE627E7F941E54CEC98067354FEA9C13DA3F9DA6B7AF7D79D7224A6A`. Historical pre-guard helper. |
+| `helper-consolidation-ownership-01` | Actual owned HWND7342626 paired with deliberately wrong PID; owner guard threw. Deliberately impossible predicate timed out after0.15s and retained latest Playing/session14 diagnostic. | PID41536, exit0, graceful after expected failure. `failure-path-check.local.json` SHA-256 `68CD0CCD00E6B42085E6855F3DD2F12D3C81FE4301BA7A087A4845F844BF0DE6`. Final helper. |
+| `helper consolidation final reload 01` | Final helper/scenario, same immutable source byte copy and actual food input. Session57→71, Board38→38→44. Source/identity7 and final/save5 declared f32 equivalents; zero other differences. Completed frames57/77 were visually inspected: pause overlay and resumed fish/food. | PID45460, exit0, graceful. `result.local.json` SHA-256 `892C3765CF6D310606ECD263ADEF95AB5918DD8BE23AF4D5BD4434F383E3DFBD`. Final helper. |
+
+Input receipts record logical/client coordinates, owned PID, scan/down/up values and UTC times. Result documents retain actual pause/hold/resume snapshots and typed comparison paths. Every run retains `launch.local.json`, runtime identity/events/final, separate save and cleanup; successful runs were not deleted. Native PID readbacks found all owned processes absent. Raw owned images/evidence remain ignored and local-only.
+
+The final scenario was invoked by validated `.scratch/runtime/helper-consolidation/Run-Native-Reload-Final.ps1`, which passes a structured parameter hashtable into [Test-Playtest.ps1](../../scripts/Test-Playtest.ps1). The ownership negative test used separately validated `Run-Native-Ownership-Failure.ps1`. No shared services/ports/database were used; only the primary owned native process launches, serialized one at a time.
+
+## Regressions, corrections and limits
+
+Exact validation command: `& C:\Users\Austin\.codex\tools\Invoke-CodexPowerShell.ps1 -Path scripts\Test-PlaytestHelpers.ps1 -Execute`. Final result26passed/0failed; parser and `PSAvoidAssignmentToAutomaticVariable` passed. The unique regression scratch fixture was removed. Expectations come from the explicit [helper contracts](../playtest-helpers.md), the checked source field inventory and prior [Escape/pause failure evidence](2026-10-09-adventure-3-5-bonus-pause-02.md), not from newly generated expected gameplay output.
+
+Independent review reproduced two actual false passes: PowerShell string `'false'` was truthy as a waiter predicate, and `null` against `null` vacuously passed reload comparison. The red pass had23passes/2failures; the final helper requires a single Boolean predicate and complete non-null session objects with progress/board/phase/ticks/next_seed. Missing board versus nullable board remain distinct. Added guards and negative cases preceded final native revalidation. Earlier test expectations that demanded different results for exact numeric spellings1/1.0 or -0/-0.0 were corrected to the API's exact numeric-value contract; +0 versus -0 still differs. A private receipt reader initially assumed the fresh run had an initial-reload result; corrected null handling and reran readback without runtime changes.
+
+No install/system-tool changes, historical script deletion, new save compatibility, original gameplay, audible listening, human feel, full A32 acceptance or native forced-kill test occurred. No broad Rust gate is asserted by this tooling report. [STATUS](../../STATUS.md) remains authoritative for the paused gameplay goal. Future scenarios should use maintained helpers, explicit frozen-state selectors and complete-session comparisons, and revalidate the f32 path inventory when source types change.
