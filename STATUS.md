@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-10-09, America/Phoenix. **Paused at the user's request after the A32 source/build checkpoint.** Resume runtime work only on explicit request. Full scope remains in [requirements](docs/requirements.md).
+Updated: 2026-10-09, America/Phoenix. **Active: resumed A32 native acceptance at the user's request.** Continue automatically after verified milestones toward the full [requirements](docs/requirements.md).
 
 ## Current increment
 
@@ -25,16 +25,20 @@ Focused runtime validation commands are available in the [README](README.md#focu
 
 ## Agent workflow tooling
 
+**E80 — observed resume gate/freeze:** Current `b3e3d0c` plus the reviewed launcher notice-staging correction passed the full407-check gate `.scratch/runtime/gate-adventure32-resume-02.log`, SHA`736F729B1DE635C6FEC67E1AD27AED89C57BA81EA032F4210A69DF9428C83E34`. Focused commands passed8Bilaterus/7Board/4current17 persistence tests. Repeated preparation retains5DLLs/8notices and the unchanged E79 executable. Frozen bundle is `.scratch/runtime/tester/a32-bundle-02`; maintained identity `.scratch/evidence/a32-build-frozen-02.local.json`, SHA`F0E62CBCC2C9230B7E9BE59CC00752BC245C7FCA22E156EE52581B68B602F381`, records launcher-success-with-unchanged-inputs and passes70artifact/source readbacks. Transfer02 SHA`55647E83F3EEA644C81A4D79322B563D51D0BAC63F662D5398E9A46C32B2422F` retains the36unchanged historical inputs/one changed launcher. Preparation01/partial bundle01 are failed historical attempts; no run used them.
+
+**E81 — observed entry, acceptance underway:** Maintained-helper entry02 copied the genuine source byte-exactly, matched complete `identity.start`, entered4-2 with200cash/SmallBreeder2points/NikoItchyNimbus/egg25000/FixedBilaterus, and persisted current17 with exact final/save session equality. Root inspected selector and tank frames. PID43600 exited0 without force; runtime install receipts report unchanged. Entry01's early identity-read failure and clean PID11788 exit remain retained. Natural earning/combat/Ultra, native reopen/pause and full cleanup/lineage acceptance remain pending.
+
 - [Maintained playtest helpers](docs/playtest-helpers.md): 26 regressions and four identified Tank 1 tooling runs; owned processes exited and installation inventories matched. [Report](docs/playtests/2026-10-09-playtest-helpers-01.md).
 - [Evidence commands](docs/evidence-tooling.md): 47 contracts, prepared-build/source/artifact readback, and a verified adapter for recorded helper telemetry. Report drafts keep behavioral verdicts **not tested**.
 - [Compact delegation briefs](docs/delegation-template.md): reusable fields, explicit ownership/isolation and an unexecuted 4-2 review example; linked from AGENTS.
 
-These maintenance checks preserve the runtime pause and historical records; they do not establish Tank 4-2 gameplay acceptance.
+These maintenance checks retain historical records; they do not establish Tank4-2 gameplay acceptance. E80/E81 are the current resumed build/entry evidence.
 
 ## Gaps and blockers
 
-- No missing access or information currently requires user input. The explicit pause remains in effect; it is not completion or a technical blocker.
-- A32 still needs normal-speed input/render/earning, reopen/pause and cleanup/lineage acceptance. No A32 acceptance bundle, save copy or runtime PID was created at the pause.
+- No missing access or information currently requires user input. The user resumed work; full completion is unproved.
+- A32 still needs natural conversion/combat/Ultra income, reopen/pause, three earned eggs/Amp/selector and complete cleanup/lineage acceptance. E80 freezes the resumed bundle; E81 proves entry only.
 - Tank 4-3 is temporarily gated; live Amp and its primary study have not started. Remaining stages, fish/pets, modes, menus/profiles/highscores and effects remain open in [coverage](docs/compatibility.md).
 - Retail comparison and human feel remain untested. [Original-game isolation](docs/original-observation.md) is unproved; startup can force fullscreen despite ScreenMode0. [Music](docs/audio.md) has native-load/queue evidence, while audible fidelity, loops/fades/mixing remain untested. Distribution/runtime-code licensing is undecided.
 
@@ -62,9 +66,9 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 
 ## Next action
 
-On explicit resume:
+Current next action:
 
-1. Recheck E79's source/executable/gate/checkpoint identities, then freeze the A32 bundle. `.scratch/runtime/tester/freeze-a32-01.ps1` passed parser/automatic-variable validation but **was not executed**.
+1. Continue identified native A32 acceptance on E80 bundle02 using maintained playtest/evidence tools. Root owns build/source/Git; tester owns isolated run data and PIDs. Coordinate any observed defect before changing frozen inputs, and revalidate affected checks.
 2. Byte-copy genuine `.scratch/playtests/a31-nimbus-locked-reload-01/adventure.json` into isolated project saves. SHA-256 `048319F4E63A9BB3BACC090D21FFBAE8E2ACA1D6C19CADDA7264FDBEA563C38A`; format16, Board null, 4-2 PetSelection, Niko/Itchy/Nimbus, sixteen cards, shell2365. Do not convert or edit gameplay state.
 3. Execute [A32 acceptance](docs/adventure-4-2.md#acceptance): genuine entry, natural Nimbus conversion/Bilaterus lifecycle/Ultra income, current17 reopen/pause, three paid 25000 eggs/Amp once and seventeen-card Locked 4-3/reload. Inspect events/pixels and audit build, save lineage, original-install integrity and owned-PID cleanup.
 4. After acceptance, commit results and automatically study/implement 4-3. Register new Amp source paths in provenance before study. Full requirements remain the goal.

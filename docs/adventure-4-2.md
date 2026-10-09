@@ -1,6 +1,6 @@
 # Adventure4-2: Bilaterus, Ultravores and live Nimbus
 
-Increment after accepted A31 commit`38c65be9ad439a727b2e7e1b1401db928b8e55f6`. Installed PB05 is authoritative; PB59–63 in the [behavior ledger](behavior-contract.md#tank4-2-primary-ledger) own primary findings/corrections. Pinned W1 in [provenance](provenance.md) supplies labelled remaining actor/order/draw rules. Source/current17 integration passed the407-check gate; native gameplay is **not tested**. Work is paused at the user's request; [STATUS](../STATUS.md) owns the checkpoint and resume action. Full [requirements](requirements.md) remain in scope.
+Increment after accepted A31 commit`38c65be9ad439a727b2e7e1b1401db928b8e55f6`. Installed PB05 is authoritative; PB59–63 in the [behavior ledger](behavior-contract.md#tank4-2-primary-ledger) own primary findings/corrections. Pinned W1 in [provenance](provenance.md) supplies labelled remaining actor/order/draw rules. Source/current17 integration passed the407-check gate. The user resumed native acceptance after efficiency commit`b3e3d0c`; entry is observed while full earning/combat/continuation acceptance remains pending. [STATUS](../STATUS.md) owns current identities/results. Full [requirements](requirements.md) remain in scope.
 
 ## Required outcome and evidence
 

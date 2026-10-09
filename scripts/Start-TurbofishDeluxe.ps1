@@ -109,6 +109,18 @@ foreach ($nativeFile in $nativeFiles) {
     Assert-FileDigest -Path $destination -Expected $nativeFile.Digest -Description "copied $($nativeFile.Name)"
 }
 $noticeDirectory = Join-Path $outputDirectory 'libopenmpt-notices'
+# Copying a directory into an existing destination nests another Licenses
+# directory. Recreate only this bounded build output before staging notices.
+$resolvedNoticeDirectory = [System.IO.Path]::GetFullPath($noticeDirectory)
+$outputPrefix = $outputDirectory.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+if (-not $resolvedNoticeDirectory.StartsWith($outputPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Native notice directory escaped the build output directory'
+}
+if (Test-Path -LiteralPath $noticeDirectory) {
+    $existingNoticeDirectory = Get-Item -LiteralPath $noticeDirectory -Force
+    if (($existingNoticeDirectory.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Native notice destination is a reparse point' }
+    Remove-Item -LiteralPath $resolvedNoticeDirectory -Recurse -Force
+}
 New-Item -ItemType Directory -Path $noticeDirectory -Force | Out-Null
 Copy-Item -LiteralPath $nativeLicensePath -Destination (Join-Path $noticeDirectory 'LICENSE.txt') -Force
 Copy-Item -LiteralPath $componentLicensesPath -Destination (Join-Path $noticeDirectory 'Licenses') -Recurse -Force
