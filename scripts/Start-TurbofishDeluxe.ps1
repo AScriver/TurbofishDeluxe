@@ -5,12 +5,16 @@ param(
     [switch]$PreflightOnly,
     [switch]$Offline,
     [string]$NativePackageDirectory,
+    [string]$BuildIdentityPath,
+    [string[]]$BuildEvidencePaths = @(),
     [string[]]$GameArguments = @()
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+. (Join-Path $PSScriptRoot 'Evidence.Common.ps1')
+if ($BuildIdentityPath) { Assert-EvidenceOutputPath -Path $BuildIdentityPath | Out-Null }
 $cacheRoot = Join-Path $repositoryRoot '.scratch/native/libopenmpt-0.8.9'
 $archivePath = Join-Path $cacheRoot 'libopenmpt-0.8.9+release.dev.windows.vs2022.zip'
 $cachedPackageRoot = Join-Path $cacheRoot 'package'
@@ -87,6 +91,7 @@ $env:CARGO_TARGET_DIR = Join-Path $repositoryRoot 'target'
 $buildArguments = @('build', '--locked', '--manifest-path', (Join-Path $repositoryRoot 'Cargo.toml'))
 if ($Release) { $buildArguments += '--release' }
 if ($Offline) { $buildArguments += '--offline' }
+$sourcesBeforeBuild = Get-EvidenceSources
 & $cargoExecutable @buildArguments
 if ($LASTEXITCODE -ne 0) { throw "Turbofish build failed: $LASTEXITCODE" }
 
@@ -108,6 +113,16 @@ New-Item -ItemType Directory -Path $noticeDirectory -Force | Out-Null
 Copy-Item -LiteralPath $nativeLicensePath -Destination (Join-Path $noticeDirectory 'LICENSE.txt') -Force
 Copy-Item -LiteralPath $componentLicensesPath -Destination (Join-Path $noticeDirectory 'Licenses') -Recurse -Force
 Write-Output "NATIVE_RUNTIME_READY executable=$executable notices=$noticeDirectory"
+$identityParameters = @{
+    ExecutablePath = $executable
+    BuildProfile = $profileDirectory
+    BuildArguments = $buildArguments
+    NativePackageDirectory = $packageRoot
+    AdditionalArtifacts = $BuildEvidencePaths
+    SourcesBeforeBuild = $sourcesBeforeBuild
+}
+if ($BuildIdentityPath) { $identityParameters.OutputPath = $BuildIdentityPath }
+& (Join-Path $PSScriptRoot 'New-BuildIdentity.ps1') @identityParameters
 if ($PrepareOnly) { return }
 
 & $executable @GameArguments

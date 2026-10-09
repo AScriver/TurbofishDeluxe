@@ -2,6 +2,8 @@
 
 Copy this to a new dated `.md` report in this directory. This template is **not tested** and is not a completed playtest. Fill unknown fields explicitly; do not reuse an old result for a changed build. Procedures and claim rules are authoritative in [AGENTS](../../AGENTS.md); M1 acceptance is in [DESIGN](../DESIGN.md#m1-execution-acceptance).
 
+Prefer the [maintained evidence generator](../evidence-tooling.md#commands) to fill mechanical identity and artifact fields consistently. It leaves behavioral verdicts **not tested**; review the draft, supply the actual reproduction steps and assess discrepancies.
+
 ## Report identity
 
 - Date/time/timezone: unknown.

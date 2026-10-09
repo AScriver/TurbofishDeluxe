@@ -21,6 +21,11 @@ $requiredPaths = @(
     'THIRD-PARTY-NOTICES.md', 'docs/requirements.md', 'docs/DESIGN.md',
     'docs/provenance.md', 'docs/workflow-setup.md', 'docs/playtests/TEMPLATE.md', 'docs/analysis-tools.md',
     'scripts/Test-Workflow.ps1', 'scripts/Test-Runtime.ps1', 'scripts/Start-TurbofishDeluxe.ps1',
+    'docs/evidence-tooling.md', 'scripts/Evidence.Common.ps1', 'scripts/New-BuildIdentity.ps1',
+    'scripts/New-RunManifest.ps1', 'scripts/Test-Evidence.ps1', 'scripts/New-PlaytestReport.ps1',
+    'scripts/Test-EvidenceTools.ps1',
+    'scripts/Playtest-Helpers.ps1', 'scripts/Test-Playtest.ps1', 'scripts/Test-PlaytestHelpers.ps1',
+    'docs/playtest-helpers.md', 'docs/delegation-template.md',
     'crates/turbofish-openmpt/Cargo.toml', 'crates/turbofish-openmpt/build.rs',
     'crates/turbofish-openmpt/LICENSE', 'crates/turbofish-openmpt/src/lib.rs'
 )
@@ -43,7 +48,10 @@ $excludedPaths = @(
     'Insaniquarium.exe', 'bass.dll', 'assets/fish.gif', 'assets/tank.jpg', 'assets/mask.png',
     'sounds/eat.au', 'music/theme.mo3', 'music/theme.ogg', 'data/raw.txt', 'data/raw.xml',
     'assets/raw.luc', 'capture.raw', 'process.dmp', 'analysis.gpr', 'unknown-file.txt',
-    'crates/turbofish-openmpt/native/libopenmpt.dll', 'crates/turbofish-openmpt/src/secret.bin'
+    'crates/turbofish-openmpt/native/libopenmpt.dll', 'crates/turbofish-openmpt/src/secret.bin',
+    '.scratch/evidence/build.local.json', '.scratch/evidence/run.local.json',
+    'docs/evidence/receipt.json', 'docs/playtests/frame.png', 'scripts/receipt.local.ps1',
+    '.scratch/playtests/helper-shaped/Test-Playtest.ps1'
 )
 foreach ($ignoreCase in @(
     @{ Paths = $allowedPaths; ExpectedIgnored = $false },

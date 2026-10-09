@@ -96,6 +96,17 @@ $validatorPath = Join-Path $env:USERPROFILE '.codex\tools\Invoke-CodexPowerShell
 & $validatorPath -Path .\scripts\Test-Runtime.ps1 -Execute -ArgumentList @('-Check', 'Format')
 ```
 
+## Evidence bookkeeping
+
+Successful launcher builds now create immutable build identities automatically. [Evidence tooling](docs/evidence-tooling.md) documents explicit output paths, single-run manifests, artifact/source readback, private scenario inputs and generated playtest drafts. Raw receipts stay ignored; generated behavioral verdicts remain **not tested** until reviewed. Readback checks a run's referenced build as well as its own artifacts, and `-CheckSources` identifies exactly which inputs changed.
+
+```powershell
+.\scripts\Start-TurbofishDeluxe.ps1 -Offline -PrepareOnly -BuildIdentityPath .scratch/evidence/example-build.local.json
+.\scripts\Test-Evidence.ps1 -RecordPath .scratch/evidence/example-build.local.json -CheckSources
+```
+
+Run manifests and report drafts consume completed evidence; they do not launch gameplay. The tooling passed 47 synthetic contracts, independent negative-case rechecks, a real prepared-build identity/readback and read-only historical telemetry consumption. The paused A32 executable remains unchanged.
+
 ## Local data and licensing
 
 Keep reference downloads and probes under `.scratch/`, local paths/configuration under `local/`, and proprietary content/captures under `private/`; all are ignored. Keep these directories out of attachments and releases. No machine-local configuration is needed to run the workflow checker.
