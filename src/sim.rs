@@ -6,6 +6,7 @@ use crate::{
     alien::{AlienFoodView, AlienRuntimeRequest, PreyView, SylvesterKind},
     clyde::{ClydeCoinView, ClydeState},
     fish_pet::{FishPetKind, FishPetState, PetAlienView, WardFishView, ZorfHungryView},
+    gekko::{DeadGekko, GekkoPrey, GekkoPreyKind, GekkoState},
     grubber::{DeadGrubber, GrubberPrey, GrubberState},
     invasion::{Invasion1_2, InvasionEvent, WavePlan},
     larva::{LARVA_VALUE, LarvaState, LarvaUpdate},
@@ -38,7 +39,9 @@ pub const TANK2_FOURTH_EGG_PRICE: i32 = 7500;
 pub const TANK2_FIFTH_EGG_PRICE: i32 = 10000;
 pub const STARCATCHER_PRICE: i32 = 750;
 pub const GRUBBER_PRICE: i32 = 750;
+pub const GEKKO_PRICE: i32 = 2000;
 pub const TANK3_FIRST_EGG_PRICE: i32 = 1000;
+pub const TANK3_SECOND_EGG_PRICE: i32 = 5000;
 pub const POTION_PRICE: i32 = 250;
 pub const FOOD_QUALITY_PRICE: i32 = 200;
 pub const FOOD_QUANTITY_PRICE: i32 = 300;
@@ -68,6 +71,7 @@ pub enum PetKind {
     Meryl,
     Wadsworth,
     Seymour,
+    Shrapnel,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,6 +180,7 @@ pub enum CoinKind {
     Diamond,
     Star,
     DiamondPenta,
+    Pearl,
 }
 
 impl CoinKind {
@@ -186,6 +191,7 @@ impl CoinKind {
             Self::Diamond => 200,
             Self::Star => 40,
             Self::DiamondPenta => 200,
+            Self::Pearl => 500,
         }
     }
 }
@@ -333,10 +339,11 @@ const fn initial_food_animation_period() -> u8 {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Coin {
     pub id: u64,
-    pub x: f32,
-    pub y: f32,
+    pub x: f64,
+    pub y: f64,
     pub kind: CoinKind,
     pub frame: u8,
+    pub animation_ticks: u8,
     pub collecting: bool,
     pub bottom_ticks: u16,
     pub fade_ticks: u8,
@@ -365,6 +372,7 @@ pub enum Action {
     BuyPotion,
     BuyStarcatcher,
     BuyGrubber,
+    BuyGekko,
     HoldFeed { x: f32, y: f32, elapsed_ms: u32 },
     HoldFire { x: f32, y: f32, elapsed_ms: u32 },
     TogglePet { pet: PetKind },
@@ -535,6 +543,32 @@ pub enum Event {
         x: i32,
         y: i32,
     },
+    GekkoBought {
+        tick: u64,
+        gekko_id: u64,
+        balance: i32,
+    },
+    GekkoAtePrey {
+        tick: u64,
+        gekko_id: u64,
+        prey_id: u64,
+        kind: GekkoPreyKind,
+    },
+    GekkoDied {
+        tick: u64,
+        gekko_id: u64,
+    },
+    GekkoPearlDropped {
+        tick: u64,
+        gekko_id: u64,
+        coin_id: u64,
+    },
+    GekkoBubble {
+        tick: u64,
+        gekko_id: u64,
+        x: i32,
+        y: i32,
+    },
     LarvaDropped {
         tick: u64,
         grubber_id: u64,
@@ -666,6 +700,7 @@ pub enum Event {
     CoinCollectionStarted {
         tick: u64,
         coin_id: u64,
+        kind: CoinKind,
     },
     CoinExpired {
         tick: u64,
@@ -674,6 +709,7 @@ pub enum Event {
     CoinCredited {
         tick: u64,
         coin_id: u64,
+        kind: CoinKind,
         amount: i32,
         balance: i32,
     },
@@ -750,6 +786,7 @@ pub struct AdventureState {
     pub oscar_unlocked: bool,
     pub starcatcher_unlocked: bool,
     pub grubber_unlocked: bool,
+    pub gekko_unlocked: bool,
     #[serde(default)]
     pub weapon_unlocked: bool,
     #[serde(default = "initial_weapon_strength")]
@@ -774,6 +811,8 @@ pub struct AdventureState {
     pub dead_starcatchers: Vec<DeadStarcatcher>,
     pub grubbers: Vec<GrubberState>,
     pub dead_grubbers: Vec<DeadGrubber>,
+    pub gekkos: Vec<GekkoState>,
+    pub dead_gekkos: Vec<DeadGekko>,
     pub larvae: Vec<LarvaState>,
     #[serde(default)]
     pub fish_pets: Vec<FishPetState>,
@@ -841,6 +880,7 @@ impl AdventureState {
             oscar_unlocked: false,
             starcatcher_unlocked: false,
             grubber_unlocked: false,
+            gekko_unlocked: false,
             weapon_unlocked: false,
             weapon_strength: 2,
             potion_unlocked: false,
@@ -857,6 +897,8 @@ impl AdventureState {
             dead_starcatchers: Vec::new(),
             grubbers: Vec::new(),
             dead_grubbers: Vec::new(),
+            gekkos: Vec::new(),
+            dead_gekkos: Vec::new(),
             larvae: Vec::new(),
             fish_pets: Vec::new(),
             punch_sound_cooldown: 0,
@@ -975,7 +1017,8 @@ impl AdventureState {
                 | PetKind::Rufus
                 | PetKind::Meryl
                 | PetKind::Wadsworth
-                | PetKind::Seymour => {
+                | PetKind::Seymour
+                | PetKind::Shrapnel => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1028,7 +1071,8 @@ impl AdventureState {
                 | PetKind::Rufus
                 | PetKind::Meryl
                 | PetKind::Wadsworth
-                | PetKind::Seymour => {
+                | PetKind::Seymour
+                | PetKind::Shrapnel => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1087,7 +1131,8 @@ impl AdventureState {
                 | PetKind::Rufus
                 | PetKind::Meryl
                 | PetKind::Wadsworth
-                | PetKind::Seymour => {
+                | PetKind::Seymour
+                | PetKind::Shrapnel => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1144,7 +1189,11 @@ impl AdventureState {
                     state.rng_state = rng_state;
                 }
                 PetKind::Vert => state.spawn_fish_pet(FishPetKind::Vert),
-                PetKind::Rufus | PetKind::Meryl | PetKind::Wadsworth | PetKind::Seymour => {
+                PetKind::Rufus
+                | PetKind::Meryl
+                | PetKind::Wadsworth
+                | PetKind::Seymour
+                | PetKind::Shrapnel => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1210,7 +1259,7 @@ impl AdventureState {
                     }));
                     state.rng_state = rng_state;
                 }
-                PetKind::Meryl | PetKind::Wadsworth | PetKind::Seymour => {
+                PetKind::Meryl | PetKind::Wadsworth | PetKind::Seymour | PetKind::Shrapnel => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1285,7 +1334,7 @@ impl AdventureState {
                     state.rng_state = rng_state;
                 }
                 PetKind::Meryl => state.spawn_fish_pet(FishPetKind::Meryl),
-                PetKind::Wadsworth | PetKind::Seymour => {
+                PetKind::Wadsworth | PetKind::Seymour | PetKind::Shrapnel => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1298,6 +1347,37 @@ impl AdventureState {
     /// are constructed before the two starter guppies, preserving Board's
     /// actor-constructor RNG order; the Balrog countdown starts at 3000.
     pub fn new_tank3_first_stage(seed: u64, pets: &[PetKind]) -> Result<Self, String> {
+        Self::validate_tank3_selection(pets, false)?;
+        let mut state = Self::empty_board(seed);
+        state.tank = 3;
+        state.level = 1;
+        state.egg_price = TANK3_FIRST_EGG_PRICE;
+        state.invasion = Some(Invasion1_2::new_balrog());
+        state.spawn_tank3_pets(pets);
+        state.spawn_starter_guppies(false);
+        Ok(state)
+    }
+
+    /// The first 3-2 expected alien draw precedes pet and starter-fish
+    /// constructors. Later waves use one conditional toggle roll after spawn.
+    pub fn new_tank3_second_stage(seed: u64, pets: &[PetKind]) -> Result<Self, String> {
+        Self::validate_tank3_selection(pets, true)?;
+        let mut state = Self::empty_board(seed);
+        state.tank = 3;
+        state.level = 2;
+        state.egg_price = TANK3_SECOND_EGG_PRICE;
+        let first = if state.rand_range(2) == 0 {
+            SylvesterKind::Gus
+        } else {
+            SylvesterKind::Destructor
+        };
+        state.invasion = Some(Invasion1_2::new_tank3_second_stage(first));
+        state.spawn_tank3_pets(pets);
+        state.spawn_starter_guppies(false);
+        Ok(state)
+    }
+
+    fn validate_tank3_selection(pets: &[PetKind], allow_seymour: bool) -> Result<(), String> {
         let canonical = [
             PetKind::Stinky,
             PetKind::Niko,
@@ -1309,60 +1389,59 @@ impl AdventureState {
             PetKind::Rufus,
             PetKind::Meryl,
             PetKind::Wadsworth,
+            PetKind::Seymour,
         ];
         if pets.len() > 3
-            || pets.iter().any(|pet| !canonical.contains(pet))
+            || pets
+                .iter()
+                .any(|pet| !canonical.contains(pet) || *pet == PetKind::Seymour && !allow_seymour)
             || pets.windows(2).any(|pair| {
                 canonical.iter().position(|pet| *pet == pair[0])
                     >= canonical.iter().position(|pet| *pet == pair[1])
             })
         {
-            return Err("invalid Adventure 3-1 pet selection".into());
+            return Err("invalid Tank 3 pet selection".into());
         }
-        let mut state = Self::empty_board(seed);
-        state.tank = 3;
-        state.level = 1;
-        state.egg_price = TANK3_FIRST_EGG_PRICE;
-        state.invasion = Some(Invasion1_2::new_balrog());
-        state.pets = pets.to_vec();
+        Ok(())
+    }
+
+    fn spawn_tank3_pets(&mut self, pets: &[PetKind]) {
+        self.pets = pets.to_vec();
         for pet in pets {
             match pet {
-                PetKind::Stinky => {
-                    state.stinky = Some(state.spawn_stinky(StinkyOrigin::StageStart))
-                }
+                PetKind::Stinky => self.stinky = Some(self.spawn_stinky(StinkyOrigin::StageStart)),
                 PetKind::Niko => {
-                    let owner_id = state.id();
-                    state.niko = Some(NikoState::spawn_tank3(owner_id, &mut |upper| {
-                        state.rand_range(upper)
+                    let owner_id = self.id();
+                    self.niko = Some(NikoState::spawn_tank3(owner_id, &mut |upper| {
+                        self.rand_range(upper)
                     }));
                 }
-                PetKind::Itchy => state.spawn_fish_pet(FishPetKind::Itchy),
-                PetKind::Prego => state.spawn_fish_pet(FishPetKind::Prego),
-                PetKind::Zorf => state.spawn_fish_pet(FishPetKind::Zorf),
+                PetKind::Itchy => self.spawn_fish_pet(FishPetKind::Itchy),
+                PetKind::Prego => self.spawn_fish_pet(FishPetKind::Prego),
+                PetKind::Zorf => self.spawn_fish_pet(FishPetKind::Zorf),
                 PetKind::Clyde => {
-                    let id = state.id();
-                    let mut rng_state = state.rng_state;
-                    state.clyde = Some(ClydeState::spawn_tank2(id, &mut |upper| {
+                    let id = self.id();
+                    let mut rng_state = self.rng_state;
+                    self.clyde = Some(ClydeState::spawn_tank2(id, &mut |upper| {
                         Self::advance_rng(&mut rng_state) % upper
                     }));
-                    state.rng_state = rng_state;
+                    self.rng_state = rng_state;
                 }
-                PetKind::Vert => state.spawn_fish_pet(FishPetKind::Vert),
+                PetKind::Vert => self.spawn_fish_pet(FishPetKind::Vert),
                 PetKind::Rufus => {
-                    let id = state.id();
-                    let mut rng_state = state.rng_state;
-                    state.rufus = Some(RufusState::spawn_tank2(id, &mut |upper| {
+                    let id = self.id();
+                    let mut rng_state = self.rng_state;
+                    self.rufus = Some(RufusState::spawn_tank2(id, &mut |upper| {
                         Self::advance_rng(&mut rng_state) % upper
                     }));
-                    state.rng_state = rng_state;
+                    self.rng_state = rng_state;
                 }
-                PetKind::Meryl => state.spawn_fish_pet(FishPetKind::Meryl),
-                PetKind::Wadsworth => state.spawn_fish_pet(FishPetKind::Wadsworth),
-                PetKind::Seymour => unreachable!("roster checked before construction"),
+                PetKind::Meryl => self.spawn_fish_pet(FishPetKind::Meryl),
+                PetKind::Wadsworth => self.spawn_fish_pet(FishPetKind::Wadsworth),
+                PetKind::Seymour => self.spawn_fish_pet(FishPetKind::Seymour),
+                PetKind::Shrapnel => unreachable!("roster checked before construction"),
             }
         }
-        state.spawn_starter_guppies(false);
-        Ok(state)
     }
 
     fn spawn_fish_pet(&mut self, kind: FishPetKind) {
@@ -1478,6 +1557,7 @@ impl AdventureState {
             || self.oscars.iter().any(|oscar| oscar.alive)
             || self.starcatchers.iter().any(|actor| actor.alive)
             || self.grubbers.iter().any(|actor| actor.alive)
+            || self.gekkos.iter().any(|actor| actor.alive)
     }
 
     /// Rendering tests the fish's current double position against the
@@ -1525,7 +1605,7 @@ impl AdventureState {
     pub fn validate(&self) -> Result<(), String> {
         if !((self.tank == 1 && (1..=5).contains(&self.level))
             || (self.tank == 2 && (1..=5).contains(&self.level))
-            || (self.tank, self.level) == (3, 1))
+            || (self.tank == 3 && (1..=2).contains(&self.level)))
             || self.next_id == 0
             || self.next_id == u64::MAX
             || self.rng_state == 0
@@ -1556,22 +1636,30 @@ impl AdventureState {
             || !(2..=12).contains(&self.weapon_strength)
             || (!self.weapon_unlocked && self.weapon_strength > 2)
             || self.punch_sound_cooldown > 11
-            || self.pets.contains(&PetKind::Seymour)
+            || self.pets.contains(&PetKind::Shrapnel)
+            || ((self.tank, self.level) != (3, 2) && self.pets.contains(&PetKind::Seymour))
             || (self.tank != 3 && self.pets.contains(&PetKind::Wadsworth))
             || (self.tank != 3
                 && (self.grubber_unlocked
                     || !self.grubbers.is_empty()
                     || !self.dead_grubbers.is_empty()
                     || !self.larvae.is_empty()))
+            || ((self.tank, self.level) != (3, 2)
+                && (self.gekko_unlocked || !self.gekkos.is_empty() || !self.dead_gekkos.is_empty()))
             || (self.tank != 2 || !(2..=5).contains(&self.level))
                 && (self.starcatcher_unlocked
                     || !self.starcatchers.is_empty()
                     || !self.dead_starcatchers.is_empty())
             || !((self.tank == 2 && (2..=5).contains(&self.level))
-                || (self.tank, self.level) == (3, 1))
+                || (self.tank == 3 && (1..=2).contains(&self.level)))
                 && self.clyde.is_some()
             || self.coins.iter().any(|coin| {
                 (coin.penta_rising && coin.kind != CoinKind::DiamondPenta)
+                    || coin.animation_ticks > 79
+                    || coin.frame > 9
+                    || !coin.x.is_finite()
+                    || !coin.y.is_finite()
+                    || (coin.kind == CoinKind::Pearl && (self.tank, self.level) != (3, 2))
                     || (coin.kind == CoinKind::DiamondPenta
                         && !(self.tank == 2 && (2..=5).contains(&self.level)))
             })
@@ -1584,7 +1672,11 @@ impl AdventureState {
             return Err("invalid Adventure board counters or upgrades".into());
         }
         let expected_price = if self.tank == 3 {
-            TANK3_FIRST_EGG_PRICE
+            if self.level == 1 {
+                TANK3_FIRST_EGG_PRICE
+            } else {
+                TANK3_SECOND_EGG_PRICE
+            }
         } else if self.tank == 2 {
             match self.level {
                 1 => TANK2_FIRST_EGG_PRICE,
@@ -1666,6 +1758,69 @@ impl AdventureState {
                     || !self.dead_starcatchers.is_empty() =>
             {
                 return Err("third-tank roster or Grubber gates disagree".into());
+            }
+            (3, 2)
+                if self.invasion.as_ref().is_none_or(|wave| {
+                    !matches!(wave.plan, WavePlan::CyclingTank3Second { .. })
+                }) || self.pets.len() > 3
+                    || self.pets.windows(2).any(|pair| {
+                        let canonical = [
+                            PetKind::Stinky,
+                            PetKind::Niko,
+                            PetKind::Itchy,
+                            PetKind::Prego,
+                            PetKind::Zorf,
+                            PetKind::Clyde,
+                            PetKind::Vert,
+                            PetKind::Rufus,
+                            PetKind::Meryl,
+                            PetKind::Wadsworth,
+                            PetKind::Seymour,
+                        ];
+                        canonical.iter().position(|pet| *pet == pair[0])
+                            >= canonical.iter().position(|pet| *pet == pair[1])
+                    })
+                    || self.stinky.is_some() != self.pets.contains(&PetKind::Stinky)
+                    || self.niko.is_some() != self.pets.contains(&PetKind::Niko)
+                    || self.clyde.is_some() != self.pets.contains(&PetKind::Clyde)
+                    || self.rufus.is_some() != self.pets.contains(&PetKind::Rufus)
+                    || self
+                        .fish_pets
+                        .iter()
+                        .map(|pet| pet.kind)
+                        .collect::<Vec<_>>()
+                        != self
+                            .pets
+                            .iter()
+                            .filter_map(|pet| match pet {
+                                PetKind::Itchy => Some(FishPetKind::Itchy),
+                                PetKind::Prego => Some(FishPetKind::Prego),
+                                PetKind::Zorf => Some(FishPetKind::Zorf),
+                                PetKind::Vert => Some(FishPetKind::Vert),
+                                PetKind::Meryl => Some(FishPetKind::Meryl),
+                                PetKind::Wadsworth => Some(FishPetKind::Wadsworth),
+                                PetKind::Seymour => Some(FishPetKind::Seymour),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                    || self.oscar_unlocked
+                    || self.starcatcher_unlocked
+                    || self.potion_unlocked
+                    || !self.oscars.is_empty()
+                    || !self.dead_oscars.is_empty()
+                    || !self.starcatchers.is_empty()
+                    || !self.dead_starcatchers.is_empty()
+                    || self.upgrades.quality_unlocked != self.upgrades.quantity_unlocked
+                    || self.upgrades.quality_unlocked != self.grubber_unlocked
+                    || self.weapon_unlocked != self.egg_unlocked
+                    || (self.egg_unlocked && !self.gekko_unlocked)
+                    || (self.gekko_unlocked && !self.grubber_unlocked)
+                    || ((!self.gekkos.is_empty()
+                        || !self.dead_gekkos.is_empty()
+                        || self.coins.iter().any(|coin| coin.kind == CoinKind::Pearl))
+                        && !self.weapon_unlocked) =>
+            {
+                return Err("third-tank Gekko roster or purchase gates disagree".into());
             }
             (1, 1)
                 if !self.pets.is_empty()
@@ -1903,7 +2058,9 @@ impl AdventureState {
         }
         if !(self.notes.is_empty()
             || (self.tank, self.level) == (2, 5)
-            || (self.tank, self.level) == (3, 1) && self.pets.contains(&PetKind::Meryl))
+            || (self.tank == 3
+                && (1..=2).contains(&self.level)
+                && self.pets.contains(&PetKind::Meryl)))
             || self
                 .notes
                 .iter()
@@ -1926,9 +2083,11 @@ impl AdventureState {
         if let Some(rufus) = &self.rufus {
             rufus.validate()?;
         }
-        if !(self.missiles.is_empty() || self.tank == 2 && (4..=5).contains(&self.level))
+        let destructor_stage =
+            self.tank == 2 && (4..=5).contains(&self.level) || (self.tank, self.level) == (3, 2);
+        if !(self.missiles.is_empty() || destructor_stage)
             || (!(self.tank == 2 && (4..=5).contains(&self.level))
-                && (self.tank, self.level) != (3, 1)
+                && self.tank != 3
                 && self.rufus.is_some())
         {
             return Err("Destructor missiles or Rufus outside Adventure 2-4".into());
@@ -1961,6 +2120,12 @@ impl AdventureState {
             actor.validate()?;
         }
         for corpse in &self.dead_grubbers {
+            corpse.validate()?;
+        }
+        for actor in &self.gekkos {
+            actor.validate()?;
+        }
+        for corpse in &self.dead_gekkos {
             corpse.validate()?;
         }
         for larva in &self.larvae {
@@ -2051,6 +2216,12 @@ impl AdventureState {
         for corpse in &self.dead_grubbers {
             register(corpse.id)?;
         }
+        for actor in &self.gekkos {
+            register(actor.id)?;
+        }
+        for corpse in &self.dead_gekkos {
+            register(corpse.id)?;
+        }
         for larva in &self.larvae {
             register(larva.id)?;
         }
@@ -2101,6 +2272,10 @@ impl AdventureState {
                 .any(|actor| actor.id == id && actor.alive)
             || self
                 .grubbers
+                .iter()
+                .any(|actor| actor.id == id && actor.alive)
+            || self
+                .gekkos
                 .iter()
                 .any(|actor| actor.id == id && actor.alive)
     }
@@ -2202,6 +2377,17 @@ impl AdventureState {
                 widget_y: actor.widget_y,
             });
         }
+        if let Some(actor) = self
+            .gekkos
+            .iter()
+            .find(|actor| actor.id == target_id && actor.alive)
+        {
+            return Some(MissilePreyView {
+                id: target_id,
+                widget_x: actor.widget_x,
+                widget_y: actor.widget_y,
+            });
+        }
         self.starcatchers
             .iter()
             .find(|actor| actor.id == target_id && actor.alive)
@@ -2263,6 +2449,15 @@ impl AdventureState {
                     events.push(Event::GrubberDied {
                         tick: self.tick,
                         grubber_id: target_id,
+                    });
+                } else if let Some(pos) = self.gekkos.iter().position(|actor| actor.id == target_id)
+                {
+                    self.dead_gekkos
+                        .push(DeadGekko::from_impact(&self.gekkos[pos]));
+                    self.gekkos.remove(pos);
+                    events.push(Event::GekkoDied {
+                        tick: self.tick,
+                        gekko_id: target_id,
                     });
                 }
                 self.remove_missile(missile_id, events);
@@ -2509,7 +2704,7 @@ impl AdventureState {
                 }
             }
             Action::BuyGrubber => {
-                if (self.tank, self.level) != (3, 1) || !self.grubber_unlocked {
+                if self.tank != 3 || !(1..=2).contains(&self.level) || !self.grubber_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -2528,7 +2723,11 @@ impl AdventureState {
                     });
                     self.rng_state = rng_state;
                     self.grubbers.push(actor);
-                    self.egg_unlocked = true;
+                    if self.level == 1 {
+                        self.egg_unlocked = true;
+                    } else {
+                        self.gekko_unlocked = true;
+                    }
                     events.push(Event::GrubberBought {
                         tick: self.tick,
                         grubber_id,
@@ -2536,8 +2735,40 @@ impl AdventureState {
                     });
                 }
             }
+            Action::BuyGekko => {
+                if (self.tank, self.level) != (3, 2) || !self.gekko_unlocked {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::Locked,
+                    });
+                } else if self.available_funds() < GEKKO_PRICE {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::InsufficientFunds,
+                    });
+                } else {
+                    self.balance -= GEKKO_PRICE;
+                    let gekko_id = self.id();
+                    let mut rng_state = self.rng_state;
+                    let actor = GekkoState::spawn_bought(gekko_id, &mut |upper| {
+                        Self::advance_rng(&mut rng_state) % upper
+                    });
+                    self.rng_state = rng_state;
+                    self.gekkos.push(actor);
+                    self.weapon_unlocked = true;
+                    self.egg_unlocked = true;
+                    events.push(Event::GekkoBought {
+                        tick: self.tick,
+                        gekko_id,
+                        balance: self.balance,
+                    });
+                }
+            }
             Action::BuyWeapon => {
-                if (self.tank != 1 && !(self.tank == 2 && (2..=5).contains(&self.level)))
+                let price = if self.tank == 3 { 2000 } else { WEAPON_PRICE };
+                if (self.tank != 1
+                    && !(self.tank == 2 && (2..=5).contains(&self.level))
+                    && (self.tank, self.level) != (3, 2))
                     || !self.weapon_unlocked
                 {
                     events.push(Event::Rejected {
@@ -2549,13 +2780,13 @@ impl AdventureState {
                         tick: self.tick,
                         reason: Rejection::MaximumUpgrade,
                     });
-                } else if self.available_funds() < WEAPON_PRICE {
+                } else if self.available_funds() < price {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::InsufficientFunds,
                     });
                 } else {
-                    self.balance -= WEAPON_PRICE;
+                    self.balance -= price;
                     self.weapon_strength += 1;
                     events.push(Event::WeaponBought {
                         tick: self.tick,
@@ -2743,6 +2974,7 @@ impl AdventureState {
                 events.push(Event::CoinCollectionStarted {
                     tick: self.tick,
                     coin_id,
+                    kind: coin.kind,
                 });
             }
             return;
@@ -3021,6 +3253,7 @@ impl AdventureState {
         self.dead_oscars.retain_mut(|corpse| !corpse.tick());
         self.dead_starcatchers.retain_mut(|corpse| !corpse.tick());
         self.dead_grubbers.retain_mut(|corpse| !corpse.tick());
+        self.dead_gekkos.retain_mut(|corpse| !corpse.tick());
         self.update_starcatchers(&mut events);
         self.update_food(&mut events);
         self.update_fish(&mut events);
@@ -3029,6 +3262,7 @@ impl AdventureState {
         // a newly emitted Larva begins its own updates on the next tick.
         self.update_larvae(&mut events);
         self.update_grubbers(&mut events);
+        self.update_gekkos(&mut events);
         self.update_invasion_objects(&mut events);
         self.update_missiles(&mut events);
         self.update_stinky(&mut events);
@@ -3430,10 +3664,11 @@ impl AdventureState {
                 let id = self.id();
                 self.coins.push(Coin {
                     id,
-                    x,
-                    y,
+                    x: f64::from(x),
+                    y: f64::from(y),
                     kind,
                     frame: 0,
+                    animation_ticks: 0,
                     collecting: false,
                     bottom_ticks: 0,
                     fade_ticks: 0,
@@ -3528,10 +3763,11 @@ impl AdventureState {
             let coin_id = self.id();
             self.coins.push(Coin {
                 id: coin_id,
-                x,
-                y,
+                x: f64::from(x),
+                y: f64::from(y),
                 kind,
                 frame: 0,
+                animation_ticks: 0,
                 collecting: false,
                 bottom_ticks: 0,
                 fade_ticks: 0,
@@ -3782,6 +4018,7 @@ impl AdventureState {
                     self.oscars.retain(|oscar| oscar.id != prey_id);
                     self.starcatchers.retain(|actor| actor.id != prey_id);
                     self.grubbers.retain(|actor| actor.id != prey_id);
+                    self.gekkos.retain(|actor| actor.id != prey_id);
                     detached_target |= self.detach_missile_target(prey_id, events);
                 }
                 InvasionEvent::GusAteFood { food_id, .. } => {
@@ -3791,10 +4028,11 @@ impl AdventureState {
                     let coin_id = self.id();
                     self.coins.push(Coin {
                         id: coin_id,
-                        x: x as f32,
-                        y: y as f32,
+                        x: f64::from(x),
+                        y: f64::from(y),
                         kind: CoinKind::Diamond,
                         frame: 0,
+                        animation_ticks: 0,
                         collecting: false,
                         bottom_ticks: 0,
                         fade_ticks: 0,
@@ -3854,10 +4092,11 @@ impl AdventureState {
                     let diamond_coin_id = self.id();
                     self.coins.push(Coin {
                         id: diamond_coin_id,
-                        x: x as f32,
-                        y: y as f32,
+                        x: f64::from(x),
+                        y: f64::from(y),
                         kind: CoinKind::DiamondPenta,
                         frame: 0,
+                        animation_ticks: 0,
                         collecting: false,
                         bottom_ticks: 0,
                         fade_ticks: 0,
@@ -3936,10 +4175,11 @@ impl AdventureState {
                 let coin_id = self.id();
                 self.coins.push(Coin {
                     id: coin_id,
-                    x: x as f32,
-                    y: y as f32,
+                    x: f64::from(x),
+                    y: f64::from(y),
                     kind: CoinKind::Diamond,
                     frame: 0,
+                    animation_ticks: 0,
                     collecting: false,
                     bottom_ticks: 0,
                     fade_ticks: 0,
@@ -4070,6 +4310,96 @@ impl AdventureState {
         }
     }
 
+    fn update_gekkos(&mut self, events: &mut Vec<Event>) {
+        let alien_present = self
+            .invasion
+            .as_ref()
+            .is_some_and(Invasion1_2::has_live_alien);
+        let mut index = 0;
+        while index < self.gekkos.len() {
+            // Build a fresh view per actor. The preceding Gekko's removal is
+            // committed before this one can select or collide with its prey.
+            let prey = self
+                .larvae
+                .iter()
+                .map(|larva| GekkoPrey {
+                    id: larva.id,
+                    widget_x: larva.widget_x,
+                    widget_y: larva.widget_y,
+                    kind: GekkoPreyKind::Larva,
+                    eligible: !larva.picked_up,
+                })
+                .collect::<Vec<_>>();
+            // Raw-18 Peanuts belong to a later producer. No current CoinKind
+            // can represent one; the actor's typed diet already supports it.
+            let mut rng_state = self.rng_state;
+            let result = self.gekkos[index].tick(&prey, alien_present, &mut |upper| {
+                Self::advance_rng(&mut rng_state) % upper
+            });
+            self.rng_state = rng_state;
+            let gekko_id = self.gekkos[index].id;
+            if let Some((prey_id, kind)) = result.eaten_prey {
+                if kind == GekkoPreyKind::Larva {
+                    self.larvae.retain(|larva| larva.id != prey_id);
+                }
+                events.push(Event::GekkoAtePrey {
+                    tick: self.tick,
+                    gekko_id,
+                    prey_id,
+                    kind,
+                });
+            }
+            for (x, y) in result.bubbles {
+                events.push(Event::GekkoBubble {
+                    tick: self.tick,
+                    gekko_id,
+                    x,
+                    y,
+                });
+            }
+            if let Some((x, y)) = result.pearl_at {
+                let coin_id = self.id();
+                self.coins.push(Coin {
+                    id: coin_id,
+                    x: f64::from(x),
+                    y: f64::from(y),
+                    kind: CoinKind::Pearl,
+                    frame: 0,
+                    animation_ticks: 0,
+                    collecting: false,
+                    bottom_ticks: 0,
+                    fade_ticks: 0,
+                    penta_rising: false,
+                });
+                events.push(Event::GekkoPearlDropped {
+                    tick: self.tick,
+                    gekko_id,
+                    coin_id,
+                });
+                events.push(Event::CoinDropped {
+                    tick: self.tick,
+                    coin_id,
+                    fish_id: gekko_id,
+                    kind: CoinKind::Pearl,
+                });
+            }
+            if result.died {
+                self.dead_gekkos
+                    .push(DeadGekko::from_live(&self.gekkos[index]));
+                events.push(Event::GekkoDied {
+                    tick: self.tick,
+                    gekko_id,
+                });
+                if self.detach_missile_target(gekko_id, events) {
+                    self.finish_destructor_battle(events);
+                }
+                self.gekkos.remove(index);
+            } else {
+                index += 1;
+            }
+        }
+    }
+
     fn update_invasion_objects(&mut self, events: &mut Vec<Event>) {
         let warded = self.ward_snapshot().is_some();
         let actor_ids = self.invasion.as_ref().map_or_else(Vec::new, |wave| {
@@ -4118,6 +4448,19 @@ impl AdventureState {
             );
             prey.extend(
                 self.grubbers
+                    .iter()
+                    .filter(|actor| actor.alive)
+                    .map(|actor| PreyView {
+                        id: actor.id,
+                        widget_x: actor.widget_x,
+                        widget_y: actor.widget_y,
+                        width: 80,
+                        height: 80,
+                        eligible: true,
+                    }),
+            );
+            prey.extend(
+                self.gekkos
                     .iter()
                     .filter(|actor| actor.alive)
                     .map(|actor| PreyView {
@@ -4315,10 +4658,11 @@ impl AdventureState {
                 let coin_id = self.id();
                 self.coins.push(Coin {
                     id: coin_id,
-                    x: x as f32,
-                    y: y as f32,
+                    x: f64::from(x),
+                    y: f64::from(y),
                     kind: CoinKind::Gold,
                     frame: 0,
+                    animation_ticks: 0,
                     collecting: false,
                     bottom_ticks: 0,
                     fade_ticks: 0,
@@ -4467,8 +4811,8 @@ impl AdventureState {
                     if coin.collecting || (starcatcher_live && coin.kind == CoinKind::Star) {
                         return false;
                     }
-                    let x = f64::from(coin.x.trunc());
-                    let y = f64::from(coin.y.trunc());
+                    let x = coin.x.trunc();
+                    let y = coin.y.trunc();
                     center_x > x + 16.0
                         && center_x < x + 56.0
                         && center_y > y + 16.0
@@ -4488,6 +4832,7 @@ impl AdventureState {
                     events.push(Event::CoinCredited {
                         tick: self.tick,
                         coin_id: coin.id,
+                        kind: coin.kind,
                         amount,
                         balance: self.balance,
                     });
@@ -4624,6 +4969,7 @@ impl AdventureState {
             events.push(Event::CoinCredited {
                 tick: self.tick,
                 coin_id,
+                kind: coin.kind,
                 amount,
                 balance: self.balance,
             });
@@ -4662,22 +5008,29 @@ impl AdventureState {
     }
 
     fn update_coins(&mut self, events: &mut Vec<Event>) {
+        let seymour_present = self
+            .fish_pets
+            .iter()
+            .any(|pet| pet.kind == FishPetKind::Seymour);
         let bottom_limit = match (self.tank, self.level) {
             (1, 1) => FIRST_STAGE_COIN_BOTTOM_TICKS,
             (1, 2..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             (2, 1..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
-            (3, 1) => SECOND_STAGE_COIN_BOTTOM_TICKS,
+            (3, 1..=2) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             _ => unreachable!("coin lifetime for this Adventure stage is not implemented"),
         };
+        let bottom_limit = if seymour_present { 200 } else { bottom_limit };
         let mut credited = Vec::new();
         let mut expired = Vec::new();
         for coin in &mut self.coins {
-            coin.frame = (coin.frame + 1) % 10;
+            coin.animation_ticks = (coin.animation_ticks + 1) % 80;
+            coin.frame = (coin.animation_ticks / if seymour_present { 4 } else { 2 }) % 10;
             if coin.collecting {
+                coin.fade_ticks = 0;
                 // Coin::Update tests last tick's integer widget Y before its
                 // easing calculation and Move, then credits exactly once.
                 if coin.y.trunc() < 40.0 {
-                    credited.push((coin.id, coin.kind.value()));
+                    credited.push((coin.id, coin.kind, coin.kind.value()));
                     continue;
                 }
                 coin.x += (550.0 - coin.x) / 7.0;
@@ -4710,20 +5063,22 @@ impl AdventureState {
                 }
                 continue;
             }
-            coin.y = (coin.y + 1.5).min(370.0);
+            coin.y += if seymour_present { 0.8 } else { 1.5 };
             if coin.y >= 370.0 {
+                coin.y = 370.0;
                 coin.bottom_ticks += 1;
                 if coin.bottom_ticks >= bottom_limit {
                     coin.fade_ticks = 5;
                 }
             }
         }
-        for (id, amount) in credited {
+        for (id, kind, amount) in credited {
             self.coins.retain(|coin| coin.id != id);
             self.balance = (self.balance + amount).min(9_999_999);
             events.push(Event::CoinCredited {
                 tick: self.tick,
                 coin_id: id,
+                kind,
                 amount,
                 balance: self.balance,
             });
@@ -4760,6 +5115,187 @@ impl AdventureState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tank3_second_stage_purchase_chain_and_selected_seymour_are_distinct() {
+        let mut board =
+            AdventureState::new_tank3_second_stage(0x3201, &[PetKind::Seymour]).unwrap();
+        assert_eq!(
+            (board.balance, board.egg_price, board.weapon_strength),
+            (200, 5000, 2)
+        );
+        assert_eq!(
+            board
+                .fish_pets
+                .iter()
+                .filter(|pet| pet.kind == FishPetKind::Seymour)
+                .count(),
+            1
+        );
+        assert!(matches!(
+            board.invasion.as_ref().unwrap().plan,
+            WavePlan::CyclingTank3Second { .. }
+        ));
+        board.validate().unwrap();
+        assert!(board.apply(Action::BuyGekko).iter().any(|event| matches!(
+            event,
+            Event::Rejected {
+                reason: Rejection::Locked,
+                ..
+            }
+        )));
+        board.upgrades.quality_unlocked = true;
+        board.upgrades.quantity_unlocked = true;
+        board.grubber_unlocked = true;
+        board.balance = GRUBBER_PRICE;
+        board.apply(Action::BuyGrubber);
+        assert!(board.gekko_unlocked && !board.weapon_unlocked && !board.egg_unlocked);
+        board.balance = GEKKO_PRICE;
+        assert!(
+            board
+                .apply(Action::BuyGekko)
+                .iter()
+                .any(|event| matches!(event, Event::GekkoBought { balance: 0, .. }))
+        );
+        assert!(board.weapon_unlocked && board.egg_unlocked);
+        board.validate().unwrap();
+        assert!(AdventureState::new_tank3_first_stage(0x3201, &[PetKind::Seymour]).is_err());
+        assert!(AdventureState::new_tank3_second_stage(0x3201, &[PetKind::Shrapnel]).is_err());
+    }
+
+    #[test]
+    fn two_gekkos_commit_first_larva_meal_before_second_actor() {
+        let mut board = AdventureState::new_tank3_second_stage(0x3202, &[]).unwrap();
+        let larva_id = board.id();
+        board
+            .larvae
+            .push(LarvaState::spawn(larva_id, 100, 150, &mut || 0));
+        for _ in 0..2 {
+            let id = board.id();
+            let mut gekko = GekkoState::spawn_bought(id, &mut |_| 0);
+            gekko.x = 100.0;
+            gekko.y = 150.0;
+            gekko.widget_x = 100;
+            gekko.widget_y = 150;
+            gekko.hunger = 300;
+            gekko.bought_timer = 0;
+            gekko.vy = 0.0;
+            board.gekkos.push(gekko);
+        }
+        let mut events = Vec::new();
+        board.update_gekkos(&mut events);
+        assert_eq!(events.iter().filter(|event| matches!(event, Event::GekkoAtePrey { prey_id, .. } if *prey_id == larva_id)).count(), 1);
+        assert!(board.larvae.is_empty());
+        assert!(board.gekkos[0].hunger > board.gekkos[1].hunger);
+    }
+
+    #[test]
+    fn live_seymour_slows_only_falling_coins_and_claim_credit_keeps_kind() {
+        let mut board = AdventureState::new_tank3_second_stage(0x3203, &[]).unwrap();
+        let coin_id = board.id();
+        board.coins.push(Coin {
+            id: coin_id,
+            x: 100.0,
+            y: 369.5,
+            kind: CoinKind::Pearl,
+            frame: 0,
+            animation_ticks: 0,
+            collecting: false,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+            penta_rising: false,
+        });
+        board.pets.push(PetKind::Seymour); // An unlocked/selected name alone has no live modifier.
+        board.update_coins(&mut Vec::new());
+        assert_eq!(
+            (
+                board.coins[0].y,
+                board.coins[0].bottom_ticks,
+                board.coins[0].animation_ticks,
+                board.coins[0].frame
+            ),
+            (370.0, 1, 1, 0)
+        );
+        let pet_id = board.id();
+        board.fish_pets.push(FishPetState::spawn_tank1(
+            pet_id,
+            FishPetKind::Seymour,
+            &mut |_| 0,
+        ));
+        board.coins[0].y = 369.5;
+        board.coins[0].bottom_ticks = 0;
+        board.update_coins(&mut Vec::new());
+        assert_eq!(board.coins[0].y, 370.0);
+        assert_eq!(board.coins[0].bottom_ticks, 1);
+        board.coins[0].collecting = true;
+        board.coins[0].fade_ticks = 4;
+        board.coins[0].y = 39.9;
+        let mut events = Vec::new();
+        board.update_coins(&mut events);
+        assert!(events.iter().any(|event| matches!(event,
+            Event::CoinCredited { coin_id: id, kind: CoinKind::Pearl, amount: 500, .. } if *id == coin_id)));
+        assert!(board.coins.is_empty());
+    }
+
+    #[test]
+    fn coin_at_exact_bottom_after_fall_starts_floor_clock_immediately() {
+        let mut board = AdventureState::new_tank3_second_stage(0x3205, &[]).unwrap();
+        let id = board.id();
+        board.coins.push(Coin {
+            id,
+            x: 100.0,
+            y: 368.5,
+            kind: CoinKind::Silver,
+            frame: 0,
+            animation_ticks: 0,
+            collecting: false,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+            penta_rising: false,
+        });
+        board.update_coins(&mut Vec::new());
+        assert_eq!((board.coins[0].y, board.coins[0].bottom_ticks), (370.0, 1));
+        board.update_coins(&mut Vec::new());
+        assert_eq!((board.coins[0].y, board.coins[0].bottom_ticks), (370.0, 2));
+    }
+
+    #[test]
+    fn coin_animation_wraps_before_claimed_flight_and_claim_cancels_prior_fade() {
+        let mut board =
+            AdventureState::new_tank3_second_stage(0x3204, &[PetKind::Seymour]).unwrap();
+        let id = board.id();
+        board.coins.push(Coin {
+            id,
+            x: 100.0,
+            y: 100.0,
+            kind: CoinKind::Silver,
+            frame: 9,
+            animation_ticks: 79,
+            collecting: true,
+            bottom_ticks: 19,
+            fade_ticks: 4,
+            penta_rising: false,
+        });
+        board.update_coins(&mut Vec::new());
+        assert_eq!(
+            (
+                board.coins[0].animation_ticks,
+                board.coins[0].frame,
+                board.coins[0].fade_ticks
+            ),
+            (0, 0, 0)
+        );
+        assert!(board.coins[0].y < 100.0);
+        // Membership controls subsequent projection without resetting the clock.
+        board.fish_pets.clear();
+        board.coins[0].collecting = false;
+        board.coins[0].animation_ticks = 19;
+        board.update_coins(&mut Vec::new());
+        assert_eq!(
+            (board.coins[0].animation_ticks, board.coins[0].frame),
+            (20, 0)
+        );
+    }
 
     #[test]
     fn tank3_large_growth_opens_grubber_then_purchase_opens_egg() {
@@ -5184,6 +5720,7 @@ mod tests {
             y: 300.0,
             kind: CoinKind::Silver,
             frame: 0,
+            animation_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -5318,6 +5855,7 @@ mod tests {
             y: 370.0,
             kind: CoinKind::Gold,
             frame: 0,
+            animation_ticks: 0,
             collecting: false,
             bottom_ticks: 149,
             fade_ticks: 0,
@@ -5396,6 +5934,7 @@ mod tests {
             y: 40.5,
             kind: CoinKind::Gold,
             frame: 0,
+            animation_ticks: 0,
             collecting: true,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -5575,6 +6114,7 @@ mod tests {
                 y: 360.0,
                 kind: CoinKind::Gold,
                 frame: 0,
+                animation_ticks: 0,
                 collecting: true,
                 bottom_ticks: 0,
                 fade_ticks: 0,
@@ -5586,6 +6126,7 @@ mod tests {
                 y: 360.0,
                 kind: CoinKind::Silver,
                 frame: 0,
+                animation_ticks: 0,
                 collecting: false,
                 bottom_ticks: 0,
                 fade_ticks: 1,
@@ -5597,6 +6138,7 @@ mod tests {
                 y: 360.0,
                 kind: CoinKind::Gold,
                 frame: 0,
+                animation_ticks: 0,
                 collecting: false,
                 bottom_ticks: 0,
                 fade_ticks: 0,
@@ -5657,6 +6199,7 @@ mod tests {
             y: 360.0,
             kind: CoinKind::Silver,
             frame: 0,
+            animation_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -5722,6 +6265,7 @@ mod tests {
                 y: 100.0,
                 kind: CoinKind::Silver,
                 frame: 0,
+                animation_ticks: 0,
                 collecting: false,
                 bottom_ticks: 0,
                 fade_ticks: 0,
@@ -5750,6 +6294,7 @@ mod tests {
                 y: 100.0,
                 kind: CoinKind::Silver,
                 frame: 0,
+                animation_ticks: 0,
                 collecting: false,
                 bottom_ticks: 0,
                 fade_ticks: 0,
@@ -5771,6 +6316,7 @@ mod tests {
             y: 100.0,
             kind: CoinKind::Silver,
             frame: 0,
+            animation_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -5803,6 +6349,7 @@ mod tests {
             y: 370.0,
             kind: CoinKind::Silver,
             frame: 0,
+            animation_ticks: 0,
             collecting: false,
             bottom_ticks: 148,
             fade_ticks: 0,
@@ -5826,6 +6373,7 @@ mod tests {
             y: 370.0,
             kind: CoinKind::Gold,
             frame: 0,
+            animation_ticks: 0,
             collecting: false,
             bottom_ticks: 18,
             fade_ticks: 0,
@@ -5856,6 +6404,7 @@ mod tests {
             y: 370.0,
             kind: CoinKind::Gold,
             frame: 0,
+            animation_ticks: 0,
             collecting: false,
             bottom_ticks: 18,
             fade_ticks: 0,
@@ -6039,6 +6588,7 @@ mod tests {
             y: 39.0,
             kind: CoinKind::Silver,
             frame: 0,
+            animation_ticks: 0,
             collecting: true,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -6401,13 +6951,14 @@ mod tests {
         state.fish[0].coin_timer = 10;
         state.fish[0].coin_threshold = 11;
         let hunger = state.fish[0].hunger;
-        let stinky_x = state.stinky.as_ref().unwrap().x as f32;
+        let stinky_x = state.stinky.as_ref().unwrap().x;
         state.coins.push(Coin {
             id: 700,
             x: stinky_x,
             y: 360.0,
             kind: CoinKind::Silver,
             frame: 0,
+            animation_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -6452,6 +7003,7 @@ mod tests {
             y: 180.0,
             kind: CoinKind::Silver,
             frame: 0,
+            animation_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -6479,6 +7031,7 @@ mod tests {
             y: 200.0,
             kind: CoinKind::Silver,
             frame: 0,
+            animation_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -6505,6 +7058,7 @@ mod tests {
             y: 120.0,
             kind: CoinKind::Silver,
             frame: 0,
+            animation_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -6989,6 +7543,7 @@ mod tests {
             y: 200.0,
             kind: CoinKind::Star,
             frame: 0,
+            animation_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -7017,6 +7572,7 @@ mod tests {
             y: 200.0,
             kind: CoinKind::Star,
             frame: 0,
+            animation_ticks: 0,
             collecting: true,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -7042,6 +7598,7 @@ mod tests {
             y: 119.5,
             kind: CoinKind::DiamondPenta,
             frame: 0,
+            animation_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -7138,6 +7695,7 @@ mod tests {
             y: 160.0,
             kind: CoinKind::Silver,
             frame: 0,
+            animation_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,
@@ -7554,6 +8112,7 @@ mod tests {
             y: 100.0,
             kind: CoinKind::Silver,
             frame: 0,
+            animation_ticks: 0,
             collecting: false,
             bottom_ticks: 0,
             fade_ticks: 0,

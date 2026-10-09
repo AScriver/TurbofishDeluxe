@@ -14,6 +14,7 @@ pub enum FishPetKind {
     Vert,
     Meryl,
     Wadsworth,
+    Seymour,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,7 +189,12 @@ impl FishPetState {
             || self.movement_timer > 20
             || !matches!(self.x_direction, -1 | 1)
             || self.vx_abs > 64
-            || self.swim_counter > 19
+            || self.swim_counter
+                > (if self.kind == FishPetKind::Seymour {
+                    79
+                } else {
+                    19
+                })
             || self.frame > 9
             || !(-19..=19).contains(&self.turn_ticks)
             || (self.kind == FishPetKind::Prego
@@ -278,6 +284,7 @@ impl FishPetState {
                     u8::from(self.turn_ticks != 0)
                 }
             }
+            FishPetKind::Seymour => u8::from(self.turn_ticks != 0),
         }
     }
 
@@ -644,7 +651,13 @@ impl FishPetState {
             } else {
                 2
             };
-            if self.swim_counter > 19 {
+            if self.swim_counter
+                > (if self.kind == FishPetKind::Seymour {
+                    79
+                } else {
+                    19
+                })
+            {
                 self.swim_counter = 0;
             }
             self.frame = if self.kind == FishPetKind::Vert {
@@ -653,6 +666,8 @@ impl FishPetState {
                 } else {
                     19 - self.swim_counter
                 }
+            } else if self.kind == FishPetKind::Seymour {
+                self.swim_counter / 8
             } else {
                 self.swim_counter / 2
             };
@@ -1101,6 +1116,22 @@ mod tests {
         pet.previous_vx = 1.0;
         pet.animate();
         assert_eq!((pet.swim_counter, pet.frame), (0, 0));
+    }
+
+    #[test]
+    fn seymour_ordinary_swim_uses_eighty_tick_cycle_and_eight_tick_frames() {
+        let mut pet = actor(FishPetKind::Seymour);
+        pet.turn_ticks = 0;
+        pet.swim_counter = 7;
+        pet.vx_abs = 1;
+        pet.vx = 1.0;
+        pet.previous_vx = 1.0;
+        pet.animate();
+        assert_eq!((pet.swim_counter, pet.frame), (8, 1));
+        pet.swim_counter = 79;
+        pet.animate();
+        assert_eq!((pet.swim_counter, pet.frame), (0, 0));
+        pet.validate().unwrap();
     }
 
     #[test]

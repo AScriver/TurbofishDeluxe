@@ -53,6 +53,7 @@ pub enum WavePlan {
     Fixed(SylvesterKind),
     CyclingTank1Finale { next: EncounterKind },
     CyclingTank2Finale { next: EncounterKind },
+    CyclingTank3Second { next: SylvesterKind },
 }
 
 impl WavePlan {
@@ -60,6 +61,7 @@ impl WavePlan {
         match self {
             Self::Fixed(kind) => EncounterKind::Single(kind),
             Self::CyclingTank1Finale { next } | Self::CyclingTank2Finale { next } => next,
+            Self::CyclingTank3Second { next } => EncounterKind::Single(next),
         }
     }
 }
@@ -218,6 +220,16 @@ impl Invasion1_2 {
         wave.plan = WavePlan::CyclingTank2Finale {
             next: EncounterKind::Single(first),
         };
+        wave
+    }
+
+    pub fn new_tank3_second_stage(first: SylvesterKind) -> Self {
+        assert!(matches!(
+            first,
+            SylvesterKind::Gus | SylvesterKind::Destructor
+        ));
+        let mut wave = Self::with_origin(InvasionOrigin::StageStart, first);
+        wave.plan = WavePlan::CyclingTank3Second { next: first };
         wave
     }
 
@@ -430,6 +442,17 @@ impl Invasion1_2 {
                         };
                         WavePlan::CyclingTank2Finale { next }
                     }
+                    WavePlan::CyclingTank3Second { next } => WavePlan::CyclingTank3Second {
+                        next: if next_random().is_multiple_of(10) {
+                            if next == SylvesterKind::Gus {
+                                SylvesterKind::Destructor
+                            } else {
+                                SylvesterKind::Gus
+                            }
+                        } else {
+                            next
+                        },
+                    },
                 };
                 self.post_spawn_flash_ticks = 35;
                 self.countdown = 3000;
@@ -732,6 +755,13 @@ impl Invasion1_2 {
                         }
                     ]
                 )
+            }
+            WavePlan::CyclingTank3Second { next } => {
+                matches!(next, SylvesterKind::Gus | SylvesterKind::Destructor)
+                    && self.actors.len() <= 1
+                    && self.actors.iter().all(|actor| {
+                        matches!(actor.kind, SylvesterKind::Gus | SylvesterKind::Destructor)
+                    })
             }
         };
         if !(0..=3000).contains(&self.countdown)
@@ -1305,6 +1335,35 @@ mod tests {
         );
         assert_eq!(wave.warps.len(), 2);
         assert_eq!(wave.plan.expected(), EncounterKind::WeakBalrogPair);
+        wave.validate().unwrap();
+    }
+
+    #[test]
+    fn tank3_second_stage_spawns_one_kind_then_uses_one_toggle_draw() {
+        let mut wave = Invasion1_2::new_tank3_second_stage(SylvesterKind::Gus);
+        wave.warning = Some(WarningCoords {
+            first_x: 100,
+            first_y: 120,
+            second_x: 300,
+            second_y: 200,
+        });
+        wave.countdown = 1;
+        // Two actor constructor draws, followed by exactly one reschedule draw.
+        let mut draws = [7, 9, 20].into_iter();
+        let events = wave.board_update(|| draws.next().expect("no extra schedule draw"), || 40);
+        assert_eq!(draws.next(), None);
+        assert!(matches!(
+            events.as_slice(),
+            [InvasionEvent::AlienSpawned { id: 40, .. }]
+        ));
+        assert_eq!(wave.actors.len(), 1);
+        assert_eq!(wave.actors[0].kind, SylvesterKind::Gus);
+        assert_eq!(
+            wave.plan,
+            WavePlan::CyclingTank3Second {
+                next: SylvesterKind::Destructor
+            }
+        );
         wave.validate().unwrap();
     }
 

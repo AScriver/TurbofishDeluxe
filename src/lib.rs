@@ -8,6 +8,7 @@ pub mod cli;
 pub mod clyde;
 pub mod fish_pet;
 pub mod font;
+pub mod gekko;
 pub mod grubber;
 pub mod install;
 pub mod invasion;

@@ -90,6 +90,10 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_SEYMOUR",
     "IMAGE_GRUBBER",
     "IMAGE_SCL_GRUBBER",
+    "IMAGE_GEKKO",
+    "IMAGE_SCL_GEKKO",
+    "IMAGE_SHRAPNEL",
+    "IMAGE_SCL_SHRAPNEL",
     "IMAGE_ZZZ",
     "IMAGE_STARCATCHER",
     "IMAGE_SCL_STARCATCHER",
@@ -337,6 +341,14 @@ impl Presentation {
                     ..
                 } => "SOUND_SLURP",
                 Event::FishGrew { .. } => "SOUND_GROW",
+                Event::CoinCollectionStarted {
+                    kind: CoinKind::Pearl,
+                    ..
+                } => "SOUND_PEARL",
+                Event::CoinCredited {
+                    kind: CoinKind::Pearl,
+                    ..
+                } => continue,
                 Event::CoinCredited { .. } => "SOUND_POINTS",
                 Event::GuppyBought { .. }
                 | Event::EggBought { .. }
@@ -347,8 +359,11 @@ impl Presentation {
                 | Event::WeaponBought { .. } => "SOUND_BUY",
                 Event::OscarBought { .. }
                 | Event::StarcatcherBought { .. }
-                | Event::GrubberBought { .. } => "SOUND_GROW",
-                Event::OscarAteGuppy { .. } | Event::GrubberAteGuppy { .. } => "SOUND_CHOMP",
+                | Event::GrubberBought { .. }
+                | Event::GekkoBought { .. } => "SOUND_GROW",
+                Event::OscarAteGuppy { .. }
+                | Event::GrubberAteGuppy { .. }
+                | Event::GekkoAtePrey { .. } => "SOUND_CHOMP",
                 Event::OscarDied { tick, oscar_id }
                     if death_has_missile_impact(events, *tick, *oscar_id) =>
                 {
@@ -365,9 +380,15 @@ impl Presentation {
                 {
                     continue;
                 }
+                Event::GekkoDied { tick, gekko_id }
+                    if death_has_missile_impact(events, *tick, *gekko_id) =>
+                {
+                    continue;
+                }
                 Event::OscarDied { .. }
                 | Event::StarcatcherDied { .. }
-                | Event::GrubberDied { .. } => "SOUND_DIE",
+                | Event::GrubberDied { .. }
+                | Event::GekkoDied { .. } => "SOUND_DIE",
                 Event::LarvaPickupSound { .. } => "SOUND_POINTS",
                 Event::FishPetHit { sound: true, .. } => "SOUND_PUNCH",
                 Event::RufusHit { sound: true, .. } => "SOUND_PUNCH",
@@ -589,6 +610,40 @@ impl Presentation {
                 );
             }
         }
+        for gekko in &state.gekkos {
+            let frame_x = f32::from(gekko.sprite_frame()) * 80.0;
+            self.sprite(
+                "IMAGE_GEKKO",
+                gekko.widget_x as f32,
+                gekko.widget_y as f32,
+                Some(Rect::new(
+                    frame_x,
+                    f32::from(gekko.sprite_row()) * 80.0,
+                    80.0,
+                    80.0,
+                )),
+                gekko.facing_right(),
+                1.0,
+                1.0,
+            );
+            let hunger_alpha = f32::from(gekko.hunger_overlay_alpha()) / 255.0;
+            if hunger_alpha > 0.0 {
+                self.sprite(
+                    "IMAGE_GEKKO",
+                    gekko.widget_x as f32,
+                    gekko.widget_y as f32,
+                    Some(Rect::new(
+                        frame_x,
+                        f32::from(gekko.hungry_sprite_row()) * 80.0,
+                        80.0,
+                        80.0,
+                    )),
+                    gekko.facing_right(),
+                    1.0,
+                    hunger_alpha,
+                );
+            }
+        }
         let aliens_present = state
             .invasion
             .as_ref()
@@ -601,6 +656,7 @@ impl Presentation {
                 FishPetKind::Vert => "IMAGE_VERT",
                 FishPetKind::Meryl => "IMAGE_MERYL",
                 FishPetKind::Wadsworth => "IMAGE_WADSWORTH",
+                FishPetKind::Seymour => "IMAGE_SEYMOUR",
             };
             self.sprite(
                 image,
@@ -687,6 +743,22 @@ impl Presentation {
                     80.0,
                 )),
                 false,
+                1.0,
+                corpse.opacity,
+            );
+        }
+        for corpse in &state.dead_gekkos {
+            self.sprite(
+                "IMAGE_GEKKO",
+                corpse.widget_x as f32,
+                corpse.widget_y as f32,
+                Some(Rect::new(
+                    f32::from(corpse.sprite_frame()) * 80.0,
+                    f32::from(corpse.sprite_row()) * 80.0,
+                    80.0,
+                    80.0,
+                )),
+                corpse.facing_right,
                 1.0,
                 corpse.opacity,
             );
@@ -912,21 +984,33 @@ impl Presentation {
             }
         }
         for coin in &state.coins {
-            let row = match coin.kind {
-                CoinKind::Silver => 0.0,
-                CoinKind::Gold => 1.0,
-                CoinKind::Diamond | CoinKind::DiamondPenta => 3.0,
-                CoinKind::Star => 2.0,
-            };
             let alpha = if coin.fade_ticks > 0 {
                 f32::from(coin.fade_ticks) / 5.0
             } else {
                 1.0
             };
+            let row = match coin.kind {
+                CoinKind::Silver => 0.0,
+                CoinKind::Gold => 1.0,
+                CoinKind::Diamond | CoinKind::DiamondPenta => 3.0,
+                CoinKind::Star => 2.0,
+                CoinKind::Pearl => {
+                    self.sprite(
+                        "IMAGE_PEARL",
+                        coin.x as f32,
+                        coin.y as f32,
+                        None,
+                        false,
+                        1.0,
+                        alpha,
+                    );
+                    continue;
+                }
+            };
             self.sprite(
                 "IMAGE_MONEY",
-                coin.x,
-                coin.y,
+                coin.x as f32,
+                coin.y as f32,
                 Some(Rect::new(
                     f32::from(coin.frame % 10) * 72.0,
                     row * 72.0,
@@ -1092,6 +1176,24 @@ impl Presentation {
             );
             self.fonts["Pix118"].text("750", 304.0, 58.0, Color::from_rgba(110, 250, 110, 255));
         }
+        if state.gekko_unlocked {
+            self.sprite("IMAGE_MENUBTNU", 290.0, 3.0, None, false, 1.0, 1.0);
+            self.sprite(
+                "IMAGE_SCL_GEKKO",
+                300.0,
+                5.0,
+                Some(Rect::new(
+                    ((state.tick / 2) % 10) as f32 * 40.0,
+                    0.0,
+                    40.0,
+                    40.0,
+                )),
+                false,
+                1.0,
+                1.0,
+            );
+            self.fonts["Pix118"].text("2000", 302.0, 58.0, Color::from_rgba(110, 250, 110, 255));
+        }
         if state.weapon_unlocked {
             self.sprite("IMAGE_MENUBTNU", 363.0, 3.0, None, false, 1.0, 1.0);
             if state.weapon_strength < 12 {
@@ -1110,7 +1212,11 @@ impl Presentation {
                     1.0,
                 );
                 self.fonts["Pix118"].text(
-                    "1000",
+                    if state.tank == 3 && state.level == 2 {
+                        "2000"
+                    } else {
+                        "1000"
+                    },
                     375.0,
                     58.0,
                     Color::from_rgba(110, 250, 110, 255),
@@ -1522,6 +1628,7 @@ impl Presentation {
                 PetKind::Meryl => ("IMAGE_MERYL", 90.0, updates % 20 / 2),
                 PetKind::Wadsworth => ("IMAGE_WADSWORTH", 90.0, updates % 20 / 2),
                 PetKind::Seymour => ("IMAGE_SEYMOUR", 90.0, updates % 40 / 4),
+                PetKind::Shrapnel => ("IMAGE_SHRAPNEL", 90.0, updates % 40 / 4),
             };
             self.sprite(
                 id,
@@ -1533,7 +1640,7 @@ impl Presentation {
                 1.0,
             );
             self.centered_text(
-                if pet == PetKind::Wadsworth {
+                if matches!(pet, PetKind::Wadsworth | PetKind::Shrapnel) {
                     "JungleFever12outline"
                 } else {
                     "JungleFever15outline"
@@ -1550,6 +1657,7 @@ impl Presentation {
                     PetKind::Meryl => "MERYL the Mermaid",
                     PetKind::Wadsworth => "WADSWORTH the Whale",
                     PetKind::Seymour => "SEYMOUR the Turtle",
+                    PetKind::Shrapnel => "SHRAPNEL the Robot Fish",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -1608,6 +1716,11 @@ impl Presentation {
                     "SEYMOUR's presence makes all",
                     "coins and diamonds drift",
                     "at a slower rate.",
+                ],
+                PetKind::Shrapnel => [
+                    "SHRAPNEL drops bombs that",
+                    "blow up fish on contact but",
+                    "give lots of cash when clicked.",
                 ],
             };
             for (index, line) in description.iter().enumerate() {
@@ -1692,12 +1805,13 @@ impl Presentation {
                 PetKind::Meryl => "IMAGE_SCL_MERYL",
                 PetKind::Wadsworth => "IMAGE_SCL_WADSWORTH",
                 PetKind::Seymour => "IMAGE_SCL_SEYMOUR",
+                PetKind::Shrapnel => "IMAGE_SCL_SHRAPNEL",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
                 let phase = session.ticks % 18;
                 if phase > 9 { 18 - phase } else { phase }
-            } else if matches!(*pet, PetKind::Clyde | PetKind::Seymour) {
+            } else if matches!(*pet, PetKind::Clyde | PetKind::Seymour | PetKind::Shrapnel) {
                 session.ticks / 4 % 10
             } else {
                 session.ticks / 2 % 10
@@ -1835,11 +1949,21 @@ impl Presentation {
                     ],
                     90.0,
                 ),
+                PetKind::Shrapnel => (
+                    "IMAGE_SHRAPNEL",
+                    "SHRAPNEL the Robot Fish",
+                    [
+                        "SHRAPNEL drops bombs that",
+                        "blow up fish on contact but",
+                        "give lots of cash when clicked.",
+                    ],
+                    90.0,
+                ),
             };
             let column = if matches!(pet, PetKind::Niko | PetKind::Vert) {
                 let phase = session.ticks % 18;
                 if phase > 9 { 18 - phase } else { phase }
-            } else if matches!(pet, PetKind::Clyde | PetKind::Seymour) {
+            } else if matches!(pet, PetKind::Clyde | PetKind::Seymour | PetKind::Shrapnel) {
                 session.ticks / 4 % 10
             } else {
                 session.ticks % 20 / 2
@@ -2413,6 +2537,15 @@ pub async fn run(
                         if session
                             .board
                             .as_ref()
+                            .is_some_and(|board| board.gekko_unlocked)
+                            && Rect::new(290.0, 3.0, 58.0, 60.0).contains(pointer) =>
+                    {
+                        Action::BuyGekko
+                    }
+                    AdventurePhase::Playing
+                        if session
+                            .board
+                            .as_ref()
                             .is_some_and(|board| board.weapon_unlocked)
                             && Rect::new(363.0, 3.0, 58.0, 60.0).contains(pointer) =>
                     {
@@ -2773,6 +2906,33 @@ mod feed_input_tests {
             Some(PetKind::Wadsworth)
         );
         assert_eq!(pet_at_pointer(&unlocked, vec2(320.0, 82.0)), None);
+    }
+
+    #[test]
+    fn twelfth_pet_uses_second_right_hand_card() {
+        let unlocked = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+            PetKind::Clyde,
+            PetKind::Vert,
+            PetKind::Rufus,
+            PetKind::Meryl,
+            PetKind::Wadsworth,
+            PetKind::Seymour,
+            PetKind::Shrapnel,
+        ];
+        assert_eq!(pet_card_rect(11), Rect::new(425.0, 124.0, 90.0, 83.0));
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(470.0, 165.0)),
+            Some(PetKind::Shrapnel)
+        );
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(470.0, 82.0)),
+            Some(PetKind::Seymour)
+        );
     }
 
     #[test]

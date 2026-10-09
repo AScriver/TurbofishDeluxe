@@ -94,6 +94,249 @@ fn tank_three_session(pets: &[PetKind]) -> AdventureSession {
     session
 }
 
+fn tank_three_second_session(pets: &[PetKind]) -> AdventureSession {
+    // The previous-stage constructor correctly rejects Seymour; construct
+    // only this stage with the requested roster.
+    let mut session = tank_three_session(&[]);
+    session.progress.level = 2;
+    session.progress.unlocked_pets.push(PetKind::Seymour);
+    session.progress.selected_pets = pets.to_vec();
+    session.board = Some(AdventureState::new_tank3_second_stage(42, pets).unwrap());
+    session
+}
+
+fn bought_gekko_session() -> AdventureSession {
+    // Synthetic growth/cash boundary; purchases and actor allocation run the
+    // production actions. This does not claim native earning or progression.
+    let mut session = tank_three_second_session(&[PetKind::Seymour]);
+    let board = session.board.as_mut().unwrap();
+    board.balance = 2750;
+    board.upgrades.quality_unlocked = true;
+    board.upgrades.quantity_unlocked = true;
+    board.grubber_unlocked = true;
+    session.apply_actions(&[Action::BuyGrubber, Action::BuyGekko]);
+    session.validate().unwrap();
+    session
+}
+
+#[test]
+fn current_tank_three_second_save_accepts_all_eleven_single_pet_rosters() {
+    for pet in [
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Clyde,
+        PetKind::Vert,
+        PetKind::Rufus,
+        PetKind::Meryl,
+        PetKind::Wadsworth,
+        PetKind::Seymour,
+    ] {
+        let session = tank_three_second_session(&[pet]);
+        session.validate().unwrap();
+        let saved = serde_json::to_vec(&cli::ProjectSave {
+            format_version: cli::SAVE_FORMAT_VERSION,
+            session: session.clone(),
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(cli::decode_save(&saved).unwrap()).unwrap(),
+            serde_json::to_value(session).unwrap()
+        );
+    }
+}
+
+#[test]
+fn current_gekko_lists_live_corpse_and_coin_counter_require_every_field() {
+    use turbofish_deluxe::gekko::DeadGekko;
+    let mut session = bought_gekko_session();
+    let board = session.board.as_mut().unwrap();
+    let gekko = board.gekkos.pop().unwrap();
+    board.dead_gekkos.push(DeadGekko::from_impact(&gekko));
+    // Keep both live and corpse schemas in this valid fixture using the
+    // next production purchase, so no duplicated ID is manufactured.
+    board.balance = 2000;
+    session.apply_actions(&[Action::BuyGekko]);
+    for _ in 0..55 {
+        session.step(&[]);
+    }
+    let board = session.board.as_mut().unwrap();
+    board.gekkos[0].coin_timer = board.gekkos[0].coin_threshold - 1;
+    session.step(&[]);
+    session.validate().unwrap();
+    let current = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    for field in ["gekko_unlocked", "gekkos", "dead_gekkos"] {
+        let mut missing = current.clone();
+        missing["session"]["board"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "{field}"
+        );
+    }
+    for pointer in ["/session/board/gekkos/0", "/session/board/dead_gekkos/0"] {
+        for field in current
+            .pointer(pointer)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .keys()
+        {
+            let mut missing = current.clone();
+            missing
+                .pointer_mut(pointer)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            assert!(
+                cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+                "{pointer}/{field} must be required"
+            );
+        }
+    }
+    let mut missing = current;
+    missing["session"]["board"]["coins"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("animation_ticks");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+}
+
+#[test]
+fn current_gekko_and_seymour_coin_continue_with_exact_double_positions() {
+    use turbofish_deluxe::sim::{CoinKind, Event};
+    let mut uninterrupted = bought_gekko_session();
+    for _ in 0..55 {
+        uninterrupted.step(&[]);
+    }
+    let board = uninterrupted.board.as_mut().unwrap();
+    board.gekkos[0].coin_timer = board.gekkos[0].coin_threshold - 1;
+    assert!(
+        uninterrupted
+            .step(&[])
+            .iter()
+            .any(|event| matches!(event, Event::GekkoPearlDropped { .. }))
+    );
+    let pearl_id = uninterrupted
+        .board
+        .as_ref()
+        .unwrap()
+        .coins
+        .iter()
+        .find(|coin| coin.kind == CoinKind::Pearl)
+        .unwrap()
+        .id;
+    // A source-derived .8 accumulation boundary, with actual actor membership.
+    uninterrupted
+        .board
+        .as_mut()
+        .unwrap()
+        .coins
+        .iter_mut()
+        .find(|coin| coin.id == pearl_id)
+        .unwrap()
+        .y = 100.0;
+    for _ in 0..5 {
+        uninterrupted.step(&[]);
+    }
+    let pearl = uninterrupted
+        .board
+        .as_ref()
+        .unwrap()
+        .coins
+        .iter()
+        .find(|coin| coin.id == pearl_id)
+        .unwrap();
+    assert_eq!(pearl.y.to_bits(), 103.99999999999999_f64.to_bits());
+    let saved = serde_json::to_vec(&cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: uninterrupted.clone(),
+    })
+    .unwrap();
+    let mut resumed = cli::decode_save(&saved).unwrap();
+    for _ in 0..80 {
+        let expected = uninterrupted.step(&[]);
+        let actual = resumed.step(&[]);
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&uninterrupted).unwrap()
+        );
+        let expected_coin = uninterrupted
+            .board
+            .as_ref()
+            .unwrap()
+            .coins
+            .iter()
+            .find(|coin| coin.id == pearl_id)
+            .unwrap();
+        let actual_coin = resumed
+            .board
+            .as_ref()
+            .unwrap()
+            .coins
+            .iter()
+            .find(|coin| coin.id == pearl_id)
+            .unwrap();
+        assert_eq!(actual_coin.x.to_bits(), expected_coin.x.to_bits());
+        assert_eq!(actual_coin.y.to_bits(), expected_coin.y.to_bits());
+        resumed.validate().unwrap();
+    }
+}
+
+#[test]
+fn current_gekko_purchase_evidence_requires_gates_but_not_surviving_producer() {
+    use turbofish_deluxe::{gekko::DeadGekko, sim::CoinKind};
+    let live = bought_gekko_session();
+    let mut corpse = live.clone();
+    let actor = corpse.board.as_mut().unwrap().gekkos.pop().unwrap();
+    corpse
+        .board
+        .as_mut()
+        .unwrap()
+        .dead_gekkos
+        .push(DeadGekko::from_impact(&actor));
+    let mut pearl = live.clone();
+    for _ in 0..55 {
+        pearl.step(&[]);
+    }
+    let board = pearl.board.as_mut().unwrap();
+    board.gekkos[0].coin_timer = board.gekkos[0].coin_threshold - 1;
+    pearl.step(&[]);
+    let board = pearl.board.as_mut().unwrap();
+    assert!(board.coins.iter().any(|coin| coin.kind == CoinKind::Pearl));
+    board.gekkos.clear();
+    // Output is independent membership and legitimately outlives its producer.
+    for session in [live, corpse, pearl] {
+        session.validate().unwrap();
+        let current = serde_json::to_value(cli::ProjectSave {
+            format_version: cli::SAVE_FORMAT_VERSION,
+            session,
+        })
+        .unwrap();
+        assert!(cli::decode_save(&serde_json::to_vec(&current).unwrap()).is_ok());
+        let mut hidden_final_gates = current.clone();
+        hidden_final_gates["session"]["board"]["weapon_unlocked"] = false.into();
+        hidden_final_gates["session"]["board"]["egg_unlocked"] = false.into();
+        assert!(cli::decode_save(&serde_json::to_vec(&hidden_final_gates).unwrap()).is_err());
+        let mut hidden_gekko_gate = current;
+        hidden_gekko_gate["session"]["board"]["gekko_unlocked"] = false.into();
+        assert!(cli::decode_save(&serde_json::to_vec(&hidden_gekko_gate).unwrap()).is_err());
+    }
+}
+
 #[test]
 fn current_tank_three_save_accepts_every_unlocked_single_pet_roster() {
     for pet in [
@@ -933,6 +1176,7 @@ fn current_actor_corpse_and_diamond_phase_reload_preserves_every_next_update() {
         x: 300.0,
         y: 119.5,
         kind: CoinKind::DiamondPenta,
+        animation_ticks: 0,
         frame: 0,
         collecting: false,
         bottom_ticks: 0,

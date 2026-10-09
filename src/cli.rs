@@ -95,7 +95,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 12;
+pub const SAVE_FORMAT_VERSION: u32 = 13;
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -202,7 +202,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=12) => {
+        Some(version @ 5..=13) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -256,6 +256,19 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                 .iter()
                                 .any(|field| !board.contains_key(*field)))
                         || (version >= 11 && !board.contains_key("notes"))
+                        || (version >= 13
+                            && ["gekko_unlocked", "gekkos", "dead_gekkos"]
+                                .iter()
+                                .any(|field| !board.contains_key(*field)))
+                        || (version >= 13
+                            && board
+                                .get("coins")
+                                .and_then(serde_json::Value::as_array)
+                                .is_some_and(|coins| {
+                                    coins
+                                        .iter()
+                                        .any(|coin| coin.get("animation_ticks").is_none())
+                                }))
                         || (version >= 12
                             && ["grubber_unlocked", "grubbers", "dead_grubbers", "larvae"]
                                 .iter()
@@ -367,7 +380,8 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     9 => "nine",
                     10 => "ten",
                     11 => "eleven",
-                    _ => "twelve",
+                    12 => "twelve",
+                    _ => "thirteen",
                 };
                 return Err(format!(
                     "Incomplete format-{label} save; required state fields are missing"
