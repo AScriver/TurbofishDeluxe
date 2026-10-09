@@ -383,8 +383,28 @@ impl DeadStarcatcher {
         let pose = actor
             .death_pose
             .expect("Starcatcher corpse requires death-tick pose");
+        Self::from_pose(actor.id, pose)
+    }
+
+    /// Missile impact calls Penta::Die at the current live widget, without
+    /// entering the starvation hook that creates `death_pose`.
+    pub fn from_impact(actor: &StarcatcherState) -> Self {
+        Self::from_pose(
+            actor.id,
+            DeathPose {
+                x: actor.widget_x,
+                y: actor.widget_y,
+                vx: actor.vx,
+                vy: actor.vy,
+                speed_mod: actor.speed_mod,
+                facing_right: actor.vx >= 0.0,
+            },
+        )
+    }
+
+    fn from_pose(id: u64, pose: DeathPose) -> Self {
         Self {
-            id: actor.id,
+            id,
             x: f64::from(pose.x),
             y: f64::from(pose.y),
             widget_x: pose.x,
@@ -644,5 +664,24 @@ mod tests {
         above_limit.tick();
         assert!((near_limit.vy - 2.04).abs() < 1e-9);
         assert_eq!(above_limit.vy, 2.4);
+    }
+
+    #[test]
+    fn missile_impact_corpse_uses_current_penta_widget_without_starvation_pose() {
+        let mut actor = StarcatcherState::spawn_bought(9, &mut |_| 1);
+        actor.widget_x = 150;
+        actor.widget_y = 220;
+        actor.x = 150.75;
+        actor.y = 220.25;
+        actor.vx = -1.0;
+        actor.vy = -4.0;
+        assert!(actor.death_pose.is_none());
+        let corpse = DeadStarcatcher::from_impact(&actor);
+        assert_eq!(
+            (corpse.widget_x, corpse.widget_y, corpse.vy),
+            (150, 220, -5.0)
+        );
+        assert!(!corpse.facing_right);
+        corpse.validate().unwrap();
     }
 }

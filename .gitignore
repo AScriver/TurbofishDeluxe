@@ -17,6 +17,11 @@
 !/rust-toolchain.toml
 !/src/**/*.rs
 !/tests/**/*.rs
+!/crates/turbofish-openmpt/Cargo.toml
+!/crates/turbofish-openmpt/build.rs
+!/crates/turbofish-openmpt/LICENSE
+!/crates/turbofish-openmpt/src/**/*.rs
+!/crates/turbofish-openmpt/tests/**/*.rs
 
 # Private trees override the allowlist, including source-shaped files.
 /.scratch/

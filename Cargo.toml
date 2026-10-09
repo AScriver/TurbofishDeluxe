@@ -5,12 +5,19 @@ edition = "2024"
 rust-version = "1.95"
 publish = false
 
+[workspace]
+members = ["crates/turbofish-openmpt"]
+resolver = "3"
+
 [dependencies]
-macroquad = { version = "=0.4.16", features = ["audio"] }
+macroquad = "=0.4.16"
 image = { version = "=0.25.10", default-features = false, features = ["gif", "png", "jpeg"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151", features = ["float_roundtrip"] }
 sha2 = "=0.11.0"
+turbofish-openmpt = { path = "crates/turbofish-openmpt" }
+
+rodio = { version = "=0.22.2", default-features = false, features = ["playback", "vorbis", "wav"] }
 
 [lints.rust]
 unsafe_code = "forbid"

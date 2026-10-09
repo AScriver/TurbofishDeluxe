@@ -9,7 +9,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::alien::{AlienFoodView, PreyView, ShotResult, SylvesterKind, WeakSylvester};
+use crate::alien::{
+    AlienFoodView, AlienRuntimeRequest, PreyView, ShotResult, SylvesterKind, WeakSylvester,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InvasionOrigin {
@@ -169,6 +171,10 @@ impl Invasion1_2 {
         Self::with_origin(InvasionOrigin::StageStart, SylvesterKind::Gus)
     }
 
+    pub fn new_destructor() -> Self {
+        Self::with_origin(InvasionOrigin::StageStart, SylvesterKind::Destructor)
+    }
+
     pub fn legacy_v5_balrog_resume() -> Self {
         Self::with_origin(InvasionOrigin::LegacyV5Resume, SylvesterKind::Balrog)
     }
@@ -236,6 +242,15 @@ impl Invasion1_2 {
     /// its held-feeding check using the old board clock.
     pub fn advance_after_pre_pause(
         &mut self,
+        next_random: impl FnMut() -> u32,
+        next_id: impl FnMut() -> u64,
+    ) -> Vec<InvasionEvent> {
+        self.advance_with_threats(false, next_random, next_id)
+    }
+
+    pub fn advance_with_threats(
+        &mut self,
+        missiles_present: bool,
         mut next_random: impl FnMut() -> u32,
         mut next_id: impl FnMut() -> u64,
     ) -> Vec<InvasionEvent> {
@@ -243,7 +258,7 @@ impl Invasion1_2 {
             return Vec::new();
         }
         self.post_spawn_flash_ticks = self.post_spawn_flash_ticks.saturating_sub(1);
-        if self.alien.is_some() {
+        if self.alien.is_some() || missiles_present {
             return Vec::new();
         }
         if self.countdown <= 0 {
@@ -303,9 +318,10 @@ impl Invasion1_2 {
                     next_random(),
                     next_random(),
                 );
+                let spawn_y = actor.widget_y;
                 self.warp = Some(WarpEffect {
                     x: coords.first_x + 30,
-                    y: coords.first_y - 40,
+                    y: spawn_y - 40,
                     remaining_ticks: 36,
                 });
                 self.alien = Some(actor);
@@ -314,7 +330,7 @@ impl Invasion1_2 {
                 vec![InvasionEvent::AlienSpawned {
                     id,
                     x: coords.first_x,
-                    y: coords.first_y,
+                    y: spawn_y,
                 }]
             }
             _ => Vec::new(),
@@ -335,7 +351,19 @@ impl Invasion1_2 {
         &mut self,
         prey: &[PreyView],
         food: &[AlienFoodView],
-        next_random: impl FnMut() -> u32,
+        mut next_random: impl FnMut() -> u32,
+    ) -> Vec<InvasionEvent> {
+        self.objects_update_with_runtime(prey, food, |request| match request {
+            AlienRuntimeRequest::Random => next_random(),
+            AlienRuntimeRequest::Launch { .. } => 0,
+        })
+    }
+
+    pub fn objects_update_with_runtime(
+        &mut self,
+        prey: &[PreyView],
+        food: &[AlienFoodView],
+        runtime: impl FnMut(AlienRuntimeRequest) -> u32,
     ) -> Vec<InvasionEvent> {
         if self.pending_modal.is_some() {
             return Vec::new();
@@ -343,7 +371,7 @@ impl Invasion1_2 {
         let mut events = Vec::new();
         let mut defeated_on_update = false;
         if let Some(actor) = self.alien.as_mut() {
-            let update = actor.update_with_food(prey, food, next_random);
+            let update = actor.update_with_runtime(prey, food, runtime);
             if let Some((food_id, damage)) = update.food_eaten {
                 events.push(InvasionEvent::GusAteFood {
                     alien_id: actor.id,
@@ -491,16 +519,19 @@ impl Invasion1_2 {
             opacity: 1.0,
             remaining_ticks: 125,
         });
-        self.food_delay = 36;
-        vec![
+        let mut events = vec![
             InvasionEvent::AlienDefeated { id: dead.id },
             InvasionEvent::DiamondDropped {
                 alien_id: dead.id,
                 x: dead.widget_x + 25,
                 y: dead.widget_y + 25,
             },
-            InvasionEvent::BattleEnded,
-        ]
+        ];
+        if dead.kind != SylvesterKind::Destructor {
+            self.food_delay = 36;
+            events.push(InvasionEvent::BattleEnded);
+        }
+        events
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -603,6 +634,29 @@ mod tests {
         );
         assert_eq!(draws.next(), None);
         wave.validate().unwrap();
+    }
+
+    #[test]
+    fn destructor_warning_y_does_not_relocate_actor_or_its_spawn_warp() {
+        let mut wave = Invasion1_2::new_destructor();
+        wave.warning = Some(WarningCoords {
+            first_x: 100,
+            first_y: 120,
+            second_x: 200,
+            second_y: 220,
+        });
+        wave.countdown = 1;
+        let events = wave.board_update(|| 1, || 77);
+        assert_eq!(
+            events,
+            vec![InvasionEvent::AlienSpawned {
+                id: 77,
+                x: 100,
+                y: 280
+            }]
+        );
+        assert_eq!(wave.alien.as_ref().unwrap().widget_y, 280);
+        assert_eq!(wave.warp.as_ref().unwrap().y, 240);
     }
 
     #[test]

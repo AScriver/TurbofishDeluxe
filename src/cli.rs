@@ -95,7 +95,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 9;
+pub const SAVE_FORMAT_VERSION: u32 = 10;
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -202,7 +202,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=9) => {
+        Some(version @ 5..=10) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -251,6 +251,10 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                             ]
                             .iter()
                             .any(|field| !board.contains_key(*field)))
+                        || (version >= 10
+                            && ["missiles", "rufus"]
+                                .iter()
+                                .any(|field| !board.contains_key(*field)))
                         || (version >= 9
                             && board
                                 .get("fish_pets")

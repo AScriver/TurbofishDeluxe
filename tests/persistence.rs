@@ -28,6 +28,165 @@ fn vert_session() -> AdventureSession {
     session
 }
 
+fn rufus_session() -> AdventureSession {
+    let mut session = vert_session();
+    session.progress.level = 4;
+    session.progress.unlocked_pets.push(PetKind::Rufus);
+    session.progress.selected_pets = vec![PetKind::Niko, PetKind::Itchy, PetKind::Rufus];
+    session.board =
+        Some(AdventureState::new_tank2_fourth_stage(42, &session.progress.selected_pets).unwrap());
+    session
+}
+
+fn pending_destructor_session() -> (AdventureSession, u64, u64) {
+    use turbofish_deluxe::{
+        alien::{SylvesterKind, WeakSylvester},
+        missile::ClassicMissile,
+    };
+    // Synthetic current-format fixture: no progression or live earning claim.
+    // Allocate fixture entities through serialized next_id, keeping the live
+    // Board allocator private and retaining the target's actual identity.
+    let mut fixture = serde_json::to_value(rufus_session()).unwrap();
+    let alien_id = fixture["board"]["next_id"].as_u64().unwrap();
+    let missile_id = alien_id + 1;
+    fixture["board"]["next_id"] = (missile_id + 1).into();
+    let mut session: AdventureSession = serde_json::from_value(fixture).unwrap();
+    let board = session.board.as_mut().unwrap();
+    let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Destructor, alien_id, 100, 280, 1, 1);
+    actor.spawn_ticks = 0;
+    actor.health = 0.25;
+    assert_eq!(actor.itchy_hit(), Some(0.0));
+    assert_eq!(actor.rufus_hit(), Some(-0.25));
+    board.invasion.as_mut().unwrap().alien = Some(actor);
+    board.missiles.push(ClassicMissile::launch(
+        missile_id,
+        board.fish[0].id,
+        10,
+        95,
+        3,
+    ));
+    let rufus = board.rufus.as_mut().unwrap();
+    rufus.chase_ticks = 4;
+    rufus.animation_ticks = 12;
+    rufus.frame = 3;
+    session.validate().unwrap();
+    (session, alien_id, missile_id)
+}
+
+#[test]
+fn current_destructor_pending_death_live_missile_and_rufus_reload_exactly() {
+    use turbofish_deluxe::{invasion::InvasionEvent, sim::Event};
+    let (mut uninterrupted, alien_id, missile_id) = pending_destructor_session();
+    let bytes = serde_json::to_vec(&cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: uninterrupted.clone(),
+    })
+    .unwrap();
+    let mut resumed = cli::decode_save(&bytes).unwrap();
+    assert_eq!(
+        serde_json::to_value(&resumed).unwrap(),
+        serde_json::to_value(&uninterrupted).unwrap()
+    );
+    for tick in 0..32 {
+        let expected_events = uninterrupted.step(&[]);
+        let actual_events = resumed.step(&[]);
+        assert_eq!(
+            serde_json::to_value(&actual_events).unwrap(),
+            serde_json::to_value(&expected_events).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&uninterrupted).unwrap()
+        );
+        if tick == 0 {
+            assert_eq!(actual_events.iter().filter(|event| matches!(event,
+                Event::Invasion { event: InvasionEvent::AlienDefeated { id, .. }, .. } if *id == alien_id
+            )).count(), 1);
+            assert_eq!(
+                actual_events
+                    .iter()
+                    .filter(|event| matches!(event,
+                        Event::AlienDiamondDropped { alien_id: id, .. } if *id == alien_id
+                    ))
+                    .count(),
+                1
+            );
+            let board = resumed.board.as_ref().unwrap();
+            assert!(board.invasion.as_ref().unwrap().dead_alien.is_some());
+            assert!(
+                board
+                    .missiles
+                    .iter()
+                    .any(|missile| missile.id == missile_id)
+            );
+            assert!(
+                !actual_events.iter().any(|event| matches!(
+                    event,
+                    Event::Invasion {
+                        event: InvasionEvent::BattleEnded,
+                        ..
+                    }
+                )),
+                "the registered missile keeps this battle open after alien death"
+            );
+        }
+        resumed.validate().unwrap();
+    }
+}
+
+#[test]
+fn current_missile_and_rufus_fields_are_required_without_repair() {
+    let value = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: rufus_session(),
+    })
+    .unwrap();
+    assert!(cli::decode_save(&serde_json::to_vec(&value).unwrap()).is_ok());
+    for field in ["missiles", "rufus"] {
+        let mut incomplete = value.clone();
+        incomplete["session"]["board"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&incomplete).unwrap()).is_err(),
+            "missing {field}"
+        );
+    }
+}
+
+#[test]
+fn current_save_rejects_malformed_missile_clock_and_destructor_health() {
+    let (session, _, _) = pending_destructor_session();
+    let value = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    for (pointer, invalid) in [
+        (
+            "/session/board/missiles/0/immunity_ticks",
+            serde_json::json!(16),
+        ),
+        (
+            "/session/board/missiles/0/target_id",
+            serde_json::json!(u64::MAX),
+        ),
+        ("/session/board/rufus/vy", serde_json::json!(1.0)),
+        (
+            "/session/board/invasion/alien/health",
+            serde_json::json!(-0.1),
+        ),
+    ] {
+        let mut malformed = value.clone();
+        *malformed.pointer_mut(pointer).unwrap() = invalid;
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&malformed).unwrap()).is_err(),
+            "invalid {pointer}"
+        );
+    }
+}
+
 #[test]
 fn current_gus_quarter_pending_death_and_vert_clock_reload_exactly() {
     use turbofish_deluxe::{

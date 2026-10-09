@@ -8,19 +8,18 @@ use crate::{
     font::BitmapFont,
     install::{self, InstallIdentity},
     invasion::{InvasionEvent, InvasionTip},
+    music::{MusicOwner, MusicReport},
     oscar::OscarPose,
     sim::{Action, AdventureState, CoinKind, Event, FishPose, FishSize, PetKind, TICK_MS},
 };
-use macroquad::{
-    audio::{PlaySoundParams, Sound, load_sound_from_bytes, play_sound},
-    prelude::*,
-};
+use macroquad::prelude::*;
 use std::{
     collections::HashMap,
     error::Error,
     fs::{self, File},
     io::{BufWriter, Write},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 const IMAGE_IDS: &[&str] = &[
@@ -52,6 +51,8 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_PEARL",
     "IMAGE_SYLV",
     "IMAGE_GUS",
+    "IMAGE_DESTRUCTOR",
+    "IMAGE_MISSILE",
     "IMAGE_LASERS",
     "IMAGE_WARPHOLE",
     "IMAGE_WARPGLOW",
@@ -79,6 +80,8 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_VERT",
     "IMAGE_RUFUS",
     "IMAGE_SCL_RUFUS",
+    "IMAGE_MERYL",
+    "IMAGE_SCL_MERYL",
     "IMAGE_STARCATCHER",
     "IMAGE_SCL_STARCATCHER",
     "IMAGE_BONUSBUCKET",
@@ -100,6 +103,8 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_ROAR",
     "SOUND_HIT",
     "SOUND_EXPLOSION1",
+    "SOUND_EXPLODE",
+    "SOUND_MISSLE",
     "SOUND_ZAP",
     "SOUND_NIKOOPEN",
     "SOUND_NIKOCLOSE",
@@ -114,7 +119,7 @@ const SOUND_IDS: &[&str] = &[
 
 pub struct Presentation {
     images: HashMap<String, Texture2D>,
-    sounds: HashMap<String, Sound>,
+    sounds: HashMap<String, Arc<[u8]>>,
     fonts: HashMap<String, RenderedFont>,
 }
 
@@ -239,9 +244,9 @@ impl Presentation {
                         samples,
                     } => pcm_wav(sample_rate, &samples),
                 };
-                let sound = load_sound_from_bytes(&bytes)
-                    .await
-                    .map_err(|error| format!("{id}: {error:?}"))?;
+                let sound: Arc<[u8]> = bytes.into();
+                rodio::Decoder::try_from(std::io::Cursor::new(sound.clone()))
+                    .map_err(|error| format!("{id}: {error}"))?;
                 sounds.insert((*id).into(), sound);
             }
         }
@@ -295,7 +300,8 @@ impl Presentation {
         );
     }
 
-    fn play(&self, events: &[Event]) {
+    fn play(&self, events: &[Event], music: Option<&MusicOwner>) -> Vec<MusicReport> {
+        let mut reports = Vec::new();
         for event in events {
             let id = match event {
                 Event::FoodDropped { potion: false, .. } => "SOUND_DROPFOOD",
@@ -318,6 +324,10 @@ impl Presentation {
                 Event::OscarAteGuppy { .. } => "SOUND_CHOMP",
                 Event::OscarDied { .. } | Event::StarcatcherDied { .. } => "SOUND_DIE",
                 Event::FishPetHit { sound: true, .. } => "SOUND_PUNCH",
+                Event::RufusHit { sound: true, .. } => "SOUND_PUNCH",
+                Event::MissileLaunched { .. } => "SOUND_MISSLE",
+                Event::MissileRemoved { .. } => "SOUND_EXPLODE",
+                Event::MissileImpacted { .. } => "SOUND_DIE",
                 Event::PregoBirth { .. } => "SOUND_BABY",
                 Event::HatchOpened { .. } => "SOUND_HATCH",
                 Event::Invasion { event, .. } => match event {
@@ -345,16 +355,13 @@ impl Presentation {
                 | Event::PetSelectionConfirmation { .. } => "SOUND_BUTTONCLICK",
                 _ => continue,
             };
-            if let Some(sound) = self.sounds.get(id) {
-                play_sound(
-                    sound,
-                    PlaySoundParams {
-                        looped: false,
-                        volume: 0.75,
-                    },
-                );
+            if let (Some(sound), Some(music)) = (self.sounds.get(id), music)
+                && let Some(report) = music.play_effect(sound.clone())
+            {
+                reports.push(report);
             }
         }
+        reports
     }
 
     fn draw_board(&self, state: &AdventureState) {
@@ -621,6 +628,7 @@ impl Presentation {
                     let alien_image = match alien.kind {
                         SylvesterKind::Balrog => "IMAGE_BALROG",
                         SylvesterKind::Gus => "IMAGE_GUS",
+                        SylvesterKind::Destructor => "IMAGE_DESTRUCTOR",
                         SylvesterKind::Weak | SylvesterKind::Strong => "IMAGE_SYLV",
                     };
                     // Gus's eating row uses the velocity facing even when a
@@ -644,8 +652,35 @@ impl Presentation {
                             scale,
                             (f32::from(alien.hit_ticks) * 25.0 / 255.0).min(1.0),
                         );
+                    } else if alien.kind == SylvesterKind::Destructor
+                        && (1..10).contains(&alien.special_ticks)
+                        && alien.spawn_ticks == 0
+                    {
+                        let intensity = alien.special_ticks.min(10 - alien.special_ticks);
+                        // W1 uses an additive pass; standard alpha is a bounded
+                        // macroquad presentation approximation.
+                        self.sprite(
+                            alien_image,
+                            x,
+                            y,
+                            Some(source),
+                            facing_right,
+                            scale,
+                            f32::from(intensity) / 5.0,
+                        );
                     }
                 }
+            }
+            for missile in &state.missiles {
+                self.sprite(
+                    "IMAGE_MISSILE",
+                    missile.widget_x as f32,
+                    missile.widget_y as f32,
+                    Some(Rect::new(f32::from(missile.frame) * 80.0, 0.0, 80.0, 80.0)),
+                    false,
+                    1.0,
+                    1.0,
+                );
             }
             for laser in &wave.lasers {
                 let frame = laser.frame();
@@ -672,10 +707,12 @@ impl Presentation {
                 && body.kind != SylvesterKind::Gus
             {
                 self.sprite(
-                    if body.kind == SylvesterKind::Balrog {
-                        "IMAGE_BALROG"
-                    } else {
-                        "IMAGE_SYLV"
+                    match body.kind {
+                        SylvesterKind::Balrog => "IMAGE_BALROG",
+                        SylvesterKind::Destructor => "IMAGE_DESTRUCTOR",
+                        SylvesterKind::Weak | SylvesterKind::Strong | SylvesterKind::Gus => {
+                            "IMAGE_SYLV"
+                        }
                     },
                     body.widget_x as f32,
                     body.widget_y as f32,
@@ -708,6 +745,22 @@ impl Presentation {
                 clyde.widget_x as f32,
                 clyde.widget_y as f32,
                 Some(Rect::new(f32::from(clyde.frame) * 80.0, 0.0, 80.0, 80.0)),
+                false,
+                1.0,
+                1.0,
+            );
+        }
+        if let Some(rufus) = &state.rufus {
+            self.sprite(
+                "IMAGE_RUFUS",
+                rufus.widget_x as f32,
+                rufus.widget_y as f32,
+                Some(Rect::new(
+                    f32::from(rufus.sprite_frame()) * 80.0,
+                    f32::from(rufus.sprite_row()) * 80.0,
+                    80.0,
+                    80.0,
+                )),
                 false,
                 1.0,
                 1.0,
@@ -1299,6 +1352,7 @@ impl Presentation {
                     )
                 }
                 PetKind::Rufus => ("IMAGE_RUFUS", 90.0, updates % 20 / 2),
+                PetKind::Meryl => ("IMAGE_MERYL", 90.0, updates % 20 / 2),
             };
             self.sprite(
                 id,
@@ -1320,6 +1374,7 @@ impl Presentation {
                     PetKind::Clyde => "CLYDE the Jellyfish",
                     PetKind::Vert => "VERT the Skeleton",
                     PetKind::Rufus => "RUFUS the Fiddler Crab",
+                    PetKind::Meryl => "MERYL the Mermaid",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -1363,6 +1418,11 @@ impl Presentation {
                     "RUFUS guards the tank floor,",
                     "dealing heavy damage to aliens",
                     "that come within reach.",
+                ],
+                PetKind::Meryl => [
+                    "MERYL's song cheers up all the",
+                    "guppies in the tank, making",
+                    "them drop coins faster.",
                 ],
             };
             for (index, line) in description.iter().enumerate() {
@@ -1444,6 +1504,7 @@ impl Presentation {
                 PetKind::Clyde => "IMAGE_SCL_CLYDE",
                 PetKind::Vert => "IMAGE_SCL_VERT",
                 PetKind::Rufus => "IMAGE_SCL_RUFUS",
+                PetKind::Meryl => "IMAGE_SCL_MERYL",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
@@ -1554,6 +1615,16 @@ impl Presentation {
                         "RUFUS guards the tank floor,",
                         "dealing heavy damage to aliens",
                         "that come within reach.",
+                    ],
+                    90.0,
+                ),
+                PetKind::Meryl => (
+                    "IMAGE_MERYL",
+                    "MERYL the Mermaid",
+                    [
+                        "MERYL's song cheers up all the",
+                        "guppies in the tank, making",
+                        "them drop coins faster.",
                     ],
                     90.0,
                 ),
@@ -1906,6 +1977,23 @@ impl Evidence {
         let path = self.root.join(format!("frame-{tick:06}.png"));
         get_screen_data().export_png(&path.to_string_lossy());
     }
+
+    fn record_music(
+        &mut self,
+        reports: &[MusicReport],
+        elapsed: f64,
+        tick: u64,
+    ) -> Result<(), Box<dyn Error>> {
+        for report in reports {
+            serde_json::to_writer(
+                &mut self.events,
+                &serde_json::json!({"elapsed_seconds": elapsed, "session_tick": tick, "music": report}),
+            )?;
+            writeln!(&mut self.events)?;
+        }
+        self.events.flush()?;
+        Ok(())
+    }
 }
 
 pub async fn run(
@@ -1916,6 +2004,14 @@ pub async fn run(
     mut session: AdventureSession,
 ) -> Result<(), Box<dyn Error>> {
     let presentation = Presentation::load(&game_root, &assets, options.muted).await?;
+    let (mut music, mut music_unavailable) = if options.muted {
+        (None, None)
+    } else {
+        match MusicOwner::start(game_root.clone()) {
+            Ok(owner) => (Some(owner), None),
+            Err(error) => (None, Some(format!("Music thread unavailable: {error}"))),
+        }
+    };
     let mut evidence = options
         .evidence_dir
         .as_ref()
@@ -2136,10 +2232,11 @@ pub async fn run(
                     && pointer.y > 40.0
                     && session.board.as_ref().is_some_and(|board| {
                         board.weapon_strength == 12
-                            && board
+                            && (board
                                 .invasion
                                 .as_ref()
                                 .is_some_and(|wave| wave.has_live_alien())
+                                || !board.missiles.is_empty())
                     })
                 {
                     held_fire_at = Some(get_time());
@@ -2193,6 +2290,9 @@ pub async fn run(
             || options.quit_after.is_some_and(|limit| elapsed >= limit);
         let mut events = Vec::new();
         let mut phase_transitioned = false;
+        if let Some(owner) = music.as_mut() {
+            owner.sync(&session, paused);
+        }
         if save_requested || exit_requested {
             // Inputs already accepted by this window belong to the checkpoint.
             // Apply them without inventing an extra simulation tick on save/exit.
@@ -2244,6 +2344,9 @@ pub async fn run(
                     }
                     let previous_phase = std::mem::discriminant(&session.phase);
                     let step_events = session.step(&step_actions);
+                    if let Some(owner) = music.as_mut() {
+                        owner.sync(&session, paused);
+                    }
                     phase_transitioned |= previous_phase != std::mem::discriminant(&session.phase);
                     if feed_press_at
                         .is_some_and(|(_, gus_click)| arms_held_feed(&step_events, gus_click))
@@ -2310,9 +2413,26 @@ pub async fn run(
         {
             cli::save_session(&options, &session)?;
         }
-        presentation.play(&events);
+        let mut music_reports = presentation.play(&events, music.as_ref());
+        if let Some(owner) = music.as_mut() {
+            owner.sync(&session, paused);
+            music_reports.extend(owner.drain_reports());
+            if let Some(reason) = owner.unavailable() {
+                music_unavailable.get_or_insert_with(|| reason.to_owned());
+            }
+        }
+        for report in &music_reports {
+            match report {
+                MusicReport::Unavailable { reason } => eprintln!("Music unavailable: {reason}"),
+                MusicReport::EffectFailed { reason } | MusicReport::Overload { reason } => {
+                    eprintln!("Audio warning: {reason}");
+                }
+                _ => {}
+            }
+        }
         if let Some(evidence) = evidence.as_mut() {
             evidence.record(&events, &session, elapsed, paused)?;
+            evidence.record_music(&music_reports, elapsed, session.ticks)?;
         }
         if exit_requested {
             break;
@@ -2330,6 +2450,9 @@ pub async fn run(
         ));
         set_camera(&camera);
         presentation.draw(&session, paused, pointer);
+        if music_unavailable.is_some() {
+            draw_text("Music unavailable", 425.0, 470.0, 18.0, YELLOW);
+        }
         set_default_camera();
         if let Some(evidence) = evidence.as_ref() {
             let request = evidence.root.join("capture.request");

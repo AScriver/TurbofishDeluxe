@@ -21,6 +21,7 @@ pub enum SylvesterKind {
     Strong,
     Balrog,
     Gus,
+    Destructor,
 }
 
 impl SylvesterKind {
@@ -30,6 +31,7 @@ impl SylvesterKind {
             Self::Strong => 1.6,
             Self::Balrog => 1.2,
             Self::Gus => 1.6,
+            Self::Destructor => 1.2,
         }
     }
 
@@ -39,6 +41,7 @@ impl SylvesterKind {
             Self::Strong => 60.0,
             Self::Balrog => 130.0,
             Self::Gus => 100.0,
+            Self::Destructor => 150.0,
         }
     }
 }
@@ -73,6 +76,20 @@ pub struct AlienUpdate {
     pub prey_eaten: Option<u64>,
     /// Registered zero-health aliens finish this active update before removal.
     pub defeated: bool,
+}
+
+/// A Board callback executes the launch before the actor requests its reload
+/// draw. `Launch` returns one on successful registration, zero otherwise.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlienRuntimeRequest {
+    Random,
+    Launch {
+        slot: u8,
+        x: i32,
+        y: i32,
+        center_x: i32,
+        center_y: i32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -114,6 +131,9 @@ pub struct WeakSylvester {
     pub turn_ticks: i8,
     pub frame: u8,
     pub alive: bool,
+    pub launch_ticks: u16,
+    pub reload_ticks: u16,
+    pub special_ticks: u8,
 }
 
 impl WeakSylvester {
@@ -145,6 +165,13 @@ impl WeakSylvester {
         movement_draw: u32,
     ) -> Self {
         let left = direction_draw.is_multiple_of(2);
+        // Ordinary Destructor placement fixes its vertical lane after the
+        // warning has chosen a location (W1 Alien constructor, lines 98-106).
+        let widget_y = if kind == SylvesterKind::Destructor {
+            280
+        } else {
+            widget_y
+        };
         Self {
             id,
             kind,
@@ -167,6 +194,13 @@ impl WeakSylvester {
             turn_ticks: 0,
             frame: 1,
             alive: true,
+            launch_ticks: 0,
+            reload_ticks: if kind == SylvesterKind::Destructor {
+                75
+            } else {
+                0
+            },
+            special_ticks: 0,
         }
     }
 
@@ -183,6 +217,18 @@ impl WeakSylvester {
         prey: &[PreyView],
         food: &[AlienFoodView],
         mut next_random: impl FnMut() -> u32,
+    ) -> AlienUpdate {
+        self.update_with_runtime(prey, food, |request| match request {
+            AlienRuntimeRequest::Random => next_random(),
+            AlienRuntimeRequest::Launch { .. } => 0,
+        })
+    }
+
+    pub fn update_with_runtime(
+        &mut self,
+        prey: &[PreyView],
+        food: &[AlienFoodView],
+        mut runtime: impl FnMut(AlienRuntimeRequest) -> u32,
     ) -> AlienUpdate {
         if !self.alive {
             return AlienUpdate::default();
@@ -214,21 +260,57 @@ impl WeakSylvester {
                     }
                 }
             } else {
-                self.wander(&mut next_random);
+                self.wander(&mut || runtime(AlienRuntimeRequest::Random));
             }
+        } else if self.kind == SylvesterKind::Destructor {
+            // AlienUnk01 never chases for Destructor, even with nearby fish.
+            self.wander(&mut || runtime(AlienRuntimeRequest::Random));
         } else if let Some(target) = self.nearest_eligible(prey) {
             self.chase(target);
             if self.chase_ticks == 0 {
                 result.prey_eaten = self.first_contact(prey);
             }
         } else {
-            self.wander(&mut next_random);
+            self.wander(&mut || runtime(AlienRuntimeRequest::Random));
         }
 
         self.x = self.x.clamp(-10.0, 490.0) + self.vx / self.kind.speed_divisor() + emergence_dx;
         self.y = self.y.clamp(85.0, 290.0) + self.vy / self.kind.speed_divisor();
         self.hit_ticks = self.hit_ticks.saturating_sub(1);
         self.chase_ticks = self.chase_ticks.saturating_sub(1);
+
+        if self.kind == SylvesterKind::Destructor && !prey.is_empty() {
+            self.launch_ticks += 1;
+            if self.launch_ticks > self.reload_ticks {
+                let right = self.vx >= 0.0;
+                let mut launched = false;
+                for slot in 0..3_u8 {
+                    let x = self.widget_x
+                        + if right {
+                            90 + i32::from(slot) * 15
+                        } else {
+                            -10 - i32::from(slot) * 15
+                        };
+                    let y = self.widget_y - 35 + i32::from(slot) * 5;
+                    if runtime(AlienRuntimeRequest::Launch {
+                        slot,
+                        x,
+                        y,
+                        center_x: self.widget_x + 80,
+                        center_y: self.widget_y + 80,
+                    }) == 0
+                    {
+                        break;
+                    }
+                    launched = true;
+                }
+                self.launch_ticks = 0;
+                self.reload_ticks = 150 + (runtime(AlienRuntimeRequest::Random) % 50) as u16;
+                if launched {
+                    self.special_ticks = 10;
+                }
+            }
+        }
 
         // C++ Widget::Move(int,int) truncates the double arguments. Keep
         // this snapshot before animation's further double-position shift.
@@ -261,7 +343,11 @@ impl WeakSylvester {
             return ShotResult::Miss;
         }
 
-        self.health -= f64::from(weapon) * 3.0;
+        self.health -= if self.kind == SylvesterKind::Destructor {
+            f64::from(weapon) * 2.0 + 2.0
+        } else {
+            f64::from(weapon) * 3.0
+        };
         self.apply_shot_push(sx, sy);
         if self.health <= 0.0 {
             self.alive = false;
@@ -284,10 +370,22 @@ impl WeakSylvester {
         if !self.alive {
             return None;
         }
-        self.health -= if self.kind == SylvesterKind::Gus {
+        self.health -= if matches!(self.kind, SylvesterKind::Gus | SylvesterKind::Destructor) {
             0.25
         } else {
             1.0
+        };
+        Some(self.health)
+    }
+
+    pub fn rufus_hit(&mut self) -> Option<f64> {
+        if !self.alive {
+            return None;
+        }
+        self.health -= match self.kind {
+            SylvesterKind::Destructor => 0.25,
+            SylvesterKind::Gus => 0.5,
+            _ => 2.0,
         };
         Some(self.health)
     }
@@ -319,14 +417,17 @@ impl WeakSylvester {
             || self.widget_y > 312
             || !self.health.is_finite()
             || self.health > self.kind.starting_health()
-            || (self.kind != SylvesterKind::Gus && self.health.fract() != 0.0)
-            || (self.kind == SylvesterKind::Gus && (self.health * 4.0).fract() != 0.0)
+            || (self.health * 4.0).fract() != 0.0
             // Project-save guard for one ordinary Itchy contact per elapsed
             // spawn update. This bounds malformed pending-death state without
             // rejecting the original's deferred removal during emergence.
             || self.alive
                 && self.health < -f64::from(15_u8.saturating_sub(self.spawn_ticks))
-                    * (if self.kind == SylvesterKind::Gus { 0.25 } else { 1.0 })
+                    * (match self.kind {
+                        SylvesterKind::Destructor => 0.5,
+                        SylvesterKind::Gus => 0.75,
+                        _ => 3.0,
+                    })
             || !self.alive && self.health > 0.0
             || self.spawn_ticks > 15
             || self.chase_ticks > 100
@@ -336,6 +437,11 @@ impl WeakSylvester {
             || self.swim_ticks > 50
             || !(-9..=9).contains(&self.turn_ticks)
             || self.frame > 9
+            || (self.kind == SylvesterKind::Destructor
+                && (self.reload_ticks < 75 || self.reload_ticks > 199
+                    || self.launch_ticks > self.reload_ticks || self.special_ticks > 10))
+            || (self.kind != SylvesterKind::Destructor
+                && (self.launch_ticks != 0 || self.reload_ticks != 0 || self.special_ticks != 0))
         {
             return Err("invalid weak Sylvester counters".into());
         }
@@ -497,20 +603,27 @@ impl WeakSylvester {
     }
 
     fn wander(&mut self, next_random: &mut impl FnMut() -> u32) {
-        match self.movement_state {
-            0 => self.target_vx = -1.5,
-            1 => self.target_vx = 1.5,
-            2 => self.target_vy = -1.5,
-            3 => self.target_vy = 1.5,
-            _ => {}
-        }
-        // W1 uses independent comparisons, so a small overshoot can be
-        // countered within the same update.
-        if self.vy > self.target_vy {
-            self.vy -= 0.1;
-        }
-        if self.vy < self.target_vy {
-            self.vy += 0.1;
+        if self.kind == SylvesterKind::Destructor {
+            match self.movement_state {
+                0 | 2 => self.target_vx = -1.0,
+                1 | 3 => self.target_vx = 1.0,
+                _ => {}
+            }
+        } else {
+            match self.movement_state {
+                0 => self.target_vx = -1.5,
+                1 => self.target_vx = 1.5,
+                2 => self.target_vy = -1.5,
+                3 => self.target_vy = 1.5,
+                _ => {}
+            }
+            // W1 uses independent comparisons, retaining small overshoot.
+            if self.vy > self.target_vy {
+                self.vy -= 0.1;
+            }
+            if self.vy < self.target_vy {
+                self.vy += 0.1;
+            }
         }
         if self.vx > self.target_vx {
             self.vx -= 0.1;
@@ -518,11 +631,13 @@ impl WeakSylvester {
         if self.vx < self.target_vx {
             self.vx += 0.1;
         }
-        self.movement_change_ticks += 1;
-        if self.movement_change_ticks > 20 {
-            self.movement_change_ticks = 0;
-            if next_random().is_multiple_of(10) {
-                self.movement_state = (next_random() % 4) as u8;
+        if self.special_ticks == 0 || self.kind != SylvesterKind::Destructor {
+            self.movement_change_ticks += 1;
+            if self.movement_change_ticks > 20 {
+                self.movement_change_ticks = 0;
+                if next_random().is_multiple_of(10) {
+                    self.movement_state = (next_random() % 4) as u8;
+                }
             }
         }
     }
@@ -536,11 +651,25 @@ impl WeakSylvester {
         }
         self.turn_ticks -= self.turn_ticks.signum();
 
+        if self.special_ticks > 0 {
+            self.special_ticks -= 1;
+            if self.kind == SylvesterKind::Destructor {
+                if self.special_ticks > 0 {
+                    self.frame = self.special_ticks;
+                    if self.vx != self.previous_vx && self.vx != 0.0 && self.previous_vx != 0.0 {
+                        self.previous_vx = self.vx;
+                    }
+                    return;
+                }
+                self.swim_ticks = 0;
+            }
+        }
+
         if self.turn_ticks > 0 {
             self.frame = (9 - self.turn_ticks) as u8;
         } else if self.turn_ticks < 0 {
             self.frame = (self.turn_ticks + 10) as u8;
-        } else if self.vx.abs() <= 1.6 {
+        } else if self.kind == SylvesterKind::Destructor || self.vx.abs() <= 1.6 {
             self.swim_ticks += 1;
             if self.swim_ticks > 19 {
                 self.swim_ticks = 0;
@@ -582,6 +711,16 @@ impl WeakSylvester {
     }
 
     fn apply_shot_push(&mut self, sx: f64, sy: f64) {
+        if self.kind == SylvesterKind::Destructor {
+            if self.special_ticks == 0 {
+                if sx < self.x + 60.0 {
+                    self.vx = self.kind.speed_divisor() * 3.0;
+                } else if sx > self.x + 100.0 {
+                    self.vx = -self.kind.speed_divisor() * 3.0;
+                }
+            }
+            return;
+        }
         let diagonal = self.kind.speed_divisor() * 2.5;
         let cardinal = self.kind.speed_divisor() * 3.0;
         let left = sx < self.x + 60.0;
@@ -1038,5 +1177,126 @@ mod tests {
         assert!(gus.validate().is_err());
         gus.health = 99.75;
         gus.validate().unwrap();
+    }
+
+    #[test]
+    fn destructor_first_launch_on_76_registers_before_reload_draw_and_sets_animation() {
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Destructor, 76, 100, 120, 1, 1);
+        assert_eq!((actor.widget_x, actor.widget_y, actor.y), (100, 280, 280.0));
+        actor.spawn_ticks = 0;
+        actor.launch_ticks = 75;
+        let prey = [PreyView {
+            id: 5,
+            widget_x: 400,
+            widget_y: 300,
+            width: 80,
+            height: 80,
+            eligible: true,
+        }];
+        let mut requests = Vec::new();
+        actor.update_with_runtime(&prey, &[], |request| {
+            requests.push(request);
+            match request {
+                AlienRuntimeRequest::Launch { slot: 0, .. } => 1,
+                AlienRuntimeRequest::Launch { .. } => 0,
+                AlienRuntimeRequest::Random => 49,
+            }
+        });
+        assert!(matches!(
+            requests.as_slice(),
+            [
+                AlienRuntimeRequest::Random, // due wander roll precedes launch
+                AlienRuntimeRequest::Launch { slot: 0, .. },
+                AlienRuntimeRequest::Launch { slot: 1, .. },
+                AlienRuntimeRequest::Random,
+            ]
+        ));
+        assert_eq!(
+            (
+                actor.launch_ticks,
+                actor.reload_ticks,
+                actor.special_ticks,
+                actor.frame
+            ),
+            (0, 199, 9, 9)
+        );
+    }
+
+    #[test]
+    fn pending_rufus_quarter_kill_can_launch_before_destructor_final_removal() {
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Destructor, 77, 100, 120, 1, 1);
+        actor.spawn_ticks = 0;
+        actor.health = 0.25;
+        actor.launch_ticks = 75;
+        assert_eq!(actor.rufus_hit(), Some(0.0));
+        let prey = [PreyView {
+            id: 5,
+            widget_x: 400,
+            widget_y: 300,
+            width: 80,
+            height: 80,
+            eligible: true,
+        }];
+        let mut launched = false;
+        let update = actor.update_with_runtime(&prey, &[], |request| match request {
+            AlienRuntimeRequest::Launch { slot: 0, .. } => {
+                launched = true;
+                1
+            }
+            AlienRuntimeRequest::Launch { .. } => 0,
+            AlienRuntimeRequest::Random => 0,
+        });
+        assert!(launched && update.defeated);
+    }
+
+    #[test]
+    fn destructor_never_chases_or_bites_and_special_freezes_wander_rng() {
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Destructor, 78, 100, 120, 1, 1);
+        actor.spawn_ticks = 0;
+        actor.chase_ticks = 0;
+        actor.special_ticks = 5;
+        actor.movement_change_ticks = 20;
+        let prey = [PreyView {
+            id: 5,
+            widget_x: 120,
+            widget_y: 300,
+            width: 80,
+            height: 80,
+            eligible: true,
+        }];
+        let update = actor.update_with_runtime(&prey, &[], |_| panic!("no random draw or launch"));
+        assert_eq!(update.prey_eaten, None);
+        assert_eq!(actor.movement_change_ticks, 20);
+        assert_eq!(actor.target_vx, 1.0);
+        assert_eq!((actor.y, actor.vy), (280.0, 0.0));
+    }
+
+    #[test]
+    fn destructor_special_end_uses_twenty_clock_and_shot_push_is_horizontal_only() {
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Destructor, 79, 100, 120, 1, 1);
+        actor.spawn_ticks = 0;
+        actor.vx = 2.0;
+        actor.swim_ticks = 30;
+        actor.special_ticks = 1;
+        let old_x = actor.x;
+        actor.animate();
+        assert_eq!(
+            (actor.special_ticks, actor.swim_ticks, actor.frame, actor.x),
+            (0, 1, 0, old_x)
+        );
+        assert!(matches!(
+            actor.shot_with_weapon(110, 290, 2),
+            ShotResult::Hit { health: 144.0 }
+        ));
+        assert!((actor.vx - 3.6).abs() < 1e-9 && actor.vy == 0.0);
+        actor.hit_ticks = 0;
+        actor.special_ticks = 4;
+        assert!(matches!(
+            actor.shot_with_weapon(110, 290, 2),
+            ShotResult::Hit { .. }
+        ));
+        assert!((actor.vx - 3.6).abs() < 1e-9 && actor.vy == 0.0);
+        actor.health = 0.25;
+        assert_eq!(actor.itchy_hit(), Some(0.0));
     }
 }

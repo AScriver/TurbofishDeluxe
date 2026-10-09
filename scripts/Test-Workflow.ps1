@@ -20,7 +20,9 @@ $requiredPaths = @(
     '.gitignore', '.gitattributes', 'AGENTS.md', 'README.md', 'STATUS.md', 'MODLOG.md',
     'THIRD-PARTY-NOTICES.md', 'docs/requirements.md', 'docs/DESIGN.md',
     'docs/provenance.md', 'docs/workflow-setup.md', 'docs/playtests/TEMPLATE.md', 'docs/analysis-tools.md',
-    'scripts/Test-Workflow.ps1'
+    'scripts/Test-Workflow.ps1', 'scripts/Test-Runtime.ps1', 'scripts/Start-TurbofishDeluxe.ps1',
+    'crates/turbofish-openmpt/Cargo.toml', 'crates/turbofish-openmpt/build.rs',
+    'crates/turbofish-openmpt/LICENSE', 'crates/turbofish-openmpt/src/lib.rs'
 )
 foreach ($requiredPath in $requiredPaths) {
     if (-not (Test-Path -LiteralPath (Join-Path $repositoryRoot $requiredPath) -PathType Leaf)) {
@@ -30,7 +32,8 @@ foreach ($requiredPath in $requiredPaths) {
 
 $allowedPaths = $requiredPaths + @(
     'docs/playtests/2026-10-08-example.md', 'docs/evidence/example.md',
-    'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'src/main.rs', 'src/assets/reader.rs', 'tests/tank_rules.rs'
+    'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'src/main.rs', 'src/assets/reader.rs', 'tests/tank_rules.rs',
+    'src/music.rs', 'crates/turbofish-openmpt/tests/ffi_boundaries.rs'
 )
 $excludedPaths = @(
     '.scratch/references/ai-game-modding-guides/AGENTS.md', '.scratch/evidence/setup/toolchain-probe.rs',
@@ -39,7 +42,8 @@ $excludedPaths = @(
     'src/game-data/recovered.rs', 'docs/dumps/output.md', 'docs/captures/frame.png',
     'Insaniquarium.exe', 'bass.dll', 'assets/fish.gif', 'assets/tank.jpg', 'assets/mask.png',
     'sounds/eat.au', 'music/theme.mo3', 'music/theme.ogg', 'data/raw.txt', 'data/raw.xml',
-    'assets/raw.luc', 'capture.raw', 'process.dmp', 'analysis.gpr', 'unknown-file.txt'
+    'assets/raw.luc', 'capture.raw', 'process.dmp', 'analysis.gpr', 'unknown-file.txt',
+    'crates/turbofish-openmpt/native/libopenmpt.dll', 'crates/turbofish-openmpt/src/secret.bin'
 )
 foreach ($ignoreCase in @(
     @{ Paths = $allowedPaths; ExpectedIgnored = $false },

@@ -98,6 +98,26 @@ impl DeadOscar {
         let pose = actor
             .death_pose
             .expect("Oscar corpse requires a death-tick pose");
+        Self::from_pose(actor.id, pose)
+    }
+
+    /// Missile impact calls ordinary Fish::Die at the current live pose,
+    /// outside Oscar's starvation hook and its cached pre-motion snapshot.
+    pub fn from_impact(actor: &OscarState) -> Self {
+        Self::from_pose(
+            actor.id,
+            DeathPose {
+                x: actor.widget_x,
+                y: actor.widget_y,
+                vx: actor.vx,
+                vy: actor.vy,
+                speed_mod: actor.speed_mod,
+                facing_right: actor.vx >= 0.0,
+            },
+        )
+    }
+
+    fn from_pose(id: u64, pose: DeathPose) -> Self {
         let vy = pose.vy
             - if pose.x < 115 || pose.vy < -3.0 {
                 1.0
@@ -105,7 +125,7 @@ impl DeadOscar {
                 2.0
             };
         Self {
-            id: actor.id,
+            id,
             x: f64::from(pose.x),
             y: f64::from(pose.y),
             widget_x: pose.x,
@@ -887,5 +907,24 @@ mod tests {
         }
         assert_eq!(corpse.remaining_ticks, 0);
         assert_eq!(corpse.opacity, 0.0);
+    }
+
+    #[test]
+    fn missile_impact_corpse_uses_current_widget_without_starvation_snapshot() {
+        let mut actor = actor();
+        actor.widget_x = 130;
+        actor.widget_y = 170;
+        actor.x = 130.5;
+        actor.y = 170.5;
+        actor.vx = -1.0;
+        actor.vy = 0.5;
+        assert!(actor.death_pose.is_none());
+        let corpse = DeadOscar::from_impact(&actor);
+        assert_eq!(
+            (corpse.widget_x, corpse.widget_y, corpse.vy),
+            (130, 170, -1.5)
+        );
+        assert!(!corpse.facing_right);
+        corpse.validate().unwrap();
     }
 }

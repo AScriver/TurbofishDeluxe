@@ -34,3 +34,5 @@ any rights to game assets, decompiled code, or extracted data.
 ```
 
 IW4L workflow and provenance documents were studied, with attribution in provenance; none of its code or bundled material is included. Insaniquarium Deluxe assets and executable files belong to their respective owners and are not included. Record and retain additional applicable notices before any future reuse.
+
+The original libopenmpt binding has a separate [BSD-3-Clause license](crates/turbofish-openmpt/LICENSE). The maintained launcher verifies and stages the general-purpose native package's own notices beside local builds, including libopenmpt, mpg123, Xiph codecs and zlib. Exact package/component identities, terms and unresolved redistribution questions are in [audio provenance](docs/audio.md) and [dependency provenance](docs/provenance.md#rust-dependencies). Those local binaries and proprietary music are not included in this repository.
