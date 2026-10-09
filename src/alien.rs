@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 pub const WEAK_SYLVESTER_SIZE: i32 = 160;
 const WEAK_SPEED_DIVISOR: f64 = 2.0;
-const WEAK_STARTING_HEALTH: i16 = 50;
+const WEAK_STARTING_HEALTH: f64 = 50.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SylvesterKind {
@@ -20,6 +20,7 @@ pub enum SylvesterKind {
     Weak,
     Strong,
     Balrog,
+    Gus,
 }
 
 impl SylvesterKind {
@@ -28,14 +29,16 @@ impl SylvesterKind {
             Self::Weak => WEAK_SPEED_DIVISOR,
             Self::Strong => 1.6,
             Self::Balrog => 1.2,
+            Self::Gus => 1.6,
         }
     }
 
-    pub fn starting_health(self) -> i16 {
+    pub fn starting_health(self) -> f64 {
         match self {
             Self::Weak => WEAK_STARTING_HEALTH,
-            Self::Strong => 60,
-            Self::Balrog => 130,
+            Self::Strong => 60.0,
+            Self::Balrog => 130.0,
+            Self::Gus => 100.0,
         }
     }
 }
@@ -52,19 +55,31 @@ pub struct PreyView {
     pub eligible: bool,
 }
 
+/// Current food-list order, captured after food and fish update but before
+/// the alien's object update. `eligible` includes the food's eating delay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AlienFoodView {
+    pub id: u64,
+    pub widget_x: i32,
+    pub widget_y: i32,
+    pub quality: u8,
+    pub eligible: bool,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AlienUpdate {
+    pub food_eaten: Option<(u64, u8)>,
     /// At most one prey, selected in the board-provided order.
     pub prey_eaten: Option<u64>,
     /// Registered zero-health aliens finish this active update before removal.
     pub defeated: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ShotResult {
     Miss,
     Hit {
-        health: i16,
+        health: f64,
     },
     /// The board creates the single diamond and removes the live alien.
     Defeated {
@@ -89,7 +104,7 @@ pub struct WeakSylvester {
     pub target_vx: f64,
     pub target_vy: f64,
     pub previous_vx: f64,
-    pub health: i16,
+    pub health: f64,
     pub spawn_ticks: u8,
     pub chase_ticks: u8,
     pub hit_ticks: u8,
@@ -159,9 +174,14 @@ impl WeakSylvester {
     /// board RNG value. It is called only when the idle movement timer rolls
     /// over, and a second time only if the first roll selects a new state.
     /// Caller-supplied prey order is the collision order; no target is saved.
-    pub fn update(
+    pub fn update(&mut self, prey: &[PreyView], next_random: impl FnMut() -> u32) -> AlienUpdate {
+        self.update_with_food(prey, &[], next_random)
+    }
+
+    pub fn update_with_food(
         &mut self,
         prey: &[PreyView],
+        food: &[AlienFoodView],
         mut next_random: impl FnMut() -> u32,
     ) -> AlienUpdate {
         if !self.alive {
@@ -182,10 +202,22 @@ impl WeakSylvester {
         }
 
         let mut result = AlienUpdate::default();
-        if let Some(target) = self.nearest_eligible(prey) {
+        if self.kind == SylvesterKind::Gus {
+            if let Some((target_x, target_y, food_found)) = self.gus_target(food, prey) {
+                self.chase_gus(target_x, target_y, food_found);
+                result.food_eaten = self.gus_food_contact(food);
+                if self.chase_ticks == 0 {
+                    result.prey_eaten = self.first_contact(prey);
+                    if result.prey_eaten.is_some() {
+                        self.health -= 15.0;
+                        self.hit_ticks = 10;
+                    }
+                }
+            } else {
+                self.wander(&mut next_random);
+            }
+        } else if let Some(target) = self.nearest_eligible(prey) {
             self.chase(target);
-            // Contact precedes motion and uses the old chase delay and old
-            // integer widget location, regardless of the nearest target.
             if self.chase_ticks == 0 {
                 result.prey_eaten = self.first_contact(prey);
             }
@@ -203,7 +235,7 @@ impl WeakSylvester {
         self.widget_x = self.x as i32;
         self.widget_y = self.y as i32;
         self.animate();
-        if self.health <= 0 {
+        if self.health <= 0.0 {
             self.alive = false;
             result.defeated = true;
         }
@@ -229,9 +261,9 @@ impl WeakSylvester {
             return ShotResult::Miss;
         }
 
-        self.health = self.health.saturating_sub(i16::from(weapon) * 3);
+        self.health -= f64::from(weapon) * 3.0;
         self.apply_shot_push(sx, sy);
-        if self.health <= 0 {
+        if self.health <= 0.0 {
             self.alive = false;
             ShotResult::Defeated {
                 diamond_x: self.widget_x + 25,
@@ -248,11 +280,15 @@ impl WeakSylvester {
     /// FishTypePet Itchy contact only subtracts HP. It does not apply shot
     /// immunity, flash, push or immediate removal; the next active alien
     /// update owns the eventual death transaction.
-    pub fn itchy_hit(&mut self) -> Option<i16> {
+    pub fn itchy_hit(&mut self) -> Option<f64> {
         if !self.alive {
             return None;
         }
-        self.health = self.health.saturating_sub(1);
+        self.health -= if self.kind == SylvesterKind::Gus {
+            0.25
+        } else {
+            1.0
+        };
         Some(self.health)
     }
 
@@ -281,13 +317,17 @@ impl WeakSylvester {
             || self.widget_x > 512
             || self.widget_y < 64
             || self.widget_y > 312
+            || !self.health.is_finite()
             || self.health > self.kind.starting_health()
+            || (self.kind != SylvesterKind::Gus && self.health.fract() != 0.0)
+            || (self.kind == SylvesterKind::Gus && (self.health * 4.0).fract() != 0.0)
             // Project-save guard for one ordinary Itchy contact per elapsed
             // spawn update. This bounds malformed pending-death state without
             // rejecting the original's deferred removal during emergence.
             || self.alive
-                && self.health < -i16::from(15_u8.saturating_sub(self.spawn_ticks))
-            || !self.alive && self.health > 0
+                && self.health < -f64::from(15_u8.saturating_sub(self.spawn_ticks))
+                    * (if self.kind == SylvesterKind::Gus { 0.25 } else { 1.0 })
+            || !self.alive && self.health > 0.0
             || self.spawn_ticks > 15
             || self.chase_ticks > 100
             || self.hit_ticks > 10
@@ -303,10 +343,25 @@ impl WeakSylvester {
     }
 
     pub fn sprite_row(&self) -> u8 {
-        u8::from(self.turn_ticks != 0)
+        if self.kind == SylvesterKind::Gus && self.hit_ticks > 0 {
+            2
+        } else {
+            u8::from(self.turn_ticks != 0)
+        }
+    }
+
+    pub fn sprite_frame(&self) -> u8 {
+        if self.kind == SylvesterKind::Gus && self.hit_ticks > 0 {
+            self.hit_ticks.min(9)
+        } else {
+            self.frame
+        }
     }
 
     pub fn facing_right(&self) -> bool {
+        if self.kind == SylvesterKind::Gus && self.hit_ticks > 0 {
+            return self.vx >= 0.0;
+        }
         if self.turn_ticks != 0 {
             self.turn_ticks > 0
         } else {
@@ -350,6 +405,78 @@ impl WeakSylvester {
                 let dy = center_y - i64::from(candidate.widget_y + candidate.height / 2);
                 (dx.abs() < 45 && dy.abs() < 65).then_some(candidate.id)
             })
+    }
+
+    /// The source biases each accepted food distance by 2500 before the next
+    /// comparison, then may replace that target with fish without clearing
+    /// its food-steering flag (PB31).
+    fn gus_target(&self, food: &[AlienFoodView], prey: &[PreyView]) -> Option<(i32, i32, bool)> {
+        let cx = i64::from(self.widget_x + 80);
+        let cy = i64::from(self.widget_y + 80);
+        let mut best = 100_000_000_i64;
+        let mut target = None;
+        let mut food_found = false;
+        for item in food.iter().filter(|item| item.eligible) {
+            let dx = cx - i64::from(item.widget_x + 20);
+            let dy = cy - i64::from(item.widget_y + 20);
+            let distance = dx * dx + dy * dy;
+            if distance < best {
+                best = distance - 2500;
+                food_found = true;
+                target = Some((item.widget_x, item.widget_y));
+            }
+        }
+        if self.chase_ticks == 0 {
+            for item in prey.iter().filter(|item| item.eligible) {
+                let dx = cx - i64::from(item.widget_x + item.width / 2);
+                let dy = cy - i64::from(item.widget_y + item.height / 2);
+                let distance = dx * dx + dy * dy;
+                if distance < best {
+                    best = distance;
+                    target = Some((item.widget_x, item.widget_y));
+                }
+            }
+        }
+        target.map(|(x, y)| (x, y, food_found))
+    }
+
+    fn chase_gus(&mut self, x: i32, y: i32, food_found: bool) {
+        let offset = if food_found { 20.0 } else { 40.0 };
+        let tx = f64::from(x) + offset;
+        let ty = f64::from(y) + offset;
+        if self.x + 80.0 < tx && self.vx < 1.8 {
+            self.vx += 0.1;
+        } else if self.x + 80.0 > tx && self.vx > -1.8 {
+            self.vx -= 0.1;
+        }
+        if self.y + 80.0 < ty && self.vy < (if food_found { 3.0 } else { 1.8 }) {
+            self.vy += if food_found { 0.3 } else { 0.1 };
+        } else if self.y + 80.0 > ty && self.vy > -1.8 {
+            self.vy -= 0.1;
+        }
+    }
+
+    fn gus_food_contact(&mut self, food: &[AlienFoodView]) -> Option<(u64, u8)> {
+        if self.hit_ticks >= 6 {
+            return None;
+        }
+        let cx = self.x + 80.0;
+        let cy = self.y + 80.0;
+        let item = food.iter().find(|item| {
+            item.eligible
+                && cx > f64::from(item.widget_x - 25)
+                && cx < f64::from(item.widget_x + 65)
+                && cy > f64::from(item.widget_y - 25)
+                && cy < f64::from(item.widget_y + 65)
+        })?;
+        let damage = if item.quality == 3 {
+            20
+        } else {
+            item.quality * 2 + 4
+        };
+        self.health -= f64::from(damage);
+        self.hit_ticks = 10;
+        Some((item.id, damage))
     }
 
     fn chase(&mut self, target: &PreyView) {
@@ -570,7 +697,7 @@ mod tests {
         actor.spawn_ticks = 0;
         assert_eq!(actor.shot(100, 200), ShotResult::Miss);
         assert_eq!(actor.shot(260, 200), ShotResult::Miss);
-        assert_eq!(actor.shot(101, 121), ShotResult::Hit { health: 44 });
+        assert_eq!(actor.shot(101, 121), ShotResult::Hit { health: 44.0 });
         assert_eq!(actor.shot(101, 121), ShotResult::Miss);
         for accepted_shot in 2..=9 {
             for _ in 0..10 {
@@ -592,7 +719,7 @@ mod tests {
                 assert_eq!(
                     result,
                     ShotResult::Hit {
-                        health: 50 - 6 * accepted_shot
+                        health: f64::from(50 - 6 * accepted_shot)
                     }
                 );
             }
@@ -607,14 +734,14 @@ mod tests {
     fn strong_constructor_and_board_weapon_change_lethal_hit_count() {
         // PB17 confirms strong HP60/divisor1.6; PB13 confirms Board weapon×3.
         let mut strong = WeakSylvester::spawn_kind(SylvesterKind::Strong, 8, 100, 120, 1, 1);
-        assert_eq!(strong.health, 60);
+        assert_eq!(strong.health, 60.0);
         assert_eq!(strong.kind.speed_divisor(), 1.6);
         for hit in 1..=9 {
             strong.hit_ticks = 0;
             assert_eq!(
                 strong.shot_with_weapon(120, 140, 2),
                 ShotResult::Hit {
-                    health: 60 - hit * 6
+                    health: f64::from(60 - hit * 6)
                 }
             );
         }
@@ -630,7 +757,7 @@ mod tests {
             assert_eq!(
                 upgraded.shot_with_weapon(120, 140, 3),
                 ShotResult::Hit {
-                    health: 60 - hit * 9
+                    health: f64::from(60 - hit * 9)
                 }
             );
         }
@@ -646,7 +773,7 @@ mod tests {
         let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Strong, 8, 100, 120, 1, 1);
         assert_eq!(
             actor.shot_with_weapon(101, 121, 2),
-            ShotResult::Hit { health: 54 }
+            ShotResult::Hit { health: 54.0 }
         );
         assert_eq!((actor.vx, actor.vy), (4.0, 4.0));
         let mut side = WeakSylvester::spawn_kind(SylvesterKind::Strong, 9, 100, 120, 1, 1);
@@ -657,38 +784,38 @@ mod tests {
     #[test]
     fn itchy_contact_leaves_zero_health_actor_registered_without_shot_state() {
         let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Balrog, 48, 100, 120, 1, 1);
-        actor.health = 1;
+        actor.health = 1.0;
         let before_motion = (actor.vx, actor.vy);
-        assert_eq!(actor.itchy_hit(), Some(0));
+        assert_eq!(actor.itchy_hit(), Some(0.0));
         assert!(actor.alive);
         assert_eq!(actor.hit_ticks, 0);
         assert_eq!((actor.vx, actor.vy), before_motion);
         actor.validate().unwrap();
-        assert_eq!(actor.itchy_hit(), Some(-1));
+        assert_eq!(actor.itchy_hit(), Some(-1.0));
         assert!(actor.alive);
     }
 
     #[test]
     fn pending_health_save_bound_tracks_emergence_and_malformed_math_cannot_overflow() {
         let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Balrog, 49, 100, 120, 1, 1);
-        actor.health = -1;
+        actor.health = -1.0;
         assert!(
             actor.validate().is_err(),
             "negative HP before first update is impossible"
         );
-        actor.health = 1;
+        actor.health = 1.0;
         for _ in 0..6 {
             actor.update(&[], || 1);
             actor.itchy_hit();
             actor.validate().unwrap();
         }
-        assert_eq!((actor.spawn_ticks, actor.health), (9, -5));
+        assert_eq!((actor.spawn_ticks, actor.health), (9, -5.0));
         assert!(actor.update(&[], || 1).defeated);
 
         let mut malformed = WeakSylvester::spawn_kind(SylvesterKind::Balrog, 50, 100, 120, 1, 1);
-        malformed.health = i16::MIN;
+        malformed.health = f64::from(i16::MIN);
         assert!(malformed.validate().is_err());
-        assert_eq!(malformed.itchy_hit(), Some(i16::MIN));
+        assert_eq!(malformed.itchy_hit(), Some(f64::from(i16::MIN) - 1.0));
         assert!(matches!(
             malformed.shot_with_weapon(180, 200, 12),
             ShotResult::Defeated { .. }
@@ -698,7 +825,7 @@ mod tests {
     #[test]
     fn hidden_spawn_does_not_advance_nonlethal_hit_immunity() {
         let mut actor = alien();
-        assert_eq!(actor.shot(180, 200), ShotResult::Hit { health: 44 });
+        assert_eq!(actor.shot(180, 200), ShotResult::Hit { health: 44.0 });
         for _ in 0..6 {
             actor.update(&[], || panic!("hidden return should consume no RNG"));
         }
@@ -710,7 +837,7 @@ mod tests {
     #[test]
     fn shot_push_bands_use_ordered_strict_edges() {
         let mut middle = alien();
-        assert_eq!(middle.shot(160, 180), ShotResult::Hit { health: 44 });
+        assert_eq!(middle.shot(160, 180), ShotResult::Hit { health: 44.0 });
         assert_eq!((middle.vx, middle.vy), (3.0, 0.0));
 
         let mut left_band = alien();
@@ -762,5 +889,154 @@ mod tests {
         actor.animate();
         assert_eq!(actor.swim_ticks, 0);
         assert_eq!(actor.frame, 0);
+    }
+
+    #[test]
+    fn gus_food_distance_subtraction_is_ordered_and_fish_replacement_keeps_food_flag() {
+        let mut gus = WeakSylvester::spawn_kind(SylvesterKind::Gus, 70, 0, 0, 1, 1);
+        gus.chase_ticks = 0;
+        let food = [
+            AlienFoodView {
+                id: 1,
+                widget_x: 60,
+                widget_y: 70,
+                quality: 0,
+                eligible: true,
+            },
+            AlienFoodView {
+                id: 2,
+                widget_x: 70,
+                widget_y: 70,
+                quality: 0,
+                eligible: true,
+            },
+        ];
+        assert_eq!(gus.gus_target(&food, &[]), Some((60, 70, true)));
+        let distant_food = [AlienFoodView {
+            id: 3,
+            widget_x: 300,
+            widget_y: 300,
+            quality: 0,
+            eligible: true,
+        }];
+        let fish = [PreyView {
+            id: 4,
+            widget_x: 50,
+            widget_y: 40,
+            width: 80,
+            height: 80,
+            eligible: true,
+        }];
+        assert_eq!(gus.gus_target(&distant_food, &fish), Some((50, 40, true)));
+        gus.vx = 0.0;
+        gus.chase_gus(50, 40, true);
+        assert_eq!(gus.vx, -0.1, "sticky food flag steers to fish X+20");
+    }
+
+    #[test]
+    fn gus_food_target_uses_forty_pixel_food_centers_before_distance_bias() {
+        let gus = WeakSylvester::spawn_kind(SylvesterKind::Gus, 74, 100, 100, 1, 1);
+        let foods = [
+            AlienFoodView {
+                id: 1,
+                widget_x: 260,
+                widget_y: 160,
+                quality: 0,
+                eligible: true,
+            },
+            AlienFoodView {
+                id: 2,
+                widget_x: 160,
+                widget_y: 245,
+                quality: 0,
+                eligible: true,
+            },
+        ];
+        assert_eq!(gus.gus_target(&foods, &[]), Some((160, 245, true)));
+    }
+
+    #[test]
+    fn gus_food_edges_hitflash_and_quality_damage_use_old_double_center() {
+        let mut gus = WeakSylvester::spawn_kind(SylvesterKind::Gus, 71, 100, 100, 1, 1);
+        gus.hit_ticks = 5;
+        let edge = AlienFoodView {
+            id: 1,
+            widget_x: 115,
+            widget_y: 115,
+            quality: 2,
+            eligible: true,
+        };
+        assert_eq!(gus.gus_food_contact(&[edge]), None);
+        let inside = AlienFoodView {
+            widget_x: 116,
+            widget_y: 116,
+            ..edge
+        };
+        assert_eq!(gus.gus_food_contact(&[inside]), Some((1, 8)));
+        assert_eq!((gus.health, gus.hit_ticks), (92.0, 10));
+        assert_eq!(gus.gus_food_contact(&[inside]), None);
+        gus.hit_ticks = 5;
+        let potion = AlienFoodView {
+            quality: 3,
+            ..inside
+        };
+        assert_eq!(gus.gus_food_contact(&[potion]), Some((1, 20)));
+        assert_eq!(gus.health, 72.0);
+    }
+
+    #[test]
+    fn lethal_gus_food_still_allows_same_update_prey_and_no_early_reward() {
+        let mut gus = WeakSylvester::spawn_kind(SylvesterKind::Gus, 72, 100, 100, 1, 1);
+        gus.spawn_ticks = 0;
+        gus.chase_ticks = 0;
+        gus.health = 4.0;
+        let food = [AlienFoodView {
+            id: 5,
+            widget_x: 120,
+            widget_y: 120,
+            quality: 0,
+            eligible: true,
+        }];
+        let prey = [PreyView {
+            id: 6,
+            widget_x: 140,
+            widget_y: 140,
+            width: 80,
+            height: 80,
+            eligible: true,
+        }];
+        let update = gus.update_with_food(&prey, &food, || 1);
+        assert_eq!(update.food_eaten, Some((5, 4)));
+        assert_eq!(update.prey_eaten, Some(6));
+        assert!(update.defeated);
+        assert_eq!(gus.health, -15.0);
+        assert_eq!(gus.hit_ticks, 9);
+    }
+
+    #[test]
+    fn gus_itchy_hit_is_quarter_health_and_survives_round_trip_until_active_update() {
+        let mut gus = WeakSylvester::spawn_kind(SylvesterKind::Gus, 73, 100, 100, 1, 1);
+        gus.health = 0.25;
+        assert_eq!(gus.itchy_hit(), Some(0.0));
+        assert!(gus.alive);
+        let saved = serde_json::to_string(&gus).unwrap();
+        let mut resumed: WeakSylvester = serde_json::from_str(&saved).unwrap();
+        resumed.validate().unwrap();
+        resumed.spawn_ticks = 0;
+        assert!(resumed.update_with_food(&[], &[], || 1).defeated);
+    }
+
+    #[test]
+    fn gus_eat_pose_keeps_velocity_facing_and_rejects_nonquarter_save_health() {
+        let mut gus = WeakSylvester::spawn_kind(SylvesterKind::Gus, 75, 100, 100, 1, 1);
+        gus.vx = -1.0;
+        gus.turn_ticks = 4;
+        gus.hit_ticks = 9;
+        assert!(!gus.facing_right());
+        assert_eq!(gus.sprite_row(), 2);
+        gus.health = 99.9;
+        assert!(gus.validate().is_err());
+        gus.health = 99.75;
+        gus.validate().unwrap();
     }
 }

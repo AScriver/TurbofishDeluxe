@@ -1,6 +1,6 @@
 # Adventure2-3 Gus and Vert contract
 
-Next integrated outcome after [Clyde/Starcatcher2-2](adventure-2-2.md): select Vert, enter2-3, survive Gus by feeding, earn Rufus and reach2-4 selection. Full scope remains in [requirements](requirements.md). No2-3 implementation or execution acceptance yet.
+Integrated outcome after [Clyde/Starcatcher2-2](adventure-2-2.md): select Vert, enter2-3, survive Gus by feeding, earn Rufus and reach2-4 selection. Current-format9 passed197tests/lint/native build and [identified normal-speed execution](playtests/2026-10-08-adventure-2-3-gus-rufus-01.md), including the reproduced/corrected Rufus pointer defect. All seven owned PIDs exited/install unchanged. This accepts the bounded Rust path; full scope and original/human fidelity remain open in [requirements](requirements.md). Continue automatically with [Destructor/Rufus2-4](adventure-2-4.md).
 
 W1 is pinned WinFish `f919b3c241cfd611c547f1653fb3514f500f761b`; paths below are relative to `source/WinFish/`. License/study boundaries are in [provenance](provenance.md). These expectations are secondary-source-derived unless linked to installed PB05 evidence. [PB31–PB33](behavior-contract.md#primary-binary-findings) confirms Alien numeric4, double health100/divisor1.6, food targeting/contact/deferred death, fractional pet damage, distinct paid-held/free-Gus-click paths and Vert216 production/value branch. Stage-warning association and full retail behavior remain unverified. No retail execution.
 

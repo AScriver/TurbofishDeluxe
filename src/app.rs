@@ -51,6 +51,7 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_NIKO",
     "IMAGE_PEARL",
     "IMAGE_SYLV",
+    "IMAGE_GUS",
     "IMAGE_LASERS",
     "IMAGE_WARPHOLE",
     "IMAGE_WARPGLOW",
@@ -76,6 +77,8 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_CLYDE",
     "IMAGE_VERT",
     "IMAGE_SCL_VERT",
+    "IMAGE_RUFUS",
+    "IMAGE_SCL_RUFUS",
     "IMAGE_STARCATCHER",
     "IMAGE_SCL_STARCATCHER",
     "IMAGE_BONUSBUCKET",
@@ -126,6 +129,29 @@ fn pet_card_rect(index: usize) -> Rect {
         90.0,
         83.0,
     )
+}
+
+fn pet_at_pointer(unlocked_pets: &[PetKind], pointer: Vec2) -> Option<PetKind> {
+    unlocked_pets
+        .iter()
+        .enumerate()
+        .find(|(index, _)| pet_card_rect(*index).contains(pointer))
+        .map(|(_, pet)| *pet)
+}
+
+fn arms_held_feed(events: &[Event], gus_click: Option<(i32, i32)>) -> bool {
+    match gus_click {
+        Some((click_x, click_y)) => events.iter().any(|event| {
+            matches!(
+                event,
+                Event::GusInitialFeedAttempt { x, y, .. }
+                    if *x == click_x && *y == click_y
+            )
+        }),
+        None => events
+            .iter()
+            .any(|event| matches!(event, Event::FoodDropped { .. })),
+    }
 }
 
 struct RenderedFont {
@@ -274,7 +300,11 @@ impl Presentation {
             let id = match event {
                 Event::FoodDropped { potion: false, .. } => "SOUND_DROPFOOD",
                 Event::PotionExploded { .. } => "SOUND_EXPLOSION1",
-                Event::FoodEaten { .. } => "SOUND_SLURP",
+                Event::FoodEaten { .. }
+                | Event::Invasion {
+                    event: InvasionEvent::GusAteFood { .. },
+                    ..
+                } => "SOUND_SLURP",
                 Event::FishGrew { .. } => "SOUND_GROW",
                 Event::CoinCredited { .. } => "SOUND_POINTS",
                 Event::GuppyBought { .. }
@@ -481,6 +511,7 @@ impl Presentation {
                 FishPetKind::Itchy => "IMAGE_ITCHY",
                 FishPetKind::Prego => "IMAGE_PREGO",
                 FishPetKind::Zorf => "IMAGE_ZORF",
+                FishPetKind::Vert => "IMAGE_VERT",
             };
             self.sprite(
                 image,
@@ -579,7 +610,7 @@ impl Presentation {
                 let size = 160 - inset;
                 if size > 0 {
                     let source = Rect::new(
-                        f32::from(alien.frame) * 160.0,
+                        f32::from(alien.sprite_frame()) * 160.0,
                         f32::from(alien.sprite_row()) * 160.0,
                         160.0,
                         160.0,
@@ -587,27 +618,29 @@ impl Presentation {
                     let x = alien.widget_x as f32 + (inset / 2) as f32;
                     let y = alien.widget_y as f32 + (inset / 2) as f32;
                     let scale = size as f32 / 160.0;
-                    let alien_image = if alien.kind == SylvesterKind::Balrog {
-                        "IMAGE_BALROG"
-                    } else {
-                        "IMAGE_SYLV"
+                    let alien_image = match alien.kind {
+                        SylvesterKind::Balrog => "IMAGE_BALROG",
+                        SylvesterKind::Gus => "IMAGE_GUS",
+                        SylvesterKind::Weak | SylvesterKind::Strong => "IMAGE_SYLV",
                     };
-                    self.sprite(
-                        alien_image,
-                        x,
-                        y,
-                        Some(source),
-                        alien.facing_right(),
-                        scale,
-                        1.0,
-                    );
-                    if alien.hit_flash() && alien.spawn_ticks == 0 {
+                    // Gus's eating row uses the velocity facing even when a
+                    // turn is in progress (W1 Alien::DrawAlien).
+                    let facing_right = if alien.kind == SylvesterKind::Gus && alien.hit_flash() {
+                        alien.vx >= 0.0
+                    } else {
+                        alien.facing_right()
+                    };
+                    self.sprite(alien_image, x, y, Some(source), facing_right, scale, 1.0);
+                    if alien.kind != SylvesterKind::Gus
+                        && alien.hit_flash()
+                        && alien.spawn_ticks == 0
+                    {
                         self.sprite(
                             alien_image,
                             x,
                             y,
                             Some(source),
-                            alien.facing_right(),
+                            facing_right,
                             scale,
                             (f32::from(alien.hit_ticks) * 25.0 / 255.0).min(1.0),
                         );
@@ -635,7 +668,9 @@ impl Presentation {
                     }
                 }
             }
-            if let Some(body) = &wave.dead_alien {
+            if let Some(body) = &wave.dead_alien
+                && body.kind != SylvesterKind::Gus
+            {
                 self.sprite(
                     if body.kind == SylvesterKind::Balrog {
                         "IMAGE_BALROG"
@@ -1263,6 +1298,7 @@ impl Presentation {
                         if phase > 9 { 19 - phase } else { phase },
                     )
                 }
+                PetKind::Rufus => ("IMAGE_RUFUS", 90.0, updates % 20 / 2),
             };
             self.sprite(
                 id,
@@ -1283,6 +1319,7 @@ impl Presentation {
                     PetKind::Zorf => "ZORF the Sea Horse",
                     PetKind::Clyde => "CLYDE the Jellyfish",
                     PetKind::Vert => "VERT the Skeleton",
+                    PetKind::Rufus => "RUFUS the Fiddler Crab",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -1321,6 +1358,11 @@ impl Presentation {
                     "VERT drops gold coins just like",
                     "a large guppy, but doesn't need",
                     "fish food to survive.",
+                ],
+                PetKind::Rufus => [
+                    "RUFUS guards the tank floor,",
+                    "dealing heavy damage to aliens",
+                    "that come within reach.",
                 ],
             };
             for (index, line) in description.iter().enumerate() {
@@ -1372,7 +1414,7 @@ impl Presentation {
             Color::from_rgba(255, 200, 0, 255),
         );
         let mut hovered = None;
-        for (index, pet) in session.progress.unlocked_pets.iter().take(7).enumerate() {
+        for (index, pet) in session.progress.unlocked_pets.iter().enumerate() {
             let card = pet_card_rect(index);
             if card.contains(pointer) {
                 hovered = Some(*pet);
@@ -1401,6 +1443,7 @@ impl Presentation {
                 PetKind::Zorf => "IMAGE_SCL_ZORF",
                 PetKind::Clyde => "IMAGE_SCL_CLYDE",
                 PetKind::Vert => "IMAGE_SCL_VERT",
+                PetKind::Rufus => "IMAGE_SCL_RUFUS",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
@@ -1501,6 +1544,16 @@ impl Presentation {
                         "VERT drops gold coins just like",
                         "a large guppy, but doesn't need",
                         "fish food to survive.",
+                    ],
+                    90.0,
+                ),
+                PetKind::Rufus => (
+                    "IMAGE_RUFUS",
+                    "RUFUS the Fiddler Crab",
+                    [
+                        "RUFUS guards the tank floor,",
+                        "dealing heavy damage to aliens",
+                        "that come within reach.",
                     ],
                     90.0,
                 ),
@@ -1651,6 +1704,13 @@ impl Presentation {
                     [
                         "Click an alien repeatedly to defeat it.",
                         "Keep your fish safe!",
+                    ],
+                ),
+                InvasionTip::GusWarning => (
+                    "WARNING!",
+                    [
+                        "Lasers cannot hurt this alien.",
+                        "Click in the tank to feed it instead.",
                     ],
                 ),
             };
@@ -1867,7 +1927,7 @@ pub async fn run(
     let mut paused = false;
     let mut hatch_pointer_owned = false;
     let mut hatch_background_down = false;
-    let mut feed_press_at = None::<f64>;
+    let mut feed_press_at = None::<(f64, Option<(i32, i32)>)>;
     let mut held_feed_at = None::<f64>;
     let mut held_fire_at = None::<f64>;
     prevent_quit();
@@ -1926,15 +1986,8 @@ pub async fn run(
                         Action::Continue
                     }
                     AdventurePhase::PetSelection { .. } => {
-                        let pet_at_pointer = session
-                            .progress
-                            .unlocked_pets
-                            .iter()
-                            .take(7)
-                            .enumerate()
-                            .find(|(index, _)| pet_card_rect(*index).contains(pointer))
-                            .map(|(_, pet)| *pet);
-                        if let Some(pet) = pet_at_pointer {
+                        if let Some(pet) = pet_at_pointer(&session.progress.unlocked_pets, pointer)
+                        {
                             Action::TogglePet { pet }
                         } else if Rect::new(225.0, 250.0, 186.0, button_height).contains(pointer) {
                             Action::Continue
@@ -2068,7 +2121,16 @@ pub async fn run(
                     && (31.0..=586.0).contains(&pointer.x)
                     && (61.0..=399.0).contains(&pointer.y)
                 {
-                    feed_press_at = Some(get_time());
+                    // An out-of-range Gus press still belongs to the Gus
+                    // route. It must not borrow another click's FoodDropped.
+                    let gus_initial_attempt = session.board.as_ref().is_some_and(|board| {
+                        board.invasion.as_ref().is_some_and(|wave| {
+                            wave.kind == SylvesterKind::Gus && wave.has_live_alien()
+                        })
+                    });
+                    let gus_click =
+                        gus_initial_attempt.then_some((pointer.x as i32, pointer.y as i32));
+                    feed_press_at = Some((get_time(), gus_click));
                 }
                 if matches!(action, Action::Click { .. })
                     && pointer.y > 40.0
@@ -2136,13 +2198,10 @@ pub async fn run(
             // Apply them without inventing an extra simulation tick on save/exit.
             events.extend(session.apply_actions(&pending_actions));
             pending_actions.clear();
-            if feed_press_at.is_some()
-                && events
-                    .iter()
-                    .any(|event| matches!(event, Event::FoodDropped { .. }))
+            if feed_press_at.is_some_and(|(_, gus_click)| arms_held_feed(&events, gus_click))
                 && is_mouse_button_down(MouseButton::Left)
             {
-                held_feed_at = feed_press_at.take();
+                held_feed_at = feed_press_at.take().map(|(pressed_at, _)| pressed_at);
             }
         }
         if !exit_requested {
@@ -2163,7 +2222,9 @@ pub async fn run(
                             .board
                             .as_ref()
                             .and_then(|board| board.invasion.as_ref())
-                            .is_some_and(|wave| wave.has_live_alien())
+                            .is_some_and(|wave| {
+                                wave.has_live_alien() && wave.kind != SylvesterKind::Gus
+                            })
                     {
                         step_actions.push(Action::HoldFeed {
                             x: pointer.x,
@@ -2184,13 +2245,11 @@ pub async fn run(
                     let previous_phase = std::mem::discriminant(&session.phase);
                     let step_events = session.step(&step_actions);
                     phase_transitioned |= previous_phase != std::mem::discriminant(&session.phase);
-                    if feed_press_at.is_some()
-                        && step_events
-                            .iter()
-                            .any(|event| matches!(event, Event::FoodDropped { .. }))
+                    if feed_press_at
+                        .is_some_and(|(_, gus_click)| arms_held_feed(&step_events, gus_click))
                         && is_mouse_button_down(MouseButton::Left)
                     {
-                        held_feed_at = feed_press_at.take();
+                        held_feed_at = feed_press_at.take().map(|(pressed_at, _)| pressed_at);
                     }
                     if pressed_feed {
                         feed_press_at = None;
@@ -2296,4 +2355,56 @@ pub async fn run(
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod feed_input_tests {
+    use super::*;
+
+    #[test]
+    fn earned_eighth_pet_accepts_the_observed_native_click() {
+        let unlocked = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+            PetKind::Clyde,
+            PetKind::Vert,
+            PetKind::Rufus,
+        ];
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(165.333_33, 248.0)),
+            Some(PetKind::Rufus)
+        );
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(165.333_33, 165.0)),
+            Some(PetKind::Vert)
+        );
+    }
+
+    #[test]
+    fn gus_hold_arms_only_from_the_pressed_click_route() {
+        let unrelated = [
+            Event::GusInitialFeedAttempt {
+                tick: 9,
+                x: 300,
+                y: 200,
+            },
+            Event::Rejected {
+                tick: 9,
+                reason: crate::sim::Rejection::FoodCapacity,
+            },
+            Event::FoodDropped {
+                tick: 9,
+                food_id: 17,
+                balance: 200,
+                potion: false,
+            },
+        ];
+        assert!(!arms_held_feed(&unrelated, Some((350, 200))));
+        assert!(!arms_held_feed(&unrelated, Some((350, 390))));
+        assert!(arms_held_feed(&unrelated, Some((300, 200))));
+        assert!(arms_held_feed(&unrelated, None));
+    }
 }

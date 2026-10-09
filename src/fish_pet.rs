@@ -11,6 +11,7 @@ pub enum FishPetKind {
     Itchy,
     Prego,
     Zorf,
+    Vert,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +27,8 @@ pub struct FishPetUpdate {
     pub damaged_alien: Option<u64>,
     pub born_at: Option<(i32, i32)>,
     pub free_food: Option<ZorfFoodRequest>,
+    /// Gold appears at the prior integer widget, before this pet moves.
+    pub gold_at: Option<(i32, i32)>,
     /// The board applies its shared eleven-update punch sound delay.
     pub punch_sound: bool,
 }
@@ -68,6 +71,7 @@ pub struct FishPetState {
     pub birth_threshold: u16,
     #[serde(default)]
     pub food_timer: i32,
+    pub coin_timer: u16,
     speed_mod: f64,
     previous_vx: f64,
     movement_state: u8,
@@ -113,6 +117,7 @@ impl FishPetState {
             birth_timer: 0,
             birth_threshold: 930,
             food_timer: 0,
+            coin_timer: 0,
             speed_mod: if kind == FishPetKind::Zorf {
                 3.0
             } else {
@@ -162,6 +167,8 @@ impl FishPetState {
             || (self.kind != FishPetKind::Prego && self.birth_timer != 0)
             || (self.kind == FishPetKind::Zorf && self.food_timer < -10)
             || (self.kind != FishPetKind::Zorf && self.food_timer != 0)
+            || (self.kind == FishPetKind::Vert && self.coin_timer >= 216)
+            || (self.kind != FishPetKind::Vert && self.coin_timer != 0)
         {
             return Err("invalid ordinary fish pet save state".into());
         }
@@ -210,6 +217,7 @@ impl FishPetState {
                     0
                 }
             }
+            FishPetKind::Vert => u8::from(self.turn_ticks != 0),
         }
     }
 
@@ -300,6 +308,15 @@ impl FishPetState {
                     y: self.widget_y + 10,
                     direction: if self.vx < 0.0 { 1 } else { 2 },
                 });
+            }
+        }
+        // FishTypePet::Update skips DropCoin while any alien is registered.
+        // The DropCoin helper owns both the counter and its threshold reset.
+        if self.kind == FishPetKind::Vert && aliens.is_empty() {
+            self.coin_timer += 1;
+            if self.coin_timer >= 216 {
+                self.coin_timer = 0;
+                update.gold_at = Some((self.widget_x + 15, self.widget_y + 10));
             }
         }
         match self.vx {
@@ -485,7 +502,15 @@ impl FishPetState {
             if self.swim_counter > 19 {
                 self.swim_counter = 0;
             }
-            self.frame = self.swim_counter / 2;
+            self.frame = if self.kind == FishPetKind::Vert {
+                if self.swim_counter < 10 {
+                    self.swim_counter
+                } else {
+                    19 - self.swim_counter
+                }
+            } else {
+                self.swim_counter / 2
+            };
             if self.kind == FishPetKind::Zorf && self.food_timer == -1 {
                 self.swim_counter = 10;
             }
@@ -770,5 +795,62 @@ mod tests {
         assert_eq!(pet.food_timer, -1);
         assert_eq!(pet.swim_counter, 10);
         assert_eq!((pet.sprite_row(false), pet.sprite_frame()), (2, 9));
+    }
+
+    #[test]
+    fn vert_emits_one_gold_at_prior_widget_when_interval_reaches_216() {
+        let mut pet = actor(FishPetKind::Vert);
+        pet.coin_timer = 214;
+        let old_widget = (pet.widget_x, pet.widget_y);
+        assert_eq!(pet.tick(&[], 0, &mut |_| 1).gold_at, None);
+        assert_eq!(pet.coin_timer, 215);
+        let next_origin = (pet.widget_x, pet.widget_y);
+        let result = pet.tick(&[], 0, &mut |_| 1);
+        assert_eq!(
+            result.gold_at,
+            Some((next_origin.0 + 15, next_origin.1 + 10))
+        );
+        assert_eq!(pet.coin_timer, 0);
+        assert_ne!(next_origin, old_widget);
+        assert_eq!(pet.sprite_row(false), u8::from(pet.turn_ticks != 0));
+    }
+
+    #[test]
+    fn vert_fast_swim_counter_resets_after_overshoot() {
+        let mut pet = actor(FishPetKind::Vert);
+        pet.swim_counter = 8;
+        pet.vx_abs = 2;
+        pet.vx = 1.0;
+        pet.previous_vx = 1.0;
+        pet.animate();
+        assert_eq!((pet.swim_counter, pet.frame), (10, 9));
+        pet.swim_counter = 9;
+        pet.vx_abs = 1;
+        pet.animate();
+        assert_eq!((pet.swim_counter, pet.frame), (10, 9));
+        pet.swim_counter = 18;
+        pet.vx_abs = 2;
+        pet.vx = 1.0;
+        pet.previous_vx = 1.0;
+        pet.animate();
+        assert_eq!((pet.swim_counter, pet.frame), (0, 0));
+    }
+
+    #[test]
+    fn vert_coin_interval_freezes_for_registered_alien_including_pending_death() {
+        let mut pet = actor(FishPetKind::Vert);
+        pet.coin_timer = 215;
+        let alien = PetAlienView {
+            id: 7,
+            widget_x: 500,
+            widget_y: 300,
+            healing: false,
+        };
+        for _ in 0..3 {
+            assert_eq!(pet.tick(&[alien], 0, &mut |_| 1).gold_at, None);
+            assert_eq!(pet.coin_timer, 215);
+        }
+        assert!(pet.tick(&[], 0, &mut |_| 1).gold_at.is_some());
+        assert_eq!(pet.coin_timer, 0);
     }
 }

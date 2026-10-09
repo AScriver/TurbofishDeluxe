@@ -2,6 +2,8 @@
 
 Further read-only W1 startup study includes `source/WinFish/SexyApp.cpp` (derived command-line handler), in addition to the already studied framework startup paths. Revision/license boundaries below apply. No original startup code is copied into maintained runtime files.
 
+The next Destructor/Rufus study adds W1 `source/WinFish/Missle.cpp` for the projectile lifecycle/input, under the same pinned revision and study boundaries. No projectile implementation has been accepted yet. Audio dependency/probe lineage and unresolved wrapper license metadata are in [audio design](audio.md); those packages are not yet adopted by the main runtime.
+
 This record owns source identity and study/reuse boundaries. Workflow adaptations are mapped in [workflow setup](workflow-setup.md). Game-build observations are in [STATUS](../STATUS.md).
 
 ## Primary reference
@@ -64,7 +66,7 @@ Bonus expectations now map to `src/bonus.rs` and session/profile accounting in `
 
 ## Original-run isolation study
 
-Audio feasibility additionally studies W1 `source/WinFish/InterludeScreen.cpp` and `source/SexyAppFramework/MusicInterface.cpp`, plus the P2 audio headers recorded above, for tracker-order selection and ownership. No P2 implementation is reused. An ignored Windows/MSVC prototype tests the safe `openmpt`0.3.1 wrapper against official libopenmpt0.8.9 libraries and owned MO3 files; native feasibility is distinct from runtime playback/adoption. Exact package/licenses/API and results will be recorded in the audio design note before integration. The main runtime retains its unsafe-code prohibition.
+Audio feasibility additionally studies W1 `source/WinFish/InterludeScreen.cpp` and `source/SexyAppFramework/MusicInterface.cpp`, plus the P2 audio headers recorded above, for tracker-order selection and ownership. No P2 implementation is reused. The initial ignored `openmpt`0.3.1 probe is historical: its missing attribution and the old sys-package notice gaps prevent selecting that wrapper. The chosen ignored prototype is an original isolated Rust binding to official libopenmpt0.8.9 C declarations, with its own BSD-3-Clause notice; no prior Rust wrapper code was copied. Exact archive/header/import/DLL identities, native component notices, rodio0.22.2/CPAL0.17.3 APIs, FFI review and actual loaded-DLL/output checks are authoritative in [audio design](audio.md). Main adoption is next; the game crate retains its unsafe-code prohibition. General-purpose native libraries remain separate from proprietary music supplied by the user's install.
 
 W1 `source/SexyAppFramework/{SexyAppBase,Common,D3DTester,BassMusicInterface,DSoundManager,FModMusicInterface}.cpp` and `source/WinFish/{SexyApp,WinFishApp,ProfileMgr,HighScoreMgr,Board}.cpp` were studied read-only for registry, known-folder, save, mixer/display and screensaver side effects. Installed `partner.xml` metadata was read. No launch/isolation code was incorporated; findings and the unperformed comparison boundary are in [original observation](original-observation.md). Official Microsoft SHGetFolderPath/RegOverridePredefKey documentation was consulted for the relevant API scope, not as proof of retail execution.
 

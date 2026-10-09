@@ -9,6 +9,140 @@ use turbofish_deluxe::{
     sim::{Action, AdventureState, StinkyOrigin},
 };
 
+fn vert_session() -> AdventureSession {
+    let mut session = AdventureSession::new(42);
+    session.progress.tank = 2;
+    session.progress.level = 3;
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Clyde,
+        PetKind::Vert,
+    ];
+    session.progress.selected_pets = vec![PetKind::Niko, PetKind::Itchy, PetKind::Vert];
+    session.board =
+        Some(AdventureState::new_tank2_third_stage(42, &session.progress.selected_pets).unwrap());
+    session
+}
+
+#[test]
+fn current_gus_quarter_pending_death_and_vert_clock_reload_exactly() {
+    use turbofish_deluxe::{
+        alien::{SylvesterKind, WeakSylvester},
+        fish_pet::FishPetKind,
+        invasion::InvasionEvent,
+        sim::Event,
+    };
+    let mut uninterrupted = vert_session();
+    // Reserve a synthetic current entity through its serialized fixture;
+    // the Board's live identity allocator remains private.
+    let mut fixture = serde_json::to_value(&uninterrupted).unwrap();
+    let alien_id = fixture["board"]["next_id"].as_u64().unwrap();
+    fixture["board"]["next_id"] = (alien_id + 1).into();
+    uninterrupted = serde_json::from_value(fixture).unwrap();
+    let board = uninterrupted.board.as_mut().unwrap();
+    let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Gus, alien_id, 100, 120, 1, 1);
+    actor.spawn_ticks = 0;
+    actor.health = 0.25;
+    assert_eq!(actor.itchy_hit(), Some(0.0));
+    assert_eq!(actor.itchy_hit(), Some(-0.25));
+    board.invasion.as_mut().unwrap().alien = Some(actor);
+    board
+        .fish_pets
+        .iter_mut()
+        .find(|pet| pet.kind == FishPetKind::Vert)
+        .unwrap()
+        .coin_timer = 215;
+    uninterrupted.validate().unwrap();
+    let saved = serde_json::to_vec(&cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: uninterrupted.clone(),
+    })
+    .unwrap();
+    let mut resumed = cli::decode_save(&saved).unwrap();
+    assert_eq!(
+        resumed
+            .board
+            .as_ref()
+            .unwrap()
+            .invasion
+            .as_ref()
+            .unwrap()
+            .alien
+            .as_ref()
+            .unwrap()
+            .health,
+        -0.25
+    );
+    for tick in 0..32 {
+        let expected_events = uninterrupted.step(&[]);
+        let actual_events = resumed.step(&[]);
+        assert_eq!(
+            serde_json::to_value(&actual_events).unwrap(),
+            serde_json::to_value(&expected_events).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&uninterrupted).unwrap()
+        );
+        if tick == 0 {
+            assert_eq!(actual_events.iter().filter(|event| matches!(event,
+                Event::Invasion { event: InvasionEvent::AlienDefeated { id, .. }, .. } if *id == alien_id
+            )).count(), 1);
+            assert_eq!(
+                actual_events
+                    .iter()
+                    .filter(|event| matches!(event, Event::VertGoldDropped { .. }))
+                    .count(),
+                1
+            );
+            assert!(
+                resumed
+                    .board
+                    .as_ref()
+                    .unwrap()
+                    .invasion
+                    .as_ref()
+                    .unwrap()
+                    .dead_alien
+                    .is_none()
+            );
+        }
+        resumed.validate().unwrap();
+    }
+}
+
+#[test]
+fn current_gus_warning_and_vert_clock_fields_are_required_without_repair() {
+    let session = vert_session();
+    let value = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    for pointer in ["/session/board/fish_pets/0", "/session/board/invasion"] {
+        let field = if pointer.ends_with("/0") {
+            "coin_timer"
+        } else {
+            "gus_warning_shown"
+        };
+        let mut incomplete = value.clone();
+        incomplete
+            .pointer_mut(pointer)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(cli::decode_save(&serde_json::to_vec(&incomplete).unwrap()).is_err());
+    }
+    let mut invalid_clock = value;
+    invalid_clock["session"]["board"]["fish_pets"][1]["coin_timer"] = 216.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&invalid_clock).unwrap()).is_err());
+}
+
 fn temporary_root(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
         "turbofish-{name}-{}-{}",

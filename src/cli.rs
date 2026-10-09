@@ -95,7 +95,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 8;
+pub const SAVE_FORMAT_VERSION: u32 = 9;
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -202,7 +202,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=8) => {
+        Some(version @ 5..=9) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -251,6 +251,13 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                             ]
                             .iter()
                             .any(|field| !board.contains_key(*field)))
+                        || (version >= 9
+                            && board
+                                .get("fish_pets")
+                                .and_then(serde_json::Value::as_array)
+                                .is_some_and(|pets| {
+                                    pets.iter().any(|pet| pet.get("coin_timer").is_none())
+                                }))
                         || board
                             .get("food")
                             .and_then(serde_json::Value::as_array)
@@ -281,6 +288,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                             .and_then(serde_json::Value::as_object)
                             .is_some_and(|wave| {
                                 !wave.contains_key("kind")
+                                    || (version >= 9 && !wave.contains_key("gus_warning_shown"))
                                     || wave
                                         .get("alien")
                                         .and_then(serde_json::Value::as_object)
@@ -306,7 +314,8 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     5 => "five",
                     6 => "six",
                     7 => "seven",
-                    _ => "eight",
+                    8 => "eight",
+                    _ => "nine",
                 };
                 return Err(format!(
                     "Incomplete format-{label} save; required state fields are missing"
