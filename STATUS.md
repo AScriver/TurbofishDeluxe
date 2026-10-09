@@ -10,7 +10,7 @@ Updated: 2026-10-09, America/Phoenix. **Paused at the user's request after the A
 
 ## Current build verification
 
-**E79 — observed build gate:** A32 gate 04 passed formatting, strict workspace Clippy, locked native build/staging and 407 checks: 335 library, 5 assets, 4 fonts, 60 persistence and 3 binding, including 2 owned-music checks. Current17 continuation, required-field and pause regressions passed. No A32 native launch, earning, pixels or audio acceptance occurred.
+**E79 — observed build gate:** A32 gate 04 passed formatting, strict workspace Clippy, locked native build/staging and 407 checks: 335 library, 5 assets, 4 fonts, 60 persistence and 3 binding, including 2 owned-music checks. Current17 continuation, required-field and pause regressions passed. Tank 4-2 native gameplay acceptance remains **not tested**.
 
 | Identity | Recorded value |
 |---|---|
@@ -19,9 +19,17 @@ Updated: 2026-10-09, America/Phoenix. **Paused at the user's request after the A
 | Checkpoint | `.scratch/runtime/checkpoint-adventure32-01.local.json`; SHA-256 `4D7B7E8A753499C6AD402B66E06925B3A1994DE8AC8A9682FE9E9C4471B2A904` |
 | Toolchain | Rust/Cargo 1.95.0, stable MSVC, Rust 2024; pinned dependencies/Cargo.lock. Exact rustup channel pin pending |
 
-The checkpoint identifies base `38c65be` plus A32 inputs now committed in `4b2d53f`. All 37 build-input hashes, 5 artifact hashes and the checkpoint hash matched during this handoff edit. These documentation changes leave that runtime identity intact; the gate was not rerun. Commands: [README](README.md#workflow-checks).
+The checkpoint identifies base `38c65be` plus A32 inputs now committed in `4b2d53f`. All 37 build-input hashes, 5 artifact hashes and the checkpoint hash matched when this handoff was shortened. The launcher subsequently changed for evidence tooling; its old hash is historical. Rust sources, the executable and other checkpoint artifacts remain unchanged. The integrated tooling gate passed all 407 checks; [MODLOG](MODLOG.md) owns the new receipts. Commands: [README](README.md#workflow-checks).
 
 Focused runtime validation commands are available in the [README](README.md#focused-runtime-checks). All selectors and filter/input guards passed 17 CLI scenarios; the default full gate reran successfully with all 407 checks including owned music and the unchanged E79 executable digest. See [MODLOG](MODLOG.md#2026-10-09--add-focused-runtime-validation-commands) for the tooling receipt. A32 native gameplay remains paused and untested.
+
+## Agent workflow tooling
+
+- [Maintained playtest helpers](docs/playtest-helpers.md): 26 regressions and four identified Tank 1 tooling runs; owned processes exited and installation inventories matched. [Report](docs/playtests/2026-10-09-playtest-helpers-01.md).
+- [Evidence commands](docs/evidence-tooling.md): 47 contracts, prepared-build/source/artifact readback, and a verified adapter for recorded helper telemetry. Report drafts keep behavioral verdicts **not tested**.
+- [Compact delegation briefs](docs/delegation-template.md): reusable fields, explicit ownership/isolation and an unexecuted 4-2 review example; linked from AGENTS.
+
+These maintenance checks preserve the runtime pause and historical records; they do not establish Tank 4-2 gameplay acceptance.
 
 ## Gaps and blockers
 
