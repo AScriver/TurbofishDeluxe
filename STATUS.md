@@ -4,13 +4,15 @@ Updated: 2026-10-09, America/Phoenix. **Active: broad remaining-runtime binary r
 
 ## Current increment
 
-[A35: Tank4-5, Angie and final-Tank4 completion](docs/adventure-4-5.md) is integrated from PB73–75. The complete477-check code gate passed and its executable/DLLs/notices are frozen privately; native behavior remains unverified. The next phase is the [broad recovery map](docs/binary-recovery.md): finale, remaining actors/pets, other modes, Virtual Tank/store, menus, profiles, highscores, persistence and audio/effects. No user blocker is known. [A34](docs/adventure-4-4.md)'s453-check and [A33](docs/adventure-4-3.md)'s433-check checkpoints remain historical.
+[A35: Tank4-5, Angie and final-Tank4 completion](docs/adventure-4-5.md) is committed in `246515aeb5f718401cd0aadb01dd17c72f30b5d5` from PB73–75. The complete477-check code gate passed and its executable/DLLs/notices are frozen privately; native behavior remains unverified. The [broad recovery map](docs/binary-recovery.md) now has inspected outlines/evidence/gaps for all12 remaining families; targeted adversarial review and documentation checks passed. Commit this checkpoint, then resume A36 implementation. No user blocker is known. [A34](docs/adventure-4-4.md)'s453-check and [A33](docs/adventure-4-3.md)'s433-check checkpoints remain historical.
 
 [A32: Tank4-2, live Nimbus, Bilaterus and Ultravore](docs/adventure-4-2.md) is implemented at source checkpoint`4b2d53fd6c6711ad615d083b11f9d41f745ad22f`/format17. E80 preserves its executable/source identity; the [partial native report](docs/playtests/2026-10-09-adventure-4-2-native-a32-01.md) owns observed entry/conversions/combat/Ultra/save-pause/two paid eggs and deferred outcomes.
 
 [A31: Tank 4-1](docs/adventure-4-1.md) is the latest native-accepted stage, committed `38c65be9ad439a727b2e7e1b1401db928b8e55f6` (E76/E78). Its frozen bundle, reports and genuine earned saves remain preserved.
 
 ## Current build verification
+
+**E88 — binary-derived broad first pass and checkpoint checks complete:**595 functions attempted/594 decompiled/one retained timeout; all594 export hashes match. Inspection logs reconcile290 indexed addresses (188 full/9 partial/93 unspecified scope) plus four historical addresses, separately from export success. Twelve usable subsystem outlines and exact gaps are in the [recovery map](docs/binary-recovery.md), which owns source/index/readback identities and challenged corrections. Documentation/private-ignore/whitespace and preserved A35/E80/earned-save checks passed; [MODLOG](MODLOG.md#2026-10-09--recover-every-remaining-runtime-subsystem-in-a-broad-first-pass) owns results. No runtime code or native acceptance changed. Relax activation, Walter register mapping, offline ageing, profile deletion, detailed navigation/score/audio behavior remain explicit follow-ups.
 
 **E87 — observed A35 code gate, native deferred:** Current20 passed477 maintained checks, formatting/strict lint/build/staging. [MODLOG](MODLOG.md#2026-10-09--implement-angie-and-tank-4-5-and-preserve-the-code-checkpoint) owns counts, retained failures, source/executable and frozen-bundle identities. Source/artifact readback passed65/65; frozen readback passed68/68 with14 copied files matched to the identified launcher build. Angie now stops on first eligible contact even if revival is pending; mixed Tank4 projectiles retain strict ownership checks. E80 and its genuine earned save were rehashed unchanged. No game/native process was launched; two owned-music checks were skipped. Retail/audio/human fidelity remains pending.
 
@@ -86,10 +88,10 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 
 Current next action:
 
-1. Commit verified A35 code progress and preserve its frozen477-check checkpoint; do not claim native playability.
-2. Complete the [broad remaining-runtime recovery](docs/binary-recovery.md) using the identified database, resumable per-function batches and independent subsystem reviews. Track attempted/decompiled/reviewed separately; recover state, ownership, update order, transactions and transitions before refining small details.
+1. Preserve the committed A35 checkpoint and its frozen477-check bundle; native playability remains unverified.
+2. Commit the verified [broad remaining-runtime recovery](docs/binary-recovery.md), then begin the bounded A36 contract. All12 outlines passed final targeted coverage review; export and inspection counts are separate in E88. Retain the Ghidra auto-save incident, metadata/identity limits, failed interpretations and unclosed exact follow-ups.
 3. Preserve E80 and the genuine current17 earning06 save for later testing. Do not synthesize Amp's earned selector or alter the retail installation. Defer native/manual acceptance unless a material reversing/implementation discrepancy requires it or the user requests it.
-4. Once every remaining subsystem has an inspected usable outline, evidence references and explicit gaps, resume implementation in coherent increments automatically. Keep coverage/provenance/evidence current. Build/unit results do not establish playable behavior, retail fidelity, audible output or human feel.
+4. After verifying/committing this first-pass checkpoint, resume A36 Tank5-1/Cyrax and ordinary finale transitions automatically from BR01, closing only materially blocking initialization/actor details before coding. Continue other modes/VT/menus/profiles/audio/effects in coherent increments afterward. Build/unit results do not establish playable behavior, retail fidelity, audible output or human feel.
 
 ## Environment and reference build
 

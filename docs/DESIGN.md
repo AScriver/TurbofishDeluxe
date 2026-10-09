@@ -4,6 +4,8 @@ Product scope: [requirements](requirements.md). Current evidence and environment
 
 The user directed continued reversing and implementation on2026-10-09 and deferred detailed native/manual acceptance. Keep independently grounded regressions and focused build checks; proceed to the next recovered contract without waiting for an earning playtest. Native acceptance is required before a playability claim and remains pending wherever unperformed. Preserve stopped game-written saves and frozen identities for later testing; do not manufacture earned progression.
 
+The user then prioritized a broad first recovery pass before further implementation. The [remaining-runtime map](binary-recovery.md) owns BR01–12 main behavior outlines and exact follow-ups across all remaining families. Verify and commit that checkpoint, then resume A36 Tank5-1/Cyrax from BR01 and existing actor/progression contracts. Close materially blocking details before each increment; defer other refinements with exact references. Preserve atomic validated project writes even where retail error handling is weaker, and keep unknown Relax entry/offline ageing/repeated-result behavior explicit until recovered.
+
 ## Explicit accelerated test runs
 
 The user requested faster gameplay tests on 2026-10-09. Add an opt-in integer `--test-speed` factor from 1 through 8; default gameplay remains exactly 1. This is an engineering bound, not a recovered original-game setting. Acceleration requires explicit isolated project saves, evidence output and muted audio. Run identity, telemetry, manifests, report drafts and captures must identify the factor and distinguish wall elapsed time from fixed-step session time. Speed is transient process configuration, never a saved gameplay field.
