@@ -3,9 +3,10 @@
 //! Positions are logical 640x480 coordinates and advance in 28 ms ticks.
 
 use crate::{
-    alien::PreyView,
+    alien::{PreyView, SylvesterKind},
     invasion::{Invasion1_2, InvasionEvent},
     niko::{NikoEvent, NikoPearl, NikoState, PEARL_VALUE, PearlPhase, PearlUpdate},
+    oscar::{DeadOscar, OscarPrey, OscarState},
 };
 use serde::{Deserialize, Serialize};
 
@@ -17,8 +18,11 @@ pub const GUPPY_PRICE: i32 = 100;
 pub const EGG_PRICE: i32 = 150;
 pub const SECOND_STAGE_EGG_PRICE: i32 = 500;
 pub const THIRD_STAGE_EGG_PRICE: i32 = 2000;
+pub const FOURTH_STAGE_EGG_PRICE: i32 = 3000;
 pub const FOOD_QUALITY_PRICE: i32 = 200;
 pub const FOOD_QUANTITY_PRICE: i32 = 300;
+pub const OSCAR_PRICE: i32 = 1000;
+pub const WEAPON_PRICE: i32 = 1000;
 const FIRST_STAGE_COIN_BOTTOM_TICKS: u16 = 150;
 const SECOND_STAGE_COIN_BOTTOM_TICKS: u16 = 20;
 
@@ -26,10 +30,15 @@ const fn first_stage_egg_price() -> i32 {
     EGG_PRICE
 }
 
+const fn initial_weapon_strength() -> u8 {
+    2
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PetKind {
     Stinky,
     Niko,
+    Itchy,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -291,7 +300,10 @@ pub enum Action {
     BuyEgg,
     BuyFoodQuality,
     BuyFoodQuantity,
+    BuyOscar,
+    BuyWeapon,
     HoldFeed { x: f32, y: f32, elapsed_ms: u32 },
+    HoldFire { x: f32, y: f32, elapsed_ms: u32 },
     OpenMenu,
     PlayAdventure,
     Continue,
@@ -392,6 +404,25 @@ pub enum Event {
         quantity: u8,
         balance: i32,
     },
+    OscarBought {
+        tick: u64,
+        oscar_id: u64,
+        balance: i32,
+    },
+    WeaponBought {
+        tick: u64,
+        strength: u8,
+        balance: i32,
+    },
+    OscarAteGuppy {
+        tick: u64,
+        oscar_id: u64,
+        guppy_id: u64,
+    },
+    OscarDied {
+        tick: u64,
+        oscar_id: u64,
+    },
     CoinDropped {
         tick: u64,
         coin_id: u64,
@@ -486,6 +517,12 @@ pub struct AdventureState {
     pub victory: bool,
     pub guppy_unlocked: bool,
     pub egg_unlocked: bool,
+    #[serde(default)]
+    pub oscar_unlocked: bool,
+    #[serde(default)]
+    pub weapon_unlocked: bool,
+    #[serde(default = "initial_weapon_strength")]
+    pub weapon_strength: u8,
     #[serde(default = "first_stage_egg_price")]
     pub egg_price: i32,
     #[serde(default)]
@@ -493,6 +530,10 @@ pub struct AdventureState {
     #[serde(default)]
     pub stinky: Option<StinkyState>,
     pub fish: Vec<Fish>,
+    #[serde(default)]
+    pub oscars: Vec<OscarState>,
+    #[serde(default)]
+    pub dead_oscars: Vec<DeadOscar>,
     pub dead_fish: Vec<DeadFish>,
     pub food: Vec<Food>,
     pub coins: Vec<Coin>,
@@ -509,6 +550,8 @@ pub struct AdventureState {
     rng_state: u64,
     #[serde(skip)]
     held_feed: Option<(f32, f32, u32)>,
+    #[serde(skip)]
+    held_fire: Option<(f32, f32, u32)>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -547,10 +590,15 @@ impl AdventureState {
             victory: false,
             guppy_unlocked: false,
             egg_unlocked: false,
+            oscar_unlocked: false,
+            weapon_unlocked: false,
+            weapon_strength: 2,
             egg_price: EGG_PRICE,
             pets: Vec::new(),
             stinky: None,
             fish: Vec::new(),
+            oscars: Vec::new(),
+            dead_oscars: Vec::new(),
             dead_fish: Vec::new(),
             food: Vec::new(),
             coins: Vec::new(),
@@ -566,6 +614,7 @@ impl AdventureState {
                 seed
             },
             held_feed: None,
+            held_fire: None,
         }
     }
 
@@ -596,16 +645,53 @@ impl AdventureState {
         let mut state = Self::empty_board(seed);
         state.level = 3;
         state.egg_price = THIRD_STAGE_EGG_PRICE;
+        state.invasion = Some(Invasion1_2::new_strong());
         state.pets = vec![PetKind::Stinky, PetKind::Niko];
         state.stinky = Some(state.spawn_stinky(StinkyOrigin::StageStart));
         let owner_id = state.id();
         state.niko = Some(NikoState::spawn_tank1(owner_id, &mut |upper| {
             state.rand_range(upper)
         }));
-        // Strong Sylvester is the following integration; do not reuse weak
-        // stats silently. Its live encounter is not yet implemented here.
         state.spawn_starter_guppies(false);
         state
+    }
+
+    /// Source-backed starting roster and economy for 1-4. Itchy and Balrog
+    /// behavior are not implemented yet; this stage is not playable parity.
+    pub fn new_fourth_stage(seed: u64) -> Self {
+        let mut state = Self::empty_board(seed);
+        state.level = 4;
+        state.egg_price = FOURTH_STAGE_EGG_PRICE;
+        state.pets = vec![PetKind::Stinky, PetKind::Niko, PetKind::Itchy];
+        state.stinky = Some(state.spawn_stinky(StinkyOrigin::StageStart));
+        let owner_id = state.id();
+        state.niko = Some(NikoState::spawn_tank1(owner_id, &mut |upper| {
+            state.rand_range(upper)
+        }));
+        state.spawn_starter_guppies(false);
+        state
+    }
+
+    /// Explicit migration from old format-4 project boards. Existing 1-3
+    /// ticks do not reveal the historically elapsed strong-wave countdown.
+    pub fn initialize_legacy_stage13_support(&mut self) {
+        if self.tank == 1 && self.level == 3 && self.invasion.is_none() {
+            self.invasion = Some(Invasion1_2::legacy_v4_strong_resume());
+            let grew_large = self.upgrades.quality_unlocked
+                || self.fish.iter().any(|fish| fish.size == FishSize::Large)
+                || self
+                    .dead_fish
+                    .iter()
+                    .any(|fish| fish.size == FishSize::Large);
+            if grew_large {
+                self.upgrades.quality_unlocked = true;
+                self.upgrades.quantity_unlocked = true;
+                self.oscar_unlocked = true;
+            }
+            self.weapon_strength = 2;
+            self.weapon_unlocked = false;
+            self.egg_unlocked = false;
+        }
     }
 
     pub fn initialize_legacy_invasion(&mut self) {
@@ -663,7 +749,7 @@ impl AdventureState {
     }
 
     pub(crate) fn has_live_fish(&self) -> bool {
-        self.fish.iter().any(|fish| fish.alive)
+        self.fish.iter().any(|fish| fish.alive) || self.oscars.iter().any(|oscar| oscar.alive)
     }
 
     /// Board::Buy counts coins already flying to the money display as
@@ -687,7 +773,7 @@ impl AdventureState {
     /// The profile and screen phase are checked by AdventureSession separately.
     pub fn validate(&self) -> Result<(), String> {
         if self.tank != 1
-            || !(1..=3).contains(&self.level)
+            || !(1..=4).contains(&self.level)
             || self.next_id == 0
             || self.rng_state == 0
             || self.eggs > 3
@@ -698,6 +784,8 @@ impl AdventureState {
             || (!self.upgrades.quantity_unlocked && self.upgrades.quantity > 1)
             || self.food.len() > usize::from(self.upgrades.quantity)
             || self.food.iter().any(|food| food.quality > 2)
+            || !(2..=12).contains(&self.weapon_strength)
+            || (!self.weapon_unlocked && self.weapon_strength > 2)
         {
             return Err("invalid Adventure board counters or upgrades".into());
         }
@@ -705,6 +793,7 @@ impl AdventureState {
             1 => EGG_PRICE,
             2 => SECOND_STAGE_EGG_PRICE,
             3 => THIRD_STAGE_EGG_PRICE,
+            4 => FOURTH_STAGE_EGG_PRICE,
             _ => unreachable!(),
         };
         if self.egg_price != expected_price {
@@ -717,7 +806,12 @@ impl AdventureState {
                 || self.invasion.is_some()
                 || !self.pearls.is_empty()
                 || self.upgrades.quality_unlocked
-                || self.upgrades.quantity_unlocked =>
+                || self.upgrades.quantity_unlocked
+                || self.oscar_unlocked
+                || self.weapon_unlocked
+                || self.weapon_strength != 2
+                || !self.oscars.is_empty()
+                || !self.dead_oscars.is_empty() =>
             {
                 return Err("first-stage roster or upgrades disagree".into());
             }
@@ -725,16 +819,31 @@ impl AdventureState {
                 || self.stinky.is_none()
                 || self.invasion.is_none()
                 || self.niko.is_some()
-                || !self.pearls.is_empty() =>
+                || !self.pearls.is_empty()
+                || self.oscar_unlocked
+                || self.weapon_unlocked
+                || self.weapon_strength != 2
+                || !self.oscars.is_empty()
+                || !self.dead_oscars.is_empty() =>
             {
                 return Err("second-stage roster or wave disagree".into());
             }
             3 if self.pets.as_slice() != [PetKind::Stinky, PetKind::Niko]
                 || self.stinky.is_none()
                 || self.niko.is_none()
-                || self.invasion.is_some() =>
+                || self
+                    .invasion
+                    .as_ref()
+                    .is_none_or(|wave| wave.kind != SylvesterKind::Strong) =>
             {
                 return Err("third-stage roster disagrees".into());
+            }
+            4 if self.pets.as_slice() != [PetKind::Stinky, PetKind::Niko, PetKind::Itchy]
+                || self.stinky.is_none()
+                || self.niko.is_none()
+                || self.invasion.is_some() =>
+            {
+                return Err("fourth-stage initial roster disagrees".into());
             }
             _ => {}
         }
@@ -744,11 +853,29 @@ impl AdventureState {
         {
             return Err("upgrade unlock order disagrees".into());
         }
+        if self.level >= 3
+            && ((!self.upgrades.quality_unlocked && self.upgrades.quantity_unlocked)
+                || (self.oscar_unlocked && !self.upgrades.quantity_unlocked)
+                || (self.weapon_unlocked && !self.oscar_unlocked)
+                || (self.egg_unlocked && !self.weapon_unlocked)
+                || (!self.oscar_unlocked && !self.oscars.is_empty()))
+        {
+            return Err("carnivore and weapon unlock order disagrees".into());
+        }
         if let Some(stinky) = &self.stinky {
             stinky.validate()?;
         }
         if let Some(wave) = &self.invasion {
             wave.validate()?;
+            if self.level == 2 && wave.kind != SylvesterKind::Weak {
+                return Err("second-stage wave must be weak".into());
+            }
+        }
+        for oscar in &self.oscars {
+            oscar.validate()?;
+        }
+        for corpse in &self.dead_oscars {
+            corpse.validate()?;
         }
         if let Some(niko) = &self.niko {
             niko.validate()?;
@@ -826,7 +953,7 @@ impl AdventureState {
                         tick: self.tick,
                         reason: Rejection::Locked,
                     });
-                } else if self.level > 2 {
+                } else if self.level > 3 {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::UnsupportedStage,
@@ -863,10 +990,68 @@ impl AdventureState {
             }
             Action::BuyFoodQuality => self.buy_food_upgrade(true, &mut events),
             Action::BuyFoodQuantity => self.buy_food_upgrade(false, &mut events),
+            Action::BuyOscar => {
+                if !self.oscar_unlocked {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::Locked,
+                    });
+                } else if self.available_funds() < OSCAR_PRICE {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::InsufficientFunds,
+                    });
+                } else {
+                    self.balance -= OSCAR_PRICE;
+                    let id = self.id();
+                    let mut rng_state = self.rng_state;
+                    let oscar = OscarState::spawn_bought(id, &mut |upper| {
+                        Self::advance_rng(&mut rng_state) % upper
+                    });
+                    self.rng_state = rng_state;
+                    self.oscars.push(oscar);
+                    self.weapon_unlocked = true;
+                    self.egg_unlocked = true;
+                    events.push(Event::OscarBought {
+                        tick: self.tick,
+                        oscar_id: id,
+                        balance: self.balance,
+                    });
+                }
+            }
+            Action::BuyWeapon => {
+                if !self.weapon_unlocked {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::Locked,
+                    });
+                } else if self.weapon_strength >= 12 {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::MaximumUpgrade,
+                    });
+                } else if self.available_funds() < WEAPON_PRICE {
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::InsufficientFunds,
+                    });
+                } else {
+                    self.balance -= WEAPON_PRICE;
+                    self.weapon_strength += 1;
+                    events.push(Event::WeaponBought {
+                        tick: self.tick,
+                        strength: self.weapon_strength,
+                        balance: self.balance,
+                    });
+                }
+            }
             Action::HoldFeed { x, y, elapsed_ms } => {
                 // Real held input belongs to the next board update. Do not
                 // create food at a no-time input/save boundary.
                 self.held_feed = Some((x, y, elapsed_ms));
+            }
+            Action::HoldFire { x, y, elapsed_ms } => {
+                self.held_fire = Some((x, y, elapsed_ms));
             }
             Action::OpenMenu
             | Action::PlayAdventure
@@ -922,7 +1107,11 @@ impl AdventureState {
             })
         });
         if (!on_collectible || on_alien_widget) && self.invasion.is_some() {
-            let click = self.invasion.as_mut().unwrap().click(world_x, world_y);
+            let click = self.invasion.as_mut().unwrap().click_with_weapon(
+                world_x,
+                world_y,
+                self.weapon_strength,
+            );
             let suppress_food = click.suppress_food;
             self.record_invasion_events(click.events, events);
             if !on_collectible && suppress_food {
@@ -1106,6 +1295,7 @@ impl AdventureState {
             .is_some_and(|wave| wave.pending_modal.is_some())
         {
             self.held_feed = None;
+            self.held_fire = None;
             return Vec::new();
         }
         let mut events = Vec::new();
@@ -1126,6 +1316,18 @@ impl AdventureState {
             {
                 self.drop_food(x, y, 20, &mut events);
             }
+        }
+        if let Some((x, y, elapsed_ms)) = self.held_fire.take()
+            && self.weapon_strength == 12
+            && elapsed_ms > 100
+            && self.tick.is_multiple_of(5)
+            && x.is_finite()
+            && y.is_finite()
+            && y > 40.0
+            && let Some(wave) = self.invasion.as_mut()
+        {
+            let shot = wave.click_with_weapon(x as i32, y as i32, self.weapon_strength);
+            self.record_invasion_events(shot.events, &mut events);
         }
         self.advance_board_clock();
         if let Some(wave) = self.invasion.as_mut() {
@@ -1150,12 +1352,13 @@ impl AdventureState {
     /// returning. The clock, flash, actors, and held-feeding check do not run.
     pub(crate) fn paused_board_update(&mut self) {
         self.held_feed = None;
+        self.held_fire = None;
         if let Some(wave) = self.invasion.as_mut() {
             wave.update_before_pause();
         }
     }
 
-    /// Board-sorted object update: food, fish, alien, Stinky, Niko, coins,
+    /// Board-sorted object update: food, guppies, Oscars, alien, Stinky, Niko, coins,
     /// and the separately sorted Niko pearl list.
     pub(crate) fn update_objects(&mut self) -> Vec<Event> {
         if self.victory
@@ -1168,8 +1371,10 @@ impl AdventureState {
         }
         let mut events = Vec::new();
         self.update_dead_fish();
+        self.dead_oscars.retain_mut(|corpse| !corpse.tick());
         self.update_food(&mut events);
         self.update_fish(&mut events);
+        self.update_oscars(&mut events);
         self.update_invasion_objects(&mut events);
         self.update_stinky(&mut events);
         self.update_niko(&mut events);
@@ -1462,12 +1667,12 @@ impl AdventureState {
                             tick: self.tick,
                             cue: TutorialCue::BuyFoodQuality,
                         });
-                    } else if self.level == 3 {
+                    } else if self.level >= 3 {
                         // Fish::FishOnGrow unlocks quality, quantity and Oscar
                         // together at 1-3. Oscar purchase later unlocks Egg;
-                        // that purchase and actor remain a separate milestone.
                         self.upgrades.quality_unlocked = true;
                         self.upgrades.quantity_unlocked = true;
+                        self.oscar_unlocked = true;
                     }
                 }
                 events.push(Event::FishGrew {
@@ -1701,6 +1906,7 @@ impl AdventureState {
                     // Alien::CheckCollision removes the live prey directly;
                     // there is no ordinary dead-fish corpse for this path.
                     self.fish.retain(|fish| fish.id != prey_id);
+                    self.oscars.retain(|oscar| oscar.id != prey_id);
                 }
                 InvasionEvent::DiamondDropped { alien_id, x, y } => {
                     let coin_id = self.id();
@@ -1722,6 +1928,7 @@ impl AdventureState {
                 }
                 InvasionEvent::BattleEnded => {
                     self.held_feed = None;
+                    self.held_fire = None;
                 }
                 _ => {}
             }
@@ -1732,8 +1939,76 @@ impl AdventureState {
         }
     }
 
+    fn update_oscars(&mut self, events: &mut Vec<Event>) {
+        let alien_present = self
+            .invasion
+            .as_ref()
+            .is_some_and(Invasion1_2::has_live_alien);
+        let mut index = 0;
+        while index < self.oscars.len() {
+            let prey = self
+                .fish
+                .iter()
+                .map(|fish| OscarPrey {
+                    id: fish.id,
+                    widget_x: fish.x as i32,
+                    widget_y: fish.y as i32,
+                    eligible: fish.alive
+                        && fish.size == FishSize::Small
+                        && fish.cannot_be_eaten_ticks == 0,
+                })
+                .collect::<Vec<_>>();
+            let mut rng_state = self.rng_state;
+            let result = self.oscars[index].tick(&prey, alien_present, &mut |upper| {
+                Self::advance_rng(&mut rng_state) % upper
+            });
+            self.rng_state = rng_state;
+            let oscar_id = self.oscars[index].id;
+            if let Some(guppy_id) = result.eaten_prey {
+                // Widget sorting updates Oscar after the guppy; immediate
+                // removal means a later Oscar or alien sees the new list.
+                self.fish.retain(|fish| fish.id != guppy_id);
+                events.push(Event::OscarAteGuppy {
+                    tick: self.tick,
+                    oscar_id,
+                    guppy_id,
+                });
+            }
+            if let Some((x, y)) = result.diamond {
+                let coin_id = self.id();
+                self.coins.push(Coin {
+                    id: coin_id,
+                    x: x as f32,
+                    y: y as f32,
+                    kind: CoinKind::Diamond,
+                    frame: 0,
+                    collecting: false,
+                    bottom_ticks: 0,
+                    fade_ticks: 0,
+                });
+                events.push(Event::CoinDropped {
+                    tick: self.tick,
+                    coin_id,
+                    fish_id: oscar_id,
+                    kind: CoinKind::Diamond,
+                });
+            }
+            if result.died {
+                self.dead_oscars
+                    .push(DeadOscar::from_live(&self.oscars[index]));
+                events.push(Event::OscarDied {
+                    tick: self.tick,
+                    oscar_id,
+                });
+                self.oscars.remove(index);
+            } else {
+                index += 1;
+            }
+        }
+    }
+
     fn update_invasion_objects(&mut self, events: &mut Vec<Event>) {
-        let prey = self
+        let mut prey = self
             .fish
             .iter()
             .filter(|fish| fish.alive)
@@ -1746,6 +2021,19 @@ impl AdventureState {
                 eligible: fish.cannot_be_eaten_ticks == 0,
             })
             .collect::<Vec<_>>();
+        prey.extend(
+            self.oscars
+                .iter()
+                .filter(|oscar| oscar.alive)
+                .map(|oscar| PreyView {
+                    id: oscar.id,
+                    widget_x: oscar.widget_x,
+                    widget_y: oscar.widget_y,
+                    width: 80,
+                    height: 80,
+                    eligible: oscar.cannot_be_eaten_ticks == 0,
+                }),
+        );
         if let Some(wave) = self.invasion.as_mut() {
             let mut rng_state = self.rng_state;
             let wave_events =
@@ -1978,7 +2266,7 @@ impl AdventureState {
     fn update_coins(&mut self, events: &mut Vec<Event>) {
         let bottom_limit = match (self.tank, self.level) {
             (1, 1) => FIRST_STAGE_COIN_BOTTOM_TICKS,
-            (1, 2 | 3) => SECOND_STAGE_COIN_BOTTOM_TICKS,
+            (1, 2..=4) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             _ => unreachable!("coin lifetime for this Adventure stage is not implemented"),
         };
         let mut credited = Vec::new();
@@ -2740,6 +3028,35 @@ mod tests {
     }
 
     #[test]
+    fn fresh_fourth_stage_first_tick_uses_ordinary_coin_lifetime() {
+        // PB09: the 150-update bottom timer is specific to the first
+        // Adventure stage. A fresh 1-4 board must update even with no coins.
+        let mut fourth = AdventureState::new_fourth_stage(0x57);
+        fourth.tick();
+        assert_eq!(fourth.tick, 1);
+        fourth.coins.push(Coin {
+            id: 83,
+            x: 500.0,
+            y: 370.0,
+            kind: CoinKind::Gold,
+            frame: 0,
+            collecting: false,
+            bottom_ticks: 18,
+            fade_ticks: 0,
+        });
+        fourth.tick();
+        assert_eq!(
+            (fourth.coins[0].bottom_ticks, fourth.coins[0].fade_ticks),
+            (19, 0)
+        );
+        fourth.tick();
+        assert_eq!(
+            (fourth.coins[0].bottom_ticks, fourth.coins[0].fade_ticks),
+            (20, 5)
+        );
+    }
+
+    #[test]
     fn claimed_coin_can_fund_purchase_once_before_arrival_without_early_credit() {
         let mut state = AdventureState::new_adventure(0xc19);
         state.guppy_unlocked = true;
@@ -2914,10 +3231,148 @@ mod tests {
         assert!(state.upgrades.quality_unlocked);
         assert!(state.upgrades.quantity_unlocked);
         assert!(!state.egg_unlocked);
+        assert!(state.oscar_unlocked);
         state.validate().unwrap();
         state.balance = 200;
         state.apply(Action::BuyFoodQuality);
         assert!(!state.egg_unlocked);
+        state.balance = OSCAR_PRICE;
+        let bought = state.apply(Action::BuyOscar);
+        assert!(
+            bought
+                .iter()
+                .any(|event| matches!(event, Event::OscarBought { balance: 0, .. }))
+        );
+        assert_eq!(state.oscars.len(), 1);
+        assert!(state.weapon_unlocked);
+        assert!(state.egg_unlocked);
+        state.balance = WEAPON_PRICE;
+        assert!(state.apply(Action::BuyWeapon).iter().any(|event| matches!(
+            event,
+            Event::WeaponBought {
+                strength: 3,
+                balance: 0,
+                ..
+            }
+        )));
+        state.fish.clear();
+        assert!(
+            state.has_live_fish(),
+            "a live Oscar prevents Game Over without guppies"
+        );
+        state.validate().unwrap();
+    }
+
+    #[test]
+    fn max_weapon_hold_fires_on_old_board_count_with_strict_elapsed_gate() {
+        // W1 Board.cpp:818-824: strength 12, old count divisible by five,
+        // more than 100 ms, and cursor below the menu area.
+        let mut state = AdventureState::new_third_stage(0xa22);
+        state.weapon_strength = 12;
+        state.weapon_unlocked = true;
+        state.oscar_unlocked = true;
+        state.upgrades.quality_unlocked = true;
+        state.upgrades.quantity_unlocked = true;
+        let wave = state.invasion.as_mut().unwrap();
+        wave.countdown = 3000;
+        wave.alien = Some(crate::alien::WeakSylvester::spawn_kind(
+            SylvesterKind::Strong,
+            900,
+            100,
+            120,
+            1,
+            1,
+        ));
+        state.tick = 5;
+        state.apply(Action::HoldFire {
+            x: 180.0,
+            y: 200.0,
+            elapsed_ms: 100,
+        });
+        assert!(!state.begin_tick().iter().any(|event| matches!(
+            event,
+            Event::Invasion {
+                event: InvasionEvent::LaserFired { .. },
+                ..
+            }
+        )));
+        state.tick = 10;
+        state.apply(Action::HoldFire {
+            x: 180.0,
+            y: 200.0,
+            elapsed_ms: 101,
+        });
+        assert!(state.begin_tick().iter().any(|event| matches!(
+            event,
+            Event::Invasion {
+                event: InvasionEvent::AlienHit { health: 24, .. },
+                ..
+            }
+        )));
+        assert_eq!(state.tick, 11);
+        state
+            .invasion
+            .as_mut()
+            .unwrap()
+            .alien
+            .as_mut()
+            .unwrap()
+            .hit_ticks = 0;
+        state.apply(Action::HoldFire {
+            x: 180.0,
+            y: 200.0,
+            elapsed_ms: 999,
+        });
+        assert!(!state.begin_tick().iter().any(|event| matches!(
+            event,
+            Event::Invasion {
+                event: InvasionEvent::LaserFired { .. },
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn starving_oscar_emits_due_diamond_then_keeps_a_persisted_corpse() {
+        // W1 Fish::Update continues production after Die schedules removal.
+        let mut state = AdventureState::new_third_stage(0xa23);
+        let mut oscar = OscarState::spawn_bought(901, &mut |_| 0);
+        oscar.hunger = 1;
+        oscar.bought_timer = 0;
+        oscar.coin_timer = oscar.coin_threshold - 1;
+        state.oscars.push(oscar);
+        let events = state.update_objects();
+        let diamond = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    Event::CoinDropped {
+                        fish_id: 901,
+                        kind: CoinKind::Diamond,
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        let death = events
+            .iter()
+            .position(|event| matches!(event, Event::OscarDied { oscar_id: 901, .. }))
+            .unwrap();
+        assert!(diamond < death);
+        assert!(state.oscars.is_empty());
+        assert_eq!(state.dead_oscars.len(), 1);
+        assert_eq!(state.dead_oscars[0].remaining_ticks, 125);
+        state.update_objects();
+        assert_eq!(state.dead_oscars[0].remaining_ticks, 124);
+        assert_eq!(
+            state
+                .coins
+                .iter()
+                .filter(|coin| coin.kind == CoinKind::Diamond)
+                .count(),
+            1
+        );
     }
 
     #[test]

@@ -5,6 +5,7 @@ use crate::{
     font::BitmapFont,
     install::{self, InstallIdentity},
     invasion::{InvasionEvent, InvasionTip},
+    oscar::OscarPose,
     sim::{Action, AdventureState, CoinKind, Event, FishPose, FishSize, PetKind, TICK_MS},
 };
 use macroquad::{
@@ -49,6 +50,9 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_LASERS",
     "IMAGE_WARPHOLE",
     "IMAGE_WARPGLOW",
+    "IMAGE_SCL_OSCAR",
+    "IMAGE_LASERUPGRADES",
+    "IMAGE_ITCHY",
 ];
 const SOUND_IDS: &[&str] = &[
     "SOUND_DROPFOOD",
@@ -66,6 +70,8 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_NIKOOPEN",
     "SOUND_NIKOCLOSE",
     "SOUND_PEARL",
+    "SOUND_CHOMP",
+    "SOUND_DIE",
 ];
 
 pub struct Presentation {
@@ -223,7 +229,11 @@ impl Presentation {
                 Event::GuppyBought { .. }
                 | Event::EggBought { .. }
                 | Event::FoodQualityBought { .. }
-                | Event::FoodQuantityBought { .. } => "SOUND_BUY",
+                | Event::FoodQuantityBought { .. }
+                | Event::WeaponBought { .. } => "SOUND_BUY",
+                Event::OscarBought { .. } => "SOUND_GROW",
+                Event::OscarAteGuppy { .. } => "SOUND_CHOMP",
+                Event::OscarDied { .. } => "SOUND_DIE",
                 Event::HatchOpened { .. } => "SOUND_HATCH",
                 Event::Invasion { event, .. } => match event {
                     InvasionEvent::WarningStarted(_) => "SOUND_AWOOGA",
@@ -303,6 +313,41 @@ impl Presentation {
                 1.0,
             );
         }
+        for oscar in state.oscars.iter().filter(|oscar| oscar.alive) {
+            let id = match (oscar.sprite_pose(), oscar.hunger_visible()) {
+                (OscarPose::Swim, false) => "IMAGE_SMALLSWIM",
+                (OscarPose::Swim, true) => "IMAGE_HUNGRYSWIM",
+                (OscarPose::Eat, false) => "IMAGE_SMALLEAT",
+                (OscarPose::Eat, true) => "IMAGE_HUNGRYEAT",
+                (OscarPose::Turn, false) => "IMAGE_SMALLTURN",
+                (OscarPose::Turn, true) => "IMAGE_HUNGRYTURN",
+            };
+            self.sprite(
+                id,
+                oscar.widget_x as f32,
+                oscar.widget_y as f32,
+                Some(Rect::new(f32::from(oscar.frame) * 80.0, 320.0, 80.0, 80.0)),
+                oscar.facing_right(),
+                1.0,
+                1.0,
+            );
+            if oscar.hunger_overlay_alpha() > 0.0 {
+                let hungry_id = match oscar.sprite_pose() {
+                    OscarPose::Swim => "IMAGE_HUNGRYSWIM",
+                    OscarPose::Eat => "IMAGE_HUNGRYEAT",
+                    OscarPose::Turn => "IMAGE_HUNGRYTURN",
+                };
+                self.sprite(
+                    hungry_id,
+                    oscar.widget_x as f32,
+                    oscar.widget_y as f32,
+                    Some(Rect::new(f32::from(oscar.frame) * 80.0, 320.0, 80.0, 80.0)),
+                    oscar.facing_right(),
+                    1.0,
+                    oscar.hunger_overlay_alpha(),
+                );
+            }
+        }
         for fish in &state.dead_fish {
             let row = match fish.size {
                 FishSize::Small => 0.0,
@@ -322,6 +367,17 @@ impl Presentation {
                 fish.facing_right,
                 1.0,
                 fish.opacity,
+            );
+        }
+        for corpse in &state.dead_oscars {
+            self.sprite(
+                "IMAGE_SMALLDIE",
+                corpse.widget_x as f32,
+                corpse.widget_y as f32,
+                Some(Rect::new(f32::from(corpse.frame) * 80.0, 320.0, 80.0, 80.0)),
+                corpse.facing_right,
+                1.0,
+                corpse.opacity,
             );
         }
         if let Some(wave) = &state.invasion {
@@ -557,6 +613,51 @@ impl Presentation {
                 Color::from_rgba(110, 250, 110, 255),
             );
         }
+        if state.oscar_unlocked {
+            self.sprite("IMAGE_MENUBTNU", 217.0, 3.0, None, false, 1.0, 1.0);
+            self.sprite(
+                "IMAGE_SCL_OSCAR",
+                225.0,
+                6.0,
+                Some(Rect::new(
+                    ((state.tick / 2) % 10) as f32 * 40.0,
+                    0.0,
+                    40.0,
+                    40.0,
+                )),
+                false,
+                1.0,
+                1.0,
+            );
+            self.fonts["Pix118"].text("1000", 229.0, 58.0, Color::from_rgba(110, 250, 110, 255));
+        }
+        if state.weapon_unlocked {
+            self.sprite("IMAGE_MENUBTNU", 363.0, 3.0, None, false, 1.0, 1.0);
+            if state.weapon_strength < 12 {
+                self.sprite(
+                    "IMAGE_LASERUPGRADES",
+                    370.0,
+                    6.0,
+                    Some(Rect::new(
+                        f32::from(state.weapon_strength - 2) * 46.0,
+                        0.0,
+                        46.0,
+                        39.0,
+                    )),
+                    false,
+                    1.0,
+                    1.0,
+                );
+                self.fonts["Pix118"].text(
+                    "1000",
+                    375.0,
+                    58.0,
+                    Color::from_rgba(110, 250, 110, 255),
+                );
+            } else {
+                self.fonts["Pix118"].text("MAX", 376.0, 58.0, Color::from_rgba(110, 250, 110, 255));
+            }
+        }
         if state.egg_unlocked {
             self.sprite("IMAGE_MENUBTNU", 436.0, 3.0, None, false, 1.0, 1.0);
             let texture = &self.images["IMAGE_EGGPIECES"];
@@ -727,6 +828,7 @@ impl Presentation {
                         if phase > 9 { 19 - phase } else { phase },
                     )
                 }
+                PetKind::Itchy => ("IMAGE_ITCHY", 90.0, updates % 20 / 2),
             };
             self.sprite(
                 id,
@@ -742,6 +844,7 @@ impl Presentation {
                 match pet {
                     PetKind::Stinky => "STINKY the Snail",
                     PetKind::Niko => "NIKO the Oyster",
+                    PetKind::Itchy => "ITCHY the Swordfish",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -759,6 +862,11 @@ impl Presentation {
                     "NIKO produces pearls that",
                     "you can click on for a",
                     "hefty sum of money.",
+                ],
+                PetKind::Itchy => [
+                    "ITCHY helps you by attacking",
+                    "aliens when they appear.",
+                    "",
                 ],
             };
             for (index, line) in description.iter().enumerate() {
@@ -1066,6 +1174,7 @@ pub async fn run(
     let mut hatch_background_down = false;
     let mut feed_press_at = None::<f64>;
     let mut held_feed_at = None::<f64>;
+    let mut held_fire_at = None::<f64>;
     prevent_quit();
     loop {
         let elapsed = get_time() - started;
@@ -1081,6 +1190,7 @@ pub async fn run(
             accumulator = 0.0;
             feed_press_at = None;
             held_feed_at = None;
+            held_fire_at = None;
         }
         let button_height = presentation.images["IMAGE_MAINBUTTON"].height();
         let menu_rect = if matches!(session.phase, AdventurePhase::Hatch { .. }) {
@@ -1103,6 +1213,7 @@ pub async fn run(
                 }
                 feed_press_at = None;
                 held_feed_at = None;
+                held_fire_at = None;
             } else if !paused {
                 let action = match session.phase {
                     AdventurePhase::Hatch { updates, .. }
@@ -1168,6 +1279,24 @@ pub async fn run(
                         Action::BuyFoodQuantity
                     }
                     AdventurePhase::Playing
+                        if session
+                            .board
+                            .as_ref()
+                            .is_some_and(|board| board.oscar_unlocked)
+                            && Rect::new(217.0, 3.0, 58.0, 60.0).contains(pointer) =>
+                    {
+                        Action::BuyOscar
+                    }
+                    AdventurePhase::Playing
+                        if session
+                            .board
+                            .as_ref()
+                            .is_some_and(|board| board.weapon_unlocked)
+                            && Rect::new(363.0, 3.0, 58.0, 60.0).contains(pointer) =>
+                    {
+                        Action::BuyWeapon
+                    }
+                    AdventurePhase::Playing
                         if Rect::new(436.0, 3.0, 58.0, 60.0).contains(pointer) =>
                     {
                         Action::BuyEgg
@@ -1184,6 +1313,18 @@ pub async fn run(
                 {
                     feed_press_at = Some(get_time());
                 }
+                if matches!(action, Action::Click { .. })
+                    && pointer.y > 40.0
+                    && session.board.as_ref().is_some_and(|board| {
+                        board.weapon_strength == 12
+                            && board
+                                .invasion
+                                .as_ref()
+                                .is_some_and(|wave| wave.has_live_alien())
+                    })
+                {
+                    held_fire_at = Some(get_time());
+                }
                 pending_actions.push(action);
             }
         }
@@ -1191,6 +1332,7 @@ pub async fn run(
             hatch_pointer_owned = false;
             feed_press_at = None;
             held_feed_at = None;
+            held_fire_at = None;
         }
         if matches!(session.phase, AdventurePhase::Hatch { .. }) {
             let held = hatch_pointer_owned && is_mouse_button_down(MouseButton::Left);
@@ -1257,6 +1399,16 @@ pub async fn run(
                             elapsed_ms: ((get_time() - press_at) * 1000.0).max(0.0) as u32,
                         });
                     }
+                    if let Some(press_at) = held_fire_at
+                        && is_mouse_button_down(MouseButton::Left)
+                        && matches!(session.phase, AdventurePhase::Playing)
+                    {
+                        step_actions.push(Action::HoldFire {
+                            x: pointer.x,
+                            y: pointer.y,
+                            elapsed_ms: ((get_time() - press_at) * 1000.0).max(0.0) as u32,
+                        });
+                    }
                     let step_events = session.step(&step_actions);
                     if feed_press_at.is_some()
                         && step_events
@@ -1282,6 +1434,7 @@ pub async fn run(
                     {
                         feed_press_at = None;
                         held_feed_at = None;
+                        held_fire_at = None;
                     }
                     events.extend(step_events);
                 }

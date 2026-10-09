@@ -2,6 +2,16 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-08 — Integrate Adventure1-3 Oscar, strong combat and weapon gates
+
+**Changed:** Preserved existing progression while adding serializable Oscar hunting/diamonds/death visuals, strong Sylvester, per-board weapon upgrades/held maximum fire, later-stage score and Itchy hatch. Format5 explicitly migrates old1-3 boards with an unknown historical Strong countdown, retaining earned Niko state and remembered Large-growth gates. Independent contract/corrections are in [Adventure1-3](docs/adventure-1-3.md).
+
+**Evidence/checks:** Installed payload PB18–PB19 identifies Oscar and confirms dimensions/hunger/contact/meal/rawtype4 emission plus ordinary App mode flag; diamond name/value200 and broader RNG/filtering remain secondary. Frozen integration passed102 tests and a [normal-speed earned run](docs/playtests/2026-10-08-adventure-1-3-01.md) through Oscar purchase/six meals/29 diamonds, three strong fights, weapon upgrade and three2000 eggs to Itchy. One starter was lost during combat. Rebuilt transition fix passed103 tests, strict Clippy/format/native build; hatch reload/Continue into partial1-4 and exact complete-session reload passed. Four owned PIDs exited0/install unchanged. Root inspected Oscar left/right, strong and hatch frames.
+
+**Failures/corrections:** Independent review caught clamped pursuit, inherited movement guard/direction order, counter wrap, absent hungry blending/corpse and wrong death pose timing; corrected before execution. A failed fixture assumed the guard ran before VY decrement; corrected expectation against source. Derived Default resolved strict Clippy. Next-stage review found an unconditional1-4 coin-lifetime panic; extended the ordinary20-update stage rule and directly tested fresh1-4 first tick/expiry. Main run retains its earlier executable identity; rebuilt transition evidence is separate.
+
+**Limits/next:** Full source RNG parity is absent: bubble admission/constructors and meal blood particles consume additional conditional draws. Audible CHOMP/music, retail/human comparison and complete effects remain untested. Complete rebuilt transition/report/workflow checks, commit this checkpoint, then implement [Itchy/Balrog and pet selection](docs/adventure-1-4.md) automatically. Preserve prior earned saves and commits.
+
 ## 2026-10-08 — Integrate Adventure1-2 upgrades, invasion and Niko
 
 **Changed:** Preserved the existing loop while adding food upgrades/held feeding, weak Sylvester and its warning/modal/laser/diamond lifecycle, Game Over/reentry, Niko reward/live pearl, separate later-stage times and strict format4 migration. Pure actor/wave/pet modules feed the existing simulation and renderer; project saves remain separate. Source contract and deliberate adaptations are in [Adventure1-2](docs/adventure-1-2.md).
@@ -10,7 +20,7 @@ Newest entries first. Update triggers and evidence rules are authoritative in [A
 
 **Failures/corrections:** Focused alien test expected emergence on update8; source branch showed7, so corrected the expectation. Review caught fast-to-slow animation counter reset, fractional death-body construction, paused flash decrement and omitted lethal hit event; corrected. Initial integrated gate found test closure borrows, two collapsible conditions and an external test calling a private method; fixed narrowly. The retained pearl round-trip assertion then caught a real one-bit f64 parse loss. Enabled pinned serde_json's exact float parser and reran the full gate successfully. Stage1-3 quality cannot unlock its egg: source requires Oscar purchase, so the premature gate was corrected.
 
-**Limits/next:** Initial death particles, bubbles, additive/warp endpoints, full menu/hatch artwork, audible music/effects and original/human comparison remain missing or unverified. A late optional capture watcher failed on an already exited PID; needed frames existed from the main driver. Complete workflow checks, commit the coherent result, then implement Oscar/strong Sylvester and1-3 automatically. No original game execution or modification.
+**Limits/next:** Initial death particles, bubbles, additive/warp endpoints, full menu/hatch artwork, audible music/effects and original/human comparison remain missing or unverified. A late optional capture watcher failed on an already exited PID; needed frames existed from the main driver. Workflow checks passed and this checkpoint was committed as582f510; Oscar/strong Sylvester and1-3 followed automatically. No original game execution or modification.
 
 ## 2026-10-08 — Implement Stinky and first-stage score bookkeeping
 

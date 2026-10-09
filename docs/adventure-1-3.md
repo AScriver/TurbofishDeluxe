@@ -1,6 +1,6 @@
 # Adventure1-3 contract and next increment
 
-W1 is pinned in [provenance](provenance.md); paths below are relative to `source/WinFish/`. These A13 claims are **secondary-source-derived** except the actor constants/table association confirmed in [PB17](behavior-contract.md#primary-binary-findings). The installed PB05 payload remains authoritative. No original gameplay has been observed. Current1-3 has live Niko but lacks Oscar, the strong wave, weapon buying and completion.
+W1 is pinned in [provenance](provenance.md); paths below are relative to `source/WinFish/`. These A13 claims are **secondary-source-derived** except the marked partial confirmations in [PB17–PB19](behavior-contract.md#primary-binary-findings). The installed PB05 payload remains authoritative. No original gameplay has been observed. Current1-3 integration passes103 tests; [normal-speed earned play and rebuilt hatch/entry/reload](playtests/2026-10-08-adventure-1-3-01.md) passed. Those checks do not prove retail fidelity. Next1-4 remains partial.
 
 ## Evidence ledger
 
@@ -19,13 +19,19 @@ W1 is pinned in [provenance](provenance.md); paths below are relative to `source
 | A13-11 | Oscars count as surviving fish and valid alien prey. Removing the last guppy does not open Game Over while an Oscar lives. Guppy→Oscar→Alien sorting makes immediate prey removal visible to subsequent actors | `Board.cpp:1958–1969,2014–2108,3215–3220`, `Alien.cpp:826–864,969–1004`, `Oscar.cpp:460–477`; exact retail cross-list tie order remains unknown |
 | A13-12 | Third egg settles claimed coins/pearls and records score once, then advances1-4/rewards Itchy(ID2) before retiring board. Hatch Continue starts fresh1-4 with Stinky/Niko/Itchy | `Board.cpp:2177–2184,3293–3360`, `ProfileMgr.cpp:555–564,581–599`, `GameObject.h:69–74`, `WinFishApp.cpp:2362–2373`, `HatchScreen.cpp:630–638`; profile mapping not primary-confirmed |
 
-Oscar presentation uses inherited fish atlases, source rowY320 with80×80 cells and hungry swim/turn/eat variants (`Oscar.cpp:172–198`, `Fish.cpp:1595–1602`). It does not require an invented Oscar texture. Hungry steering is conditional acceleration, not a hard velocity clamp (`Oscar.cpp:245–373`). Exact RNG parity, double/widget lag and inherited animation/death ordering need independent checks.
+Oscar presentation uses inherited fish atlases, source rowY320 with80×80 cells and hungry swim/turn/eat variants (`Oscar.cpp:172–198`, `Fish.cpp:1595–1602`). It does not require an invented Oscar texture. Hungry steering is conditional acceleration, not a hard velocity clamp (`Oscar.cpp:245–373`). Primary PB18 confirms Oscar80×80/600–799 hunger/strict mixed-coordinate contact/+900 cap1300/rawtype4 production; PB19 traces the inactive ordinary starvation suppression flag. Small-prey filtering, exact inheritance/RNG and coin-type naming/value retain their separate source limits.
+
+Source review corrected inherited movement before execution: near-zero state0 drift remains unchanged, states1/2 take a whole velocity step even when overshooting, states3/4 test the guard after lowering VY, and states5–9 capture horizontal speed before direction reversal. Swim counter19+2 resets0 rather than modulo1. Hungry atlas blends across five updates; corpse captures the hunger-death pose before remaining movement/production, starts125 and updates next board tick. Regression expectations came from independent source branches, not the initial implementation.
+
+Particle/RNG limits: consuming entrance coordinate draws alone does not preserve the source stream. Admission depends on live bubble count<30; each admitted Bubble constructor adds draws (`Board.cpp:1696–1699`, `BubbleMgr.cpp:145–153,229–256`). Default-enabled Oscar meal blood shots also consume randomness (`Oscar.cpp:69–74`, `WinFishApp.cpp:259`). These effects and their full conditional RNG remain unimplemented; deterministic project replay is not source/retail replay parity. Audible CHOMP variant/pitch and complete effects still need comparison.
 
 ## Implementation boundary
 
 Preserve the existing runtime. Add an explicit ordinary Oscar actor with owned double motion/animation/hunger/production state; Board retains globally unique IDs, ordered prey membership, purchases and coin creation. Generalize Sylvester only across its two recovered variants, pass Board weapon into shots, and make wave initialization/tutorial gates stage-specific. Persist the new actor, gates, weapon and variant atomically with existing state. Extend survival and alien prey/removal to Oscars.
 
 Extend stage score/reward validation through1-3 and Itchy hatch after those actors work. Next1-4 is a separate increment: its Itchy/Balrog behaviors are not established by this note. Keep an explicit incomplete boundary until their contract and normal-speed run exist.
+
+Format5 requires Oscar/dead-Oscar lists, remembered purchase gates, weapon strength and explicit actor/wave kinds. Formats1–4 migrate before play. Old1-3 format4 had no wave/actors: preserve cash/fish/pets/owners/RNG/clocks/results, derive Oscar unlock from its remembered Large-growth food gate, and mark a new Strong3000 wave `LegacyV4Resume`; its historical countdown is unknown. No Oscar or free weapon upgrade is granted. Existing1-2 wave/state remains intact with Weak kind supplied only in the legacy path. Missing modern fields or Weak actor inside Strong wave are rejected.
 
 ## Acceptance
 

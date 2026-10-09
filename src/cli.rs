@@ -95,7 +95,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 4;
+pub const SAVE_FORMAT_VERSION: u32 = 5;
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -185,6 +185,71 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             if !has_score_field || missing_board_field {
                 return Err(
                     "Incomplete format-four save; required state fields are missing".into(),
+                );
+            }
+            let mut session = serde_json::from_value::<ProjectSave>(value)?.session;
+            if session.progress.level > 3 {
+                return Err("Format-four save contains unsupported Adventure progress".into());
+            }
+            if let Some(board) = &mut session.board {
+                board.initialize_legacy_stage13_support();
+            }
+            (session, true)
+        }
+        Some(5) => {
+            let complete_progress = value
+                .pointer("/session/progress")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|progress| {
+                    ["first_stage_best_seconds", "later_stage_best_seconds"]
+                        .iter()
+                        .all(|field| progress.contains_key(*field))
+                });
+            let incomplete_board = value
+                .pointer("/session/board")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|board| {
+                    [
+                        "stinky",
+                        "upgrades",
+                        "invasion",
+                        "niko",
+                        "pearls",
+                        "oscars",
+                        "dead_oscars",
+                        "oscar_unlocked",
+                        "weapon_strength",
+                        "weapon_unlocked",
+                    ]
+                    .iter()
+                    .any(|field| !board.contains_key(*field))
+                        || board
+                            .get("food")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|food| {
+                                food.iter().any(|pellet| pellet.get("quality").is_none())
+                            })
+                        || board
+                            .get("fish")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|fish| {
+                                fish.iter()
+                                    .any(|entity| entity.get("cannot_be_eaten_ticks").is_none())
+                            })
+                        || board
+                            .get("invasion")
+                            .and_then(serde_json::Value::as_object)
+                            .is_some_and(|wave| {
+                                !wave.contains_key("kind")
+                                    || wave
+                                        .get("alien")
+                                        .and_then(serde_json::Value::as_object)
+                                        .is_some_and(|alien| !alien.contains_key("kind"))
+                            })
+                });
+            if !complete_progress || incomplete_board {
+                return Err(
+                    "Incomplete format-five save; required state fields are missing".into(),
                 );
             }
             (serde_json::from_value::<ProjectSave>(value)?.session, false)

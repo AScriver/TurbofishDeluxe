@@ -8,4 +8,5 @@ pub mod font;
 pub mod install;
 pub mod invasion;
 pub mod niko;
+pub mod oscar;
 pub mod sim;

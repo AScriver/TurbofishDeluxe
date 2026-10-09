@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::alien::{PreyView, ShotResult, WeakSylvester};
+use crate::alien::{PreyView, ShotResult, SylvesterKind, WeakSylvester};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InvasionOrigin {
@@ -17,6 +17,8 @@ pub enum InvasionOrigin {
     /// Initial state synthesized for a pre-invasion-field version-3 save.
     /// Old board ticks do not reveal how much of the invasion timer elapsed.
     LegacyV3Resume,
+    /// Synthesized timer for an old format-4 stage-3 board without a wave.
+    LegacyV4Resume,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,6 +125,8 @@ pub struct DeadAlienEffect {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Invasion1_2 {
     pub origin: InvasionOrigin,
+    #[serde(default)] // Pre-format-5 stage-2 waves were necessarily weak.
+    pub kind: SylvesterKind,
     pub countdown: i32,
     pub danger_shown: bool,
     pub battle_tip_shown: bool,
@@ -139,17 +143,30 @@ pub struct Invasion1_2 {
 
 impl Invasion1_2 {
     pub fn new() -> Self {
-        Self::with_origin(InvasionOrigin::StageStart)
+        Self::with_origin(InvasionOrigin::StageStart, SylvesterKind::Weak)
+    }
+
+    pub fn new_strong() -> Self {
+        Self::with_origin(InvasionOrigin::StageStart, SylvesterKind::Strong)
+    }
+
+    pub fn legacy_v4_strong_resume() -> Self {
+        Self::with_origin(InvasionOrigin::LegacyV4Resume, SylvesterKind::Strong)
     }
 
     pub fn legacy_v3_resume() -> Self {
-        Self::with_origin(InvasionOrigin::LegacyV3Resume)
+        Self::with_origin(InvasionOrigin::LegacyV3Resume, SylvesterKind::Weak)
     }
 
-    fn with_origin(origin: InvasionOrigin) -> Self {
+    fn with_origin(origin: InvasionOrigin, kind: SylvesterKind) -> Self {
         Self {
             origin,
-            countdown: 1750,
+            kind,
+            countdown: if kind == SylvesterKind::Weak {
+                1750
+            } else {
+                3000
+            },
             danger_shown: false,
             battle_tip_shown: false,
             pending_modal: None,
@@ -213,7 +230,7 @@ impl Invasion1_2 {
 
         self.countdown -= 1;
         match self.countdown {
-            276 => {
+            276 if self.kind == SylvesterKind::Weak => {
                 let tip = if !self.danger_shown {
                     self.danger_shown = true;
                     Some(InvasionTip::Danger)
@@ -249,7 +266,8 @@ impl Invasion1_2 {
                     return Vec::new();
                 };
                 let id = next_id();
-                let actor = WeakSylvester::spawn(
+                let actor = WeakSylvester::spawn_kind(
+                    self.kind,
                     id,
                     coords.first_x,
                     coords.first_y,
@@ -340,6 +358,10 @@ impl Invasion1_2 {
     /// The caller routes menu-area clicks separately but still suppresses
     /// feeding while `suppress_food` is true.
     pub fn click(&mut self, x: i32, y: i32) -> InvasionClick {
+        self.click_with_weapon(x, y, 2)
+    }
+
+    pub fn click_with_weapon(&mut self, x: i32, y: i32, weapon: u8) -> InvasionClick {
         let mut events = Vec::new();
         if self.food_delay > 0
             && self.last_laser.is_some_and(|(last_x, last_y)| {
@@ -361,7 +383,7 @@ impl Invasion1_2 {
         let Some((alien_id, shot_result)) = self
             .alien
             .as_mut()
-            .map(|actor| (actor.id, actor.shot(x, y)))
+            .map(|actor| (actor.id, actor.shot_with_weapon(x, y, weapon)))
         else {
             return result;
         };
@@ -432,6 +454,12 @@ impl Invasion1_2 {
             || self.warning.is_some() && !(1..=275).contains(&self.countdown)
             || self.alien.is_some() && self.countdown != 3000
             || self.alien.as_ref().is_some_and(|actor| !actor.alive)
+            || self
+                .alien
+                .as_ref()
+                .is_some_and(|actor| actor.kind != self.kind)
+            || self.kind == SylvesterKind::Strong
+                && (self.danger_shown || self.battle_tip_shown || self.pending_modal.is_some())
             || self
                 .warp
                 .as_ref()
@@ -679,5 +707,35 @@ mod tests {
         assert_eq!(resumed.warp.as_ref().unwrap().remaining_ticks, 0);
         resumed.objects_update(&[], || panic!("no actor"));
         assert!(resumed.warp.is_none());
+    }
+
+    #[test]
+    fn strong_stage_starts_at_3000_without_first_stage_two_modals() {
+        let mut wave = Invasion1_2::new_strong();
+        assert_eq!(wave.countdown, 3000);
+        assert_eq!(wave.kind, SylvesterKind::Strong);
+        wave.countdown = 277;
+        assert!(
+            wave.board_update(|| panic!("modal needs no RNG"), || panic!("no spawn"))
+                .is_empty()
+        );
+        assert_eq!(wave.countdown, 276);
+        assert!(wave.pending_modal.is_none());
+        assert!(!wave.danger_shown);
+        let mut draws = [0_u32, 0, 1, 1].into_iter();
+        assert!(matches!(
+            wave.board_update(|| draws.next().unwrap(), || panic!("no spawn"))
+                .as_slice(),
+            [InvasionEvent::WarningStarted(_)]
+        ));
+        assert_eq!(draws.next(), None);
+        wave.countdown = 1;
+        let spawned = wave.board_update(|| 1, || 99);
+        assert!(matches!(
+            spawned.as_slice(),
+            [InvasionEvent::AlienSpawned { id: 99, .. }]
+        ));
+        assert_eq!(wave.alien.as_ref().unwrap().kind, SylvesterKind::Strong);
+        assert_eq!(wave.alien.as_ref().unwrap().health, 60);
     }
 }

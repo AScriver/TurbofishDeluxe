@@ -274,13 +274,24 @@ fn format_three_migration_preserves_old_state_and_rewrites_before_play() {
 }
 
 #[test]
-fn format_four_does_not_repair_missing_or_null_modern_state() {
+fn modern_save_does_not_repair_missing_or_null_state() {
     let modern = serde_json::to_value(cli::ProjectSave {
         format_version: cli::SAVE_FORMAT_VERSION,
         session: second_stage_session(),
     })
     .unwrap();
-    for field in ["stinky", "upgrades", "invasion", "niko", "pearls"] {
+    for field in [
+        "stinky",
+        "upgrades",
+        "invasion",
+        "niko",
+        "pearls",
+        "oscars",
+        "dead_oscars",
+        "oscar_unlocked",
+        "weapon_strength",
+        "weapon_unlocked",
+    ] {
         let mut incomplete = modern.clone();
         incomplete["session"]["board"]
             .as_object_mut()
@@ -306,6 +317,121 @@ fn format_four_does_not_repair_missing_or_null_modern_state() {
         .unwrap()
         .remove("later_stage_best_seconds");
     assert!(cli::decode_save(&serde_json::to_vec(&missing_later_score).unwrap()).is_err());
+}
+
+fn third_stage_session() -> AdventureSession {
+    let mut session = second_stage_session();
+    let board = session.board.as_mut().unwrap();
+    board.upgrades.quality_unlocked = true;
+    board.balance = 1700;
+    session.apply_actions(&[
+        Action::BuyFoodQuality,
+        Action::BuyEgg,
+        Action::BuyEgg,
+        Action::BuyEgg,
+    ]);
+    for _ in 0..171 {
+        session.step(&[]);
+    }
+    session.apply_actions(&[Action::Continue]);
+    session
+}
+
+#[test]
+fn format_four_stage_three_migration_retains_state_and_remembered_growth_gate() {
+    let mut session = third_stage_session();
+    session.ticks = 900;
+    let board = session.board.as_mut().unwrap();
+    board.tick = 50;
+    board.balance = 400;
+    // Old format4 remembered Large growth after its fish/corpse disappeared.
+    board.upgrades.quality_unlocked = true;
+    board.upgrades.quantity_unlocked = true;
+    let expected_rng = serde_json::to_value(&*board).unwrap()["rng_state"].clone();
+    let expected_niko = serde_json::to_value(&board.niko).unwrap();
+    let progress_before = session.progress.clone();
+    let mut old = serde_json::to_value(cli::ProjectSave {
+        format_version: 4,
+        session,
+    })
+    .unwrap();
+    let old_board = old["session"]["board"].as_object_mut().unwrap();
+    old_board.insert("invasion".into(), serde_json::Value::Null);
+    for field in [
+        "oscars",
+        "dead_oscars",
+        "oscar_unlocked",
+        "weapon_strength",
+        "weapon_unlocked",
+    ] {
+        old_board.remove(field);
+    }
+    let migrated = cli::decode_save(&serde_json::to_vec(&old).unwrap()).unwrap();
+    let board = migrated.board.as_ref().unwrap();
+    assert_eq!(migrated.progress, progress_before);
+    assert_eq!((migrated.ticks, board.tick, board.balance), (900, 50, 400));
+    assert_eq!(
+        serde_json::to_value(board).unwrap()["rng_state"],
+        expected_rng
+    );
+    assert_eq!(serde_json::to_value(&board.niko).unwrap(), expected_niko);
+    assert!(board.oscar_unlocked);
+    assert!(!board.weapon_unlocked);
+    assert_eq!(board.weapon_strength, 2);
+    let wave = board.invasion.as_ref().unwrap();
+    assert_eq!(wave.countdown, 3000);
+    assert_eq!(wave.kind, turbofish_deluxe::alien::SylvesterKind::Strong);
+    assert_eq!(
+        wave.origin,
+        turbofish_deluxe::invasion::InvasionOrigin::LegacyV4Resume
+    );
+    let roundtrip = cli::decode_save(
+        &serde_json::to_vec(&cli::ProjectSave {
+            format_version: cli::SAVE_FORMAT_VERSION,
+            session: migrated.clone(),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(roundtrip).unwrap(),
+        serde_json::to_value(migrated).unwrap()
+    );
+}
+
+#[test]
+fn format_five_requires_variant_and_rejects_weak_actor_on_strong_stage() {
+    let mut session = third_stage_session();
+    let wave = session.board.as_mut().unwrap().invasion.as_mut().unwrap();
+    wave.alien = Some(turbofish_deluxe::alien::WeakSylvester::spawn_kind(
+        turbofish_deluxe::alien::SylvesterKind::Strong,
+        99,
+        100,
+        120,
+        1,
+        1,
+    ));
+    let modern = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    assert!(cli::decode_save(&serde_json::to_vec(&modern).unwrap()).is_ok());
+    let mut missing_wave_kind = modern.clone();
+    missing_wave_kind["session"]["board"]["invasion"]
+        .as_object_mut()
+        .unwrap()
+        .remove("kind");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing_wave_kind).unwrap()).is_err());
+    let mut missing_actor_kind = modern.clone();
+    missing_actor_kind["session"]["board"]["invasion"]["alien"]
+        .as_object_mut()
+        .unwrap()
+        .remove("kind");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing_actor_kind).unwrap()).is_err());
+    let mut wrong_actor_kind = modern;
+    wrong_actor_kind["session"]["board"]["invasion"]["alien"]["kind"] = serde_json::json!("Weak");
+    assert!(cli::decode_save(&serde_json::to_vec(&wrong_actor_kind).unwrap()).is_err());
 }
 
 #[test]

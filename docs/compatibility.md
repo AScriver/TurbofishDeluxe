@@ -12,15 +12,15 @@ The full product scope is [requirements](requirements.md). The installed game bi
 | Feeding/hunger/growth/death | First-level functional rules/tests; live feeding/growth observed | Installed-game thresholds, timing, starvation/tutorial/game-over to confirm |
 | Currency | Silver/gold production, expiry/collection/balance, aggregate claimed-value affordability; natural player/Stinky collection observed | PB09–PB12 support ordinary values, bottom thresholds and pet geometry/payment; broader modifiers/order remain pending |
 | First-tank purchases/eggs | Three earned eggs/hatch/advance, hold shortcut/rescue and active-board personal-best score observed. Terminal collecting-coin settlement has regression evidence only | Primary score/reward/settlement caller, full hatch presentation and broader profile score behavior pending |
-| Project persistence | Atomic format4 session; formats1–3 migrate before play. Stinky motion/RNG/score and exact Niko f64 flight reload exercised | Original-save compatibility and broader profile/highscore semantics not implemented |
+| Project persistence | Atomic format5 session; formats1–4 migrate before play. Stinky/Niko precise state reload exercised; new Oscar/variant fields validated | Original-save compatibility and broader profile/highscore semantics not implemented |
 | Window/input/pause | Real owned-window clicks, scaling, corrected projection observed | Retail UI layout, focus behavior and transitions pending |
 | Sound effects |65 effects decoded; initial event playback implemented | Audible output, exact event selection/rate/volume comparison pending |
 | Music | Not implemented | MO3 tracker order/loop semantics to recover from installed runtime |
-| Later Adventure stages |1-2 upgrades/combat/Niko integration passes85 tests and earned-input execution. Partial1-3 has Niko but no Oscar/strong enemy | Primary verification and full later-stage acceptance pending |
-| Additional fish | Oscar, Ultra, Gekko, Penta, Grubber, Breeder and special fish not implemented | Individual behaviors/animation/audio/progression pending |
-| Aliens/combat | Weak Sylvester warning/modal/chase/hits/diamond and finite body/laser/warp implemented; three natural fights/rewards exercised | PB13–PB17 support shot/input and variant constructor stats. Strong integration, other enemies/formations, particles and stage dispatch pending |
+| Later Adventure stages |1-2 earned-input execution accepted;1-3 Oscar/strong/weapon/Itchy earned path passed with final transition verification underway | Primary verification and full later-stage acceptance pending;1-4 still partial |
+| Additional fish | Oscar hunting/production/hunger/death implemented and under execution review; Ultra, Gekko, Penta, Grubber, Breeder and special fish absent | PB18–PB19 support partial Oscar behavior; individual retail/RNG/audio comparison pending |
+| Aliens/combat | Weak/strong Sylvester warning/chase/hits/diamond and finite body/laser/warp implemented; natural weak fights and current strong run exercised | PB13–PB17 support shot/input and variant constructor stats. Balrog/other enemies/formations, particles and stage dispatch pending |
 | Pets | Stinky ordinary ability and Niko cycle/pearl/input/credit/flight reload exercised | PB10–PB11 support Stinky, PB16 raw pearl owner marking; other22 pets, modifiers/select/transformations and retail timing pending |
-| Upgrades | Food quality/capacity gates/nutrition/held feeding implemented and tested | Weapon and tank-specific purchases, primary price/gate confirmation and full acceptance pending |
+| Upgrades | Food quality/capacity and1-3 weapon gates/damage/maximum held-fire implemented and tested; normal weapon purchase observed | Tank-specific purchases, primary price/gate confirmation and full acceptance pending |
 | Adventure ending/bonus/rewards | Not implemented | Normal completion, unlocks, shells and post-completion behavior pending |
 | Time Trial | Not implemented | Tank selection, time limits/scoring/pet egg behavior pending |
 | Challenge | Not implemented | Escalating waves/prices, victory/scoring/bonus flow pending |

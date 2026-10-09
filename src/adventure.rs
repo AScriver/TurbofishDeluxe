@@ -181,13 +181,14 @@ impl AdventureSession {
 
     /// Reject a decoded session whose board, profile, and screen disagree.
     pub fn validate(&self) -> Result<(), String> {
-        if self.progress.tank != 1 || !(1..=3).contains(&self.progress.level) {
+        if self.progress.tank != 1 || !(1..=4).contains(&self.progress.level) {
             return Err("unsupported Adventure progress".into());
         }
         let expected_pets: &[PetKind] = match self.progress.level {
             1 => &[],
             2 => &[PetKind::Stinky],
             3 => &[PetKind::Stinky, PetKind::Niko],
+            4 => &[PetKind::Stinky, PetKind::Niko, PetKind::Itchy],
             _ => unreachable!("progress checked above"),
         };
         if self.progress.unlocked_pets != expected_pets {
@@ -195,8 +196,9 @@ impl AdventureSession {
         }
         let mut recorded_stages = Vec::new();
         for result in &self.progress.later_stage_best_seconds {
-            if (result.tank, result.level) != (1, 2)
-                || self.progress.level < 3
+            if result.tank != 1
+                || !(2..=3).contains(&result.level)
+                || self.progress.level <= result.level
                 || recorded_stages.contains(&(result.tank, result.level))
             {
                 return Err("invalid or duplicate completed-stage time".into());
@@ -261,7 +263,8 @@ impl AdventureSession {
             }
             (AdventurePhase::Hatch { pet, .. }, None)
                 if (self.progress.level, *pet) == (2, PetKind::Stinky)
-                    || (self.progress.level, *pet) == (3, PetKind::Niko) =>
+                    || (self.progress.level, *pet) == (3, PetKind::Niko)
+                    || (self.progress.level, *pet) == (4, PetKind::Itchy) =>
             {
                 Ok(())
             }
@@ -506,6 +509,7 @@ impl AdventureSession {
             1 => AdventureState::new_adventure(self.next_seed),
             2 => AdventureState::new_second_stage(self.next_seed),
             3 => AdventureState::new_third_stage(self.next_seed),
+            4 => AdventureState::new_fourth_stage(self.next_seed),
             _ => unreachable!("supported progress validated at load"),
         };
         self.next_seed = board.transition_seed();
@@ -539,6 +543,7 @@ impl AdventureSession {
         let pet = match board.level {
             1 => PetKind::Stinky,
             2 => PetKind::Niko,
+            3 => PetKind::Itchy,
             _ => unreachable!("stage not yet completable"),
         };
         self.progress.level = board.level + 1;
@@ -751,6 +756,131 @@ mod tests {
         }
         session.apply_actions(&[Action::Continue]);
         session
+    }
+
+    fn third_stage_session() -> AdventureSession {
+        let mut session = second_stage_session();
+        let board = session.board.as_mut().unwrap();
+        board.upgrades.quality_unlocked = true;
+        board.balance = 1700;
+        session.apply_actions(&[
+            Action::BuyFoodQuality,
+            Action::BuyEgg,
+            Action::BuyEgg,
+            Action::BuyEgg,
+        ]);
+        for _ in 0..171 {
+            session.step(&[]);
+        }
+        session.apply_actions(&[Action::Continue]);
+        session
+    }
+
+    #[test]
+    fn third_stage_completion_settles_pearl_and_diamond_once_before_itchy() {
+        // Primary PB12 supports aggregate/raw-cash purchasing; W1 NK5/A13-12
+        // supply pearl value and third-egg reward. This fixture checks their
+        // transaction boundary, not an earned-play or retail-fidelity claim.
+        let mut session = third_stage_session();
+        let first_best = session.progress.first_stage_best_seconds;
+        let previous_results = session.progress.later_stage_best_seconds.clone();
+        session.ticks = 2000;
+        let board = session.board.as_mut().unwrap();
+        board.tick = 1000;
+        board.oscar_unlocked = true;
+        board.balance = 7550;
+        board.coins.push(Coin {
+            id: 90,
+            kind: CoinKind::Diamond,
+            collecting: true,
+            x: 200.0,
+            y: 200.0,
+            frame: 0,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+        });
+        let niko = board.niko.as_mut().unwrap();
+        niko.cycle = 1234;
+        let mut pearl = crate::niko::NikoPearl::spawn(91, niko.owner_id, 96, 251);
+        assert!(pearl.pick_up(niko.owner_id));
+        assert!(niko.mark_pearl_taken(niko.owner_id));
+        board.pearls.push(pearl);
+        let events = session.apply_actions(&[
+            Action::BuyOscar,
+            Action::BuyWeapon,
+            Action::BuyEgg,
+            Action::BuyEgg,
+            Action::BuyEgg,
+        ]);
+        let results = events
+            .iter()
+            .filter(|event| matches!(event, Event::StageResultRecorded { .. }))
+            .collect::<Vec<_>>();
+        assert_eq!(results.len(), 1);
+        assert!(matches!(results[0], Event::StageResultRecorded {
+            level: 3, seconds: 28, settled_coin_ids, settled_amount: 450,
+            final_balance: 0, personal_best_seconds: 28, ..
+        } if settled_coin_ids == &[90, 91]));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Event::CoinCredited { .. } | Event::PearlCredited { .. }
+        )));
+        assert_eq!(session.progress.first_stage_best_seconds, first_best);
+        assert_eq!(
+            &session.progress.later_stage_best_seconds[..previous_results.len()],
+            &previous_results
+        );
+        assert_eq!(session.progress.level, 4);
+        assert_eq!(
+            session.phase,
+            AdventurePhase::Hatch {
+                pet: PetKind::Itchy,
+                updates: 0
+            }
+        );
+        session.validate().unwrap();
+        for _ in 0..171 {
+            session.step(&[]);
+        }
+        session.step(&[Action::Continue]);
+        let board = session.board.as_ref().unwrap();
+        assert_eq!(
+            (board.level, board.tick, board.balance, board.egg_price),
+            (4, 0, 200, 3000)
+        );
+        assert_eq!(
+            board.pets,
+            vec![PetKind::Stinky, PetKind::Niko, PetKind::Itchy]
+        );
+        assert!(board.oscars.is_empty());
+        assert_eq!(board.weapon_strength, 2);
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn oscar_only_survival_defers_game_over_until_update_after_its_death() {
+        let mut session = third_stage_session();
+        let board = session.board.as_mut().unwrap();
+        board.fish.clear();
+        let mut oscar = crate::oscar::OscarState::spawn_bought(99, &mut |_| 0);
+        oscar.hunger = 1;
+        board.oscars.push(oscar);
+        let death = session.step(&[]);
+        assert!(
+            death
+                .iter()
+                .any(|event| matches!(event, Event::OscarDied { oscar_id: 99, .. }))
+        );
+        assert_eq!(session.phase, AdventurePhase::Playing);
+        assert_eq!(session.board.as_ref().unwrap().tick, 1);
+        let next = session.step(&[]);
+        assert!(
+            next.iter()
+                .any(|event| matches!(event, Event::GameOverStarted { .. }))
+        );
+        assert_eq!(session.phase, AdventurePhase::GameOver { updates: 0 });
+        assert_eq!(session.board.as_ref().unwrap().tick, 2);
+        session.validate().unwrap();
     }
 
     #[test]

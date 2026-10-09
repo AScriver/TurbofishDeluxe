@@ -1,19 +1,41 @@
-//! Ordinary weak Sylvester actor for Adventure 1-2.
+//! Ordinary Sylvester actor for Adventure 1-2 and 1-3.
 //!
 //! The board owns spawn timing, its random stream, ordered prey membership,
 //! coin creation and removal. This actor owns only its live motion, contact,
 //! shooting and animation state. Constructor and update rules are secondary
 //! source-derived from WinFish f919b3c (`Alien.cpp`). The installed PB05
-//! payload supports shot bounds, damage and hit lockout through a strongly
-//! mapped hit function; its constructor and update order remain unconfirmed.
+//! payload confirms the class and weak/strong HP and divisor (PB17), and
+//! shot damage via Board weapon (PB13); update order remains source-derived.
 //! No original-game run or retail parity measurement has been made.
 
 use serde::{Deserialize, Serialize};
 
 pub const WEAK_SYLVESTER_SIZE: i32 = 160;
-const SPEED_DIVISOR: f64 = 2.0;
-const STARTING_HEALTH: i16 = 50;
-const SHOT_DAMAGE: i16 = 6; // Weapon strength 2 × 3.
+const WEAK_SPEED_DIVISOR: f64 = 2.0;
+const WEAK_STARTING_HEALTH: i16 = 50;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SylvesterKind {
+    #[default]
+    Weak,
+    Strong,
+}
+
+impl SylvesterKind {
+    pub fn speed_divisor(self) -> f64 {
+        match self {
+            Self::Weak => WEAK_SPEED_DIVISOR,
+            Self::Strong => 1.6,
+        }
+    }
+
+    pub fn starting_health(self) -> i16 {
+        match self {
+            Self::Weak => WEAK_STARTING_HEALTH,
+            Self::Strong => 60,
+        }
+    }
+}
 
 /// A board-ordered snapshot of a possible alien target. The board decides
 /// whether a fish is eligible (including its protection and newborn delay).
@@ -51,6 +73,8 @@ pub enum ShotResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WeakSylvester {
     pub id: u64,
+    #[serde(default)] // Only pre-format-5 project saves omit the variant.
+    pub kind: SylvesterKind,
     pub x: f64,
     pub y: f64,
     pub widget_x: i32,
@@ -82,9 +106,28 @@ impl WeakSylvester {
         direction_draw: u32,
         movement_draw: u32,
     ) -> Self {
+        Self::spawn_kind(
+            SylvesterKind::Weak,
+            id,
+            widget_x,
+            widget_y,
+            direction_draw,
+            movement_draw,
+        )
+    }
+
+    pub fn spawn_kind(
+        kind: SylvesterKind,
+        id: u64,
+        widget_x: i32,
+        widget_y: i32,
+        direction_draw: u32,
+        movement_draw: u32,
+    ) -> Self {
         let left = direction_draw.is_multiple_of(2);
         Self {
             id,
+            kind,
             x: f64::from(widget_x),
             y: f64::from(widget_y),
             widget_x,
@@ -94,7 +137,7 @@ impl WeakSylvester {
             target_vx: 0.0,
             target_vy: 0.0,
             previous_vx: if left { -1.0 } else { 1.0 },
-            health: STARTING_HEALTH,
+            health: kind.starting_health(),
             spawn_ticks: 15,
             chase_ticks: 100,
             hit_ticks: 0,
@@ -145,8 +188,8 @@ impl WeakSylvester {
             self.wander(&mut next_random);
         }
 
-        self.x = self.x.clamp(-10.0, 490.0) + self.vx / SPEED_DIVISOR + emergence_dx;
-        self.y = self.y.clamp(85.0, 290.0) + self.vy / SPEED_DIVISOR;
+        self.x = self.x.clamp(-10.0, 490.0) + self.vx / self.kind.speed_divisor() + emergence_dx;
+        self.y = self.y.clamp(85.0, 290.0) + self.vy / self.kind.speed_divisor();
         self.hit_ticks = self.hit_ticks.saturating_sub(1);
         self.chase_ticks = self.chase_ticks.saturating_sub(1);
 
@@ -161,6 +204,10 @@ impl WeakSylvester {
     /// A single player laser attempt. The board owns shot effects and the
     /// exactly-once removal/diamond transaction returned on defeat.
     pub fn shot(&mut self, shot_x: i32, shot_y: i32) -> ShotResult {
+        self.shot_with_weapon(shot_x, shot_y, 2)
+    }
+
+    pub fn shot_with_weapon(&mut self, shot_x: i32, shot_y: i32, weapon: u8) -> ShotResult {
         let sx = f64::from(shot_x);
         let sy = f64::from(shot_y);
         if !self.alive
@@ -173,7 +220,7 @@ impl WeakSylvester {
             return ShotResult::Miss;
         }
 
-        self.health -= SHOT_DAMAGE;
+        self.health -= i16::from(weapon) * 3;
         self.apply_shot_push(sx, sy);
         if self.health <= 0 {
             self.alive = false;
@@ -214,7 +261,7 @@ impl WeakSylvester {
             || self.widget_x > 512
             || self.widget_y < 64
             || self.widget_y > 312
-            || self.health > STARTING_HEALTH
+            || self.health > self.kind.starting_health()
             || self.alive != (self.health > 0)
             || self.spawn_ticks > 15
             || self.chase_ticks > 100
@@ -329,6 +376,7 @@ impl WeakSylvester {
     }
 
     fn animate(&mut self) {
+        let speed_divisor = self.kind.speed_divisor();
         if self.previous_vx < 0.0 && self.vx > 0.0 {
             self.turn_ticks = -10;
         } else if self.previous_vx > 0.0 && self.vx < 0.0 {
@@ -350,23 +398,23 @@ impl WeakSylvester {
             self.swim_ticks += 1;
             match self.swim_ticks {
                 1..=6 => {
-                    self.x -= self.vx / SPEED_DIVISOR * 0.25;
-                    self.y -= self.vy / SPEED_DIVISOR * 0.25;
+                    self.x -= self.vx / speed_divisor * 0.25;
+                    self.y -= self.vy / speed_divisor * 0.25;
                     self.frame = self.swim_ticks / 2;
                 }
                 7..=10 => {
-                    self.x += self.vx / SPEED_DIVISOR * 0.75;
-                    self.y += self.vy / SPEED_DIVISOR * 0.75;
+                    self.x += self.vx / speed_divisor * 0.75;
+                    self.y += self.vy / speed_divisor * 0.75;
                     self.frame = self.swim_ticks / 2;
                 }
                 11..=39 => {
-                    self.x += self.vx / SPEED_DIVISOR * 0.5;
-                    self.y += self.vy / SPEED_DIVISOR * 0.5;
+                    self.x += self.vx / speed_divisor * 0.5;
+                    self.y += self.vy / speed_divisor * 0.5;
                     self.frame = 6;
                 }
                 40..=50 => {
-                    self.x += self.vx / SPEED_DIVISOR * 0.5;
-                    self.y += self.vy / SPEED_DIVISOR * 0.5;
+                    self.x += self.vx / speed_divisor * 0.5;
+                    self.y += self.vy / speed_divisor * 0.5;
                     self.frame = (50 - self.swim_ticks) / 2;
                 }
                 _ => {
@@ -382,26 +430,28 @@ impl WeakSylvester {
     }
 
     fn apply_shot_push(&mut self, sx: f64, sy: f64) {
+        let diagonal = self.kind.speed_divisor() * 2.5;
+        let cardinal = self.kind.speed_divisor() * 3.0;
         let left = sx < self.x + 60.0;
         let upper = sy < self.y + 60.0;
         let right = sx > self.x + 100.0;
         let lower = sy > self.y + 100.0;
         if left && upper {
-            (self.vx, self.vy) = (5.0, 5.0);
+            (self.vx, self.vy) = (diagonal, diagonal);
         } else if left && sy < self.y + 100.0 {
-            self.vx = 6.0;
+            self.vx = cardinal;
         } else if left {
-            (self.vx, self.vy) = (5.0, -5.0);
+            (self.vx, self.vy) = (diagonal, -diagonal);
         } else if sx < self.x + 100.0 && upper {
-            self.vy = 6.0;
+            self.vy = cardinal;
         } else if right && lower {
-            (self.vx, self.vy) = (-5.0, -5.0);
+            (self.vx, self.vy) = (-diagonal, -diagonal);
         } else if right && upper {
-            (self.vx, self.vy) = (-5.0, 5.0);
+            (self.vx, self.vy) = (-diagonal, diagonal);
         } else if right {
-            self.vx = -6.0;
+            self.vx = -cardinal;
         } else if lower {
-            self.vy = -6.0;
+            self.vy = -cardinal;
         }
     }
 }
@@ -526,6 +576,57 @@ mod tests {
             actor.shot(actor.widget_x + 80, actor.widget_y + 80),
             ShotResult::Miss
         );
+    }
+
+    #[test]
+    fn strong_constructor_and_board_weapon_change_lethal_hit_count() {
+        // PB17 confirms strong HP60/divisor1.6; PB13 confirms Board weapon×3.
+        let mut strong = WeakSylvester::spawn_kind(SylvesterKind::Strong, 8, 100, 120, 1, 1);
+        assert_eq!(strong.health, 60);
+        assert_eq!(strong.kind.speed_divisor(), 1.6);
+        for hit in 1..=9 {
+            strong.hit_ticks = 0;
+            assert_eq!(
+                strong.shot_with_weapon(120, 140, 2),
+                ShotResult::Hit {
+                    health: 60 - hit * 6
+                }
+            );
+        }
+        strong.hit_ticks = 0;
+        assert!(matches!(
+            strong.shot_with_weapon(120, 140, 2),
+            ShotResult::Defeated { .. }
+        ));
+
+        let mut upgraded = WeakSylvester::spawn_kind(SylvesterKind::Strong, 9, 100, 120, 1, 1);
+        for hit in 1..=6 {
+            upgraded.hit_ticks = 0;
+            assert_eq!(
+                upgraded.shot_with_weapon(120, 140, 3),
+                ShotResult::Hit {
+                    health: 60 - hit * 9
+                }
+            );
+        }
+        upgraded.hit_ticks = 0;
+        assert!(matches!(
+            upgraded.shot_with_weapon(120, 140, 3),
+            ShotResult::Defeated { .. }
+        ));
+    }
+
+    #[test]
+    fn strong_shot_push_scales_with_confirmed_speed_divisor() {
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Strong, 8, 100, 120, 1, 1);
+        assert_eq!(
+            actor.shot_with_weapon(101, 121, 2),
+            ShotResult::Hit { health: 54 }
+        );
+        assert_eq!((actor.vx, actor.vy), (4.0, 4.0));
+        let mut side = WeakSylvester::spawn_kind(SylvesterKind::Strong, 9, 100, 120, 1, 1);
+        side.shot_with_weapon(101, 180, 2);
+        assert!((side.vx - 4.8).abs() < 1e-9);
     }
 
     #[test]
