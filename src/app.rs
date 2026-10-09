@@ -72,6 +72,12 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_PREGO",
     "IMAGE_ZORF",
     "IMAGE_SCL_ZORF",
+    "IMAGE_CLYDE",
+    "IMAGE_SCL_CLYDE",
+    "IMAGE_VERT",
+    "IMAGE_SCL_VERT",
+    "IMAGE_STARCATCHER",
+    "IMAGE_SCL_STARCATCHER",
     "IMAGE_BONUSBUCKET",
     "IMAGE_SHELLS",
     "IMAGE_MONEYBAG",
@@ -107,6 +113,19 @@ pub struct Presentation {
     images: HashMap<String, Texture2D>,
     sounds: HashMap<String, Sound>,
     fonts: HashMap<String, RenderedFont>,
+}
+
+// W1 PetsScreen places pet IDs 0..4 in the first column and 5..9 in the
+// second. Use this for both drawing and hit testing.
+fn pet_card_rect(index: usize) -> Rect {
+    let column = index / 5;
+    let row = index % 5;
+    Rect::new(
+        25.0 + column as f32 * 94.0,
+        41.0 + row as f32 * 83.0,
+        90.0,
+        83.0,
+    )
 }
 
 struct RenderedFont {
@@ -263,10 +282,11 @@ impl Presentation {
                 | Event::FoodQualityBought { .. }
                 | Event::FoodQuantityBought { .. }
                 | Event::PotionBought { .. }
+                | Event::StarcatcherAteStar { .. }
                 | Event::WeaponBought { .. } => "SOUND_BUY",
-                Event::OscarBought { .. } => "SOUND_GROW",
+                Event::OscarBought { .. } | Event::StarcatcherBought { .. } => "SOUND_GROW",
                 Event::OscarAteGuppy { .. } => "SOUND_CHOMP",
-                Event::OscarDied { .. } => "SOUND_DIE",
+                Event::OscarDied { .. } | Event::StarcatcherDied { .. } => "SOUND_DIE",
                 Event::FishPetHit { sound: true, .. } => "SOUND_PUNCH",
                 Event::PregoBirth { .. } => "SOUND_BABY",
                 Event::HatchOpened { .. } => "SOUND_HATCH",
@@ -321,6 +341,34 @@ impl Presentation {
             1.0,
             1.0,
         );
+        for penta in &state.starcatchers {
+            let source = Rect::new(
+                f32::from(penta.sprite_frame()) * 80.0,
+                f32::from(penta.sprite_row()) * 80.0,
+                80.0,
+                80.0,
+            );
+            self.sprite(
+                "IMAGE_STARCATCHER",
+                penta.widget_x as f32,
+                penta.widget_y as f32,
+                Some(source),
+                false,
+                1.0,
+                1.0,
+            );
+            if penta.hunger_overlay_alpha() > 0.0 {
+                self.sprite(
+                    "IMAGE_STARCATCHER",
+                    penta.widget_x as f32,
+                    penta.widget_y as f32,
+                    Some(Rect::new(source.x, 80.0, 80.0, 80.0)),
+                    false,
+                    1.0,
+                    penta.hunger_overlay_alpha(),
+                );
+            }
+        }
         for food in &state.food {
             self.sprite(
                 "IMAGE_FOOD",
@@ -482,6 +530,17 @@ impl Presentation {
                 corpse.opacity,
             );
         }
+        for corpse in &state.dead_starcatchers {
+            self.sprite(
+                "IMAGE_STARCATCHER",
+                corpse.widget_x as f32,
+                corpse.widget_y as f32,
+                Some(Rect::new(f32::from(corpse.frame) * 80.0, 160.0, 80.0, 80.0)),
+                false,
+                1.0,
+                corpse.opacity,
+            );
+        }
         if let Some(wave) = &state.invasion {
             if let Some(warp) = &wave.warp {
                 // WinFish Warp::Draw computes 17 - counter/2, which can
@@ -608,6 +667,17 @@ impl Presentation {
                 1.0,
             );
         }
+        if let Some(clyde) = &state.clyde {
+            self.sprite(
+                "IMAGE_CLYDE",
+                clyde.widget_x as f32,
+                clyde.widget_y as f32,
+                Some(Rect::new(f32::from(clyde.frame) * 80.0, 0.0, 80.0, 80.0)),
+                false,
+                1.0,
+                1.0,
+            );
+        }
         if let Some(niko) = &state.niko {
             let (column, row) = niko.frame();
             self.sprite(
@@ -642,7 +712,7 @@ impl Presentation {
             let row = match coin.kind {
                 CoinKind::Silver => 0.0,
                 CoinKind::Gold => 1.0,
-                CoinKind::Diamond => 3.0,
+                CoinKind::Diamond | CoinKind::DiamondPenta => 3.0,
                 CoinKind::Star => 2.0,
             };
             let alpha = if coin.fade_ticks > 0 {
@@ -760,6 +830,24 @@ impl Presentation {
                 58.0,
                 Color::from_rgba(110, 250, 110, 255),
             );
+        }
+        if state.starcatcher_unlocked {
+            self.sprite("IMAGE_MENUBTNU", 290.0, 3.0, None, false, 1.0, 1.0);
+            self.sprite(
+                "IMAGE_SCL_STARCATCHER",
+                298.0,
+                5.0,
+                Some(Rect::new(
+                    ((state.tick / 2) % 10) as f32 * 40.0,
+                    0.0,
+                    40.0,
+                    40.0,
+                )),
+                false,
+                1.0,
+                1.0,
+            );
+            self.fonts["Pix118"].text("750", 304.0, 58.0, Color::from_rgba(110, 250, 110, 255));
         }
         if state.weapon_unlocked {
             self.sprite("IMAGE_MENUBTNU", 363.0, 3.0, None, false, 1.0, 1.0);
@@ -1166,6 +1254,15 @@ impl Presentation {
                 PetKind::Itchy => ("IMAGE_ITCHY", 90.0, updates % 20 / 2),
                 PetKind::Prego => ("IMAGE_PREGO", 90.0, updates % 20 / 2),
                 PetKind::Zorf => ("IMAGE_ZORF", 90.0, updates % 20 / 2),
+                PetKind::Clyde => ("IMAGE_CLYDE", 100.0, updates % 40 / 4),
+                PetKind::Vert => {
+                    let phase = updates % 20;
+                    (
+                        "IMAGE_VERT",
+                        90.0,
+                        if phase > 9 { 19 - phase } else { phase },
+                    )
+                }
             };
             self.sprite(
                 id,
@@ -1184,6 +1281,8 @@ impl Presentation {
                     PetKind::Itchy => "ITCHY the Swordfish",
                     PetKind::Prego => "PREGO the Momma Fish",
                     PetKind::Zorf => "ZORF the Sea Horse",
+                    PetKind::Clyde => "CLYDE the Jellyfish",
+                    PetKind::Vert => "VERT the Skeleton",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -1213,6 +1312,16 @@ impl Presentation {
                     "baby guppy every so often.",
                 ],
                 PetKind::Zorf => ["ZORF gives you a hand in", "keeping your fish fed.", ""],
+                PetKind::Clyde => [
+                    "CLYDE drifts slowly through",
+                    "your tank, collecting any",
+                    "coins it passes by.",
+                ],
+                PetKind::Vert => [
+                    "VERT drops gold coins just like",
+                    "a large guppy, but doesn't need",
+                    "fish food to survive.",
+                ],
             };
             for (index, line) in description.iter().enumerate() {
                 self.centered_text(
@@ -1263,9 +1372,8 @@ impl Presentation {
             Color::from_rgba(255, 200, 0, 255),
         );
         let mut hovered = None;
-        for (index, pet) in session.progress.unlocked_pets.iter().take(5).enumerate() {
-            // The first five W1 PetsScreen buttons occupy one 90x83 column.
-            let card = Rect::new(25.0, 41.0 + index as f32 * 83.0, 90.0, 83.0);
+        for (index, pet) in session.progress.unlocked_pets.iter().take(7).enumerate() {
+            let card = pet_card_rect(index);
             if card.contains(pointer) {
                 hovered = Some(*pet);
             }
@@ -1291,11 +1399,15 @@ impl Presentation {
                 PetKind::Itchy => "IMAGE_SCL_ITCHY",
                 PetKind::Prego => "IMAGE_SCL_PREGO",
                 PetKind::Zorf => "IMAGE_SCL_ZORF",
+                PetKind::Clyde => "IMAGE_SCL_CLYDE",
+                PetKind::Vert => "IMAGE_SCL_VERT",
             };
             let image = &self.images[icon];
-            let column = if *pet == PetKind::Niko {
+            let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
                 let phase = session.ticks % 18;
                 if phase > 9 { 18 - phase } else { phase }
+            } else if *pet == PetKind::Clyde {
+                session.ticks / 4 % 10
             } else {
                 session.ticks / 2 % 10
             };
@@ -1372,10 +1484,32 @@ impl Presentation {
                     ["ZORF gives you a hand in", "keeping your fish fed.", ""],
                     90.0,
                 ),
+                PetKind::Clyde => (
+                    "IMAGE_CLYDE",
+                    "CLYDE the Jellyfish",
+                    [
+                        "CLYDE drifts slowly through",
+                        "your tank, collecting any",
+                        "coins it passes by.",
+                    ],
+                    90.0,
+                ),
+                PetKind::Vert => (
+                    "IMAGE_VERT",
+                    "VERT the Skeleton",
+                    [
+                        "VERT drops gold coins just like",
+                        "a large guppy, but doesn't need",
+                        "fish food to survive.",
+                    ],
+                    90.0,
+                ),
             };
-            let column = if pet == PetKind::Niko {
+            let column = if matches!(pet, PetKind::Niko | PetKind::Vert) {
                 let phase = session.ticks % 18;
                 if phase > 9 { 18 - phase } else { phase }
+            } else if pet == PetKind::Clyde {
+                session.ticks / 4 % 10
             } else {
                 session.ticks % 20 / 2
             };
@@ -1796,12 +1930,9 @@ pub async fn run(
                             .progress
                             .unlocked_pets
                             .iter()
-                            .take(5)
+                            .take(7)
                             .enumerate()
-                            .find(|(index, _)| {
-                                Rect::new(25.0, 41.0 + *index as f32 * 83.0, 90.0, 83.0)
-                                    .contains(pointer)
-                            })
+                            .find(|(index, _)| pet_card_rect(*index).contains(pointer))
                             .map(|(_, pet)| *pet);
                         if let Some(pet) = pet_at_pointer {
                             Action::TogglePet { pet }
@@ -1903,6 +2034,15 @@ pub async fn run(
                             && Rect::new(217.0, 3.0, 58.0, 60.0).contains(pointer) =>
                     {
                         Action::BuyOscar
+                    }
+                    AdventurePhase::Playing
+                        if session
+                            .board
+                            .as_ref()
+                            .is_some_and(|board| board.starcatcher_unlocked)
+                            && Rect::new(290.0, 3.0, 58.0, 60.0).contains(pointer) =>
+                    {
+                        Action::BuyStarcatcher
                     }
                     AdventurePhase::Playing
                         if session

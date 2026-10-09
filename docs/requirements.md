@@ -8,6 +8,8 @@ Reimplement the full Insaniquarium Deluxe runtime faithfully in Rust. Use Turbof
 
 Game logic and simulation execute in Rust. General-purpose graphics, audio, and platform libraries are acceptable. The finished program must run independently without launching or embedding the original executable. The original is a reference for analysis and comparison. Players supply their own legitimate game installation; preserve it read-only and use separate project saves.
 
+The user's 2026-10-08 clarification removes legacy-save compatibility from scope. Support the current project-save format; do not add migrations or historical-state reconstruction for future milestones. Preserve existing implementation, commits and earned test saves. Any explicitly prepared development fixture must retain its source and prove exactly which neutral schema fields changed; it is not evidence of product save compatibility. Original-save import is not required.
+
 The MW2/Skate 3/Minecraft Rust mashup is inspiration for recovering and rebuilding a runtime, not a requirement to embed another game or copy its engine architecture.
 
 ## Establish the reference

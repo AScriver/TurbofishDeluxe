@@ -227,7 +227,7 @@ impl AdventureSession {
     pub fn validate(&self) -> Result<(), String> {
         if !matches!(
             (self.progress.tank, self.progress.level),
-            (1, 1..=6) | (2, 1)
+            (1, 1..=6) | (2, 1..=3)
         ) || self.progress.shell_balance > MAX_SHELL_BALANCE
         {
             return Err("unsupported Adventure progress".into());
@@ -250,6 +250,23 @@ impl AdventureSession {
                 PetKind::Prego,
                 PetKind::Zorf,
             ],
+            (2, 2) => &[
+                PetKind::Stinky,
+                PetKind::Niko,
+                PetKind::Itchy,
+                PetKind::Prego,
+                PetKind::Zorf,
+                PetKind::Clyde,
+            ],
+            (2, 3) => &[
+                PetKind::Stinky,
+                PetKind::Niko,
+                PetKind::Itchy,
+                PetKind::Prego,
+                PetKind::Zorf,
+                PetKind::Clyde,
+                PetKind::Vert,
+            ],
             _ => unreachable!("progress checked above"),
         };
         if self.progress.unlocked_pets != expected_pets {
@@ -269,8 +286,7 @@ impl AdventureSession {
         }
         let mut recorded_stages = Vec::new();
         for result in &self.progress.later_stage_best_seconds {
-            if result.tank != 1
-                || !(2..=5).contains(&result.level)
+            if !matches!((result.tank, result.level), (1, 2..=5) | (2, 1..=2))
                 || (self.progress.tank, self.progress.level) <= (result.tank, result.level)
                 || recorded_stages.contains(&(result.tank, result.level))
             {
@@ -335,9 +351,14 @@ impl AdventureSession {
                 board.validate()
             }
             (AdventurePhase::Hatch { pet, .. }, None)
-                if (self.progress.level, *pet) == (2, PetKind::Stinky)
-                    || (self.progress.level, *pet) == (3, PetKind::Niko)
-                    || (self.progress.level, *pet) == (4, PetKind::Itchy) =>
+                if matches!(
+                    (self.progress.tank, self.progress.level, *pet),
+                    (1, 2, PetKind::Stinky)
+                        | (1, 3, PetKind::Niko)
+                        | (1, 4, PetKind::Itchy)
+                        | (2, 2, PetKind::Clyde)
+                        | (2, 3, PetKind::Vert)
+                ) =>
             {
                 Ok(())
             }
@@ -347,7 +368,7 @@ impl AdventureSession {
                     ..
                 },
                 None,
-            ) if self.progress.level == 5 => Ok(()),
+            ) if (self.progress.tank, self.progress.level) == (1, 5) => Ok(()),
             (
                 AdventurePhase::Hatch {
                     pet: PetKind::Zorf, ..
@@ -591,7 +612,7 @@ impl AdventureSession {
                             });
                             self.phase = AdventurePhase::PetSelection { selected };
                         }
-                        Action::Continue => {
+                        Action::Continue if (self.progress.tank, self.progress.level) != (2, 3) => {
                             self.progress.selected_pets = selected.clone();
                             if selected.len() < self.progress.selection_capacity() {
                                 events.push(Event::PetSelectionConfirmation {
@@ -624,7 +645,9 @@ impl AdventureSession {
                         action: action.clone(),
                     });
                     match action {
-                        Action::ConfirmPetSelection { accept: true } => {
+                        Action::ConfirmPetSelection { accept: true }
+                            if (self.progress.tank, self.progress.level) != (2, 3) =>
+                        {
                             events.push(Event::PetSelectionAccepted {
                                 tick: self.ticks,
                                 selected,
@@ -818,6 +841,10 @@ impl AdventureSession {
                 AdventureState::new_tank2_first_stage(self.next_seed, &self.progress.selected_pets)
                     .expect("session selection is validated before starting a board")
             }
+            (2, 2) => {
+                AdventureState::new_tank2_second_stage(self.next_seed, &self.progress.selected_pets)
+                    .expect("session selection is validated before starting a board")
+            }
             _ => unreachable!("supported progress validated at load"),
         };
         self.next_seed = board.transition_seed();
@@ -854,6 +881,8 @@ impl AdventureSession {
             (1, 3) => PetKind::Itchy,
             (1, 4) => PetKind::Prego,
             (1, 5) => PetKind::Zorf,
+            (2, 1) => PetKind::Clyde,
+            (2, 2) => PetKind::Vert,
             _ => unreachable!("stage not yet completable"),
         };
         self.progress.level = board.level + 1;
@@ -935,6 +964,128 @@ mod tests {
         };
         session.ticks = 1000;
         session
+    }
+
+    #[test]
+    fn tank_two_rewards_once_and_starts_clyde_before_gating_next_unimplemented_stage() {
+        let mut session = bonus_session();
+        session.progress.tank = 2;
+        session.progress.level = 1;
+        session.progress.selected_pets = vec![PetKind::Niko, PetKind::Itchy, PetKind::Zorf];
+        session.board = Some(
+            AdventureState::new_tank2_first_stage(42, &session.progress.selected_pets).unwrap(),
+        );
+        session.phase = AdventurePhase::Playing;
+        let board = session.board.as_mut().unwrap();
+        board.eggs = 2;
+        board.balance = 750;
+        board.upgrades.quality_unlocked = true;
+        board.upgrades.quantity_unlocked = true;
+        board.potion_unlocked = true;
+        board.egg_unlocked = true;
+        session.validate().unwrap();
+        let events = session.apply_actions(&[Action::BuyEgg, Action::BuyEgg]);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::PetUnlocked {
+                        pet: PetKind::Clyde,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!((session.progress.tank, session.progress.level), (2, 2));
+        assert!(session.board.is_none());
+        session.validate().unwrap();
+        let mut wrong_reward = session.clone();
+        wrong_reward.phase = AdventurePhase::Hatch {
+            pet: PetKind::Niko,
+            updates: 0,
+        };
+        assert!(wrong_reward.validate().is_err());
+        session.phase = AdventurePhase::Hatch {
+            pet: PetKind::Clyde,
+            updates: 171,
+        };
+        session.apply_actions(&[Action::Continue]);
+        session.apply_actions(&[
+            Action::TogglePet { pet: PetKind::Niko },
+            Action::TogglePet {
+                pet: PetKind::Itchy,
+            },
+            Action::TogglePet {
+                pet: PetKind::Clyde,
+            },
+            Action::Continue,
+        ]);
+        let board = session.board.as_ref().unwrap();
+        assert_eq!(
+            (
+                board.tank,
+                board.level,
+                board.tick,
+                board.balance,
+                board.egg_price
+            ),
+            (2, 2, 0, 200, 3000)
+        );
+        assert_eq!(
+            board.pets,
+            vec![PetKind::Niko, PetKind::Itchy, PetKind::Clyde]
+        );
+        assert!(board.clyde.is_some());
+        assert_eq!(board.fish.len(), 2);
+        assert!(board.starcatchers.is_empty());
+        session.validate().unwrap();
+
+        // Isolate the earned third-egg transaction; live earning is checked
+        // separately by identified window playtests, not by this fixture.
+        let board = session.board.as_mut().unwrap();
+        board.eggs = 2;
+        board.balance = 3000;
+        board.upgrades.quality_unlocked = true;
+        board.upgrades.quantity_unlocked = true;
+        board.potion_unlocked = true;
+        board.starcatcher_unlocked = true;
+        board.weapon_unlocked = true;
+        board.egg_unlocked = true;
+        let events = session.apply_actions(&[Action::BuyEgg, Action::BuyEgg]);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::PetUnlocked {
+                        pet: PetKind::Vert,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!((session.progress.tank, session.progress.level), (2, 3));
+        session.validate().unwrap();
+        session.phase = AdventurePhase::Hatch {
+            pet: PetKind::Vert,
+            updates: 171,
+        };
+        session.apply_actions(&[Action::Continue, Action::TogglePet { pet: PetKind::Vert }]);
+        let before = serde_json::to_value(&session).unwrap();
+        let events = session.apply_actions(&[Action::Continue]);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Rejected {
+                reason: Rejection::Locked,
+                ..
+            }
+        )));
+        assert_eq!(serde_json::to_value(&session).unwrap(), before);
+        assert!(session.board.is_none());
+        session.validate().unwrap();
     }
 
     #[test]
@@ -1281,6 +1432,7 @@ mod tests {
             frame: 0,
             bottom_ticks: 0,
             fade_ticks: 0,
+            penta_rising: false,
         })
         .collect();
         let events = session.apply_actions(&[Action::BuyEgg, Action::BuyEgg]);
@@ -1327,6 +1479,7 @@ mod tests {
             collecting: true,
             bottom_ticks: 0,
             fade_ticks: 0,
+            penta_rising: false,
         });
         let events = session.apply_actions(&[Action::BuyEgg]);
         assert!(events.iter().any(|event| matches!(
@@ -1439,6 +1592,7 @@ mod tests {
             frame: 0,
             bottom_ticks: 0,
             fade_ticks: 0,
+            penta_rising: false,
         });
         let niko = board.niko.as_mut().unwrap();
         niko.cycle = 1234;
@@ -1503,15 +1657,18 @@ mod tests {
         let mut session = third_stage_session();
         let board = session.board.as_mut().unwrap();
         board.fish.clear();
-        let mut oscar = crate::oscar::OscarState::spawn_bought(99, &mut |_| 0);
+        board.balance = 1000;
+        board.upgrades.quality_unlocked = true;
+        board.upgrades.quantity_unlocked = true;
+        board.oscar_unlocked = true;
+        board.apply(Action::BuyOscar);
+        let oscar = board.oscars.first_mut().unwrap();
+        let oscar_id = oscar.id;
         oscar.hunger = 1;
-        board.oscars.push(oscar);
         let death = session.step(&[]);
-        assert!(
-            death
-                .iter()
-                .any(|event| matches!(event, Event::OscarDied { oscar_id: 99, .. }))
-        );
+        assert!(death.iter().any(
+            |event| matches!(event, Event::OscarDied { oscar_id: id, .. } if *id == oscar_id)
+        ));
         assert_eq!(session.phase, AdventurePhase::Playing);
         assert_eq!(session.board.as_ref().unwrap().tick, 1);
         let next = session.step(&[]);

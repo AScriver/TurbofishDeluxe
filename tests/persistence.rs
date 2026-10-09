@@ -125,7 +125,7 @@ fn format_six_migrates_fifth_board_without_losing_earned_state() {
 }
 
 #[test]
-fn format_seven_requires_new_board_food_and_profile_fields() {
+fn current_format_requires_board_food_and_profile_fields() {
     let mut session = AdventureSession::new(42);
     session.apply_actions(&[Action::Click { x: 300.0, y: 200.0 }]);
     let modern = serde_json::to_value(cli::ProjectSave {
@@ -133,7 +133,14 @@ fn format_seven_requires_new_board_food_and_profile_fields() {
         session,
     })
     .unwrap();
-    for field in ["potion_unlocked", "potion_armed"] {
+    for field in [
+        "potion_unlocked",
+        "potion_armed",
+        "starcatcher_unlocked",
+        "starcatchers",
+        "dead_starcatchers",
+        "clyde",
+    ] {
         let mut incomplete = modern.clone();
         incomplete["session"]["board"]
             .as_object_mut()
@@ -162,6 +169,91 @@ fn format_seven_requires_new_board_food_and_profile_fields() {
         .remove("shell_balance");
     assert!(cli::decode_save(&serde_json::to_vec(&incomplete).unwrap()).is_err());
     assert!(cli::decode_save(&serde_json::to_vec(&modern).unwrap()).is_ok());
+}
+
+#[test]
+fn current_actor_corpse_and_diamond_phase_reload_preserves_every_next_update() {
+    use turbofish_deluxe::sim::{Coin, CoinKind};
+    let mut session = AdventureSession::new(42);
+    session.progress.tank = 2;
+    session.progress.level = 2;
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Clyde,
+    ];
+    session.progress.selected_pets = vec![PetKind::Niko, PetKind::Clyde];
+    session.board =
+        Some(AdventureState::new_tank2_second_stage(42, &session.progress.selected_pets).unwrap());
+    let board = session.board.as_mut().unwrap();
+    board.balance = 2000;
+    board.upgrades.quality_unlocked = true;
+    board.upgrades.quantity_unlocked = true;
+    board.potion_unlocked = true;
+    board.starcatcher_unlocked = true;
+    session.apply_actions(&[Action::BuyStarcatcher, Action::BuyStarcatcher]);
+    session.board.as_mut().unwrap().starcatchers[0].hunger = 1;
+    session.step(&[]);
+    let board = session.board.as_ref().unwrap();
+    assert_eq!(
+        (board.starcatchers.len(), board.dead_starcatchers.len()),
+        (1, 1)
+    );
+    session.validate().unwrap();
+    let mut value = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    let coin_id = value["session"]["board"]["next_id"].as_u64().unwrap();
+    value["session"]["board"]["next_id"] = (coin_id + 1).into();
+    value["session"]["board"]["coins"] = serde_json::to_value(vec![Coin {
+        id: coin_id,
+        x: 300.0,
+        y: 119.5,
+        kind: CoinKind::DiamondPenta,
+        frame: 0,
+        collecting: false,
+        bottom_ticks: 0,
+        fade_ticks: 0,
+        penta_rising: true,
+    }])
+    .unwrap();
+    let bytes = serde_json::to_vec(&value).unwrap();
+    let mut uninterrupted = cli::decode_save(&bytes).unwrap();
+    let snapshot = serde_json::to_vec(&cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: uninterrupted.clone(),
+    })
+    .unwrap();
+    let mut resumed = cli::decode_save(&snapshot).unwrap();
+    for _ in 0..32 {
+        assert_eq!(uninterrupted.step(&[]), resumed.step(&[]));
+        assert_eq!(
+            serde_json::to_value(&uninterrupted).unwrap(),
+            serde_json::to_value(&resumed).unwrap()
+        );
+    }
+    assert!(
+        !resumed
+            .board
+            .as_ref()
+            .unwrap()
+            .coins
+            .iter()
+            .find(|coin| coin.id == coin_id)
+            .unwrap()
+            .penta_rising
+    );
+    let mut missing_phase = value;
+    missing_phase["session"]["board"]["coins"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("penta_rising");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing_phase).unwrap()).is_err());
 }
 
 #[test]
@@ -557,11 +649,13 @@ fn modern_requires_variant_and_rejects_weak_actor_on_strong_stage() {
         1,
         1,
     ));
-    let modern = serde_json::to_value(cli::ProjectSave {
+    let mut modern = serde_json::to_value(cli::ProjectSave {
         format_version: cli::SAVE_FORMAT_VERSION,
         session,
     })
     .unwrap();
+    // Reserve the synthetic actor's ID in this current-format fixture.
+    modern["session"]["board"]["next_id"] = 100.into();
     assert!(cli::decode_save(&serde_json::to_vec(&modern).unwrap()).is_ok());
     let mut missing_wave_kind = modern.clone();
     missing_wave_kind["session"]["board"]["invasion"]

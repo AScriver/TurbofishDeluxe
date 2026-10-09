@@ -95,7 +95,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 7;
+pub const SAVE_FORMAT_VERSION: u32 = 8;
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -202,7 +202,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=7) => {
+        Some(version @ 5..=8) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -214,7 +214,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                             || ["pet_capacity", "selected_pets"]
                                 .iter()
                                 .all(|field| progress.contains_key(*field)))
-                        && (version != 7 || progress.contains_key("shell_balance"))
+                        && (version < 7 || progress.contains_key("shell_balance"))
                 });
             let incomplete_board = value
                 .pointer("/session/board")
@@ -238,17 +238,26 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                             && ["fish_pets", "punch_sound_cooldown"]
                                 .iter()
                                 .any(|field| !board.contains_key(*field)))
-                        || (version == 7
+                        || (version >= 7
                             && ["potion_unlocked", "potion_armed"]
                                 .iter()
                                 .any(|field| !board.contains_key(*field)))
+                        || (version >= 8
+                            && [
+                                "starcatcher_unlocked",
+                                "starcatchers",
+                                "dead_starcatchers",
+                                "clyde",
+                            ]
+                            .iter()
+                            .any(|field| !board.contains_key(*field)))
                         || board
                             .get("food")
                             .and_then(serde_json::Value::as_array)
                             .is_some_and(|food| {
                                 food.iter().any(|pellet| {
                                     pellet.get("quality").is_none()
-                                        || (version == 7
+                                        || (version >= 7
                                             && [
                                                 "direction",
                                                 "vx",
@@ -282,7 +291,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                             .and_then(serde_json::Value::as_object)
                                             .is_some_and(|body| !body.contains_key("kind")))
                             })
-                        || (version == 7
+                        || (version >= 7
                             && board
                                 .get("niko")
                                 .and_then(serde_json::Value::as_object)
@@ -296,7 +305,8 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                 let label = match version {
                     5 => "five",
                     6 => "six",
-                    _ => "seven",
+                    7 => "seven",
+                    _ => "eight",
                 };
                 return Err(format!(
                     "Incomplete format-{label} save; required state fields are missing"
