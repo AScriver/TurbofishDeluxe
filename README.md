@@ -4,7 +4,7 @@ An intended standalone Rust reimplementation of Insaniquarium Deluxe, targeting 
 
 The workflow is installed. Normal-speed Rust runs cover earned1-1 through2-5 completion, feeding/growth/currency, Stinky/Niko/Oscar/Itchy/Prego/Zorf/Clyde/Starcatcher/Vert/Rufus/Meryl, weak/strong/Balrog/Gus/Destructor combat and missiles, upgrades, Wadsworth hatch/ten-pet selection, both shell bonuses/results, Potion→Star and save/reload. A separate controlled run exercises the finale's paired aliens. Fish facing was corrected and visually checked. Full gameplay fidelity remains unverified. Installed binaries are authoritative and WinFish is secondary. See [STATUS.md](STATUS.md) for evidence and gaps.
 
-The complete runtime goal remains in [requirements](docs/requirements.md). The [coverage checklist](docs/compatibility.md) records missing systems. [Tank3-3](docs/adventure-3-3.md) passed316checks and [native earning/Gumbo/hazard/reload acceptance](docs/playtests/2026-10-09-adventure-3-3-psychosquid-gumbo-01.md). Its bomb-glint blending defect is recorded for a separate correction/retest; audio listening and retail comparison remain pending. [Tank3-4](docs/adventure-3-4.md) is next.
+The complete runtime goal remains in [requirements](docs/requirements.md). The [coverage checklist](docs/compatibility.md) records missing systems. [Tank3-3](docs/adventure-3-3.md) passed316checks, [earned Gumbo/hazard/reload acceptance](docs/playtests/2026-10-09-adventure-3-3-psychosquid-gumbo-01.md) and the [additive-glint correction/native retest](docs/playtests/2026-10-09-adventure-3-3-additive-render-02.md). Audio listening and retail comparison remain pending. [Tank3-4](docs/adventure-3-4.md) is next.
 
 ## Start here
 

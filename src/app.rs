@@ -12,6 +12,7 @@ use crate::{
     oscar::OscarPose,
     sim::{Action, AdventureState, CoinKind, Event, FishPose, FishSize, PetKind, TICK_MS},
 };
+use macroquad::miniquad::{BlendFactor, BlendState, BlendValue, Equation};
 use macroquad::prelude::*;
 use std::{
     collections::HashMap,
@@ -140,10 +141,33 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_ROAR3",
 ];
 
+const ADDITIVE_VERTEX: &str = r#"#version 100
+attribute vec3 position;
+attribute vec2 texcoord;
+attribute vec4 color0;
+varying lowp vec2 uv;
+varying lowp vec4 tint;
+uniform mat4 Model;
+uniform mat4 Projection;
+void main() {
+    gl_Position = Projection * Model * vec4(position, 1.0);
+    uv = texcoord;
+    tint = color0 / 255.0;
+}"#;
+
+const ADDITIVE_FRAGMENT: &str = r#"#version 100
+varying lowp vec2 uv;
+varying lowp vec4 tint;
+uniform sampler2D Texture;
+void main() {
+    gl_FragColor = texture2D(Texture, uv) * tint;
+}"#;
+
 pub struct Presentation {
     images: HashMap<String, Texture2D>,
     sounds: HashMap<String, Arc<[u8]>>,
     fonts: HashMap<String, RenderedFont>,
+    additive: Material,
 }
 
 // W1 PetsScreen positions pet IDs 10..14 on the right of the preview instead
@@ -324,10 +348,34 @@ impl Presentation {
         ] {
             fonts.insert(name.into(), RenderedFont::load(game_root, assets, name)?);
         }
+        let additive = load_material(
+            ShaderSource::Glsl {
+                vertex: ADDITIVE_VERTEX,
+                fragment: ADDITIVE_FRAGMENT,
+            },
+            MaterialParams {
+                pipeline_params: PipelineParams {
+                    color_blend: Some(BlendState::new(
+                        Equation::Add,
+                        BlendFactor::Value(BlendValue::SourceAlpha),
+                        BlendFactor::One,
+                    )),
+                    alpha_blend: Some(BlendState::new(
+                        Equation::Add,
+                        BlendFactor::Zero,
+                        BlendFactor::One,
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .map_err(|error| format!("additive sprite material creation failed: {error}"))?;
         Ok(Self {
             images,
             sounds,
             fonts,
+            additive,
         })
     }
 
@@ -359,6 +407,12 @@ impl Presentation {
                 ..Default::default()
             },
         );
+    }
+
+    fn additive_sprite(&self, id: &str, x: f32, y: f32, source: Rect, flip: bool, alpha: f32) {
+        gl_use_material(&self.additive);
+        self.sprite(id, x, y, Some(source), flip, 1.0, alpha);
+        gl_use_default_material();
     }
 
     fn play(&self, events: &[Event], music: Option<&MusicOwner>) -> Vec<MusicReport> {
@@ -718,14 +772,12 @@ impl Presentation {
                 1.0,
             );
             if pet.kind == FishPetKind::Shrapnel && pet.shrapnel_flash_alpha() > 0 {
-                // W1 uses an additive pass; standard alpha is the present renderer's approximation.
-                self.sprite(
+                self.additive_sprite(
                     image,
                     pet.widget_x as f32,
                     pet.widget_y as f32,
-                    Some(source),
+                    source,
                     pet.facing_right(),
-                    1.0,
                     f32::from(pet.shrapnel_flash_alpha()) / 255.0,
                 );
             }
@@ -1076,14 +1128,13 @@ impl Presentation {
                         1.0,
                         alpha,
                     );
-                    // W1 adds SPARKS cel(frame) at (+10,-10); macroquad uses standard blending.
-                    self.sprite(
+                    // W1 draws the opaque RGB SPARKS sheet additively.
+                    self.additive_sprite(
                         "IMAGE_SPARKS",
                         coin.x as f32 + 10.0,
                         coin.y as f32 - 10.0,
-                        Some(Rect::new(f32::from(coin.frame) * 40.0, 0.0, 40.0, 40.0)),
+                        Rect::new(f32::from(coin.frame) * 40.0, 0.0, 40.0, 40.0),
                         false,
-                        1.0,
                         alpha,
                     );
                     continue;
@@ -1114,17 +1165,21 @@ impl Presentation {
                 5 => ("IMAGE_EXPLOSIONTINY", 40.0),
                 _ => continue,
             };
-            // W1 uses additive blending for types 3 and 4; this sprite helper
-            // currently projects their image and opacity with standard alpha.
-            self.sprite(
-                image,
-                shot.x as f32,
-                shot.y as f32,
-                Some(Rect::new(f32::from(frame) * cell, 0.0, cell, cell)),
-                false,
-                1.0,
-                f32::from(shot.alpha) / 255.0,
-            );
+            let source = Rect::new(f32::from(frame) * cell, 0.0, cell, cell);
+            let alpha = f32::from(shot.alpha) / 255.0;
+            if shot.shot_type == 5 {
+                self.sprite(
+                    image,
+                    shot.x as f32,
+                    shot.y as f32,
+                    Some(source),
+                    false,
+                    1.0,
+                    alpha,
+                );
+            } else {
+                self.additive_sprite(image, shot.x as f32, shot.y as f32, source, false, alpha);
+            }
         }
         for larva in &state.larvae {
             self.sprite(

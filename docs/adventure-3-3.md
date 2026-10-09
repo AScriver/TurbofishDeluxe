@@ -1,6 +1,6 @@
 # Adventure 3-3: Shrapnel and the changing alien
 
-This increment follows accepted [3-2](adventure-3-2.md), committed3591b97. Integration passed316checks and root frozen-identity audit. [Report01](playtests/2026-10-09-adventure-3-3-psychosquid-gumbo-01.md) accepts three earned7500eggs/Gumbo, selected Shrapnel production/150pickup, Psychosquid phase combat, controlled hazards and live pause/reload on its identified build. It explicitly fails SPARKS presentation: a black rectangle needs the separately identified additive correction/retest. Original visual/audio/human fidelity remains unverified. Continue the full [requirements](requirements.md) after validation.
+This increment follows accepted [3-2](adventure-3-2.md), committed3591b97. Integration passed316checks; mechanics committed7e0dc6c. [Report01](playtests/2026-10-09-adventure-3-3-psychosquid-gumbo-01.md) accepts three earned7500eggs/Gumbo, selected Shrapnel production/150pickup, Psychosquid phase combat, controlled hazards and live pause/reload on its identified build. Its SPARKS black rectangle is corrected by the separately gated app-only build and [native GPU report02](playtests/2026-10-09-adventure-3-3-additive-render-02.md)/root audit. Original visual/audio/human fidelity remains unverified. Continue [3-4](adventure-3-4.md) automatically toward the full [requirements](requirements.md).
 
 ## Evidence and contract
 
