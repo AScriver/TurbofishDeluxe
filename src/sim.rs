@@ -4,6 +4,7 @@
 
 use crate::{
     alien::{PreyView, SylvesterKind},
+    fish_pet::{FishPetKind, FishPetState, PetAlienView},
     invasion::{Invasion1_2, InvasionEvent},
     niko::{NikoEvent, NikoPearl, NikoState, PEARL_VALUE, PearlPhase, PearlUpdate},
     oscar::{DeadOscar, OscarPrey, OscarState},
@@ -19,6 +20,7 @@ pub const EGG_PRICE: i32 = 150;
 pub const SECOND_STAGE_EGG_PRICE: i32 = 500;
 pub const THIRD_STAGE_EGG_PRICE: i32 = 2000;
 pub const FOURTH_STAGE_EGG_PRICE: i32 = 3000;
+pub const FIFTH_STAGE_EGG_PRICE: i32 = 5000;
 pub const FOOD_QUALITY_PRICE: i32 = 200;
 pub const FOOD_QUANTITY_PRICE: i32 = 300;
 pub const OSCAR_PRICE: i32 = 1000;
@@ -39,6 +41,7 @@ pub enum PetKind {
     Stinky,
     Niko,
     Itchy,
+    Prego,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -304,6 +307,8 @@ pub enum Action {
     BuyWeapon,
     HoldFeed { x: f32, y: f32, elapsed_ms: u32 },
     HoldFire { x: f32, y: f32, elapsed_ms: u32 },
+    TogglePet { pet: PetKind },
+    ConfirmPetSelection { accept: bool },
     OpenMenu,
     PlayAdventure,
     Continue,
@@ -423,6 +428,36 @@ pub enum Event {
         tick: u64,
         oscar_id: u64,
     },
+    FishPetHit {
+        tick: u64,
+        pet_id: u64,
+        alien_id: u64,
+        health: i16,
+        sound: bool,
+    },
+    PregoBirth {
+        tick: u64,
+        pet_id: u64,
+        fish_id: u64,
+        x: i32,
+        y: i32,
+    },
+    PetSelectionOpened {
+        tick: u64,
+        capacity: u8,
+    },
+    PetSelectionChanged {
+        tick: u64,
+        selected: Vec<PetKind>,
+    },
+    PetSelectionConfirmation {
+        tick: u64,
+        selected: Vec<PetKind>,
+    },
+    PetSelectionAccepted {
+        tick: u64,
+        selected: Vec<PetKind>,
+    },
     CoinDropped {
         tick: u64,
         coin_id: u64,
@@ -533,6 +568,10 @@ pub struct AdventureState {
     #[serde(default)]
     pub oscars: Vec<OscarState>,
     #[serde(default)]
+    pub fish_pets: Vec<FishPetState>,
+    #[serde(default)]
+    pub punch_sound_cooldown: u8,
+    #[serde(default)]
     pub dead_oscars: Vec<DeadOscar>,
     pub dead_fish: Vec<DeadFish>,
     pub food: Vec<Food>,
@@ -598,6 +637,8 @@ impl AdventureState {
             stinky: None,
             fish: Vec::new(),
             oscars: Vec::new(),
+            fish_pets: Vec::new(),
+            punch_sound_cooldown: 0,
             dead_oscars: Vec::new(),
             dead_fish: Vec::new(),
             food: Vec::new(),
@@ -656,20 +697,95 @@ impl AdventureState {
         state
     }
 
-    /// Source-backed starting roster and economy for 1-4. Itchy and Balrog
-    /// behavior are not implemented yet; this stage is not playable parity.
+    /// Source-backed roster and economy for the ordinary 1-4 Balrog stage.
     pub fn new_fourth_stage(seed: u64) -> Self {
         let mut state = Self::empty_board(seed);
         state.level = 4;
         state.egg_price = FOURTH_STAGE_EGG_PRICE;
+        state.invasion = Some(Invasion1_2::new_balrog());
         state.pets = vec![PetKind::Stinky, PetKind::Niko, PetKind::Itchy];
         state.stinky = Some(state.spawn_stinky(StinkyOrigin::StageStart));
         let owner_id = state.id();
         state.niko = Some(NikoState::spawn_tank1(owner_id, &mut |upper| {
             state.rand_range(upper)
         }));
+        state.spawn_fish_pet(FishPetKind::Itchy);
         state.spawn_starter_guppies(false);
         state
+    }
+
+    /// First-playthrough pet selection admits zero to three of the four
+    /// unlocked pets. The caller controls selection; construction preserves
+    /// profile order before the two starter guppies and rejects bad rosters.
+    pub fn new_fifth_stage(seed: u64, pets: &[PetKind]) -> Result<Self, String> {
+        let canonical = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+        ];
+        if pets.len() > 3
+            || pets.iter().any(|pet| !canonical.contains(pet))
+            || pets.windows(2).any(|pair| {
+                canonical.iter().position(|pet| *pet == pair[0])
+                    >= canonical.iter().position(|pet| *pet == pair[1])
+            })
+        {
+            return Err("invalid first-playthrough pet selection".into());
+        }
+        let mut state = Self::empty_board(seed);
+        state.level = 5;
+        state.egg_price = FIFTH_STAGE_EGG_PRICE;
+        state.invasion = Some(Invasion1_2::new_balrog());
+        state.pets = pets.to_vec();
+        for pet in pets {
+            match pet {
+                PetKind::Stinky => {
+                    state.stinky = Some(state.spawn_stinky(StinkyOrigin::StageStart))
+                }
+                PetKind::Niko => {
+                    let owner_id = state.id();
+                    state.niko = Some(NikoState::spawn_tank1(owner_id, &mut |upper| {
+                        state.rand_range(upper)
+                    }));
+                }
+                PetKind::Itchy => state.spawn_fish_pet(FishPetKind::Itchy),
+                PetKind::Prego => state.spawn_fish_pet(FishPetKind::Prego),
+            }
+        }
+        state.spawn_starter_guppies(false);
+        Ok(state)
+    }
+
+    fn spawn_fish_pet(&mut self, kind: FishPetKind) {
+        let id = self.id();
+        let mut rng_state = self.rng_state;
+        let pet = FishPetState::spawn_tank1(id, kind, &mut |upper| {
+            Self::advance_rng(&mut rng_state) % upper
+        });
+        self.rng_state = rng_state;
+        self.fish_pets.push(pet);
+    }
+
+    /// Only invoked while migrating old format-5 project saves. Their board
+    /// tick cannot recover elapsed Balrog wave phase or historical Itchy pose.
+    pub fn initialize_legacy_stage14_support(&mut self) {
+        if self.tank == 1 && self.level == 4 && self.invasion.is_none() {
+            self.invasion = Some(Invasion1_2::legacy_v5_balrog_resume());
+            if self.fish_pets.is_empty() && self.pets.contains(&PetKind::Itchy) {
+                self.spawn_fish_pet(FishPetKind::Itchy);
+            }
+        }
+    }
+
+    /// Old format-5 dead-alien effects predate their explicit variant field.
+    /// Recover only from the persisted owning wave at the migration boundary.
+    pub fn initialize_legacy_alien_body_kind(&mut self) {
+        if let Some(wave) = self.invasion.as_mut()
+            && let Some(body) = wave.dead_alien.as_mut()
+        {
+            body.kind = wave.kind;
+        }
     }
 
     /// Explicit migration from old format-4 project boards. Existing 1-3
@@ -773,7 +889,7 @@ impl AdventureState {
     /// The profile and screen phase are checked by AdventureSession separately.
     pub fn validate(&self) -> Result<(), String> {
         if self.tank != 1
-            || !(1..=4).contains(&self.level)
+            || !(1..=5).contains(&self.level)
             || self.next_id == 0
             || self.rng_state == 0
             || self.eggs > 3
@@ -786,6 +902,7 @@ impl AdventureState {
             || self.food.iter().any(|food| food.quality > 2)
             || !(2..=12).contains(&self.weapon_strength)
             || (!self.weapon_unlocked && self.weapon_strength > 2)
+            || self.punch_sound_cooldown > 11
         {
             return Err("invalid Adventure board counters or upgrades".into());
         }
@@ -794,6 +911,7 @@ impl AdventureState {
             2 => SECOND_STAGE_EGG_PRICE,
             3 => THIRD_STAGE_EGG_PRICE,
             4 => FOURTH_STAGE_EGG_PRICE,
+            5 => FIFTH_STAGE_EGG_PRICE,
             _ => unreachable!(),
         };
         if self.egg_price != expected_price {
@@ -811,7 +929,8 @@ impl AdventureState {
                 || self.weapon_unlocked
                 || self.weapon_strength != 2
                 || !self.oscars.is_empty()
-                || !self.dead_oscars.is_empty() =>
+                || !self.dead_oscars.is_empty()
+                || !self.fish_pets.is_empty() =>
             {
                 return Err("first-stage roster or upgrades disagree".into());
             }
@@ -824,7 +943,8 @@ impl AdventureState {
                 || self.weapon_unlocked
                 || self.weapon_strength != 2
                 || !self.oscars.is_empty()
-                || !self.dead_oscars.is_empty() =>
+                || !self.dead_oscars.is_empty()
+                || !self.fish_pets.is_empty() =>
             {
                 return Err("second-stage roster or wave disagree".into());
             }
@@ -834,16 +954,56 @@ impl AdventureState {
                 || self
                     .invasion
                     .as_ref()
-                    .is_none_or(|wave| wave.kind != SylvesterKind::Strong) =>
+                    .is_none_or(|wave| wave.kind != SylvesterKind::Strong)
+                || !self.fish_pets.is_empty() =>
             {
                 return Err("third-stage roster disagrees".into());
             }
             4 if self.pets.as_slice() != [PetKind::Stinky, PetKind::Niko, PetKind::Itchy]
                 || self.stinky.is_none()
                 || self.niko.is_none()
-                || self.invasion.is_some() =>
+                || self
+                    .invasion
+                    .as_ref()
+                    .is_none_or(|wave| wave.kind != SylvesterKind::Balrog)
+                || self.fish_pets.len() != 1
+                || self.fish_pets[0].kind != FishPetKind::Itchy =>
             {
-                return Err("fourth-stage initial roster disagrees".into());
+                return Err("fourth-stage roster or Balrog wave disagrees".into());
+            }
+            5 if self
+                .invasion
+                .as_ref()
+                .is_none_or(|wave| wave.kind != SylvesterKind::Balrog)
+                || self.pets.len() > 3
+                || self.pets.windows(2).any(|pair| {
+                    let canonical = [
+                        PetKind::Stinky,
+                        PetKind::Niko,
+                        PetKind::Itchy,
+                        PetKind::Prego,
+                    ];
+                    canonical.iter().position(|pet| *pet == pair[0])
+                        >= canonical.iter().position(|pet| *pet == pair[1])
+                })
+                || self.stinky.is_some() != self.pets.contains(&PetKind::Stinky)
+                || self.niko.is_some() != self.pets.contains(&PetKind::Niko)
+                || self
+                    .fish_pets
+                    .iter()
+                    .map(|pet| pet.kind)
+                    .collect::<Vec<_>>()
+                    != self
+                        .pets
+                        .iter()
+                        .filter_map(|pet| match pet {
+                            PetKind::Itchy => Some(FishPetKind::Itchy),
+                            PetKind::Prego => Some(FishPetKind::Prego),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>() =>
+            {
+                return Err("fifth-stage selected pet roster disagrees".into());
             }
             _ => {}
         }
@@ -877,6 +1037,9 @@ impl AdventureState {
         for corpse in &self.dead_oscars {
             corpse.validate()?;
         }
+        for pet in &self.fish_pets {
+            pet.validate()?;
+        }
         if let Some(niko) = &self.niko {
             niko.validate()?;
             for pearl in &self.pearls {
@@ -885,6 +1048,9 @@ impl AdventureState {
                     return Err("pearl owner or lifecycle disagrees".into());
                 }
             }
+        }
+        if self.niko.is_none() && !self.pearls.is_empty() {
+            return Err("pearl without Niko owner".into());
         }
         Ok(())
     }
@@ -953,10 +1119,17 @@ impl AdventureState {
                         tick: self.tick,
                         reason: Rejection::Locked,
                     });
-                } else if self.level > 3 {
+                } else if self.level > 5 {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::UnsupportedStage,
+                    });
+                } else if self.level == 5 && self.eggs >= 2 {
+                    // 1-5 completion requires the Zorf/1-6 shell bonus
+                    // progression, which is the next bounded integration.
+                    events.push(Event::Rejected {
+                        tick: self.tick,
+                        reason: Rejection::Locked,
                     });
                 } else if self.available_funds() < self.egg_price {
                     events.push(Event::Rejected {
@@ -1056,6 +1229,8 @@ impl AdventureState {
             Action::OpenMenu
             | Action::PlayAdventure
             | Action::Continue
+            | Action::TogglePet { .. }
+            | Action::ConfirmPetSelection { .. }
             | Action::HatchHold { .. } => {
                 events.push(Event::Rejected {
                     tick: self.tick,
@@ -1286,6 +1461,7 @@ impl AdventureState {
         if self.victory {
             return Vec::new();
         }
+        self.punch_sound_cooldown = self.punch_sound_cooldown.saturating_sub(1);
         if let Some(wave) = self.invasion.as_mut() {
             wave.update_before_pause();
         }
@@ -1351,6 +1527,7 @@ impl AdventureState {
     /// The already-paused board still decreases its drop-food delay before
     /// returning. The clock, flash, actors, and held-feeding check do not run.
     pub(crate) fn paused_board_update(&mut self) {
+        self.punch_sound_cooldown = self.punch_sound_cooldown.saturating_sub(1);
         self.held_feed = None;
         self.held_fire = None;
         if let Some(wave) = self.invasion.as_mut() {
@@ -1378,6 +1555,7 @@ impl AdventureState {
         self.update_invasion_objects(&mut events);
         self.update_stinky(&mut events);
         self.update_niko(&mut events);
+        self.update_fish_pets(&mut events);
         self.update_coins(&mut events);
         self.update_pearls(&mut events);
         events
@@ -2043,6 +2221,66 @@ impl AdventureState {
         }
     }
 
+    fn update_fish_pets(&mut self, events: &mut Vec<Event>) {
+        for index in 0..self.fish_pets.len() {
+            // Alien::Update and its removal transaction have already run.
+            // Include registered nonpositive-health aliens for Itchy contact;
+            // they remain members until the next active alien update.
+            let aliens = self
+                .invasion
+                .as_ref()
+                .and_then(|wave| wave.alien.as_ref())
+                .map(|actor| {
+                    vec![PetAlienView {
+                        id: actor.id,
+                        widget_x: actor.widget_x,
+                        widget_y: actor.widget_y,
+                        healing: false,
+                    }]
+                })
+                .unwrap_or_default();
+            let guppy_count = self.fish.iter().filter(|fish| fish.alive).count();
+            let pet_id = self.fish_pets[index].id;
+            let mut rng_state = self.rng_state;
+            let update = self.fish_pets[index].tick(&aliens, guppy_count, &mut |upper| {
+                Self::advance_rng(&mut rng_state) % upper
+            });
+            self.rng_state = rng_state;
+            if let Some(alien_id) = update.damaged_alien
+                && let Some(actor) = self
+                    .invasion
+                    .as_mut()
+                    .and_then(|wave| wave.alien.as_mut())
+                    .filter(|actor| actor.id == alien_id)
+                && let Some(health) = actor.itchy_hit()
+            {
+                let sound = update.punch_sound && self.punch_sound_cooldown == 0;
+                if sound {
+                    self.punch_sound_cooldown = 11;
+                }
+                events.push(Event::FishPetHit {
+                    tick: self.tick,
+                    pet_id,
+                    alien_id,
+                    health,
+                    sound,
+                });
+            }
+            if let Some((x, y)) = update.born_at {
+                let fish = self.make_fish(x as f32, y as f32, false, false);
+                let fish_id = fish.id;
+                self.fish.push(fish);
+                events.push(Event::PregoBirth {
+                    tick: self.tick,
+                    pet_id,
+                    fish_id,
+                    x,
+                    y,
+                });
+            }
+        }
+    }
+
     fn update_niko(&mut self, events: &mut Vec<Event>) {
         let Some(mut niko) = self.niko.take() else {
             return;
@@ -2266,7 +2504,7 @@ impl AdventureState {
     fn update_coins(&mut self, events: &mut Vec<Event>) {
         let bottom_limit = match (self.tank, self.level) {
             (1, 1) => FIRST_STAGE_COIN_BOTTOM_TICKS,
-            (1, 2..=4) => SECOND_STAGE_COIN_BOTTOM_TICKS,
+            (1, 2..=5) => SECOND_STAGE_COIN_BOTTOM_TICKS,
             _ => unreachable!("coin lifetime for this Adventure stage is not implemented"),
         };
         let mut credited = Vec::new();
@@ -3054,6 +3292,144 @@ mod tests {
             (fourth.coins[0].bottom_ticks, fourth.coins[0].fade_ticks),
             (20, 5)
         );
+    }
+
+    #[test]
+    fn fourth_stage_itchy_can_leave_balrog_pending_death_during_emergence() {
+        let mut board = AdventureState::new_fourth_stage(0x580);
+        assert_eq!(board.invasion.as_ref().unwrap().kind, SylvesterKind::Balrog);
+        assert_eq!(board.invasion.as_ref().unwrap().countdown, 3000);
+        board.validate().unwrap();
+        let mut alien =
+            crate::alien::WeakSylvester::spawn_kind(SylvesterKind::Balrog, 800, 100, 120, 1, 1);
+        alien.health = 1;
+        board.invasion.as_mut().unwrap().alien = Some(alien);
+        board.fish_pets[0].x = 140.0;
+        board.fish_pets[0].y = 160.0;
+        board.fish_pets[0].widget_x = 140;
+        board.fish_pets[0].widget_y = 160;
+        let first = board.update_objects();
+        assert!(first.iter().any(|event| matches!(
+            event,
+            Event::FishPetHit {
+                alien_id: 800,
+                health: 0,
+                sound: true,
+                ..
+            }
+        )));
+        assert!(board.invasion.as_ref().unwrap().alien.is_some());
+        assert!(
+            board
+                .invasion
+                .as_ref()
+                .unwrap()
+                .alien
+                .as_ref()
+                .unwrap()
+                .alive
+        );
+        board.validate().unwrap();
+        board
+            .invasion
+            .as_mut()
+            .unwrap()
+            .alien
+            .as_mut()
+            .unwrap()
+            .spawn_ticks = 0;
+        let removal = board.update_objects();
+        assert_eq!(
+            removal
+                .iter()
+                .filter(|event| matches!(event, Event::AlienDiamondDropped { alien_id: 800, .. }))
+                .count(),
+            1
+        );
+        assert!(board.invasion.as_ref().unwrap().alien.is_none());
+    }
+
+    #[test]
+    fn fifth_stage_selected_roster_and_prego_birth_are_explicit() {
+        assert!(
+            AdventureState::new_fifth_stage(0x581, &[])
+                .unwrap()
+                .pets
+                .is_empty()
+        );
+        assert!(
+            AdventureState::new_fifth_stage(
+                0x581,
+                &[
+                    PetKind::Stinky,
+                    PetKind::Niko,
+                    PetKind::Itchy,
+                    PetKind::Prego,
+                ]
+            )
+            .is_err()
+        );
+        let mut board = AdventureState::new_fifth_stage(0x581, &[PetKind::Prego]).unwrap();
+        assert_eq!(board.pets, [PetKind::Prego]);
+        assert!(board.stinky.is_none());
+        assert!(board.niko.is_none());
+        assert_eq!(board.fish_pets.len(), 1);
+        board.validate().unwrap();
+        board.fish_pets[0].birth_timer = 929;
+        board.fish_pets[0].x = 100.0;
+        board.fish_pets[0].y = 200.0;
+        board.fish_pets[0].widget_x = 100;
+        board.fish_pets[0].widget_y = 200;
+        let event = board.update_objects();
+        assert!(
+            event
+                .iter()
+                .any(|event| matches!(event, Event::PregoBirth { x: 107, y: 225, .. }))
+        );
+        assert_eq!(board.fish.len(), 3);
+        assert_eq!(board.fish.last().unwrap().cannot_be_eaten_ticks, 0);
+        assert_eq!(board.fish_pets[0].birth_threshold, 930);
+
+        board.invasion.as_mut().unwrap().alien = Some(crate::alien::WeakSylvester::spawn_kind(
+            SylvesterKind::Balrog,
+            801,
+            100,
+            120,
+            1,
+            1,
+        ));
+        board.fish_pets[0].birth_timer = 929;
+        board.update_objects();
+        assert_eq!(board.fish_pets[0].birth_timer, 929);
+        assert_eq!(board.fish.len(), 3);
+    }
+
+    #[test]
+    fn sorted_other_pets_update_before_fish_type_prego() {
+        // W1 Board::SortObjects/WidgetUpdateAll puts OtherTypePet before
+        // FishTypePet. Two independent due events expose that order.
+        let mut board =
+            AdventureState::new_fifth_stage(0x582, &[PetKind::Niko, PetKind::Prego]).unwrap();
+        board.niko.as_mut().unwrap().cycle = 1232;
+        board.fish_pets[0].birth_timer = 929;
+        let events = board.update_objects();
+        let pearl = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    Event::Niko {
+                        event: NikoEvent::PearlSpawn { .. },
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        let birth = events
+            .iter()
+            .position(|event| matches!(event, Event::PregoBirth { .. }))
+            .unwrap();
+        assert!(pearl < birth);
     }
 
     #[test]

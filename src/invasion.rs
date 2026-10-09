@@ -19,6 +19,8 @@ pub enum InvasionOrigin {
     LegacyV3Resume,
     /// Synthesized timer for an old format-4 stage-3 board without a wave.
     LegacyV4Resume,
+    /// Synthesized Balrog timer for a pre-format-6 stage-4 board.
+    LegacyV5Resume,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +108,8 @@ impl LaserEffect {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeadAlienEffect {
+    #[serde(default)] // Pre-format-6 corpses were weak or strong Sylvester.
+    pub kind: SylvesterKind,
     pub x: f64,
     pub y: f64,
     pub widget_x: i32,
@@ -148,6 +152,14 @@ impl Invasion1_2 {
 
     pub fn new_strong() -> Self {
         Self::with_origin(InvasionOrigin::StageStart, SylvesterKind::Strong)
+    }
+
+    pub fn new_balrog() -> Self {
+        Self::with_origin(InvasionOrigin::StageStart, SylvesterKind::Balrog)
+    }
+
+    pub fn legacy_v5_balrog_resume() -> Self {
+        Self::with_origin(InvasionOrigin::LegacyV5Resume, SylvesterKind::Balrog)
     }
 
     pub fn legacy_v4_strong_resume() -> Self {
@@ -303,13 +315,16 @@ impl Invasion1_2 {
             return Vec::new();
         }
         let mut events = Vec::new();
-        if let Some(actor) = self.alien.as_mut()
-            && let Some(prey_id) = actor.update(prey, next_random).prey_eaten
-        {
-            events.push(InvasionEvent::PreyEaten {
-                alien_id: actor.id,
-                prey_id,
-            });
+        let mut defeated_on_update = false;
+        if let Some(actor) = self.alien.as_mut() {
+            let update = actor.update(prey, next_random);
+            if let Some(prey_id) = update.prey_eaten {
+                events.push(InvasionEvent::PreyEaten {
+                    alien_id: actor.id,
+                    prey_id,
+                });
+            }
+            defeated_on_update = update.defeated;
         }
         if let Some(warp) = self.warp.as_mut() {
             if warp.remaining_ticks == 0 {
@@ -350,6 +365,9 @@ impl Invasion1_2 {
                 body.widget_x = body.x as i32;
                 body.widget_y = body.y as i32;
             }
+        }
+        if defeated_on_update {
+            events.extend(self.remove_registered_alien());
         }
         events
     }
@@ -393,43 +411,18 @@ impl Invasion1_2 {
                 id: alien_id,
                 health,
             }),
-            ShotResult::Defeated {
-                diamond_x,
-                diamond_y,
-            } => {
-                let dead = self.alien.take().expect("shot alien was live");
-                // Board::SpawnDeadAlien accepts integer coordinates before
-                // the body constructor stores its double position.
-                let body_x = dead.x as i32;
-                let body_y = dead.y as i32;
-                self.dead_alien = Some(DeadAlienEffect {
-                    x: f64::from(body_x),
-                    y: f64::from(body_y),
-                    widget_x: body_x,
-                    widget_y: body_y,
-                    vx: 0.0,
-                    vy: 0.0,
-                    frame: dead.frame,
-                    facing_right: dead.vx > 0.0,
-                    opacity: 1.0,
-                    remaining_ticks: 125,
+            ShotResult::Defeated { .. } => {
+                let health = self
+                    .alien
+                    .as_ref()
+                    .expect("shot alien was registered")
+                    .health;
+                // The input-time impact precedes the shared removal path.
+                result.events.push(InvasionEvent::AlienHit {
+                    id: alien_id,
+                    health,
                 });
-                self.food_delay = 36;
-                result.events.extend([
-                    // Alien::Shot creates the same type-two impact before
-                    // either a lethal or nonlethal completion branch.
-                    InvasionEvent::AlienHit {
-                        id: alien_id,
-                        health: dead.health,
-                    },
-                    InvasionEvent::AlienDefeated { id: alien_id },
-                    InvasionEvent::DiamondDropped {
-                        alien_id,
-                        x: diamond_x,
-                        y: diamond_y,
-                    },
-                    InvasionEvent::BattleEnded,
-                ]);
+                result.events.extend(self.remove_registered_alien());
             }
         }
         self.lasers.push(LaserEffect {
@@ -440,6 +433,41 @@ impl Invasion1_2 {
         self.last_laser = Some((x, y));
         result.events.push(InvasionEvent::LaserFired { x, y });
         result
+    }
+
+    /// Both a player shot and a completed alien update transfer ownership
+    /// through this one removal path. The registered list is cleared before
+    /// any subsequent pet contact, wave check, or click can reward it again.
+    fn remove_registered_alien(&mut self) -> Vec<InvasionEvent> {
+        let dead = self
+            .alien
+            .take()
+            .expect("alien removal requires registration");
+        let body_x = dead.x as i32;
+        let body_y = dead.y as i32;
+        self.dead_alien = Some(DeadAlienEffect {
+            kind: dead.kind,
+            x: f64::from(body_x),
+            y: f64::from(body_y),
+            widget_x: body_x,
+            widget_y: body_y,
+            vx: 0.0,
+            vy: 0.0,
+            frame: dead.frame,
+            facing_right: dead.vx > 0.0,
+            opacity: 1.0,
+            remaining_ticks: 125,
+        });
+        self.food_delay = 36;
+        vec![
+            InvasionEvent::AlienDefeated { id: dead.id },
+            InvasionEvent::DiamondDropped {
+                alien_id: dead.id,
+                x: dead.widget_x + 25,
+                y: dead.widget_y + 25,
+            },
+            InvasionEvent::BattleEnded,
+        ]
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -458,7 +486,7 @@ impl Invasion1_2 {
                 .alien
                 .as_ref()
                 .is_some_and(|actor| actor.kind != self.kind)
-            || self.kind == SylvesterKind::Strong
+            || self.kind != SylvesterKind::Weak
                 && (self.danger_shown || self.battle_tip_shown || self.pending_modal.is_some())
             || self
                 .warp
@@ -466,7 +494,8 @@ impl Invasion1_2 {
                 .is_some_and(|warp| warp.remaining_ticks > 36)
             || self.lasers.iter().any(|laser| laser.age_ticks > 14)
             || self.dead_alien.as_ref().is_some_and(|body| {
-                body.remaining_ticks > 125
+                body.kind != self.kind
+                    || body.remaining_ticks > 125
                     || body.frame > 9
                     || !body.x.is_finite()
                     || !body.y.is_finite()
@@ -737,5 +766,136 @@ mod tests {
         ));
         assert_eq!(wave.alien.as_ref().unwrap().kind, SylvesterKind::Strong);
         assert_eq!(wave.alien.as_ref().unwrap().health, 60);
+    }
+
+    #[test]
+    fn balrog_pending_death_finishes_old_widget_contact_then_drops_at_new_widget() {
+        // W1 Alien.cpp: contact precedes integration; removal follows Move
+        // and animation. PB21 fixes Balrog HP/divisor, PB22 shared removal.
+        let mut wave = Invasion1_2::new_balrog();
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Balrog, 44, 100, 120, 1, 1);
+        actor.spawn_ticks = 0;
+        actor.chase_ticks = 0;
+        actor.health = 0; // Itchy contact leaves this actor registered.
+        wave.alien = Some(actor);
+        let prey = [PreyView {
+            id: 77,
+            widget_x: 140,
+            widget_y: 160,
+            width: 80,
+            height: 80,
+            eligible: true,
+        }];
+        let events = wave.objects_update(&prey, || panic!("chase consumes no RNG"));
+        assert!(matches!(
+            events.first(),
+            Some(InvasionEvent::PreyEaten {
+                alien_id: 44,
+                prey_id: 77
+            })
+        ));
+        let body = wave.dead_alien.as_ref().unwrap();
+        assert_eq!(body.kind, SylvesterKind::Balrog);
+        assert!(body.widget_x > 100);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            InvasionEvent::DiamondDropped {
+                alien_id: 44,
+                x: 127,
+                y: 145
+            }
+        )));
+        assert!(wave.alien.is_none());
+        assert_eq!(wave.food_delay, 36);
+        assert!(
+            !wave
+                .objects_update(&[], || 1)
+                .iter()
+                .any(|event| matches!(event, InvasionEvent::DiamondDropped { .. }))
+        );
+    }
+
+    #[test]
+    fn pending_death_waits_through_emergence_and_pause_but_shot_can_claim_once() {
+        let mut wave = Invasion1_2::new_balrog();
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Balrog, 45, 100, 120, 1, 1);
+        actor.health = 0;
+        actor.hit_ticks = 5;
+        wave.alien = Some(actor);
+        for _ in 0..6 {
+            assert!(
+                wave.objects_update(&[], || panic!("emergence needs no RNG"))
+                    .is_empty()
+            );
+        }
+        assert_eq!(wave.alien.as_ref().unwrap().hit_ticks, 5);
+        wave.pending_modal = Some(InvasionTip::Danger);
+        assert!(
+            wave.objects_update(&[], || panic!("pause needs no RNG"))
+                .is_empty()
+        );
+        assert!(wave.alien.is_some());
+        wave.pending_modal = None;
+        // Positive flash blocks a shot even at zero HP; the next active
+        // alien update removes it through the shared transaction.
+        assert!(
+            !wave
+                .click(180, 200)
+                .events
+                .iter()
+                .any(|event| matches!(event, InvasionEvent::AlienDefeated { .. }))
+        );
+        assert_eq!(
+            wave.objects_update(&[], || 1)
+                .iter()
+                .filter(|event| matches!(event, InvasionEvent::DiamondDropped { .. }))
+                .count(),
+            1
+        );
+
+        let mut race = Invasion1_2::new_balrog();
+        let mut pending = WeakSylvester::spawn_kind(SylvesterKind::Balrog, 46, 100, 120, 1, 1);
+        pending.health = 0;
+        pending.hit_ticks = 0;
+        race.alien = Some(pending);
+        assert_eq!(
+            race.click(180, 200)
+                .events
+                .iter()
+                .filter(|event| matches!(event, InvasionEvent::DiamondDropped { .. }))
+                .count(),
+            1
+        );
+        assert!(race.alien.is_none());
+        assert!(
+            !race
+                .objects_update(&[], || 1)
+                .iter()
+                .any(|event| matches!(event, InvasionEvent::DiamondDropped { .. }))
+        );
+    }
+
+    #[test]
+    fn balrog_base_weapon_requires_22_accepted_hits() {
+        let mut wave = Invasion1_2::new_balrog();
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Balrog, 47, 100, 120, 1, 1);
+        actor.spawn_ticks = 0;
+        wave.alien = Some(actor);
+        for hit in 1..=21 {
+            wave.alien.as_mut().unwrap().hit_ticks = 0;
+            let events = wave.click_with_weapon(180, 200, 2).events;
+            assert!(events.iter().any(|event| matches!(event,
+                InvasionEvent::AlienHit { id: 47, health } if *health == 130 - 6*hit)));
+            assert!(wave.alien.is_some());
+        }
+        wave.alien.as_mut().unwrap().hit_ticks = 0;
+        assert_eq!(
+            wave.click_with_weapon(180, 200, 2)
+                .events
+                .iter()
+                .filter(|event| matches!(event, InvasionEvent::AlienDefeated { id: 47 }))
+                .count(),
+            1
+        );
     }
 }

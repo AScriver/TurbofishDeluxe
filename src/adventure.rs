@@ -16,12 +16,22 @@ pub struct AdventureProgress {
     pub tank: u8,
     pub level: u8,
     pub unlocked_pets: Vec<PetKind>,
+    #[serde(default = "default_pet_capacity")]
+    pub pet_capacity: u8,
+    /// Committed profile flags. Candidates live in the selection phase until
+    /// Continue copies them here, before any fewer-pet confirmation.
+    #[serde(default)]
+    pub selected_pets: Vec<PetKind>,
     /// Missing on old format-two saves: their completed board was discarded,
     /// so its active time cannot be reconstructed from the session clock.
     #[serde(default)]
     pub first_stage_best_seconds: Option<u64>,
     #[serde(default)]
     pub later_stage_best_seconds: Vec<StageBestTime>,
+}
+
+fn default_pet_capacity() -> u8 {
+    3
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +44,21 @@ pub struct StageBestTime {
 impl AdventureProgress {
     pub fn has_pet(&self, pet: PetKind) -> bool {
         self.unlocked_pets.contains(&pet)
+    }
+
+    pub fn selection_capacity(&self) -> usize {
+        usize::from(self.pet_capacity).min(self.unlocked_pets.len())
+    }
+
+    fn valid_selection(&self, selected: &[PetKind]) -> bool {
+        selected.len() <= self.selection_capacity()
+            && self
+                .unlocked_pets
+                .iter()
+                .copied()
+                .filter(|pet| selected.contains(pet))
+                .collect::<Vec<_>>()
+                == selected
     }
 
     fn record_first_stage_time(&mut self, seconds: u64) -> u64 {
@@ -75,6 +100,8 @@ pub enum AdventurePhase {
     GameSelector,
     HelpScreen,
     Hatch { pet: PetKind, updates: u32 },
+    PetSelection { selected: Vec<PetKind> },
+    PetSelectionConfirmation { selected: Vec<PetKind> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,6 +133,8 @@ impl AdventureSession {
                 tank: 1,
                 level: 1,
                 unlocked_pets: Vec::new(),
+                pet_capacity: default_pet_capacity(),
+                selected_pets: Vec::new(),
                 first_stage_best_seconds: None,
                 later_stage_best_seconds: Vec::new(),
             },
@@ -142,6 +171,8 @@ impl AdventureSession {
                     tank: 1,
                     level: 2,
                     unlocked_pets: vec![PetKind::Stinky],
+                    pet_capacity: default_pet_capacity(),
+                    selected_pets: Vec::new(),
                     first_stage_best_seconds: Some(seconds),
                     later_stage_best_seconds: Vec::new(),
                 },
@@ -164,6 +195,8 @@ impl AdventureSession {
                 tank: 1,
                 level: 1,
                 unlocked_pets: Vec::new(),
+                pet_capacity: default_pet_capacity(),
+                selected_pets: Vec::new(),
                 first_stage_best_seconds: None,
                 later_stage_best_seconds: Vec::new(),
             },
@@ -181,7 +214,7 @@ impl AdventureSession {
 
     /// Reject a decoded session whose board, profile, and screen disagree.
     pub fn validate(&self) -> Result<(), String> {
-        if self.progress.tank != 1 || !(1..=4).contains(&self.progress.level) {
+        if self.progress.tank != 1 || !(1..=5).contains(&self.progress.level) {
             return Err("unsupported Adventure progress".into());
         }
         let expected_pets: &[PetKind] = match self.progress.level {
@@ -189,15 +222,33 @@ impl AdventureSession {
             2 => &[PetKind::Stinky],
             3 => &[PetKind::Stinky, PetKind::Niko],
             4 => &[PetKind::Stinky, PetKind::Niko, PetKind::Itchy],
+            5 => &[
+                PetKind::Stinky,
+                PetKind::Niko,
+                PetKind::Itchy,
+                PetKind::Prego,
+            ],
             _ => unreachable!("progress checked above"),
         };
         if self.progress.unlocked_pets != expected_pets {
             return Err("Adventure pet unlocks disagree with completed stages".into());
         }
+        if self.progress.pet_capacity != 3
+            || !self.progress.valid_selection(&self.progress.selected_pets)
+            || (self.progress.unlocked_pets.len() < 4 && !self.progress.selected_pets.is_empty())
+        {
+            return Err("invalid Adventure selected pet roster or capacity".into());
+        }
+        if let Some(board) = &self.board
+            && self.progress.unlocked_pets.len() >= 4
+            && board.pets != self.progress.selected_pets
+        {
+            return Err("active pet roster disagrees with committed selection".into());
+        }
         let mut recorded_stages = Vec::new();
         for result in &self.progress.later_stage_best_seconds {
             if result.tank != 1
-                || !(2..=3).contains(&result.level)
+                || !(2..=4).contains(&result.level)
                 || self.progress.level <= result.level
                 || recorded_stages.contains(&(result.tank, result.level))
             {
@@ -265,6 +316,27 @@ impl AdventureSession {
                 if (self.progress.level, *pet) == (2, PetKind::Stinky)
                     || (self.progress.level, *pet) == (3, PetKind::Niko)
                     || (self.progress.level, *pet) == (4, PetKind::Itchy) =>
+            {
+                Ok(())
+            }
+            (
+                AdventurePhase::Hatch {
+                    pet: PetKind::Prego,
+                    ..
+                },
+                None,
+            ) if self.progress.level == 5 => Ok(()),
+            (AdventurePhase::PetSelection { selected }, None)
+                if self.progress.unlocked_pets.len() >= 4
+                    && self.progress.valid_selection(selected) =>
+            {
+                Ok(())
+            }
+            (AdventurePhase::PetSelectionConfirmation { selected }, None)
+                if self.progress.unlocked_pets.len() >= 4
+                    && self.progress.valid_selection(selected)
+                    && selected.len() < self.progress.selection_capacity()
+                    && *selected == self.progress.selected_pets =>
             {
                 Ok(())
             }
@@ -376,8 +448,7 @@ impl AdventureSession {
                         action: action.clone(),
                     });
                     if *action == Action::Continue {
-                        self.start_current_stage(&mut events);
-                        entered_playing = true;
+                        entered_playing = self.start_current_stage(&mut events);
                     } else {
                         events.push(Event::Rejected {
                             tick: self.ticks,
@@ -397,14 +468,94 @@ impl AdventureSession {
                     } else if let Action::HatchHold { down } = action {
                         self.hatch_held = *down;
                     } else if *action == Action::Continue && updates > HATCH_READY_CHECK {
-                        self.start_current_stage(&mut events);
+                        entered_playing = self.start_current_stage(&mut events);
                         self.hatch_held = false;
-                        entered_playing = true;
                     } else {
                         events.push(Event::Rejected {
                             tick: self.ticks,
                             reason: Rejection::Locked,
                         });
+                    }
+                }
+                AdventurePhase::PetSelection { mut selected } => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    match action {
+                        Action::TogglePet { pet } if self.progress.has_pet(*pet) => {
+                            if let Some(index) = selected.iter().position(|choice| choice == pet) {
+                                selected.remove(index);
+                            } else if selected.len() < self.progress.selection_capacity() {
+                                selected.push(*pet);
+                                selected = self
+                                    .progress
+                                    .unlocked_pets
+                                    .iter()
+                                    .copied()
+                                    .filter(|choice| selected.contains(choice))
+                                    .collect();
+                            } else {
+                                events.push(Event::Rejected {
+                                    tick: self.ticks,
+                                    reason: Rejection::Locked,
+                                });
+                                continue;
+                            }
+                            events.push(Event::PetSelectionChanged {
+                                tick: self.ticks,
+                                selected: selected.clone(),
+                            });
+                            self.phase = AdventurePhase::PetSelection { selected };
+                        }
+                        Action::Continue => {
+                            self.progress.selected_pets = selected.clone();
+                            if selected.len() < self.progress.selection_capacity() {
+                                events.push(Event::PetSelectionConfirmation {
+                                    tick: self.ticks,
+                                    selected: selected.clone(),
+                                });
+                                self.phase = AdventurePhase::PetSelectionConfirmation { selected };
+                            } else {
+                                events.push(Event::PetSelectionAccepted {
+                                    tick: self.ticks,
+                                    selected,
+                                });
+                                self.start_board(&mut events);
+                                entered_playing = true;
+                            }
+                        }
+                        Action::OpenMenu => {
+                            self.phase = AdventurePhase::GameSelector;
+                            events.push(Event::GameSelectorOpened { tick: self.ticks });
+                        }
+                        _ => events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        }),
+                    }
+                }
+                AdventurePhase::PetSelectionConfirmation { selected } => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    match action {
+                        Action::ConfirmPetSelection { accept: true } => {
+                            events.push(Event::PetSelectionAccepted {
+                                tick: self.ticks,
+                                selected,
+                            });
+                            self.start_board(&mut events);
+                            entered_playing = true;
+                        }
+                        Action::ConfirmPetSelection { accept: false } => {
+                            self.phase = AdventurePhase::PetSelection { selected };
+                        }
+                        _ => events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        }),
                     }
                 }
             }
@@ -472,7 +623,9 @@ impl AdventureSession {
             | AdventurePhase::InvasionTutorial { .. }
             | AdventurePhase::GameSelector
             | AdventurePhase::HelpScreen
-            | AdventurePhase::Hatch { .. } => {}
+            | AdventurePhase::Hatch { .. }
+            | AdventurePhase::PetSelection { .. }
+            | AdventurePhase::PetSelectionConfirmation { .. } => {}
         }
         if matches!(
             self.phase,
@@ -504,12 +657,31 @@ impl AdventureSession {
         }
     }
 
-    fn start_current_stage(&mut self, events: &mut Vec<Event>) {
+    fn start_current_stage(&mut self, events: &mut Vec<Event>) -> bool {
+        if self.progress.unlocked_pets.len() >= 4 {
+            self.progress.selected_pets.clear();
+            self.board = None;
+            self.phase = AdventurePhase::PetSelection {
+                selected: Vec::new(),
+            };
+            events.push(Event::PetSelectionOpened {
+                tick: self.ticks,
+                capacity: self.progress.selection_capacity() as u8,
+            });
+            return false;
+        }
+        self.start_board(events);
+        true
+    }
+
+    fn start_board(&mut self, events: &mut Vec<Event>) {
         let board = match self.progress.level {
             1 => AdventureState::new_adventure(self.next_seed),
             2 => AdventureState::new_second_stage(self.next_seed),
             3 => AdventureState::new_third_stage(self.next_seed),
             4 => AdventureState::new_fourth_stage(self.next_seed),
+            5 => AdventureState::new_fifth_stage(self.next_seed, &self.progress.selected_pets)
+                .expect("session selection is validated before starting a board"),
             _ => unreachable!("supported progress validated at load"),
         };
         self.next_seed = board.transition_seed();
@@ -544,6 +716,7 @@ impl AdventureSession {
             1 => PetKind::Stinky,
             2 => PetKind::Niko,
             3 => PetKind::Itchy,
+            4 => PetKind::Prego,
             _ => unreachable!("stage not yet completable"),
         };
         self.progress.level = board.level + 1;
@@ -599,6 +772,211 @@ fn settle_collecting_coins(board: &mut AdventureState) -> (Vec<u64>, i32) {
 mod tests {
     use super::*;
     use crate::sim::{Coin, CoinKind, SECOND_STAGE_EGG_PRICE};
+
+    fn selection_session() -> AdventureSession {
+        let mut session = AdventureSession::new(42);
+        session.progress.level = 5;
+        session.progress.unlocked_pets = vec![
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+        ];
+        session.board = None;
+        session.phase = AdventurePhase::PetSelection {
+            selected: Vec::new(),
+        };
+        session
+    }
+
+    #[test]
+    fn fourth_stage_rewards_prego_then_requires_selection_before_fifth_board() {
+        let mut session = AdventureSession::new(42);
+        session.progress.level = 4;
+        session.progress.unlocked_pets = vec![PetKind::Stinky, PetKind::Niko, PetKind::Itchy];
+        session.board = Some(AdventureState::new_fourth_stage(42));
+        let board = session.board.as_mut().unwrap();
+        board.eggs = 2;
+        board.egg_unlocked = true;
+        board.balance = 3000;
+        board.tick = 1000;
+        session.ticks = 1000;
+        let events = session.apply_actions(&[Action::BuyEgg]);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::PetUnlocked {
+                        pet: PetKind::Prego,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(session.progress.level, 5);
+        assert_eq!(
+            session.phase,
+            AdventurePhase::Hatch {
+                pet: PetKind::Prego,
+                updates: 0
+            }
+        );
+        assert!(session.board.is_none());
+        session.validate().unwrap();
+        session.phase = AdventurePhase::Hatch {
+            pet: PetKind::Prego,
+            updates: 171,
+        };
+        let events = session.apply_actions(&[Action::Continue]);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::PetSelectionOpened { capacity: 3, .. }))
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::StageStarted { .. }))
+        );
+        assert_eq!(
+            session.phase,
+            AdventurePhase::PetSelection {
+                selected: Vec::new()
+            }
+        );
+        assert!(session.progress.selected_pets.is_empty());
+        assert_eq!(
+            session.progress.later_stage_best_seconds[0],
+            StageBestTime {
+                tank: 1,
+                level: 4,
+                seconds: 28
+            }
+        );
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn pet_selection_caps_three_and_starts_only_the_canonical_selected_roster() {
+        let mut session = selection_session();
+        session.validate().unwrap();
+        session.apply_actions(&[
+            Action::TogglePet {
+                pet: PetKind::Prego,
+            },
+            Action::TogglePet {
+                pet: PetKind::Itchy,
+            },
+            Action::TogglePet {
+                pet: PetKind::Stinky,
+            },
+        ]);
+        let selected = vec![PetKind::Stinky, PetKind::Itchy, PetKind::Prego];
+        assert_eq!(
+            session.phase,
+            AdventurePhase::PetSelection {
+                selected: selected.clone()
+            }
+        );
+        let rejected = session.apply_actions(&[Action::TogglePet { pet: PetKind::Niko }]);
+        assert!(rejected.iter().any(|event| matches!(
+            event,
+            Event::Rejected {
+                reason: Rejection::Locked,
+                ..
+            }
+        )));
+        session.validate().unwrap();
+        let events = session.step(&[Action::Continue]);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::PetSelectionAccepted { .. }))
+        );
+        assert_eq!(session.phase, AdventurePhase::Playing);
+        assert_eq!(session.progress.selected_pets, selected);
+        let board = session.board.as_ref().unwrap();
+        assert_eq!(board.pets, selected);
+        assert_eq!(
+            (board.level, board.tick, board.balance, board.egg_price),
+            (5, 0, 200, 5000)
+        );
+        assert!(board.stinky.is_some());
+        assert!(board.niko.is_none());
+        assert_eq!(board.fish_pets.len(), 2);
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn fewer_pet_confirmation_preserves_choices_and_explicitly_allows_zero() {
+        let mut session = selection_session();
+        session.apply_actions(&[Action::TogglePet { pet: PetKind::Niko }, Action::Continue]);
+        assert_eq!(session.progress.selected_pets, vec![PetKind::Niko]);
+        assert_eq!(
+            session.phase,
+            AdventurePhase::PetSelectionConfirmation {
+                selected: vec![PetKind::Niko]
+            }
+        );
+        session.validate().unwrap();
+        let rejected = session.apply_actions(&[Action::TogglePet {
+            pet: PetKind::Itchy,
+        }]);
+        assert!(
+            rejected
+                .iter()
+                .any(|event| matches!(event, Event::Rejected { .. }))
+        );
+        session.apply_actions(&[Action::ConfirmPetSelection { accept: false }]);
+        assert_eq!(
+            session.phase,
+            AdventurePhase::PetSelection {
+                selected: vec![PetKind::Niko]
+            }
+        );
+        session.apply_actions(&[Action::TogglePet { pet: PetKind::Niko }, Action::Continue]);
+        assert_eq!(
+            session.phase,
+            AdventurePhase::PetSelectionConfirmation {
+                selected: Vec::new()
+            }
+        );
+        assert!(session.progress.selected_pets.is_empty());
+        session.validate().unwrap();
+        session.apply_actions(&[Action::ConfirmPetSelection { accept: true }]);
+        let board = session.board.as_ref().unwrap();
+        assert!(board.pets.is_empty() && board.fish_pets.is_empty());
+        assert!(board.stinky.is_none() && board.niko.is_none());
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn selection_rejects_duplicate_order_and_active_roster_disagreement() {
+        let mut session = selection_session();
+        session.phase = AdventurePhase::PetSelection {
+            selected: vec![PetKind::Niko, PetKind::Stinky],
+        };
+        assert!(session.validate().is_err());
+        session.phase = AdventurePhase::PetSelection {
+            selected: vec![PetKind::Niko, PetKind::Niko],
+        };
+        assert!(session.validate().is_err());
+        session.phase = AdventurePhase::PetSelectionConfirmation {
+            selected: vec![PetKind::Niko],
+        };
+        assert!(session.validate().is_err());
+        session.phase = AdventurePhase::PetSelection {
+            selected: vec![PetKind::Niko],
+        };
+        session.apply_actions(&[
+            Action::Continue,
+            Action::ConfirmPetSelection { accept: true },
+        ]);
+        session.board.as_mut().unwrap().pets.clear();
+        assert!(session.validate().is_err());
+    }
 
     #[test]
     fn first_stage_score_uses_active_board_ticks_and_retains_strict_best() {

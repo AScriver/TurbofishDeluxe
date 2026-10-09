@@ -95,7 +95,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 5;
+pub const SAVE_FORMAT_VERSION: u32 = 6;
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -196,7 +196,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(5) => {
+        Some(version @ (5 | 6)) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -204,6 +204,10 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     ["first_stage_best_seconds", "later_stage_best_seconds"]
                         .iter()
                         .all(|field| progress.contains_key(*field))
+                        && (version == 5
+                            || ["pet_capacity", "selected_pets"]
+                                .iter()
+                                .all(|field| progress.contains_key(*field)))
                 });
             let incomplete_board = value
                 .pointer("/session/board")
@@ -223,6 +227,10 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     ]
                     .iter()
                     .any(|field| !board.contains_key(*field))
+                        || (version == 6
+                            && ["fish_pets", "punch_sound_cooldown"]
+                                .iter()
+                                .any(|field| !board.contains_key(*field)))
                         || board
                             .get("food")
                             .and_then(serde_json::Value::as_array)
@@ -245,14 +253,31 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                         .get("alien")
                                         .and_then(serde_json::Value::as_object)
                                         .is_some_and(|alien| !alien.contains_key("kind"))
+                                    || (version == 6
+                                        && wave
+                                            .get("dead_alien")
+                                            .and_then(serde_json::Value::as_object)
+                                            .is_some_and(|body| !body.contains_key("kind")))
                             })
                 });
             if !complete_progress || incomplete_board {
-                return Err(
-                    "Incomplete format-five save; required state fields are missing".into(),
-                );
+                let label = if version == 5 { "five" } else { "six" };
+                return Err(format!(
+                    "Incomplete format-{label} save; required state fields are missing"
+                )
+                .into());
             }
-            (serde_json::from_value::<ProjectSave>(value)?.session, false)
+            let mut session = serde_json::from_value::<ProjectSave>(value)?.session;
+            if version == 5 {
+                if session.progress.level > 4 {
+                    return Err("Format-five save contains unsupported Adventure progress".into());
+                }
+                if let Some(board) = &mut session.board {
+                    board.initialize_legacy_alien_body_kind();
+                    board.initialize_legacy_stage14_support();
+                }
+            }
+            (session, version == 5)
         }
         _ => {
             return Err("Unsupported project save version; original saves are not imported".into());

@@ -1,7 +1,9 @@
 use crate::{
     adventure::{AdventurePhase, AdventureSession},
+    alien::SylvesterKind,
     assets::{GameAssets, SoundData},
     cli::{self, Options},
+    fish_pet::FishPetKind,
     font::BitmapFont,
     install::{self, InstallIdentity},
     invasion::{InvasionEvent, InvasionTip},
@@ -53,6 +55,19 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_OSCAR",
     "IMAGE_LASERUPGRADES",
     "IMAGE_ITCHY",
+    "IMAGE_PREGO",
+    "IMAGE_BALROG",
+    "IMAGE_SCREENBACK",
+    "IMAGE_FISHBOX",
+    "IMAGE_FISHBOXBUTTON",
+    "IMAGE_PETBUTTON",
+    "IMAGE_PETBUTTONHOLE",
+    "IMAGE_PETBUTTONRING",
+    "IMAGE_PETBUTTONREFLECT",
+    "IMAGE_SCL_STINKY",
+    "IMAGE_SCL_NIKO",
+    "IMAGE_SCL_ITCHY",
+    "IMAGE_SCL_PREGO",
 ];
 const SOUND_IDS: &[&str] = &[
     "SOUND_DROPFOOD",
@@ -72,6 +87,8 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_PEARL",
     "SOUND_CHOMP",
     "SOUND_DIE",
+    "SOUND_PUNCH",
+    "SOUND_BABY",
 ];
 
 pub struct Presentation {
@@ -234,6 +251,8 @@ impl Presentation {
                 Event::OscarBought { .. } => "SOUND_GROW",
                 Event::OscarAteGuppy { .. } => "SOUND_CHOMP",
                 Event::OscarDied { .. } => "SOUND_DIE",
+                Event::FishPetHit { sound: true, .. } => "SOUND_PUNCH",
+                Event::PregoBirth { .. } => "SOUND_BABY",
                 Event::HatchOpened { .. } => "SOUND_HATCH",
                 Event::Invasion { event, .. } => match event {
                     InvasionEvent::WarningStarted(_) => "SOUND_AWOOGA",
@@ -249,9 +268,10 @@ impl Presentation {
                     _ => continue,
                 },
                 Event::PearlCollectionStarted { .. } => "SOUND_PEARL",
-                Event::StageStarted { .. } | Event::RescueGuppyGranted { .. } => {
-                    "SOUND_BUTTONCLICK"
-                }
+                Event::StageStarted { .. }
+                | Event::RescueGuppyGranted { .. }
+                | Event::PetSelectionChanged { .. }
+                | Event::PetSelectionConfirmation { .. } => "SOUND_BUTTONCLICK",
                 _ => continue,
             };
             if let Some(sound) = self.sounds.get(id) {
@@ -348,6 +368,30 @@ impl Presentation {
                 );
             }
         }
+        let aliens_present = state
+            .invasion
+            .as_ref()
+            .is_some_and(|wave| wave.alien.is_some());
+        for pet in &state.fish_pets {
+            let image = match pet.kind {
+                FishPetKind::Itchy => "IMAGE_ITCHY",
+                FishPetKind::Prego => "IMAGE_PREGO",
+            };
+            self.sprite(
+                image,
+                pet.widget_x as f32,
+                pet.widget_y as f32,
+                Some(Rect::new(
+                    f32::from(pet.sprite_frame()) * 80.0,
+                    f32::from(pet.sprite_row(aliens_present)) * 80.0,
+                    80.0,
+                    80.0,
+                )),
+                pet.facing_right(),
+                1.0,
+                1.0,
+            );
+        }
         for fish in &state.dead_fish {
             let row = match fish.size {
                 FishSize::Small => 0.0,
@@ -426,8 +470,13 @@ impl Presentation {
                     let x = alien.widget_x as f32 + (inset / 2) as f32;
                     let y = alien.widget_y as f32 + (inset / 2) as f32;
                     let scale = size as f32 / 160.0;
+                    let alien_image = if alien.kind == SylvesterKind::Balrog {
+                        "IMAGE_BALROG"
+                    } else {
+                        "IMAGE_SYLV"
+                    };
                     self.sprite(
-                        "IMAGE_SYLV",
+                        alien_image,
                         x,
                         y,
                         Some(source),
@@ -437,7 +486,7 @@ impl Presentation {
                     );
                     if alien.hit_flash() && alien.spawn_ticks == 0 {
                         self.sprite(
-                            "IMAGE_SYLV",
+                            alien_image,
                             x,
                             y,
                             Some(source),
@@ -471,7 +520,11 @@ impl Presentation {
             }
             if let Some(body) = &wave.dead_alien {
                 self.sprite(
-                    "IMAGE_SYLV",
+                    if body.kind == SylvesterKind::Balrog {
+                        "IMAGE_BALROG"
+                    } else {
+                        "IMAGE_SYLV"
+                    },
                     body.widget_x as f32,
                     body.widget_y as f32,
                     Some(Rect::new(f32::from(body.frame) * 160.0, 0.0, 160.0, 160.0)),
@@ -829,6 +882,7 @@ impl Presentation {
                     )
                 }
                 PetKind::Itchy => ("IMAGE_ITCHY", 90.0, updates % 20 / 2),
+                PetKind::Prego => ("IMAGE_PREGO", 90.0, updates % 20 / 2),
             };
             self.sprite(
                 id,
@@ -845,6 +899,7 @@ impl Presentation {
                     PetKind::Stinky => "STINKY the Snail",
                     PetKind::Niko => "NIKO the Oyster",
                     PetKind::Itchy => "ITCHY the Swordfish",
+                    PetKind::Prego => "PREGO the Momma Fish",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -867,6 +922,11 @@ impl Presentation {
                     "ITCHY helps you by attacking",
                     "aliens when they appear.",
                     "",
+                ],
+                PetKind::Prego => [
+                    "PREGO helps populate your",
+                    "tank by giving birth to a new",
+                    "baby guppy every so often.",
                 ],
             };
             for (index, line) in description.iter().enumerate() {
@@ -896,9 +956,194 @@ impl Presentation {
         self.main_button(Rect::new(525.0, 4.0, 80.0, height), "Menu");
     }
 
-    fn draw(&self, session: &AdventureSession, paused: bool) {
+    fn draw_pet_selection(&self, session: &AdventureSession, selected: &[PetKind], pointer: Vec2) {
+        let backdrop = &self.images["IMAGE_SCREENBACK"];
+        self.image_box(
+            "IMAGE_SCREENBACK",
+            Rect::new(0.0, 0.0, backdrop.width(), backdrop.height()),
+            Rect::new(-5.0, -5.0, 650.0, 490.0),
+        );
+        let title = &self.images["IMAGE_SCREENTITLE"];
+        self.image_box(
+            "IMAGE_SCREENTITLE",
+            Rect::new(0.0, 0.0, title.width(), title.height()),
+            Rect::new(20.0, 0.0, 600.0, title.height()),
+        );
+        self.sprite("IMAGE_FISHBOX", 216.0, 48.0, None, false, 1.0, 1.0);
+        self.sprite("IMAGE_FISHBOXBUTTON", 221.0, 243.0, None, false, 1.0, 1.0);
+        self.fonts["JungleFever17outline"].text(
+            "Choose Your Pets",
+            215.0,
+            25.0,
+            Color::from_rgba(255, 200, 0, 255),
+        );
+        let mut hovered = None;
+        for (index, pet) in session.progress.unlocked_pets.iter().take(4).enumerate() {
+            // The first four W1 PetsScreen buttons occupy one 90x83 column.
+            let card = Rect::new(25.0, 41.0 + index as f32 * 83.0, 90.0, 83.0);
+            if card.contains(pointer) {
+                hovered = Some(*pet);
+            }
+            self.sprite("IMAGE_PETBUTTONHOLE", card.x, card.y, None, false, 1.0, 1.0);
+            let button_width = self.images["IMAGE_PETBUTTON"].width() / 4.0;
+            self.sprite(
+                "IMAGE_PETBUTTON",
+                card.x,
+                card.y,
+                Some(Rect::new(
+                    button_width * if selected.contains(pet) { 2.0 } else { 1.0 },
+                    0.0,
+                    button_width,
+                    self.images["IMAGE_PETBUTTON"].height(),
+                )),
+                false,
+                1.0,
+                1.0,
+            );
+            let icon = match pet {
+                PetKind::Stinky => "IMAGE_SCL_STINKY",
+                PetKind::Niko => "IMAGE_SCL_NIKO",
+                PetKind::Itchy => "IMAGE_SCL_ITCHY",
+                PetKind::Prego => "IMAGE_SCL_PREGO",
+            };
+            let image = &self.images[icon];
+            let column = if *pet == PetKind::Niko {
+                let phase = session.ticks % 18;
+                if phase > 9 { 18 - phase } else { phase }
+            } else {
+                session.ticks / 2 % 10
+            };
+            self.sprite(
+                icon,
+                card.x + 14.0,
+                card.y + 10.0,
+                Some(Rect::new(
+                    column as f32 * image.width() / 10.0,
+                    0.0,
+                    image.width() / 10.0,
+                    image.height(),
+                )),
+                false,
+                1.0,
+                1.0,
+            );
+            self.sprite("IMAGE_PETBUTTONRING", card.x, card.y, None, false, 1.0, 1.0);
+            self.sprite(
+                "IMAGE_PETBUTTONREFLECT",
+                card.x,
+                card.y,
+                None,
+                false,
+                1.0,
+                1.0,
+            );
+        }
+        if let Some(pet) = hovered.or_else(|| selected.last().copied()) {
+            let (image, name, description, y) = match pet {
+                PetKind::Stinky => (
+                    "IMAGE_STINKY",
+                    "STINKY the Snail",
+                    [
+                        "STINKY roams around the",
+                        "bottom of your tank, catching",
+                        "any coins you may have missed.",
+                    ],
+                    90.0,
+                ),
+                PetKind::Niko => (
+                    "IMAGE_NIKO",
+                    "NIKO the Oyster",
+                    [
+                        "NIKO produces pearls that",
+                        "you can click on for a",
+                        "hefty sum of money.",
+                    ],
+                    85.0,
+                ),
+                PetKind::Itchy => (
+                    "IMAGE_ITCHY",
+                    "ITCHY the Swordfish",
+                    [
+                        "ITCHY helps you by attacking",
+                        "aliens when they appear.",
+                        "",
+                    ],
+                    90.0,
+                ),
+                PetKind::Prego => (
+                    "IMAGE_PREGO",
+                    "PREGO the Momma Fish",
+                    [
+                        "PREGO helps populate your",
+                        "tank by giving birth to a new",
+                        "baby guppy every so often.",
+                    ],
+                    90.0,
+                ),
+            };
+            let column = if pet == PetKind::Niko {
+                let phase = session.ticks % 18;
+                if phase > 9 { 18 - phase } else { phase }
+            } else {
+                session.ticks % 20 / 2
+            };
+            self.sprite(
+                image,
+                280.0,
+                y,
+                Some(Rect::new(column as f32 * 80.0, 0.0, 80.0, 80.0)),
+                false,
+                1.0,
+                1.0,
+            );
+            self.centered_text(
+                "JungleFever15outline",
+                name,
+                180.0,
+                Color::from_rgba(255, 200, 0, 255),
+            );
+            for (index, line) in description.iter().enumerate() {
+                self.centered_text(
+                    "JungleFever10outline",
+                    line,
+                    200.0 + index as f32 * 15.0,
+                    WHITE,
+                );
+            }
+        }
+        let remaining = session
+            .progress
+            .selection_capacity()
+            .saturating_sub(selected.len());
+        if remaining > 0 {
+            self.centered_text(
+                "JungleFever10outline",
+                &format!(
+                    "Choose {remaining} more {}",
+                    if remaining == 1 { "pet" } else { "pets" }
+                ),
+                75.0,
+                WHITE,
+            );
+            self.centered_text(
+                "JungleFever10outline",
+                "to take to the next level",
+                90.0,
+                WHITE,
+            );
+        }
+        let height = self.images["IMAGE_MAINBUTTON"].height();
+        self.main_button(Rect::new(225.0, 250.0, 186.0, height), "Continue");
+        self.main_button(Rect::new(525.0, 4.0, 80.0, height), "Menu");
+    }
+
+    fn draw(&self, session: &AdventureSession, paused: bool, pointer: Vec2) {
         match session.phase {
             AdventurePhase::Hatch { pet, updates } => self.draw_hatch(pet, updates),
+            AdventurePhase::PetSelection { ref selected }
+            | AdventurePhase::PetSelectionConfirmation { ref selected } => {
+                self.draw_pet_selection(session, selected, pointer);
+            }
             AdventurePhase::Playing
             | AdventurePhase::FirstTankRescue
             | AdventurePhase::InvasionTutorial { .. }
@@ -910,6 +1155,28 @@ impl Presentation {
             AdventurePhase::GameSelector | AdventurePhase::HelpScreen => {
                 self.sprite("IMAGE_HATCHSCREEN", 0.0, 0.0, None, false, 1.0, 1.0);
             }
+        }
+        if matches!(
+            session.phase,
+            AdventurePhase::PetSelectionConfirmation { .. }
+        ) {
+            draw_rectangle(
+                110.0,
+                150.0,
+                420.0,
+                210.0,
+                Color::new(0.02, 0.1, 0.15, 0.96),
+            );
+            self.centered_text("JungleFever15outline", "Select More Pets?", 194.0, YELLOW);
+            self.centered_text(
+                "JungleFever10outline",
+                "Continue with fewer than 3 pets?",
+                232.0,
+                WHITE,
+            );
+            let height = self.images["IMAGE_MAINBUTTON"].height();
+            self.main_button(Rect::new(155.0, 300.0, 145.0, height), "Yes");
+            self.main_button(Rect::new(340.0, 300.0, 145.0, height), "No");
         }
         if session.phase == AdventurePhase::FirstTankRescue {
             draw_rectangle(90.0, 150.0, 460.0, 200.0, Color::new(0.02, 0.1, 0.15, 0.96));
@@ -1193,7 +1460,10 @@ pub async fn run(
             held_fire_at = None;
         }
         let button_height = presentation.images["IMAGE_MAINBUTTON"].height();
-        let menu_rect = if matches!(session.phase, AdventurePhase::Hatch { .. }) {
+        let menu_rect = if matches!(
+            session.phase,
+            AdventurePhase::Hatch { .. } | AdventurePhase::PetSelection { .. }
+        ) {
             Rect::new(525.0, 4.0, 80.0, button_height)
         } else {
             Rect::new(525.0, 3.0, 101.0, 29.0)
@@ -1202,10 +1472,15 @@ pub async fn run(
             if menu_rect.contains(pointer)
                 && matches!(
                     session.phase,
-                    AdventurePhase::Playing | AdventurePhase::Hatch { .. }
+                    AdventurePhase::Playing
+                        | AdventurePhase::Hatch { .. }
+                        | AdventurePhase::PetSelection { .. }
                 )
             {
-                if matches!(session.phase, AdventurePhase::Hatch { .. }) {
+                if matches!(
+                    session.phase,
+                    AdventurePhase::Hatch { .. } | AdventurePhase::PetSelection { .. }
+                ) {
                     pending_actions.push(Action::OpenMenu);
                 } else {
                     paused = !paused;
@@ -1216,6 +1491,39 @@ pub async fn run(
                 held_fire_at = None;
             } else if !paused {
                 let action = match session.phase {
+                    AdventurePhase::PetSelection { .. } => {
+                        let pet_at_pointer = session
+                            .progress
+                            .unlocked_pets
+                            .iter()
+                            .take(4)
+                            .enumerate()
+                            .find(|(index, _)| {
+                                Rect::new(25.0, 41.0 + *index as f32 * 83.0, 90.0, 83.0)
+                                    .contains(pointer)
+                            })
+                            .map(|(_, pet)| *pet);
+                        if let Some(pet) = pet_at_pointer {
+                            Action::TogglePet { pet }
+                        } else if Rect::new(225.0, 250.0, 186.0, button_height).contains(pointer) {
+                            Action::Continue
+                        } else {
+                            Action::Click {
+                                x: pointer.x,
+                                y: pointer.y,
+                            }
+                        }
+                    }
+                    AdventurePhase::PetSelectionConfirmation { .. }
+                        if Rect::new(155.0, 300.0, 145.0, button_height).contains(pointer) =>
+                    {
+                        Action::ConfirmPetSelection { accept: true }
+                    }
+                    AdventurePhase::PetSelectionConfirmation { .. }
+                        if Rect::new(340.0, 300.0, 145.0, button_height).contains(pointer) =>
+                    {
+                        Action::ConfirmPetSelection { accept: false }
+                    }
                     AdventurePhase::Hatch { updates, .. }
                         if updates > 170
                             && Rect::new(186.0, 445.0, 264.0, button_height).contains(pointer) =>
@@ -1350,9 +1658,22 @@ pub async fn run(
                 | AdventurePhase::InvasionTutorial { .. }
                 | AdventurePhase::HelpScreen
                 | AdventurePhase::Hatch { .. }
+                | AdventurePhase::PetSelection { .. }
         ) || matches!(session.phase, AdventurePhase::GameOver { updates } if updates > 30);
         if !paused && is_key_pressed(KeyCode::Enter) && enter_continues {
             pending_actions.push(Action::Continue);
+        }
+        if !paused
+            && matches!(
+                session.phase,
+                AdventurePhase::PetSelectionConfirmation { .. }
+            )
+        {
+            if is_key_pressed(KeyCode::Y) || is_key_pressed(KeyCode::Enter) {
+                pending_actions.push(Action::ConfirmPetSelection { accept: true });
+            } else if is_key_pressed(KeyCode::N) {
+                pending_actions.push(Action::ConfirmPetSelection { accept: false });
+            }
         }
         let save_requested = is_key_pressed(KeyCode::S);
         let exit_requested = is_quit_requested()
@@ -1487,7 +1808,7 @@ pub async fn run(
             (480.0 * scale) as i32,
         ));
         set_camera(&camera);
-        presentation.draw(&session, paused);
+        presentation.draw(&session, paused, pointer);
         set_default_camera();
         if let Some(evidence) = evidence.as_ref() {
             let request = evidence.root.join("capture.request");

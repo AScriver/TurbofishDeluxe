@@ -2,6 +2,16 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-08 — Verify Adventure1-4 Itchy, Balrog, Prego and selection
+
+**Changed:** Added live Itchy/Prego movement and abilities, Balrog combat/body identity, source-ordered pet updates, earned Prego hatch, capacity-three selection/confirmation and selected early1-5. Atomic format6 migrations preserve existing sessions and explicitly initialize unknown legacy1-4 support. Stage5's third egg remains gated pending Zorf/bonus. [Execution report](docs/playtests/2026-10-08-adventure-1-4-01.md) records identified builds and real outcomes.
+
+**Evidence/checks:** PB20–PB22 confirms pet spawn/contact/nearest/truncation, Balrog stats and removal paths. Format/strict Clippy/127tests/native build passed. Normal-speed earned1-4 defeated five Balrogs, combined174Itchy contacts/64laser hits, bought three3000eggs and hatched Prego; losses are retained. Actual selection rejected a fourth pet, exercised zero/fewer confirmation/No, accepted Stinky/Itchy/Prego, produced a natural baby at Board930 and reloaded the exact complete session. Root inspected headings/combat/hatch/selection/separated baby. Seven owned processes exited0/install unchanged; original/audio/human comparisons remain unperformed.
+
+**Failures/corrections:** Adversarial source review corrected pet exit/steering timers, live-object order and pending-health validation before the127-test gate. A persistence fixture incorrectly assumed Options Default; explicit options fixed it. Three window attempts exposed stale helper sampling, delayed firing and feeding only original fish IDs; reassessed actual survivor state and corrected the controller, then the earned run succeeded. No recovered rule was changed to make those failed input strategies win.
+
+**Next:** The [1-5→bonus→2-1 contract](docs/adventure-1-5-bonus-2-1.md) now includes PB23–PB25 Food/potion/flight evidence and independent corrections to arrival counts, empty completion, lethal-potion continuation and free-food capacity. [Original observation](docs/original-observation.md) records why safe isolated retail execution is still unverified. Workflow/parser/automatic-variable checks passed:25documents/208links/35anchors/49ignore cases/48eligible files. Commit this coherent checkpoint and implement the next increment automatically; full scope remains active.
+
 ## 2026-10-08 — Integrate Adventure1-3 Oscar, strong combat and weapon gates
 
 **Changed:** Preserved existing progression while adding serializable Oscar hunting/diamonds/death visuals, strong Sylvester, per-board weapon upgrades/held maximum fire, later-stage score and Itchy hatch. Format5 explicitly migrates old1-3 boards with an unknown historical Strong countdown, retaining earned Niko state and remembered Large-growth gates. Independent contract/corrections are in [Adventure1-3](docs/adventure-1-3.md).

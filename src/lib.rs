@@ -4,6 +4,7 @@ pub mod alien;
 pub mod app;
 pub mod assets;
 pub mod cli;
+pub mod fish_pet;
 pub mod font;
 pub mod install;
 pub mod invasion;

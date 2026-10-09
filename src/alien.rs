@@ -19,6 +19,7 @@ pub enum SylvesterKind {
     #[default]
     Weak,
     Strong,
+    Balrog,
 }
 
 impl SylvesterKind {
@@ -26,6 +27,7 @@ impl SylvesterKind {
         match self {
             Self::Weak => WEAK_SPEED_DIVISOR,
             Self::Strong => 1.6,
+            Self::Balrog => 1.2,
         }
     }
 
@@ -33,6 +35,7 @@ impl SylvesterKind {
         match self {
             Self::Weak => WEAK_STARTING_HEALTH,
             Self::Strong => 60,
+            Self::Balrog => 130,
         }
     }
 }
@@ -53,6 +56,8 @@ pub struct PreyView {
 pub struct AlienUpdate {
     /// At most one prey, selected in the board-provided order.
     pub prey_eaten: Option<u64>,
+    /// Registered zero-health aliens finish this active update before removal.
+    pub defeated: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -198,6 +203,10 @@ impl WeakSylvester {
         self.widget_x = self.x as i32;
         self.widget_y = self.y as i32;
         self.animate();
+        if self.health <= 0 {
+            self.alive = false;
+            result.defeated = true;
+        }
         result
     }
 
@@ -220,7 +229,7 @@ impl WeakSylvester {
             return ShotResult::Miss;
         }
 
-        self.health -= i16::from(weapon) * 3;
+        self.health = self.health.saturating_sub(i16::from(weapon) * 3);
         self.apply_shot_push(sx, sy);
         if self.health <= 0 {
             self.alive = false;
@@ -234,6 +243,17 @@ impl WeakSylvester {
                 health: self.health,
             }
         }
+    }
+
+    /// FishTypePet Itchy contact only subtracts HP. It does not apply shot
+    /// immunity, flash, push or immediate removal; the next active alien
+    /// update owns the eventual death transaction.
+    pub fn itchy_hit(&mut self) -> Option<i16> {
+        if !self.alive {
+            return None;
+        }
+        self.health = self.health.saturating_sub(1);
+        Some(self.health)
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -262,7 +282,12 @@ impl WeakSylvester {
             || self.widget_y < 64
             || self.widget_y > 312
             || self.health > self.kind.starting_health()
-            || self.alive != (self.health > 0)
+            // Project-save guard for one ordinary Itchy contact per elapsed
+            // spawn update. This bounds malformed pending-death state without
+            // rejecting the original's deferred removal during emergence.
+            || self.alive
+                && self.health < -i16::from(15_u8.saturating_sub(self.spawn_ticks))
+            || !self.alive && self.health > 0
             || self.spawn_ticks > 15
             || self.chase_ticks > 100
             || self.hit_ticks > 10
@@ -627,6 +652,47 @@ mod tests {
         let mut side = WeakSylvester::spawn_kind(SylvesterKind::Strong, 9, 100, 120, 1, 1);
         side.shot_with_weapon(101, 180, 2);
         assert!((side.vx - 4.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn itchy_contact_leaves_zero_health_actor_registered_without_shot_state() {
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Balrog, 48, 100, 120, 1, 1);
+        actor.health = 1;
+        let before_motion = (actor.vx, actor.vy);
+        assert_eq!(actor.itchy_hit(), Some(0));
+        assert!(actor.alive);
+        assert_eq!(actor.hit_ticks, 0);
+        assert_eq!((actor.vx, actor.vy), before_motion);
+        actor.validate().unwrap();
+        assert_eq!(actor.itchy_hit(), Some(-1));
+        assert!(actor.alive);
+    }
+
+    #[test]
+    fn pending_health_save_bound_tracks_emergence_and_malformed_math_cannot_overflow() {
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Balrog, 49, 100, 120, 1, 1);
+        actor.health = -1;
+        assert!(
+            actor.validate().is_err(),
+            "negative HP before first update is impossible"
+        );
+        actor.health = 1;
+        for _ in 0..6 {
+            actor.update(&[], || 1);
+            actor.itchy_hit();
+            actor.validate().unwrap();
+        }
+        assert_eq!((actor.spawn_ticks, actor.health), (9, -5));
+        assert!(actor.update(&[], || 1).defeated);
+
+        let mut malformed = WeakSylvester::spawn_kind(SylvesterKind::Balrog, 50, 100, 120, 1, 1);
+        malformed.health = i16::MIN;
+        assert!(malformed.validate().is_err());
+        assert_eq!(malformed.itchy_hit(), Some(i16::MIN));
+        assert!(matches!(
+            malformed.shot_with_weapon(180, 200, 12),
+            ShotResult::Defeated { .. }
+        ));
     }
 
     #[test]
