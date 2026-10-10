@@ -9,6 +9,48 @@ use turbofish_deluxe::{
     sim::{Action, AdventureState, StinkyOrigin},
 };
 
+#[test]
+fn current_twenty_two_requires_explicit_plain_presto_form_state() {
+    let session = vert_session();
+    let encoded = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: session.clone(),
+    })
+    .unwrap();
+    let pets = encoded
+        .pointer("/session/board/fish_pets")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert!(!pets.is_empty());
+    assert!(pets.iter().all(|pet| pet["presto_form"].is_null()));
+    for index in 0..pets.len() {
+        let mut missing = encoded.clone();
+        missing["session"]["board"]["fish_pets"][index]
+            .as_object_mut()
+            .unwrap()
+            .remove("presto_form");
+        assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+    }
+    assert_eq!(
+        serde_json::to_vec(&cli::decode_save(&serde_json::to_vec(&encoded).unwrap()).unwrap())
+            .unwrap(),
+        serde_json::to_vec(&session).unwrap()
+    );
+}
+
+#[test]
+fn current_plain_roster_rejects_unowned_presto_form() {
+    let mut encoded = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: vert_session(),
+    })
+    .unwrap();
+    encoded["session"]["board"]["fish_pets"][0]["presto_form"] =
+        serde_json::json!({"remaining_ticks":0});
+    assert!(cli::decode_save(&serde_json::to_vec(&encoded).unwrap()).is_err());
+}
+
 fn vert_session() -> AdventureSession {
     let mut session = AdventureSession::new(42);
     session.progress.tank = 2;
@@ -648,7 +690,7 @@ fn current_tank_four_second_pause_keeps_live_board_while_session_time_advances()
 fn current_tank_four_third_accepts_seventeen_rosters_and_persists_live_amp_setup() {
     use turbofish_deluxe::{alien::SylvesterKind, fish_pet::FishPetKind, invasion::EncounterKind};
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 21);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 22);
     let canonical = tank_four_third_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 17);
     for pet in canonical {
@@ -909,7 +951,7 @@ fn current_tank_four_fourth_accepts_eighteen_rosters_and_persists_gash_setup() {
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 21);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 22);
     let canonical = tank_four_fourth_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 18);
     for pet in canonical {
@@ -1162,7 +1204,7 @@ fn current_tank_four_finale_accepts_nineteen_rosters_and_starts_with_bilaterus()
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 21);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 22);
     let canonical = tank_four_finale_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 19);
     for pet in canonical {

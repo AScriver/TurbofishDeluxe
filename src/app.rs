@@ -1065,6 +1065,7 @@ impl Presentation {
                 FishPetKind::Amp => "IMAGE_AMP",
                 FishPetKind::Gash => "IMAGE_GASH",
                 FishPetKind::Angie => "IMAGE_ANGIE",
+                FishPetKind::Presto => "IMAGE_PRESTO",
             };
             let (cell_width, cell_height) = if pet.kind == FishPetKind::Amp {
                 (160.0, 60.0)

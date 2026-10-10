@@ -24,6 +24,22 @@ pub enum FishPetKind {
     Amp,
     Gash,
     Angie,
+    Presto,
+}
+
+/// Constructor-owned flag and +238 clock for a Presto-origin FishTypePet.
+/// Plain pets have no form state; a transformed pet retains it at every form.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrestoForm {
+    pub remaining_ticks: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrestoChangeEligibility {
+    NotPrestoForm,
+    SameForm,
+    CoolingDown,
+    Ready,
 }
 
 /// A direct Amp handler result. The Board owns whether normal input reaches it.
@@ -206,6 +222,9 @@ pub struct FishPetState {
     /// Independent of the protection clock: active with clock zero is legal.
     pub ward_active: bool,
     pub ward_timer: u16,
+    /// The actor owns the source +238 cooldown and transformed-form flag.
+    #[serde(default)]
+    pub presto_form: Option<PrestoForm>,
     /// Prior widget coordinates published before this pet's own movement.
     pub published_x: i32,
     pub published_y: i32,
@@ -228,27 +247,73 @@ impl FishPetState {
         kind: FishPetKind,
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> Self {
-        Self::spawn(id, kind, false, rand_range)
+        Self::spawn(id, kind, false, false, None, rand_range)
     }
 
-    /// Tank 5 keeps the common FishTypePet construction and draw order, but
-    /// its specialty clocks use the Tank-5 constructor values (PB05 004ef420).
+    /// Tank 5 uses ordinary Adventure constructor values. Its Board-specific
+    /// update suppression is independent of the App's Virtual Tank mode.
     pub fn spawn_tank5(
         id: u64,
         kind: FishPetKind,
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> Self {
-        Self::spawn(id, kind, true, rand_range)
+        Self::spawn(id, kind, false, false, None, rand_range)
+    }
+
+    /// Construct a flagged FishTypePet replacement at the old widget pose.
+    /// Board owns replacement/removal, identity, sound, and target admission.
+    /// The common Fish constructor still consumes its six draws.
+    pub fn spawn_presto_form_at(
+        id: u64,
+        kind: FishPetKind,
+        widget_x: i32,
+        widget_y: i32,
+        virtual_tank: bool,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
+        let mut pet = Self::spawn(
+            id,
+            kind,
+            virtual_tank,
+            true,
+            Some((widget_x, widget_y)),
+            rand_range,
+        );
+        pet.presto_form = Some(PrestoForm {
+            remaining_ticks: if virtual_tank || kind == FishPetKind::Presto {
+                0
+            } else {
+                360
+            },
+        });
+        pet
+    }
+
+    /// Source 004f89a0 checks form equality before the +238 readiness gate.
+    /// This query consumes no RNG and leaves the actor untouched.
+    pub fn presto_change_eligibility(&self, target: FishPetKind) -> PrestoChangeEligibility {
+        let Some(form) = self.presto_form else {
+            return PrestoChangeEligibility::NotPrestoForm;
+        };
+        if target == self.kind {
+            PrestoChangeEligibility::SameForm
+        } else if form.remaining_ticks != 0 {
+            PrestoChangeEligibility::CoolingDown
+        } else {
+            PrestoChangeEligibility::Ready
+        }
     }
 
     fn spawn(
         id: u64,
         kind: FishPetKind,
-        tank5: bool,
+        virtual_tank: bool,
+        flagged: bool,
+        at: Option<(i32, i32)>,
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> Self {
-        let widget_x = rand_range(265) as i32 + 105;
-        let widget_y = rand_range(520) as i32 + 20;
+        let (widget_x, widget_y) =
+            at.unwrap_or_else(|| (rand_range(265) as i32 + 105, rand_range(520) as i32 + 20));
         let left = rand_range(2) != 0;
         let speed_mod = match rand_range(3) {
             0 => 2.0,
@@ -259,8 +324,8 @@ impl FishPetState {
         let _unused_growth = rand_range(3);
         let movement_state = rand_range(10) as u8;
         let _unused_coin_threshold = rand_range(200);
-        // PB05 004ef420 uses one extra constructor draw for Tank-5 Vert.
-        let _tank5_vert_interval = if tank5 && kind == FishPetKind::Vert {
+        // 004ef420's mode-5 check belongs to App Virtual Tank, not Board Tank 5.
+        let _virtual_vert_interval = if virtual_tank && kind == FishPetKind::Vert {
             Some(rand_range(200))
         } else {
             None
@@ -284,13 +349,19 @@ impl FishPetState {
             amp_threshold: if kind == FishPetKind::Amp { 3000 } else { 0 },
             amp_charge: 0,
             gash_timer: if kind == FishPetKind::Gash {
-                if tank5 { 0 } else { -1550 }
+                if flagged {
+                    1520
+                } else if virtual_tank {
+                    0
+                } else {
+                    -1550
+                }
             } else {
                 0
             },
             gash_eating_ticks: 0,
             bomb_threshold: if kind == FishPetKind::Shrapnel {
-                if tank5 {
+                if virtual_tank {
                     rand_range(200) as u16 + 1080
                 } else {
                     rand_range(20) as u16 + 633
@@ -302,6 +373,7 @@ impl FishPetState {
             meryl_blink: true,
             ward_active: false,
             ward_timer: 0,
+            presto_form: (kind == FishPetKind::Presto).then_some(PrestoForm { remaining_ticks: 0 }),
             published_x: widget_x,
             published_y: widget_y,
             speed_mod: if kind == FishPetKind::Wadsworth {
@@ -324,14 +396,14 @@ impl FishPetState {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        self.validate_for_tank(false)
+        self.validate_for_tank()
     }
 
     pub fn validate_tank5(&self) -> Result<(), String> {
-        self.validate_for_tank(true)
+        self.validate_for_tank()
     }
 
-    fn validate_for_tank(&self, tank5: bool) -> Result<(), String> {
+    fn validate_for_tank(&self) -> Result<(), String> {
         if self.id == 0
             || ![
                 self.x,
@@ -384,7 +456,7 @@ impl FishPetState {
             || (self.kind == FishPetKind::Vert && self.coin_timer >= 216)
             || (self.kind == FishPetKind::Meryl && self.coin_timer >= 1400)
             || (self.kind == FishPetKind::Shrapnel
-                && (!(if tank5 { 1080..=1279 } else { 633..=652 }).contains(&self.bomb_threshold)
+                && (!(633..=652).contains(&self.bomb_threshold)
                     || self.coin_timer >= self.bomb_threshold
                     || !(-1.0..1.0).contains(&self.glint_phase)))
             || (self.kind == FishPetKind::Amp && self.amp_charge > 2)
@@ -415,6 +487,10 @@ impl FishPetState {
                     || self.ward_timer != 0
                     || self.published_x != self.widget_x
                     || self.published_y != self.widget_y))
+            || (self.kind == FishPetKind::Presto && self.presto_form.is_none())
+            || self
+                .presto_form
+                .is_some_and(|form| form.remaining_ticks > 360)
         {
             return Err("invalid ordinary fish pet save state".into());
         }
@@ -496,6 +572,7 @@ impl FishPetState {
                 }
             }
             FishPetKind::Angie => u8::from(self.turn_ticks != 0),
+            FishPetKind::Presto => u8::from(self.turn_ticks != 0),
         }
     }
 
@@ -930,6 +1007,9 @@ impl FishPetState {
         if self.kind != FishPetKind::Wadsworth {
             self.published_x = self.widget_x;
             self.published_y = self.widget_y;
+        }
+        if let Some(form) = &mut self.presto_form {
+            form.remaining_ticks = form.remaining_ticks.saturating_sub(1);
         }
         update
     }
@@ -1456,13 +1536,160 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tank5_constructor_draws_and_specialty_clocks_follow_primary_ctor() {
+    fn presto_constructor_distinguishes_raw_and_flagged_forms_and_position_draws() {
+        let mut ordinary_draws = Vec::new();
+        let raw = FishPetState::spawn_tank1(1, FishPetKind::Presto, &mut |upper| {
+            ordinary_draws.push(upper);
+            0
+        });
+        assert_eq!(ordinary_draws, [265, 520, 2, 3, 200, 3, 10, 200]);
+        assert_eq!(raw.presto_form, Some(PrestoForm { remaining_ticks: 0 }));
+        assert!(raw.validate().is_ok());
+
+        let mut replacement_draws = Vec::new();
+        let flagged = FishPetState::spawn_presto_form_at(
+            2,
+            FishPetKind::Itchy,
+            145,
+            275,
+            false,
+            &mut |upper| {
+                replacement_draws.push(upper);
+                0
+            },
+        );
+        assert_eq!(replacement_draws.as_slice(), &ordinary_draws[2..]);
+        assert_eq!((flagged.widget_x, flagged.widget_y), (145, 275));
+        assert_eq!(
+            flagged.presto_form,
+            Some(PrestoForm {
+                remaining_ticks: 360
+            })
+        );
+        assert!(flagged.validate().is_ok());
+
+        let mut specialty_draws = Vec::new();
+        let shrapnel = FishPetState::spawn_presto_form_at(
+            4,
+            FishPetKind::Shrapnel,
+            145,
+            275,
+            false,
+            &mut |upper| {
+                specialty_draws.push(upper);
+                0
+            },
+        );
+        assert_eq!(specialty_draws, [2, 3, 200, 3, 10, 200, 20]);
+        assert_eq!(shrapnel.bomb_threshold, 633);
+        assert_eq!(
+            shrapnel.presto_form,
+            Some(PrestoForm {
+                remaining_ticks: 360
+            })
+        );
+        assert!(shrapnel.validate().is_ok());
+
+        let returned =
+            FishPetState::spawn_presto_form_at(5, FishPetKind::Presto, 145, 275, false, &mut |_| 0);
+        assert_eq!(
+            returned.presto_form,
+            Some(PrestoForm { remaining_ticks: 0 })
+        );
+
+        let virtual_tank =
+            FishPetState::spawn_presto_form_at(3, FishPetKind::Itchy, 145, 275, true, &mut |_| 0);
+        assert_eq!(
+            virtual_tank.presto_form,
+            Some(PrestoForm { remaining_ticks: 0 })
+        );
+
+        let flagged_gash =
+            FishPetState::spawn_presto_form_at(6, FishPetKind::Gash, 145, 275, false, &mut |_| 0);
+        assert_eq!(flagged_gash.gash_timer, 1520);
+        assert_eq!(
+            flagged_gash.presto_form,
+            Some(PrestoForm {
+                remaining_ticks: 360
+            })
+        );
+        assert!(flagged_gash.validate().is_ok());
+    }
+
+    #[test]
+    fn presto_eligibility_is_read_only_and_preserves_form_ownership() {
+        let plain = FishPetState::spawn_tank1(1, FishPetKind::Itchy, &mut |_| 0);
+        assert_eq!(
+            plain.presto_change_eligibility(FishPetKind::Prego),
+            PrestoChangeEligibility::NotPrestoForm
+        );
+        let mut form =
+            FishPetState::spawn_presto_form_at(2, FishPetKind::Itchy, 145, 275, false, &mut |_| 0);
+        let before = serde_json::to_vec(&form).unwrap();
+        assert_eq!(
+            form.presto_change_eligibility(FishPetKind::Itchy),
+            PrestoChangeEligibility::SameForm
+        );
+        assert_eq!(
+            form.presto_change_eligibility(FishPetKind::Prego),
+            PrestoChangeEligibility::CoolingDown
+        );
+        assert_eq!(serde_json::to_vec(&form).unwrap(), before);
+        form.presto_form.as_mut().unwrap().remaining_ticks = 0;
+        assert_eq!(
+            form.presto_change_eligibility(FishPetKind::Prego),
+            PrestoChangeEligibility::Ready
+        );
+        form.presto_form = Some(PrestoForm {
+            remaining_ticks: 361,
+        });
+        assert!(form.validate().is_err());
+        form.presto_form = None;
+        assert!(form.validate().is_ok());
+        let mut raw = FishPetState::spawn_tank1(3, FishPetKind::Presto, &mut |_| 0);
+        raw.presto_form = None;
+        assert!(raw.validate().is_err());
+    }
+
+    #[test]
+    fn presto_clock_advances_once_per_active_update_and_continues_after_save() {
+        let mut form =
+            FishPetState::spawn_presto_form_at(2, FishPetKind::Itchy, 145, 275, false, &mut |_| 0);
+        // Independently recovered ctor360 and one decrement per active update.
+        for expected in (1..360).rev() {
+            form.tick(&[], 0, &mut |_| 0);
+            assert_eq!(form.presto_form.unwrap().remaining_ticks, expected);
+        }
+        assert_eq!(form.presto_form.unwrap().remaining_ticks, 1);
+        assert_eq!(
+            form.presto_change_eligibility(FishPetKind::Prego),
+            PrestoChangeEligibility::CoolingDown
+        );
+        let saved = serde_json::to_vec(&form).unwrap();
+        let mut resumed: FishPetState = serde_json::from_slice(&saved).unwrap();
+        form.tick(&[], 0, &mut |_| 0);
+        resumed.tick(&[], 0, &mut |_| 0);
+        assert_eq!(resumed.presto_form.unwrap().remaining_ticks, 0);
+        assert_eq!(
+            serde_json::to_vec(&resumed).unwrap(),
+            serde_json::to_vec(&form).unwrap()
+        );
+        assert_eq!(
+            resumed.presto_change_eligibility(FishPetKind::Prego),
+            PrestoChangeEligibility::Ready
+        );
+        resumed.tick(&[], 0, &mut |_| 0);
+        assert_eq!(resumed.presto_form.unwrap().remaining_ticks, 0);
+    }
+
+    #[test]
+    fn tank5_constructor_uses_ordinary_adventure_mode_and_clocks() {
         let mut vert_draws = Vec::new();
         let vert = FishPetState::spawn_tank5(1, FishPetKind::Vert, &mut |upper| {
             vert_draws.push(upper);
             0
         });
-        assert_eq!(vert_draws, [265, 520, 2, 3, 200, 3, 10, 200, 200]);
+        assert_eq!(vert_draws, [265, 520, 2, 3, 200, 3, 10, 200]);
         assert_eq!(vert.coin_timer, 0);
         assert!(vert.validate_tank5().is_ok());
 
@@ -1471,13 +1698,14 @@ mod tests {
             shrapnel_draws.push(upper);
             0
         });
-        assert_eq!(shrapnel_draws, vert_draws);
-        assert_eq!(shrapnel.bomb_threshold, 1080);
+        assert_eq!(shrapnel_draws, [265, 520, 2, 3, 200, 3, 10, 200, 20]);
+        assert_eq!(shrapnel.bomb_threshold, 633);
         assert!(shrapnel.validate_tank5().is_ok());
-        assert!(shrapnel.validate().is_err());
+        assert!(shrapnel.validate().is_ok());
 
         let gash = FishPetState::spawn_tank5(3, FishPetKind::Gash, &mut |_| 0);
-        assert_eq!(gash.gash_timer, 0);
+        assert_eq!(gash.gash_timer, -1550);
+        assert!(gash.validate_tank5().is_ok());
     }
 
     #[test]

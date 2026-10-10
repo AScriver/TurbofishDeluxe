@@ -2215,7 +2215,9 @@ impl AdventureState {
         StinkyState {
             combat_id,
             x,
-            y: if self.tank == 5 { 370.0 } else { 360.0 },
+            // PB05 004eb5c0 fixes unflagged raw0 to00596ed0=370,
+            // independently of both application mode and Board tank.
+            y: 370.0,
             vx: 0.0,
             vy: 0.0,
             target_vx: 0.0,
@@ -2542,6 +2544,7 @@ impl AdventureState {
             || self.next_id == 0
             || self.next_id == u64::MAX
             || self.rng_state == 0
+            || self.fish_pets.iter().any(|pet| pet.presto_form.is_some())
             || self.eggs > 3
             || self.victory != (self.eggs == 3)
             || self.upgrades.quality > 2
@@ -8480,6 +8483,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unflagged_stinky_constructor_uses_primary_anchor_across_adventure_tanks() {
+        // PB05 004eb5c0 raw0/flag0→00596ed0=370 has no mode/tank condition.
+        let ordinary = AdventureState::new_second_stage(0x370);
+        let finale = AdventureState::new_tank5_1(0x370, 0);
+        assert_eq!(ordinary.stinky.as_ref().unwrap().y, 370.0);
+        assert_eq!(finale.stinky.as_ref().unwrap().y, 370.0);
+        assert!(ordinary.validate().is_ok());
+        assert!(finale.validate().is_ok());
+    }
+
+    #[test]
     fn a35_board_revives_a_fresh_guppy_after_ten_updates_without_credit() {
         // PB74: eligible lifetime is strictly >95; 100->10 is a single
         // transaction, followed by fresh subtype construction, not restoration.
@@ -10624,7 +10638,7 @@ mod tests {
         assert!((105.0..370.0).contains(&pet.x));
         assert_eq!(
             (pet.y, pet.vx, pet.vy, pet.previous_vx),
-            (360.0, 0.0, 0.0, 1.0)
+            (370.0, 0.0, 0.0, 1.0)
         );
         assert_eq!(pet.chase_timer, 40);
         assert!(pet.movement_state < 10);

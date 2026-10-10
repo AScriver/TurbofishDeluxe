@@ -141,7 +141,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 21;
+pub const SAVE_FORMAT_VERSION: u32 = 22;
 
 #[cfg(test)]
 mod current_twenty_one_tests {
@@ -303,7 +303,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=21) => {
+        Some(version @ 5..=22) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -460,6 +460,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                 .is_some_and(|pets| {
                                     pets.iter().any(|pet| {
                                         pet.get("coin_timer").is_none()
+                                            || (version >= 22 && pet.get("presto_form").is_none())
                                             || (version >= 19
                                                 && ["gash_timer", "gash_eating_ticks"]
                                                     .iter()
