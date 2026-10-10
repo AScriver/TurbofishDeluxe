@@ -113,6 +113,12 @@ pub enum InvasionEvent {
     ModalOpened(InvasionTip),
     WarningStarted(WarningCoords),
     BattleMusicStarted,
+    /// 00543f40's five Y/X effect requests for each concrete raw21 actor,
+    /// followed by up to five repetition draws. Effect helpers are pending.
+    NostradamusPostponed {
+        effect_positions: Vec<(u64, i32, i32)>,
+        repeat_delays: Vec<u16>,
+    },
     AlienSpawned {
         id: u64,
         x: i32,
@@ -281,6 +287,9 @@ pub struct Invasion1_2 {
     pub origin: InvasionOrigin,
     pub plan: WavePlan,
     pub countdown: i32,
+    /// Board+2b4; source writes 30 on a successful raw21 postponement and
+    /// decrements it on active Board updates. Its visual shake is pending.
+    pub sneeze_shake_ticks: u8,
     pub danger_shown: bool,
     pub battle_tip_shown: bool,
     pub gus_warning_shown: bool,
@@ -453,6 +462,7 @@ impl Invasion1_2 {
             } else {
                 3000
             },
+            sneeze_shake_ticks: 0,
             danger_shown: false,
             battle_tip_shown: false,
             gus_warning_shown: false,
@@ -813,6 +823,7 @@ impl Invasion1_2 {
         if self.pending_modal.is_some() {
             return Vec::new();
         }
+        self.sneeze_shake_ticks = self.sneeze_shake_ticks.saturating_sub(1);
         self.post_spawn_flash_ticks = self.post_spawn_flash_ticks.saturating_sub(1);
         if self.has_live_alien()
             || missiles_present
@@ -1103,6 +1114,50 @@ impl Invasion1_2 {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// Board 00547610 calls 00543f40 only at the post-decrement value 30.
+    /// One leading roll governs the whole concrete raw21 list; failed and
+    /// ineligible attempts consume no effect-position or repetition draws.
+    pub fn try_nostradamus_postpone(
+        &mut self,
+        actors: &[(u64, i32, i32)],
+        missiles_present: bool,
+        mut next_random: impl FnMut() -> u32,
+    ) -> Option<InvasionEvent> {
+        if self.countdown != 30
+            || self.warning.is_none()
+            || self.plan == WavePlan::Tank5Finale
+            || self.pending_modal.is_some()
+            || self.has_live_alien()
+            || missiles_present
+            || actors.is_empty()
+        {
+            return None;
+        }
+        if next_random() % 100 >= 50 {
+            return None;
+        }
+        let mut effect_positions = Vec::with_capacity(actors.len() * 5);
+        for &(pet_id, widget_x, widget_y) in actors {
+            for _ in 0..5 {
+                let y = (next_random() % 21) as i32 + 40 + widget_y;
+                let x = (next_random() % 21) as i32 + 30 + widget_x;
+                effect_positions.push((pet_id, x, y));
+            }
+        }
+        self.sneeze_shake_ticks = 30;
+        let repeat_delays = (0..actors.len().min(5))
+            .map(|_| (next_random() % 150) as u16 + 100)
+            .collect();
+        self.countdown = 635;
+        // The Rust warning is the active onscreen warning, while the native
+        // coordinate fields persist separately. The next 275 redraws it.
+        self.warning = None;
+        Some(InvasionEvent::NostradamusPostponed {
+            effect_positions,
+            repeat_delays,
+        })
     }
 
     /// Runs the already registered alien and finite visual entities. The
@@ -1957,6 +2012,7 @@ impl Invasion1_2 {
             }
         };
         if !(0..=3000).contains(&self.countdown)
+            || self.sneeze_shake_ticks > 30
             || self.plan != WavePlan::Tank5Finale && self.finale.is_some()
             || self.plan == WavePlan::Tank5Finale
                 && self.finale.as_ref().is_some_and(|finale| {
@@ -3121,6 +3177,86 @@ mod tests {
                 prey_id: 77
             }]
         );
+    }
+
+    #[test]
+    fn nostradamus_postponement_uses_one_roll_then_each_concrete_actor_and_capped_repeats() {
+        let mut wave = Invasion1_2::new_time_trial(1);
+        wave.countdown = 31;
+        wave.warning = Some(WarningCoords {
+            first_x: 20,
+            first_y: 105,
+            second_x: 30,
+            second_y: 110,
+        });
+        assert!(
+            wave.advance_with_threats(false, || panic!("no warning draw"), || panic!("no spawn"))
+                .is_empty()
+        );
+        assert_eq!(wave.countdown, 30);
+        let actors = [(7, 100, 200), (8, 300, 350)];
+        let mut draws = 0;
+        let event = wave
+            .try_nostradamus_postpone(&actors, false, || {
+                let value = draws;
+                draws += 1;
+                value
+            })
+            .unwrap();
+        let InvasionEvent::NostradamusPostponed {
+            effect_positions,
+            repeat_delays,
+        } = event
+        else {
+            panic!("expected raw21 postponement");
+        };
+        assert_eq!(draws, 23); // leading roll + 5 Y/X pairs each + 2 repetitions
+        assert_eq!(effect_positions.len(), 10);
+        assert_eq!(effect_positions[0], (7, 132, 241));
+        assert_eq!(effect_positions[5], (8, 342, 401));
+        assert_eq!(repeat_delays, [121, 122]);
+        assert_eq!((wave.countdown, wave.sneeze_shake_ticks), (635, 30));
+        assert!(wave.warning.is_none());
+        wave.validate().unwrap();
+        let restored: Invasion1_2 =
+            serde_json::from_slice(&serde_json::to_vec(&wave).unwrap()).unwrap();
+        restored.validate().unwrap();
+        assert!(
+            wave.advance_with_threats(false, || panic!("no draw"), || panic!("no spawn"))
+                .is_empty()
+        );
+        assert_eq!((wave.countdown, wave.sneeze_shake_ticks), (634, 29));
+    }
+
+    #[test]
+    fn nostradamus_postponement_failure_or_registered_missile_preserves_warning_and_rng() {
+        let mut wave = Invasion1_2::new_time_trial(1);
+        wave.countdown = 30;
+        wave.warning = Some(WarningCoords {
+            first_x: 20,
+            first_y: 105,
+            second_x: 30,
+            second_y: 110,
+        });
+        let before = serde_json::to_value(&wave).unwrap();
+        assert!(
+            wave.try_nostradamus_postpone(&[(7, 100, 200)], true, || panic!(
+                "missile gate draws nothing"
+            ))
+            .is_none()
+        );
+        assert_eq!(serde_json::to_value(&wave).unwrap(), before);
+        let mut draws = 0;
+        assert!(
+            wave.try_nostradamus_postpone(&[(7, 100, 200)], false, || {
+                draws += 1;
+                50
+            })
+            .is_none()
+        );
+        assert_eq!(draws, 1);
+        assert_eq!(serde_json::to_value(&wave).unwrap(), before);
+        wave.validate().unwrap();
     }
 
     #[test]

@@ -677,6 +677,8 @@ fn pending_tank_four_second_session() -> AdventureSession {
         x: 110.0,
         y: 170.0,
         frame: 0,
+        food_type: turbofish_deluxe::sim::FoodType::Ordinary,
+        picked_up: false,
         ineligible_ticks: 0,
         removal_ticks: 0,
         quality: 1,
@@ -979,7 +981,7 @@ fn current_tank_four_second_pause_keeps_live_board_while_session_time_advances()
 fn current_tank_four_third_accepts_seventeen_rosters_and_persists_live_amp_setup() {
     use turbofish_deluxe::{alien::SylvesterKind, fish_pet::FishPetKind, invasion::EncounterKind};
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 27);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 28);
     let canonical = tank_four_third_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 17);
     for pet in canonical {
@@ -1240,7 +1242,7 @@ fn current_tank_four_fourth_accepts_eighteen_rosters_and_persists_gash_setup() {
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 27);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 28);
     let canonical = tank_four_fourth_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 18);
     for pet in canonical {
@@ -1493,7 +1495,7 @@ fn current_tank_four_finale_accepts_nineteen_rosters_and_starts_with_bilaterus()
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 27);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 28);
     let canonical = tank_four_finale_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 19);
     for pet in canonical {
@@ -1565,7 +1567,7 @@ fn current_twenty_one_requires_revival_clock_on_all_seven_valid_corpse_kinds() {
                 .remove("revival_ticks");
             let error = cli::decode_save(&serde_json::to_vec(&missing).unwrap()).unwrap_err();
             assert!(
-                error.to_string().contains("Incomplete format-twenty-seven"),
+                error.to_string().contains("Incomplete format-twenty-eight"),
                 "missing {list}[0].revival_ticks: {error}"
             );
         }
@@ -4600,6 +4602,78 @@ fn current_purchase_receipt_requires_exact_credited_then_debited_wallet() {
 }
 
 #[test]
+fn current_purchase_cursor_one_nostradamus_reopens_with_single_exact_debit() {
+    let mut session = AdventureSession::new(0x3925);
+    session.progress.tank = 2;
+    session.progress.level = 1;
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Brinkley,
+    ];
+    session.progress.purchase_cursor = 1;
+    session.progress.shell_balance = 25_000;
+    session.board = None;
+    session.phase = AdventurePhase::BonusResults {
+        result: turbofish_deluxe::bonus::BonusResult {
+            origin_tank: 1,
+            origin_level: 6,
+            earned: 0,
+            previous_balance: 25_000,
+            updates: 30,
+            purchase: PurchaseReceipt::new(1),
+        },
+    };
+    session.validate().unwrap();
+    session.apply_actions(&[Action::OfferBonusPurchase]);
+    let mut reopened = cli::decode_save(&current_bytes(session)).unwrap();
+    reopened.apply_actions(&[Action::ConfirmBonusPurchase { accept: true }]);
+    assert_eq!(
+        (
+            reopened.progress.purchase_cursor,
+            reopened.progress.shell_balance
+        ),
+        (2, 0)
+    );
+    assert_eq!(
+        reopened.progress.unlocked_pets.last(),
+        Some(&PetKind::Nostradamus)
+    );
+    assert!(reopened.board.is_none());
+    let committed = current_bytes(reopened.clone());
+    let mut twice = cli::decode_save(&committed).unwrap();
+    let repeat = twice.apply_actions(&[Action::OfferBonusPurchase]);
+    assert_eq!(
+        repeat
+            .iter()
+            .filter(|event| matches!(
+                event,
+                turbofish_deluxe::sim::Event::Rejected {
+                    reason: turbofish_deluxe::sim::Rejection::Locked,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    assert!(!repeat.iter().any(|event| matches!(
+        event,
+        turbofish_deluxe::sim::Event::BonusPurchaseOffered { .. }
+            | turbofish_deluxe::sim::Event::BonusPurchaseCommitted { .. }
+    )));
+    assert_eq!(twice.progress, reopened.progress);
+    let mut forged: serde_json::Value = serde_json::from_slice(&committed).unwrap();
+    forged["session"]["progress"]["unlocked_pets"]
+        .as_array_mut()
+        .unwrap()
+        .remove(5);
+    assert!(cli::decode_save(&serde_json::to_vec(&forged).unwrap()).is_err());
+}
+
+#[test]
 fn current_brinkley_initial_time_trial_actor_roundtrips_without_egg_candidate() {
     let mut session = AdventureSession::new(0x3923);
     session.progress.tank = 2;
@@ -4667,6 +4741,84 @@ fn current_brinkley_initial_time_trial_actor_roundtrips_without_egg_candidate() 
     missing = serde_json::from_slice(&serialized).unwrap();
     missing["session"]["board"]["fish_pets"][0]["brinkley_cooldown"] = 109.into();
     assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+}
+
+#[test]
+fn current_nostradamus_actor_food_and_inflight_pickup_require_complete_state() {
+    let mut session = AdventureSession::new(0x3934);
+    session.progress.tank = 2;
+    session.progress.level = 1;
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Brinkley,
+        PetKind::Nostradamus,
+    ];
+    session.progress.purchase_cursor = 2;
+    session.board = None;
+    session.phase = AdventurePhase::GameSelector;
+    session.apply_actions(&[
+        Action::PlayTimeTrial,
+        Action::SelectTimeTrialTank { tank: 1 },
+        Action::TogglePet {
+            pet: PetKind::Nostradamus,
+        },
+        Action::Continue,
+    ]);
+    session.validate().unwrap();
+    let board = session.board.as_mut().unwrap();
+    board.fish_pets[0].nostra_threshold = 300;
+    board.fish_pets[0].nostra_elapsed = 299;
+    session.step(&[]);
+    let food = &session.board.as_ref().unwrap().food[0];
+    assert_eq!(food.food_type, turbofish_deluxe::sim::FoodType::Nostradamus);
+    assert_eq!(food.ineligible_ticks, 20);
+    let serialized = current_bytes(session.clone());
+    let mut reopened = cli::decode_save(&serialized).unwrap();
+    for pointer in [
+        "/session/board/fish_pets/0/nostra_elapsed",
+        "/session/board/fish_pets/0/nostra_threshold",
+        "/session/board/fish_pets/0/nostra_converted",
+        "/session/board/food/0/food_type",
+        "/session/board/food/0/picked_up",
+        "/session/board/invasion/sneeze_shake_ticks",
+    ] {
+        let mut missing: serde_json::Value = serde_json::from_slice(&serialized).unwrap();
+        let (parent, field) = pointer.rsplit_once('/').unwrap();
+        missing
+            .pointer_mut(parent)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "{pointer}"
+        );
+    }
+    let food = &reopened.board.as_ref().unwrap().food[0];
+    let point = (food.x + 10.0, food.y + 10.0);
+    reopened.apply_actions(&[Action::Click {
+        x: point.0,
+        y: point.1,
+    }]);
+    assert!(reopened.board.as_ref().unwrap().food[0].picked_up);
+    let mut continued = cli::decode_save(&current_bytes(reopened.clone())).unwrap();
+    for _ in 0..100 {
+        assert_eq!(
+            serde_json::to_value(reopened.step(&[])).unwrap(),
+            serde_json::to_value(continued.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&reopened).unwrap(),
+            serde_json::to_value(&continued).unwrap()
+        );
+    }
+    assert_eq!(reopened.board.as_ref().unwrap().food.len(), 0);
+    reopened.validate().unwrap();
 }
 
 #[test]

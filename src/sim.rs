@@ -110,6 +110,7 @@ pub enum PetKind {
     Angie,
     Presto,
     Brinkley,
+    Nostradamus,
 }
 
 /// Fresh ordinary Tank5 entry clears retail selection flags before this
@@ -477,6 +478,10 @@ pub struct Food {
     pub x: f32,
     pub y: f32,
     pub frame: u8,
+    /// Food +0x194 is distinct from the quality byte at +0x188.
+    pub food_type: FoodType,
+    /// Food +0x185 latches a collectible pickup before flight and credit.
+    pub picked_up: bool,
     pub ineligible_ticks: u8,
     pub removal_ticks: u8,
     #[serde(default)]
@@ -493,6 +498,12 @@ pub struct Food {
     pub free_from_zorf: bool,
     #[serde(default)]
     pub nimbus_rising: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FoodType {
+    Ordinary,
+    Nostradamus,
 }
 
 const fn initial_food_animation_period() -> u8 {
@@ -743,6 +754,27 @@ pub enum Event {
         tick: u64,
         pet_id: u64,
         food_id: u64,
+    },
+    NostradamusFoodDropped {
+        tick: u64,
+        pet_id: u64,
+        food_id: u64,
+    },
+    NostradamusFoodCollectionStarted {
+        tick: u64,
+        food_id: u64,
+    },
+    NostradamusFoodCredited {
+        tick: u64,
+        food_id: u64,
+        balance: i32,
+    },
+    NostradamusFishConverted {
+        tick: u64,
+        fish_id: u64,
+        food_id: u64,
+        pet_id: u64,
+        replacement_id: Option<u64>,
     },
     Bonus {
         tick: u64,
@@ -1491,7 +1523,8 @@ impl AdventureState {
                 | PetKind::Gash
                 | PetKind::Angie
                 | PetKind::Presto
-                | PetKind::Brinkley => {
+                | PetKind::Brinkley
+                | PetKind::Nostradamus => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1554,7 +1587,8 @@ impl AdventureState {
                 | PetKind::Gash
                 | PetKind::Angie
                 | PetKind::Presto
-                | PetKind::Brinkley => {
+                | PetKind::Brinkley
+                | PetKind::Nostradamus => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1623,7 +1657,8 @@ impl AdventureState {
                 | PetKind::Gash
                 | PetKind::Angie
                 | PetKind::Presto
-                | PetKind::Brinkley => {
+                | PetKind::Brinkley
+                | PetKind::Nostradamus => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1693,7 +1728,8 @@ impl AdventureState {
                 | PetKind::Gash
                 | PetKind::Angie
                 | PetKind::Presto
-                | PetKind::Brinkley => {
+                | PetKind::Brinkley
+                | PetKind::Nostradamus => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1771,7 +1807,8 @@ impl AdventureState {
                 | PetKind::Gash
                 | PetKind::Angie
                 | PetKind::Presto
-                | PetKind::Brinkley => {
+                | PetKind::Brinkley
+                | PetKind::Nostradamus => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1857,7 +1894,8 @@ impl AdventureState {
                 | PetKind::Gash
                 | PetKind::Angie
                 | PetKind::Presto
-                | PetKind::Brinkley => {
+                | PetKind::Brinkley
+                | PetKind::Nostradamus => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -2317,6 +2355,7 @@ impl AdventureState {
             FishPetKind::Angie => PetKind::Angie,
             FishPetKind::Presto => PetKind::Presto,
             FishPetKind::Brinkley => PetKind::Brinkley,
+            FishPetKind::Nostradamus => PetKind::Nostradamus,
         }
     }
 
@@ -2338,6 +2377,7 @@ impl AdventureState {
             PetKind::Angie => Some(FishPetKind::Angie),
             PetKind::Presto => Some(FishPetKind::Presto),
             PetKind::Brinkley => Some(FishPetKind::Brinkley),
+            PetKind::Nostradamus => Some(FishPetKind::Nostradamus),
             _ => None,
         }
     }
@@ -2446,6 +2486,7 @@ impl AdventureState {
                         | (PetKind::Gash, FishPetKind::Gash)
                         | (PetKind::Angie, FishPetKind::Angie)
                         | (PetKind::Brinkley, FishPetKind::Brinkley)
+                        | (PetKind::Nostradamus, FishPetKind::Nostradamus)
                 )
             }),
         }
@@ -2521,6 +2562,7 @@ impl AdventureState {
                     PetKind::Gash => FishPetKind::Gash,
                     PetKind::Angie => FishPetKind::Angie,
                     PetKind::Brinkley => FishPetKind::Brinkley,
+                    PetKind::Nostradamus => FishPetKind::Nostradamus,
                     _ => return Err("unsupported Time Trial pet".into()),
                 };
                 self.spawn_fish_pet(fish_kind);
@@ -2672,7 +2714,7 @@ impl AdventureState {
                 PetKind::Amp => self.spawn_fish_pet(FishPetKind::Amp),
                 PetKind::Gash => self.spawn_fish_pet(FishPetKind::Gash),
                 PetKind::Angie => self.spawn_fish_pet(FishPetKind::Angie),
-                PetKind::Presto | PetKind::Brinkley => {
+                PetKind::Presto | PetKind::Brinkley | PetKind::Nostradamus => {
                     unreachable!("extra pets are not in the fixed Tank4 or Tank5 roster")
                 }
             }
@@ -2763,7 +2805,8 @@ impl AdventureState {
                 | PetKind::Gash
                 | PetKind::Angie
                 | PetKind::Presto
-                | PetKind::Brinkley => {
+                | PetKind::Brinkley
+                | PetKind::Nostradamus => {
                     unreachable!("pet unlock follows stage 3-5")
                 }
             }
@@ -3395,6 +3438,7 @@ impl AdventureState {
             .chain(
                 self.fish_pets
                     .iter()
+                    .filter(|pet| !pet.nostra_converted)
                     .map(|pet| (Self::pet_kind_from_fish(pet.kind), pet.presto_form)),
             )
         {
@@ -3504,10 +3548,20 @@ impl AdventureState {
             || !(1..=9).contains(&self.upgrades.quantity)
             || (!self.upgrades.quality_unlocked && self.upgrades.quality > 0)
             || (!self.upgrades.quantity_unlocked && self.upgrades.quantity > 1)
-            || self.food.iter().filter(|food| !food.free_from_zorf).count()
+            || self
+                .food
+                .iter()
+                .filter(|food| food.direction == 0 && food.food_type == FoodType::Ordinary)
+                .count()
                 > usize::from(self.upgrades.quantity)
             || self.food.iter().any(|food| {
                 food.quality > 3
+                    || (food.picked_up && food.food_type != FoodType::Nostradamus)
+                    || (food.food_type == FoodType::Nostradamus
+                        && (food.quality != 0
+                            || food.direction != 0
+                            || food.free_from_zorf
+                            || food.nimbus_rising))
                     || food.direction > 2
                     || !(3..=4).contains(&food.animation_period)
                     || !food.x.is_finite()
@@ -3607,7 +3661,11 @@ impl AdventureState {
                 FishPetKind::Angie => PetKind::Angie,
                 FishPetKind::Presto => PetKind::Presto,
                 FishPetKind::Brinkley => PetKind::Brinkley,
+                FishPetKind::Nostradamus => PetKind::Nostradamus,
             };
+            if pet.nostra_converted {
+                continue;
+            }
             if pet.presto_form.is_some() {
                 flagged += 1;
             } else {
@@ -3639,6 +3697,28 @@ impl AdventureState {
     /// Validate durable board relationships before accepting a project save.
     /// The profile and screen phase are checked by AdventureSession separately.
     pub fn validate(&self) -> Result<(), String> {
+        if self.fish_pets.iter().any(|pet| {
+            pet.kind == FishPetKind::Nostradamus && !(300..=599).contains(&pet.nostra_threshold)
+        }) {
+            return Err("Board Nostradamus uses a Virtual Tank threshold".into());
+        }
+        if self.food.iter().any(|food| {
+            food.food_type == FoodType::Nostradamus
+                && (food.ineligible_ticks > 20 || food.removal_ticks > 15)
+        }) {
+            return Err("Nostradamus Food clock exceeds its producer bounds".into());
+        }
+        if (self
+            .food
+            .iter()
+            .any(|food| food.food_type == FoodType::Nostradamus)
+            || self.fish_pets.iter().any(|pet| pet.nostra_converted))
+            && (self.tank == 5
+                || !self.pets.contains(&PetKind::Nostradamus)
+                    && !self.pets.contains(&PetKind::Presto))
+        {
+            return Err("Nostradamus child state lacks a producing roster".into());
+        }
         if self.bonus_active {
             return self.validate_replay_bonus();
         }
@@ -3679,10 +3759,20 @@ impl AdventureState {
                 || !(1..=9).contains(&self.upgrades.quantity)
                 || (!self.upgrades.quality_unlocked && self.upgrades.quality > 0)
                 || (!self.upgrades.quantity_unlocked && self.upgrades.quantity > 1)
-                || self.food.iter().filter(|food| !food.free_from_zorf).count()
+                || self
+                    .food
+                    .iter()
+                    .filter(|food| food.direction == 0 && food.food_type == FoodType::Ordinary)
+                    .count()
                     > usize::from(self.upgrades.quantity)
                 || self.food.iter().any(|food| {
                     food.quality > 3
+                        || (food.picked_up && food.food_type != FoodType::Nostradamus)
+                        || (food.food_type == FoodType::Nostradamus
+                            && (food.quality != 0
+                                || food.direction != 0
+                                || food.free_from_zorf
+                                || food.nimbus_rising))
                         || food.direction > 2
                         || !(3..=4).contains(&food.animation_period)
                         || !food.x.is_finite()
@@ -5832,7 +5922,26 @@ impl AdventureState {
             None
         };
 
-        let on_collectible = pearl_id.is_some() || coin_id.is_some();
+        // Food widget dimensions are 40x40. The upstream retail mouse hit
+        // edge remains unindexed, so this is the project's bounded input
+        // rectangle for its separately registered collectible Food.
+        let nostra_food_id = if pearl_id.is_none() && coin_id.is_none() {
+            self.food
+                .iter()
+                .rev()
+                .find(|food| {
+                    food.food_type == FoodType::Nostradamus
+                        && !food.picked_up
+                        && world_x >= food.x as i32
+                        && world_x < food.x as i32 + 40
+                        && world_y >= food.y as i32
+                        && world_y < food.y as i32 + 40
+                })
+                .map(|food| food.id)
+        } else {
+            None
+        };
+        let on_collectible = pearl_id.is_some() || coin_id.is_some() || nostra_food_id.is_some();
         // PB66 separates Amp's clock from normal widget mouse availability.
         // Existing raised collectibles retain their input precedence; exact
         // installed overlap/modal routing remains qualified in the contract.
@@ -5996,6 +6105,18 @@ impl AdventureState {
             }
             return;
         }
+        if let Some(food_id) = nostra_food_id {
+            if let Some(food) = self.food.iter_mut().find(|food| food.id == food_id)
+                && !food.picked_up
+            {
+                food.picked_up = true;
+                events.push(Event::NostradamusFoodCollectionStarted {
+                    tick: self.tick,
+                    food_id,
+                });
+            }
+            return;
+        }
 
         if x > 30.0 && x < 587.0 && y > 60.0 && y < 400.0 {
             if !self.missiles.is_empty()
@@ -6040,7 +6161,13 @@ impl AdventureState {
     ) {
         let rejection = if self.available_funds() < price {
             Some(Rejection::InsufficientFunds)
-        } else if self.food.len() >= usize::from(self.upgrades.quantity) {
+        } else if self
+            .food
+            .iter()
+            .filter(|food| food.direction == 0 && food.food_type == FoodType::Ordinary)
+            .count()
+            >= usize::from(self.upgrades.quantity)
+        {
             if keep_charge_on_capacity_rejection {
                 self.balance -= price;
             }
@@ -6069,6 +6196,8 @@ impl AdventureState {
             x: x - 10.0,
             y: y - 10.0,
             frame: 0,
+            food_type: FoodType::Ordinary,
+            picked_up: false,
             ineligible_ticks,
             removal_ticks: 0,
             quality,
@@ -6259,8 +6388,15 @@ impl AdventureState {
         if let Some(wave) = self.invasion.as_mut() {
             let mut rng_state = self.rng_state;
             let mut next_id = self.next_id;
-            let wave_events = wave.advance_with_threats(
-                !self.missiles.is_empty(),
+            let missiles_present = !self.missiles.is_empty();
+            let sneeze_actors = self
+                .fish_pets
+                .iter()
+                .filter(|pet| pet.kind == FishPetKind::Nostradamus)
+                .map(|pet| (pet.id, pet.widget_x, pet.widget_y))
+                .collect::<Vec<_>>();
+            let mut wave_events = wave.advance_with_threats(
+                missiles_present,
                 || Self::advance_rng(&mut rng_state) as u32,
                 || {
                     let id = next_id;
@@ -6268,6 +6404,13 @@ impl AdventureState {
                     id
                 },
             );
+            if let Some(postponed) =
+                wave.try_nostradamus_postpone(&sneeze_actors, missiles_present, || {
+                    Self::advance_rng(&mut rng_state) as u32
+                })
+            {
+                wave_events.push(postponed);
+            }
             self.rng_state = rng_state;
             self.next_id = next_id;
             self.record_invasion_events(wave_events, &mut events);
@@ -6442,8 +6585,10 @@ impl AdventureState {
         } else {
             None
         };
-        for index in 0..self.fish.len() {
+        let mut index = 0;
+        while index < self.fish.len() {
             if !self.fish[index].alive {
+                index += 1;
                 continue;
             }
             let choose_new_state =
@@ -6464,15 +6609,17 @@ impl AdventureState {
                     meryl_song,
                     events,
                 );
+                index += 1;
                 continue;
             }
-            let coin_drop;
+            let mut coin_drop = None;
             let mut eaten_food = None;
+            let mut converted_food = None;
             let mut grew = None;
             let mut died = false;
             let mut poisoned_corpse = None;
             let mut hunger_cue = None;
-            {
+            'fish_update: {
                 let fish = &mut self.fish[index];
                 fish.cannot_be_eaten_ticks = fish.cannot_be_eaten_ticks.saturating_sub(1);
                 if !alien_live {
@@ -6503,13 +6650,23 @@ impl AdventureState {
                         self.food
                             .iter()
                             .enumerate()
-                            .filter(|(_, food)| food.ineligible_ticks == 0)
-                            .min_by(|(_, a), (_, b)| {
-                                let da = (fish_cx - (a.x + 20.0)).powi(2)
-                                    + (fish_cy - (a.y + 20.0)).powi(2);
-                                let db = (fish_cx - (b.x + 20.0)).powi(2)
-                                    + (fish_cy - (b.y + 20.0)).powi(2);
-                                da.total_cmp(&db)
+                            .filter(|(_, food)| {
+                                food.ineligible_ticks == 0
+                                    && !food.picked_up
+                                    && (food.food_type == FoodType::Ordinary
+                                        || (matches!(
+                                            fish.size,
+                                            FishSize::Small | FishSize::Medium | FishSize::Large
+                                        ) && fish.hunger < 108))
+                            })
+                            .fold(None, |best: Option<(usize, f32)>, (index, food)| {
+                                let distance = (fish_cx - (food.x + 20.0)).powi(2)
+                                    + (fish_cy - (food.y + 20.0)).powi(2);
+                                if best.is_none_or(|(_, score)| distance < score) {
+                                    Some((index, distance))
+                                } else {
+                                    best
+                                }
                             })
                             .map(|(index, _)| index)
                     } else {
@@ -6522,6 +6679,10 @@ impl AdventureState {
                             && fish_cy > food.y
                             && fish_cy < food.y + 35.0
                         {
+                            if food.food_type == FoodType::Nostradamus {
+                                converted_food = Some(food.id);
+                                break 'fish_update;
+                            }
                             eaten_food = Some(food.id);
                             if food.quality == 3 {
                                 // Fish::Hungry may kill here, but its caller
@@ -6634,6 +6795,37 @@ impl AdventureState {
                     }
                     fish.hunger_visible = fish.hunger < 301;
                 }
+            }
+            if let Some(food_id) = converted_food {
+                let fish = self.fish.remove(index);
+                let old_widget = (fish.x as i32, fish.y as i32);
+                if self.detach_missile_target(fish.id, events) {
+                    self.finish_destructor_battle(events);
+                }
+                let pet_id = self.id();
+                let mut rng_state = self.rng_state;
+                let pet = FishPetState::spawn_nostra_conversion_at(
+                    pet_id,
+                    old_widget.0,
+                    old_widget.1,
+                    &mut |upper| Self::advance_rng(&mut rng_state) % upper,
+                );
+                self.rng_state = rng_state;
+                self.fish_pets.push(pet);
+                let replacement_id =
+                    (!self.has_live_fish() && self.tank != 5).then(|| self.spawn_bought_guppy());
+                if let Some(position) = self.food.iter().position(|food| food.id == food_id) {
+                    self.food.remove(position);
+                }
+                events.push(Event::NostradamusFishConverted {
+                    tick: self.tick,
+                    fish_id: fish.id,
+                    food_id,
+                    pet_id,
+                    replacement_id,
+                });
+                // Removal shifts the next registered Fish into this index.
+                continue;
             }
             if died {
                 let fish_id = self.fish[index].id;
@@ -6767,6 +6959,7 @@ impl AdventureState {
                     });
                 }
             }
+            index += 1;
         }
     }
 
@@ -7221,11 +7414,21 @@ impl AdventureState {
 
     fn update_food(&mut self, events: &mut Vec<Event>) {
         let mut expired = Vec::new();
+        let mut credited = Vec::new();
         for food in &mut self.food {
             if food.ineligible_ticks > 0 {
                 food.ineligible_ticks -= 1;
             }
             food.frame = (food.frame + 1) % (food.animation_period * 10);
+            if food.picked_up {
+                let old_widget_y = food.y as i32;
+                food.x += (550.0 - food.x) / 7.0;
+                food.y += (30.0 - food.y) / 7.0;
+                if old_widget_y < 40 {
+                    credited.push(food.id);
+                }
+                continue;
+            }
             if food.removal_ticks > 0 {
                 food.removal_ticks -= 1;
                 if food.removal_ticks == 0 {
@@ -7283,6 +7486,20 @@ impl AdventureState {
                 tick: self.tick,
                 food_id: id,
             });
+        }
+        for id in credited {
+            // 004f8aa0 removes the Food before passing literal one to the
+            // ordinary Board cash receiver. The latch and removal each make
+            // reloaded or repeated pickup incapable of a second credit.
+            if let Some(position) = self.food.iter().position(|food| food.id == id) {
+                self.food.remove(position);
+                self.balance = (self.balance + 1).min(9_999_999);
+                events.push(Event::NostradamusFoodCredited {
+                    tick: self.tick,
+                    food_id: id,
+                    balance: self.balance,
+                });
+            }
         }
     }
 
@@ -8447,7 +8664,38 @@ impl AdventureState {
             let guppy_count = self.fish.iter().filter(|fish| fish.alive).count();
             let pet_id = self.fish_pets[index].id;
             let mut rng_state = self.rng_state;
-            let update = if self.fish_pets[index].kind == FishPetKind::Brinkley {
+            let update = if self.fish_pets[index].kind == FishPetKind::Nostradamus {
+                if let Some((x, y)) = self.fish_pets[index].begin_nostradamus(aliens.is_empty()) {
+                    let food_id = self.id();
+                    // 005434e0 constructs Food before the common FishTypePet
+                    // motion tail, whose own animation may draw from RNG.
+                    let animation_period = (Self::advance_rng(&mut rng_state) % 2) as u8 + 3;
+                    self.food.push(Food {
+                        id: food_id,
+                        x: x as f32,
+                        y: y as f32,
+                        frame: 0,
+                        food_type: FoodType::Nostradamus,
+                        picked_up: false,
+                        ineligible_ticks: 20,
+                        removal_ticks: 0,
+                        quality: 0,
+                        direction: 0,
+                        vx: 0.0,
+                        vy: 0.0,
+                        animation_period,
+                        free_from_zorf: false,
+                        nimbus_rising: false,
+                    });
+                    events.push(Event::NostradamusFoodDropped {
+                        tick: self.tick,
+                        pet_id,
+                        food_id,
+                    });
+                }
+                self.fish_pets[index]
+                    .finish_nostradamus(&mut |upper| Self::advance_rng(&mut rng_state) % upper)
+            } else if self.fish_pets[index].kind == FishPetKind::Brinkley {
                 let threats_empty = self
                     .invasion
                     .as_ref()
@@ -8661,29 +8909,51 @@ impl AdventureState {
                 && let Some(position) = self.food.iter().position(|food| food.id == request.food_id)
             {
                 let old = self.food.remove(position);
-                let food_id = self.id();
-                let animation_period = self.rand_range(2) as u8 + 3;
-                self.food.push(Food {
-                    id: food_id,
-                    x: request.x as f32,
-                    y: (request.y as i32) as f32,
-                    frame: 0,
-                    ineligible_ticks: 0,
-                    removal_ticks: 0,
-                    quality: old.quality,
-                    direction: 0,
-                    vx: 0.0,
-                    vy: -2.0,
-                    animation_period,
-                    free_from_zorf: false,
-                    nimbus_rising: true,
-                });
-                events.push(Event::NimbusFoodConverted {
-                    tick: self.tick,
-                    pet_id,
-                    old_id: old.id,
-                    food_id,
-                });
+                // 00543280 counts only ordinary, undirected Food. The old
+                // exotic entry is removed before this capacity check, so a
+                // full ordinary list can reject Nimbus' fresh replacement.
+                let paid_slots = self
+                    .food
+                    .iter()
+                    .filter(|food| food.direction == 0 && food.food_type == FoodType::Ordinary)
+                    .count();
+                if paid_slots >= usize::from(self.upgrades.quantity) {
+                    // 0053c280 refunds the Board's fixed food price even
+                    // though this caller did not pay. It writes cash only.
+                    let peaceful = self
+                        .invasion
+                        .as_ref()
+                        .is_none_or(|wave| wave.actors.is_empty() && wave.bilaterus.is_empty());
+                    if !self.potion_armed && peaceful {
+                        self.balance = (self.balance + FOOD_PRICE).min(9_999_999);
+                    }
+                } else {
+                    let food_id = self.id();
+                    let animation_period = self.rand_range(2) as u8 + 3;
+                    self.food.push(Food {
+                        id: food_id,
+                        x: request.x as f32,
+                        y: (request.y as i32) as f32,
+                        frame: 0,
+                        food_type: FoodType::Ordinary,
+                        picked_up: false,
+                        ineligible_ticks: 0,
+                        removal_ticks: 0,
+                        quality: old.quality,
+                        direction: 0,
+                        vx: 0.0,
+                        vy: -2.0,
+                        animation_period,
+                        free_from_zorf: false,
+                        nimbus_rising: true,
+                    });
+                    events.push(Event::NimbusFoodConverted {
+                        tick: self.tick,
+                        pet_id,
+                        old_id: old.id,
+                        food_id,
+                    });
+                }
             }
             if self.fish_pets[index].kind == FishPetKind::Blip && self.tick > 200 {
                 let missing = if self.tank == 4 {
@@ -8864,6 +9134,8 @@ impl AdventureState {
                     x: drop.x as f32,
                     y: drop.y as f32,
                     frame: 0,
+                    food_type: FoodType::Ordinary,
+                    picked_up: false,
                     ineligible_ticks: 0,
                     removal_ticks: 0,
                     quality: 1,
@@ -10423,6 +10695,8 @@ mod tests {
             x: 100.0,
             y,
             frame: 0,
+            food_type: FoodType::Ordinary,
+            picked_up: false,
             ineligible_ticks: 20,
             removal_ticks: 0,
             quality: 2,
@@ -11229,6 +11503,8 @@ mod tests {
             x: 120.0,
             y: 120.0,
             frame: 0,
+            food_type: FoodType::Ordinary,
+            picked_up: false,
             ineligible_ticks: 0,
             removal_ticks: 0,
             quality: 0,
@@ -11751,6 +12027,8 @@ mod tests {
             x: 100.0,
             y: 410.0,
             frame: 0,
+            food_type: FoodType::Ordinary,
+            picked_up: false,
             ineligible_ticks: 0,
             removal_ticks: 0,
             quality: 0,
@@ -13278,6 +13556,8 @@ mod tests {
             x: 120.0,
             y: 120.0,
             frame: 0,
+            food_type: FoodType::Ordinary,
+            picked_up: false,
             ineligible_ticks: 0,
             removal_ticks: 0,
             quality: 3,
@@ -13313,6 +13593,8 @@ mod tests {
             x: 120.0,
             y: 120.0,
             frame: 0,
+            food_type: FoodType::Ordinary,
+            picked_up: false,
             ineligible_ticks: 0,
             removal_ticks: 0,
             quality: 3,
@@ -13341,6 +13623,8 @@ mod tests {
             x,
             y,
             frame: 0,
+            food_type: FoodType::Ordinary,
+            picked_up: false,
             ineligible_ticks: 0,
             removal_ticks: 0,
             quality: 0,
@@ -13376,21 +13660,18 @@ mod tests {
         assert_eq!(board.food[0].quality, 1);
         assert_eq!(board.food[0].ineligible_ticks, 0);
         assert!(board.food[0].free_from_zorf);
+        assert_ne!(board.food[0].direction, 0);
         board.potion_unlocked = true;
         board.potion_armed = true;
         assert!(
             board
                 .apply(Action::Click { x: 300.0, y: 200.0 })
                 .iter()
-                .any(|event| matches!(
-                    event,
-                    Event::Rejected {
-                        reason: Rejection::FoodCapacity,
-                        ..
-                    }
-                ))
+                .any(|event| matches!(event, Event::FoodDropped { potion: true, .. }))
         );
-        assert!(board.potion_armed);
+        assert!(!board.potion_armed);
+        assert_eq!(board.food.len(), 2);
+        assert_eq!(board.food[1].quality, 3);
     }
 
     #[test]
@@ -15311,6 +15592,8 @@ mod tests {
             x: 110.0,
             y: 120.0,
             frame: 0,
+            food_type: FoodType::Ordinary,
+            picked_up: false,
             ineligible_ticks: 0,
             removal_ticks: 0,
             quality: 1,
@@ -15327,6 +15610,8 @@ mod tests {
             x: 120.0,
             y: 130.0,
             frame: 0,
+            food_type: FoodType::Ordinary,
+            picked_up: false,
             ineligible_ticks: 0,
             removal_ticks: 0,
             quality: 0,
@@ -15407,6 +15692,8 @@ mod tests {
             x,
             y,
             frame: 0,
+            food_type: FoodType::Ordinary,
+            picked_up: false,
             ineligible_ticks: 0,
             removal_ticks: 0,
             quality: 0,
@@ -15567,5 +15854,430 @@ mod tests {
         );
         assert_eq!(fractional.fish_pets[0].brinkley_meals, 1);
         fractional.validate().unwrap();
+    }
+
+    #[test]
+    fn nostradamus_threshold_produces_independent_food_at_old_widget() {
+        let mut board = AdventureState::new_time_trial(0x3930, 1, &[PetKind::Nostradamus]).unwrap();
+        let pet_id = board.fish_pets[0].id;
+        board.fish_pets[0].nostra_threshold = 300;
+        board.fish_pets[0].nostra_elapsed = 299;
+        let old_widget = (board.fish_pets[0].widget_x, board.fish_pets[0].widget_y);
+        let mut expected_rng = board.rng_state;
+        let expected_period = (AdventureState::advance_rng(&mut expected_rng) % 2) as u8 + 3;
+        let mut events = Vec::new();
+        board.update_fish_pets(&mut events);
+        let food = &board.food[0];
+        assert_eq!(
+            (food.x as i32, food.y as i32),
+            (old_widget.0 + 15, old_widget.1 + 10)
+        );
+        assert_eq!(food.food_type, FoodType::Nostradamus);
+        assert_eq!(
+            (food.ineligible_ticks, food.animation_period),
+            (20, expected_period)
+        );
+        assert_eq!(board.fish_pets[0].nostra_elapsed, 0);
+        assert!(events.iter().any(|event| matches!(event,
+            Event::NostradamusFoodDropped { pet_id: id, food_id, .. }
+                if *id == pet_id && *food_id == food.id
+        )));
+        board.validate().unwrap();
+        board.food[0].ineligible_ticks = 21;
+        assert_eq!(
+            board.validate().unwrap_err(),
+            "Nostradamus Food clock exceeds its producer bounds"
+        );
+        board.food[0].ineligible_ticks = 20;
+        board.fish_pets[0].nostra_threshold = 1080;
+        assert_eq!(
+            board.validate().unwrap_err(),
+            "Board Nostradamus uses a Virtual Tank threshold"
+        );
+    }
+
+    #[test]
+    fn nostradamus_food_survives_presto_form_change_but_requires_logical_producer() {
+        let mut board = AdventureState::new_time_trial(0x3937, 1, &[PetKind::Presto]).unwrap();
+        let first = board.presto_actor().unwrap().id;
+        board.fish_pets[0]
+            .presto_form
+            .as_mut()
+            .unwrap()
+            .remaining_ticks = 0;
+        assert_eq!(
+            board
+                .change_presto_form(first, PetKind::Nostradamus, &mut Vec::new())
+                .unwrap(),
+            PrestoChangeEligibility::Ready
+        );
+        let nostra = board.presto_actor().unwrap().id;
+        let pet = board
+            .fish_pets
+            .iter_mut()
+            .find(|pet| pet.id == nostra)
+            .unwrap();
+        pet.nostra_threshold = 300;
+        pet.nostra_elapsed = 299;
+        board.update_fish_pets(&mut Vec::new());
+        assert_eq!(board.food[0].food_type, FoodType::Nostradamus);
+        board
+            .fish_pets
+            .iter_mut()
+            .find(|pet| pet.id == nostra)
+            .unwrap()
+            .presto_form
+            .as_mut()
+            .unwrap()
+            .remaining_ticks = 0;
+        board
+            .change_presto_form(nostra, PetKind::Stinky, &mut Vec::new())
+            .unwrap();
+        board.validate().unwrap();
+        board.pets[0] = PetKind::Stinky;
+        assert_eq!(
+            board.validate().unwrap_err(),
+            "Nostradamus child state lacks a producing roster"
+        );
+    }
+
+    #[test]
+    fn nostradamus_food_pickup_and_uneatable_clock_do_not_filter_brinkley_contact() {
+        let mut board =
+            AdventureState::new_time_trial(0x3938, 1, &[PetKind::Brinkley, PetKind::Nostradamus])
+                .unwrap();
+        let brinkley = board
+            .fish_pets
+            .iter_mut()
+            .find(|pet| pet.kind == FishPetKind::Brinkley)
+            .unwrap();
+        brinkley.x = 100.0;
+        brinkley.y = 100.0;
+        brinkley.widget_x = 100;
+        brinkley.widget_y = 100;
+        brinkley.published_x = 100;
+        brinkley.published_y = 100;
+        let food_id = brinkley_food(&mut board, 106.0, 110.0);
+        board.food[0].food_type = FoodType::Nostradamus;
+        board.food[0].ineligible_ticks = 20;
+        board.food[0].picked_up = true;
+        board.validate().unwrap();
+        let mut events = Vec::new();
+        board.update_fish_pets(&mut events);
+        assert!(board.food.is_empty());
+        assert!(events.iter().any(|event| matches!(event,
+            Event::BrinkleyFoodEaten { food_id: id, meals: 1, .. } if *id == food_id
+        )));
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn nostradamus_food_nimbus_capacity_failure_removes_old_and_refunds_five_cash() {
+        let mut board =
+            AdventureState::new_time_trial(0x3939, 1, &[PetKind::Nimbus, PetKind::Nostradamus])
+                .unwrap();
+        let nimbus = board
+            .fish_pets
+            .iter_mut()
+            .find(|pet| pet.kind == FishPetKind::Nimbus)
+            .unwrap();
+        nimbus.x = 100.0;
+        nimbus.y = 320.0;
+        nimbus.widget_x = 100;
+        nimbus.widget_y = 320;
+        nimbus.published_x = 100;
+        nimbus.published_y = 320;
+        let ordinary_id = brinkley_food(&mut board, 400.0, 100.0);
+        let exotic_id = brinkley_food(&mut board, 100.0, 340.0);
+        board.food[1].food_type = FoodType::Nostradamus;
+        board.food[1].ineligible_ticks = 20;
+        let old_cash = board.balance;
+        board.validate().unwrap();
+        let mut events = Vec::new();
+        board.update_fish_pets(&mut events);
+        assert_eq!(
+            board.food.iter().map(|food| food.id).collect::<Vec<_>>(),
+            vec![ordinary_id]
+        );
+        assert!(board.food.iter().all(|food| food.id != exotic_id));
+        assert_eq!(board.balance, old_cash + FOOD_PRICE);
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::NimbusFoodConverted { .. }))
+        );
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn nostradamus_sneeze_counts_conversion_duplicate_and_reopens_during_postponement() {
+        let mut board = AdventureState::new_time_trial(0x3940, 1, &[PetKind::Nostradamus]).unwrap();
+        let ordinary_id = board.fish_pets[0].id;
+        let converted_id = board.id();
+        let mut rng_state = board.rng_state;
+        let converted =
+            FishPetState::spawn_nostra_conversion_at(converted_id, 100, 200, &mut |upper| {
+                AdventureState::advance_rng(&mut rng_state) % upper
+            });
+        board.rng_state = rng_state;
+        board.fish_pets.push(converted);
+        let wave = board.invasion.as_mut().unwrap();
+        wave.countdown = 31;
+        wave.warning = Some(crate::invasion::WarningCoords {
+            first_x: 20,
+            first_y: 105,
+            second_x: 30,
+            second_y: 110,
+        });
+        board.validate().unwrap();
+        let mut found = false;
+        // The shared stream determines whether the leading branch succeeds.
+        // Find an admitted seed without hard-coding actor-constructor draws.
+        for seed in 1..1000 {
+            let mut candidate = board.clone();
+            candidate.rng_state = seed;
+            let events = candidate.step(&[]);
+            if let Some((effect_positions, repeat_delays)) =
+                events.iter().find_map(|event| match event {
+                    Event::Invasion {
+                        event:
+                            InvasionEvent::NostradamusPostponed {
+                                effect_positions,
+                                repeat_delays,
+                            },
+                        ..
+                    } => Some((effect_positions, repeat_delays)),
+                    _ => None,
+                })
+            {
+                assert_eq!(effect_positions.len(), 10);
+                assert!(
+                    effect_positions[..5]
+                        .iter()
+                        .all(|(id, _, _)| *id == ordinary_id)
+                );
+                assert!(
+                    effect_positions[5..]
+                        .iter()
+                        .all(|(id, _, _)| *id == converted_id)
+                );
+                assert_eq!(repeat_delays.len(), 2);
+                assert_eq!(
+                    (
+                        candidate.invasion.as_ref().unwrap().countdown,
+                        candidate.invasion.as_ref().unwrap().sneeze_shake_ticks
+                    ),
+                    (635, 30)
+                );
+                candidate.validate().unwrap();
+                let mut reopened: AdventureState =
+                    serde_json::from_slice(&serde_json::to_vec(&candidate).unwrap()).unwrap();
+                reopened.validate().unwrap();
+                candidate.paused_board_update();
+                reopened.paused_board_update();
+                assert_eq!(candidate.invasion.as_ref().unwrap().sneeze_shake_ticks, 30);
+                assert_eq!(
+                    serde_json::to_value(&candidate).unwrap(),
+                    serde_json::to_value(&reopened).unwrap()
+                );
+                assert_eq!(candidate.step(&[]), reopened.step(&[]));
+                assert_eq!(
+                    serde_json::to_value(&candidate).unwrap(),
+                    serde_json::to_value(&reopened).unwrap()
+                );
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "a seed should reach the single under-50 branch");
+    }
+
+    #[test]
+    fn nostradamus_food_conversion_uses_post_hunger_gate_and_updates_shifted_fish() {
+        let mut board = AdventureState::new_time_trial(0x3931, 1, &[PetKind::Nostradamus]).unwrap();
+        let fish_id = board.fish[0].id;
+        board.fish[0].x = 100.0;
+        board.fish[0].y = 100.0;
+        board.fish[0].hunger = 109;
+        board.fish[0].beginner = false;
+        board.fish[0].bought_timer = 0;
+        board.fish.truncate(1);
+        let next_id = board.spawn_bought_guppy();
+        board.fish[1].x = 300.0;
+        board.fish[1].y = 200.0;
+        board.fish[1].hunger = 300;
+        board.fish[1].beginner = false;
+        board.fish[1].bought_timer = 0;
+        let food_id = brinkley_food(&mut board, 120.0, 120.0);
+        board.food[0].food_type = FoodType::Nostradamus;
+        board.validate().unwrap();
+        board.update_fish(&mut Vec::new());
+        assert!(board.fish.iter().any(|fish| fish.id == fish_id));
+        assert_eq!(board.fish[0].hunger, 108); // strict <108 after this update's decrement
+        board.fish[0].x = 100.0;
+        board.fish[0].y = 100.0;
+        let missile_id = board.id();
+        board
+            .missiles
+            .push(ClassicMissile::launch(missile_id, fish_id, 400, 300, 0));
+        board.invasion.as_mut().unwrap().battle_active = true;
+        let mut events = Vec::new();
+        board.update_fish(&mut events);
+        assert!(!board.fish.iter().any(|fish| fish.id == fish_id));
+        assert_eq!(board.fish[0].id, next_id);
+        assert_eq!(board.fish[0].hunger, 298); // the shifted Fish received both updates
+        assert!(board.food.iter().all(|food| food.id != food_id));
+        assert!(
+            board
+                .missiles
+                .iter()
+                .all(|missile| missile.id != missile_id)
+        );
+        assert!(board.fish_pets.iter().any(|pet| pet.nostra_converted));
+        assert!(events.iter().any(|event| matches!(event,
+            Event::NostradamusFishConverted { fish_id: id, food_id: eaten, replacement_id: None, .. }
+                if *id == fish_id && *eaten == food_id
+        )));
+        board.validate().unwrap();
+        let mut resumed: AdventureState =
+            serde_json::from_slice(&serde_json::to_vec(&board).unwrap()).unwrap();
+        resumed.validate().unwrap();
+        for _ in 0..3 {
+            assert_eq!(board.step(&[]), resumed.step(&[]));
+            assert_eq!(
+                serde_json::to_value(&board).unwrap(),
+                serde_json::to_value(&resumed).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn nostradamus_conversion_replaces_last_seven_category_survivor() {
+        let mut board = AdventureState::new_time_trial(0x3932, 1, &[PetKind::Nostradamus]).unwrap();
+        let old_id = board.fish[0].id;
+        board.fish[0].x = 100.0;
+        board.fish[0].y = 100.0;
+        board.fish[0].hunger = 107;
+        board.fish[0].beginner = false;
+        board.fish[0].bought_timer = 0;
+        board.fish.truncate(1);
+        let food_id = brinkley_food(&mut board, 120.0, 120.0);
+        board.food[0].food_type = FoodType::Nostradamus;
+        let mut events = Vec::new();
+        board.update_fish(&mut events);
+        let replacement_id = events.iter().find_map(|event| match event {
+            Event::NostradamusFishConverted {
+                fish_id,
+                food_id: eaten,
+                replacement_id,
+                ..
+            } if *fish_id == old_id && *eaten == food_id => *replacement_id,
+            _ => None,
+        });
+        assert_eq!(board.fish.len(), 1);
+        assert_eq!(board.fish[0].id, replacement_id.unwrap());
+        assert_eq!(
+            board
+                .fish_pets
+                .iter()
+                .filter(|pet| pet.nostra_converted)
+                .count(),
+            1
+        );
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn nostradamus_food_first_equal_distance_wins_contact() {
+        let mut board = AdventureState::new_time_trial(0x3936, 1, &[PetKind::Nostradamus]).unwrap();
+        board.fish[0].x = 100.0;
+        board.fish[0].y = 100.0;
+        board.fish[0].hunger = 107;
+        board.fish[0].beginner = false;
+        board.fish[0].bought_timer = 0;
+        let exotic_id = brinkley_food(&mut board, 120.0, 120.0);
+        board.food[0].food_type = FoodType::Nostradamus;
+        let ordinary_id = brinkley_food(&mut board, 120.0, 120.0);
+        board.update_fish(&mut Vec::new());
+        assert_eq!(
+            board.food.iter().map(|food| food.id).collect::<Vec<_>>(),
+            vec![ordinary_id]
+        );
+        assert!(board.food.iter().all(|food| food.id != exotic_id));
+        assert_eq!(
+            board
+                .fish_pets
+                .iter()
+                .filter(|pet| pet.nostra_converted)
+                .count(),
+            1
+        );
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn nostradamus_food_pickup_before_edible_clock_reopens_and_credits_cash_once() {
+        let mut board = AdventureState::new_time_trial(0x3933, 1, &[PetKind::Nostradamus]).unwrap();
+        let food_id = brinkley_food(&mut board, 120.0, 200.0);
+        board.food[0].food_type = FoodType::Nostradamus;
+        board.food[0].ineligible_ticks = 20;
+        let original_balance = board.balance;
+        let started = board.apply(Action::Click { x: 130.0, y: 210.0 });
+        assert!(started.iter().any(|event| matches!(event,
+            Event::NostradamusFoodCollectionStarted { food_id: id, .. } if *id == food_id
+        )));
+        assert!(board.food[0].picked_up);
+        board.validate().unwrap();
+        let mut reopened: AdventureState =
+            serde_json::from_slice(&serde_json::to_vec(&board).unwrap()).unwrap();
+        reopened.validate().unwrap();
+        let mut credited = 0;
+        for _ in 0..100 {
+            board.update_food(&mut Vec::new());
+            let mut events = Vec::new();
+            reopened.update_food(&mut events);
+            assert_eq!(
+                serde_json::to_value(&board).unwrap(),
+                serde_json::to_value(&reopened).unwrap()
+            );
+            credited += events
+                .iter()
+                .filter(|event| {
+                    matches!(event,
+                        Event::NostradamusFoodCredited { food_id: id, .. } if *id == food_id
+                    )
+                })
+                .count();
+            if credited != 0 {
+                break;
+            }
+        }
+        assert_eq!(credited, 1);
+        assert!(reopened.food.iter().all(|food| food.id != food_id));
+        assert_eq!(reopened.balance, original_balance + 1);
+        reopened.update_food(&mut Vec::new());
+        assert_eq!(reopened.balance, original_balance + 1);
+        reopened.validate().unwrap();
+    }
+
+    #[test]
+    fn nostradamus_pickup_checks_old_widget_y_strictly_below_forty() {
+        let mut board = AdventureState::new_time_trial(0x3935, 1, &[PetKind::Nostradamus]).unwrap();
+        let food_id = brinkley_food(&mut board, 120.0, 40.0);
+        board.food[0].food_type = FoodType::Nostradamus;
+        board.food[0].picked_up = true;
+        let balance = board.balance;
+        board.update_food(&mut Vec::new());
+        assert_eq!(board.food[0].id, food_id);
+        assert!(board.food[0].y < 40.0);
+        assert_eq!(board.balance, balance);
+        let mut events = Vec::new();
+        board.update_food(&mut events);
+        assert!(board.food.is_empty());
+        assert_eq!(board.balance, balance + 1);
+        assert!(events.iter().any(|event| matches!(event,
+            Event::NostradamusFoodCredited { food_id: id, .. } if *id == food_id
+        )));
+        board.validate().unwrap();
     }
 }

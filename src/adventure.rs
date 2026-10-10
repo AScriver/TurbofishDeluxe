@@ -15,7 +15,13 @@ use crate::time_trial::{self, TimeTrialResult, TimeTrialRun, TimeTrialScores};
 
 const HATCH_OPEN_CHECK: u32 = 141;
 const HATCH_READY_CHECK: u32 = 170;
-const BRINKLEY_PRICE: u32 = 20_000;
+pub(crate) fn results_offer(cursor: u8) -> Option<(PetKind, u32)> {
+    match cursor {
+        0 => Some((PetKind::Brinkley, 20_000)),
+        1 => Some((PetKind::Nostradamus, 25_000)),
+        _ => None,
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdventureProgress {
@@ -45,7 +51,7 @@ pub struct AdventureProgress {
     /// Profile completion count survives the replay cursor and per-run
     /// Cyrax-attempt reset (PB05 profile+50 versus +54).
     pub adventure_completions: u32,
-    /// Profile +b0: the first acquired bonus pet advances this from 0 to 1.
+    /// Profile +b0: committed bonus-pet offers advance this cursor.
     pub purchase_cursor: u8,
 }
 
@@ -89,10 +95,17 @@ impl AdventureProgress {
     }
 
     fn valid_purchase_wallet(&self, credited: u32, receipt: &PurchaseReceipt) -> bool {
+        let debit = if receipt.purchased {
+            match results_offer(receipt.offered_cursor) {
+                Some((_, price)) => price,
+                None => return false,
+            }
+        } else {
+            0
+        };
         u16::from(self.purchase_cursor)
             == u16::from(receipt.offered_cursor) + u16::from(receipt.purchased)
-            && credited.checked_sub(if receipt.purchased { BRINKLEY_PRICE } else { 0 })
-                == Some(self.shell_balance)
+            && credited.checked_sub(debit) == Some(self.shell_balance)
     }
 
     fn record_first_stage_time(&mut self, seconds: u64) -> u64 {
@@ -137,27 +150,33 @@ fn apply_purchase_action(
 ) -> bool {
     match action {
         Action::OfferBonusPurchase => {
-            let reason = if updates < 30
-                || receipt.offered_cursor != 0
-                || progress.purchase_cursor != 0
-                || receipt.purchased
-                || receipt.confirming
-            {
-                Some(Rejection::Locked)
-            } else if progress.shell_balance < BRINKLEY_PRICE {
-                Some(Rejection::InsufficientFunds)
-            } else {
-                None
-            };
-            if let Some(reason) = reason {
-                events.push(Event::Rejected { tick, reason });
-            } else {
-                receipt.confirming = true;
-                events.push(Event::BonusPurchaseOffered {
+            let offer = results_offer(receipt.offered_cursor);
+            match offer {
+                None => events.push(Event::Rejected {
                     tick,
-                    pet: PetKind::Brinkley,
-                    price: BRINKLEY_PRICE,
-                });
+                    reason: Rejection::Locked,
+                }),
+                Some(_)
+                    if updates < 30
+                        || progress.purchase_cursor != receipt.offered_cursor
+                        || receipt.purchased
+                        || receipt.confirming =>
+                {
+                    events.push(Event::Rejected {
+                        tick,
+                        reason: Rejection::Locked,
+                    });
+                }
+                Some((_, price)) if progress.shell_balance < price => {
+                    events.push(Event::Rejected {
+                        tick,
+                        reason: Rejection::InsufficientFunds,
+                    });
+                }
+                Some((pet, price)) => {
+                    receipt.confirming = true;
+                    events.push(Event::BonusPurchaseOffered { tick, pet, price });
+                }
             }
             true
         }
@@ -174,23 +193,25 @@ fn apply_purchase_action(
             true
         }
         Action::ConfirmBonusPurchase { accept: true } => {
+            let offer = results_offer(receipt.offered_cursor);
             if receipt.confirming
                 && !receipt.purchased
                 && updates >= 30
-                && receipt.offered_cursor == 0
-                && progress.purchase_cursor == 0
-                && progress.shell_balance >= BRINKLEY_PRICE
-                && !progress.has_pet(PetKind::Brinkley)
+                && progress.purchase_cursor == receipt.offered_cursor
+                && offer.is_some_and(|(pet, price)| {
+                    progress.shell_balance >= price && !progress.has_pet(pet)
+                })
             {
-                progress.shell_balance -= BRINKLEY_PRICE;
-                progress.purchase_cursor = 1;
-                progress.unlocked_pets.push(PetKind::Brinkley);
+                let (pet, price) = offer.unwrap();
+                progress.shell_balance -= price;
+                progress.purchase_cursor += 1;
+                progress.unlocked_pets.push(pet);
                 receipt.confirming = false;
                 receipt.purchased = true;
                 events.push(Event::BonusPurchaseCommitted {
                     tick,
-                    pet: PetKind::Brinkley,
-                    price: BRINKLEY_PRICE,
+                    pet,
+                    price,
                     shell_balance: progress.shell_balance,
                 });
             } else {
@@ -670,10 +691,13 @@ impl AdventureSession {
         } else {
             expected_pets.to_vec()
         };
-        if self.progress.purchase_cursor == 1 {
+        if self.progress.purchase_cursor >= 1 {
             expected_unlocks.push(PetKind::Brinkley);
         }
-        if self.progress.purchase_cursor > 1
+        if self.progress.purchase_cursor >= 2 {
+            expected_unlocks.push(PetKind::Nostradamus);
+        }
+        if self.progress.purchase_cursor > 2
             || self.progress.unlocked_pets != expected_unlocks
             || (!self.progress.adventure_completed
                 && (self.progress.tank, self.progress.level) == (5, 2))
@@ -697,6 +721,19 @@ impl AdventureSession {
             .is_some_and(|actor| !self.progress.has_pet(actor.kind))
         {
             return Err("Presto form exceeds profile pet entitlement".into());
+        }
+        if self.board.as_ref().is_some_and(|board| {
+            !self.progress.has_pet(PetKind::Nostradamus)
+                && (board
+                    .fish_pets
+                    .iter()
+                    .any(|pet| pet.kind == crate::fish_pet::FishPetKind::Nostradamus)
+                    || board
+                        .food
+                        .iter()
+                        .any(|food| food.food_type == crate::sim::FoodType::Nostradamus))
+        }) {
+            return Err("Nostradamus actor or Food exceeds profile pet entitlement".into());
         }
         if self.mode == GameMode::TimeTrial {
             return self.validate_time_trial();
@@ -3057,6 +3094,108 @@ mod tests {
     }
 
     #[test]
+    fn bonus_purchase_cursor_one_uses_exact_wallet_and_delays_nostradamus_spawn() {
+        let mut session = bonus_purchase_session(25_000, 0, 29);
+        session.progress.purchase_cursor = 1;
+        session.progress.unlocked_pets.push(PetKind::Brinkley);
+        let AdventurePhase::BonusResults { result } = &mut session.phase else {
+            unreachable!()
+        };
+        result.purchase.offered_cursor = 1;
+        session.validate().unwrap();
+        assert!(
+            session
+                .apply_actions(&[Action::OfferBonusPurchase])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::Locked,
+                        ..
+                    }
+                ))
+        );
+        session.step(&[]);
+        assert!(
+            session
+                .apply_actions(&[Action::OfferBonusPurchase])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::BonusPurchaseOffered {
+                        pet: PetKind::Nostradamus,
+                        price: 25_000,
+                        ..
+                    }
+                ))
+        );
+        let mut reopened: AdventureSession =
+            serde_json::from_slice(&serde_json::to_vec(&session).unwrap()).unwrap();
+        reopened.validate().unwrap();
+        let committed = reopened.apply_actions(&[Action::ConfirmBonusPurchase { accept: true }]);
+        assert!(committed.iter().any(|event| matches!(
+            event,
+            Event::BonusPurchaseCommitted {
+                pet: PetKind::Nostradamus,
+                price: 25_000,
+                shell_balance: 0,
+                ..
+            }
+        )));
+        assert_eq!(reopened.progress.purchase_cursor, 2);
+        assert_eq!(
+            reopened.progress.unlocked_pets.last(),
+            Some(&PetKind::Nostradamus)
+        );
+        assert!(reopened.board.is_none());
+        reopened.validate().unwrap();
+        let repeat = reopened.apply_actions(&[
+            Action::ConfirmBonusPurchase { accept: true },
+            Action::OfferBonusPurchase,
+        ]);
+        assert_eq!(
+            repeat
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::Locked,
+                        ..
+                    }
+                ))
+                .count(),
+            2
+        );
+        assert!(!repeat.iter().any(|event| matches!(
+            event,
+            Event::BonusPurchaseOffered { .. } | Event::BonusPurchaseCommitted { .. }
+        )));
+        reopened.validate().unwrap();
+
+        let mut short = bonus_purchase_session(24_999, 0, 30);
+        short.progress.purchase_cursor = 1;
+        short.progress.unlocked_pets.push(PetKind::Brinkley);
+        let AdventurePhase::BonusResults { result } = &mut short.phase else {
+            unreachable!()
+        };
+        result.purchase.offered_cursor = 1;
+        short.validate().unwrap();
+        assert!(
+            short
+                .apply_actions(&[Action::OfferBonusPurchase])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::InsufficientFunds,
+                        ..
+                    }
+                ))
+        );
+        short.validate().unwrap();
+    }
+
+    #[test]
     fn bonus_purchase_time_trial_results_uses_credited_wallet_once() {
         let mut session = time_trial_session();
         session.progress.shell_balance = 20_000;
@@ -3325,6 +3464,44 @@ mod tests {
             serde_json::to_value(accepted).unwrap(),
             serde_json::to_value(trial).unwrap()
         );
+    }
+
+    #[test]
+    fn nostradamus_flagged_form_requires_second_purchase_entitlement() {
+        let mut session = completed_replay_session();
+        session.progress.purchase_cursor = 1;
+        session.progress.unlocked_pets.push(PetKind::Brinkley);
+        session.progress.tank = 1;
+        session.progress.level = 1;
+        session.progress.cyrax_attempts = 0;
+        session.progress.selected_pets = vec![PetKind::Stinky, PetKind::Niko, PetKind::Presto];
+        session.board = Some(
+            AdventureState::new_profile_stage(0x3926, 1, 1, &session.progress.selected_pets, 0)
+                .unwrap(),
+        );
+        session.phase = AdventurePhase::Playing;
+        session.validate().unwrap();
+        let owner = session.board.as_ref().unwrap().presto_actor().unwrap().id;
+        session
+            .board
+            .as_mut()
+            .unwrap()
+            .change_presto_form(owner, PetKind::Nostradamus, &mut Vec::new())
+            .unwrap();
+        session.board.as_ref().unwrap().validate().unwrap();
+        assert!(session.validate().is_err());
+        session.progress.purchase_cursor = 2;
+        session.progress.unlocked_pets.push(PetKind::Nostradamus);
+        session.validate().unwrap();
+        let reopened = crate::cli::decode_save(
+            &serde_json::to_vec(&crate::cli::ProjectSave {
+                format_version: crate::cli::SAVE_FORMAT_VERSION,
+                session,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        reopened.validate().unwrap();
     }
 
     #[test]

@@ -26,6 +26,7 @@ pub enum FishPetKind {
     Angie,
     Presto,
     Brinkley,
+    Nostradamus,
 }
 
 /// Constructor-owned flag and recharge clock for a Presto-origin pet:
@@ -240,6 +241,11 @@ pub struct FishPetState {
     pub ward_timer: u16,
     pub brinkley_meals: u32,
     pub brinkley_cooldown: u16,
+    /// Raw21 +220 elapsed and +224 constructor threshold.
+    pub nostra_elapsed: u16,
+    pub nostra_threshold: u16,
+    /// Raw21 +240 marks a Food conversion, independent of Presto's flag.
+    pub nostra_converted: bool,
     /// The actor owns the source +238 cooldown and transformed-form flag.
     #[serde(default)]
     pub presto_form: Option<PrestoForm>,
@@ -277,6 +283,26 @@ impl FishPetState {
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> Self {
         Self::spawn(id, kind, false, false, None, rand_range)
+    }
+
+    /// A Food conversion installs a new ordinary raw21 actor at the consumed
+    /// fish's old widget position; it is not another logical roster choice.
+    pub fn spawn_nostra_conversion_at(
+        id: u64,
+        widget_x: i32,
+        widget_y: i32,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
+        let mut pet = Self::spawn(
+            id,
+            FishPetKind::Nostradamus,
+            false,
+            false,
+            Some((widget_x, widget_y)),
+            rand_range,
+        );
+        pet.nostra_converted = true;
+        pet
     }
 
     /// Construct a flagged FishTypePet replacement at the old widget pose.
@@ -349,6 +375,12 @@ impl FishPetState {
         } else {
             None
         };
+        let nostra_threshold = if kind == FishPetKind::Nostradamus {
+            rand_range(if virtual_tank { 200 } else { 300 }) as u16
+                + if virtual_tank { 1080 } else { 300 }
+        } else {
+            0
+        };
         Self {
             id,
             kind,
@@ -394,6 +426,9 @@ impl FishPetState {
             ward_timer: 0,
             brinkley_meals: 0,
             brinkley_cooldown: 0,
+            nostra_elapsed: 0,
+            nostra_threshold,
+            nostra_converted: false,
             presto_form: (kind == FishPetKind::Presto).then_some(PrestoForm { remaining_ticks: 0 }),
             published_x: widget_x,
             published_y: widget_y,
@@ -512,6 +547,15 @@ impl FishPetState {
             || (self.kind == FishPetKind::Brinkley && self.brinkley_cooldown > 108)
             || (self.kind != FishPetKind::Brinkley
                 && (self.brinkley_meals != 0 || self.brinkley_cooldown != 0))
+            || (self.kind == FishPetKind::Nostradamus
+                && (!(300..=599).contains(&self.nostra_threshold)
+                    && !(1080..=1279).contains(&self.nostra_threshold)
+                    || self.nostra_elapsed >= self.nostra_threshold
+                    || (self.nostra_converted && self.presto_form.is_some())))
+            || (self.kind != FishPetKind::Nostradamus
+                && (self.nostra_elapsed != 0
+                    || self.nostra_threshold != 0
+                    || self.nostra_converted))
             || self
                 .presto_form
                 .is_some_and(|form| form.remaining_ticks > 360)
@@ -596,7 +640,9 @@ impl FishPetState {
                 }
             }
             FishPetKind::Angie => u8::from(self.turn_ticks != 0),
-            FishPetKind::Presto | FishPetKind::Brinkley => u8::from(self.turn_ticks != 0),
+            FishPetKind::Presto | FishPetKind::Brinkley | FishPetKind::Nostradamus => {
+                u8::from(self.turn_ticks != 0)
+            }
         }
     }
 
@@ -698,6 +744,25 @@ impl FishPetState {
         )
     }
 
+    /// PB05 004e5900 increments +0x220 before comparing with +0x224.
+    /// The Board supplies the registered-threat gate from the common updater.
+    pub fn begin_nostradamus(&mut self, production_allowed: bool) -> Option<(i32, i32)> {
+        assert_eq!(self.kind, FishPetKind::Nostradamus);
+        if production_allowed {
+            self.nostra_elapsed += 1;
+            if self.nostra_elapsed >= self.nostra_threshold {
+                self.nostra_elapsed = 0;
+                return Some((self.widget_x + 15, self.widget_y + 10));
+            }
+        }
+        None
+    }
+
+    pub fn finish_nostradamus(&mut self, rand_range: &mut impl FnMut(u64) -> u64) -> FishPetUpdate {
+        assert_eq!(self.kind, FishPetKind::Nostradamus);
+        self.tick_inner(&[], 0, &[], PetTargetViews::None, false, rand_range)
+    }
+
     /// W1 supplies steering and target order; this returns requests rather
     /// than mutating Board-owned health or fish membership. The Board applies
     /// contacts before calling finish_gash_clock with fresh threat membership.
@@ -767,8 +832,9 @@ impl FishPetState {
                     | FishPetKind::Gash
                     | FishPetKind::Angie
                     | FishPetKind::Brinkley
+                    | FishPetKind::Nostradamus
             ),
-            "Zorf, Nimbus, Amp, Gash, Angie and Brinkley need their subtype updates"
+            "Zorf, Nimbus, Amp, Gash, Angie, Brinkley and Nostradamus need subtype updates"
         );
         self.tick_inner(
             aliens,
@@ -3269,5 +3335,73 @@ mod tests {
         negative_cap.vy = -2.0;
         negative_cap.begin_brinkley(true, &food);
         assert_eq!((negative_cap.vx, negative_cap.vy), (-3.0, -2.0));
+    }
+
+    #[test]
+    fn nostradamus_constructor_threshold_and_conversion_origin_are_distinct_from_form() {
+        let mut ordinary_draws = Vec::new();
+        let ordinary = FishPetState::spawn_tank1(1, FishPetKind::Nostradamus, &mut |upper| {
+            ordinary_draws.push(upper);
+            upper - 1
+        });
+        assert_eq!(ordinary_draws, [265, 520, 2, 3, 200, 3, 10, 200, 300]);
+        assert_eq!(
+            (ordinary.nostra_elapsed, ordinary.nostra_threshold),
+            (0, 599)
+        );
+        assert!(!ordinary.nostra_converted);
+        ordinary.validate().unwrap();
+
+        let mut converted_draws = Vec::new();
+        let converted = FishPetState::spawn_nostra_conversion_at(2, 100, 200, &mut |upper| {
+            converted_draws.push(upper);
+            0
+        });
+        assert_eq!(converted_draws, [2, 3, 200, 3, 10, 200, 300]);
+        assert_eq!((converted.widget_x, converted.widget_y), (100, 200));
+        assert!(converted.nostra_converted);
+        assert!(converted.presto_form.is_none());
+        converted.validate().unwrap();
+
+        let flagged = FishPetState::spawn_presto_form_at(
+            3,
+            FishPetKind::Nostradamus,
+            100,
+            200,
+            false,
+            &mut |_| 0,
+        );
+        assert_eq!(flagged.presto_form.unwrap().remaining_ticks, 360);
+        assert!(!flagged.nostra_converted);
+        flagged.validate().unwrap();
+    }
+
+    #[test]
+    fn nostradamus_threshold_fires_on_equality_only_on_admitted_update() {
+        let mut pet = FishPetState::spawn_presto_form_at(
+            1,
+            FishPetKind::Nostradamus,
+            140,
+            250,
+            false,
+            &mut |_| 0,
+        );
+        pet.nostra_threshold = 300;
+        pet.nostra_elapsed = 299;
+        assert_eq!(pet.begin_nostradamus(false), None);
+        assert_eq!(pet.nostra_elapsed, 299);
+        pet.finish_nostradamus(&mut |_| 0);
+        let old_widget = (pet.widget_x, pet.widget_y);
+        assert_eq!(
+            pet.begin_nostradamus(true),
+            Some((old_widget.0 + 15, old_widget.1 + 10))
+        );
+        assert_eq!(pet.nostra_elapsed, 0);
+        pet.finish_nostradamus(&mut |_| 0);
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 358);
+        assert_eq!(pet.begin_nostradamus(true), None);
+        pet.finish_nostradamus(&mut |_| 0);
+        assert_eq!(pet.nostra_elapsed, 1);
+        pet.validate().unwrap();
     }
 }

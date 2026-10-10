@@ -1,5 +1,5 @@
 use crate::{
-    adventure::{AdventurePhase, AdventureSession},
+    adventure::{AdventurePhase, AdventureSession, results_offer},
     alien::SylvesterKind,
     assets::{GameAssets, SoundData},
     bonus::{BonusResult, BonusState, PurchaseReceipt, ShellKind, ShellState},
@@ -11,7 +11,9 @@ use crate::{
     missile::MissileKind,
     music::{MusicOwner, MusicReport},
     oscar::OscarPose,
-    sim::{Action, AdventureState, CoinKind, Event, FishPose, FishSize, PetKind, TICK_MS},
+    sim::{
+        Action, AdventureState, CoinKind, Event, FishPose, FishSize, FoodType, PetKind, TICK_MS,
+    },
     timing::{InputPress, StepClock, wall_deadline_reached},
     ultra::UltraPose,
 };
@@ -128,6 +130,8 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_PRESTO",
     "IMAGE_BRINKLEY",
     "IMAGE_SCL_BRINKLEY",
+    "IMAGE_NOSTRADAMUS",
+    "IMAGE_SCL_NOSTRADAMUS",
     "IMAGE_ULTRA",
     "IMAGE_SCL_ULTRA",
     "IMAGE_BILATERUS",
@@ -800,19 +804,27 @@ impl Presentation {
             }
         }
         for food in &state.food {
+            // W1 Food.cpp 173-188 places the special pellet in row four at
+            // its widget origin with 200/255 alpha. Primary draw binding
+            // remains pending; the installed sheet has five rows.
+            let exotic = food.food_type == FoodType::Nostradamus;
             self.sprite(
                 "IMAGE_FOOD",
-                food.x - 5.0,
-                food.y - 4.0,
+                if exotic { food.x.trunc() } else { food.x - 5.0 },
+                if exotic { food.y.trunc() } else { food.y - 4.0 },
                 Some(Rect::new(
                     (food.frame / food.animation_period % 10) as f32 * 40.0,
-                    f32::from(food.quality) * 40.0,
+                    if exotic {
+                        160.0
+                    } else {
+                        f32::from(food.quality) * 40.0
+                    },
                     40.0,
                     40.0,
                 )),
                 false,
                 1.0,
-                1.0,
+                if exotic { 200.0 / 255.0 } else { 1.0 },
             );
         }
         for fish in state.fish.iter().filter(|fish| {
@@ -1111,6 +1123,7 @@ impl Presentation {
                 FishPetKind::Angie => "IMAGE_ANGIE",
                 FishPetKind::Presto => "IMAGE_PRESTO",
                 FishPetKind::Brinkley => "IMAGE_BRINKLEY",
+                FishPetKind::Nostradamus => "IMAGE_NOSTRADAMUS",
             };
             let (cell_width, cell_height) = if pet.kind == FishPetKind::Amp {
                 (160.0, 60.0)
@@ -2459,10 +2472,26 @@ impl Presentation {
     }
 
     fn draw_results_purchase(&self, receipt: &PurchaseReceipt, updates: u32, balance: u32) {
+        let Some((pet, price)) = results_offer(receipt.offered_cursor) else {
+            return;
+        };
+        let name = match pet {
+            PetKind::Brinkley => "BRINKLEY",
+            PetKind::Nostradamus => "NOSTRADAMUS",
+            _ => unreachable!("implemented results offer"),
+        };
         if receipt.purchased {
-            self.centered_text("JungleFever10outline", "BRINKLEY purchased", 412.0, YELLOW);
-        } else if receipt.offered_cursor == 0 && updates >= 30 {
-            self.main_button(results_offer_rect(), "BRINKLEY - 20,000 shells");
+            self.centered_text(
+                "JungleFever10outline",
+                &format!("{name} purchased"),
+                412.0,
+                YELLOW,
+            );
+        } else if updates >= 30 {
+            self.main_button(
+                results_offer_rect(),
+                &format!("{name} - {},000 shells", price / 1000),
+            );
         }
         if receipt.confirming {
             draw_rectangle(
@@ -2472,10 +2501,15 @@ impl Presentation {
                 150.0,
                 Color::new(0.02, 0.08, 0.15, 0.96),
             );
-            self.centered_text("JungleFever15outline", "Buy BRINKLEY?", 258.0, YELLOW);
+            self.centered_text(
+                "JungleFever15outline",
+                &format!("Buy {name}?"),
+                258.0,
+                YELLOW,
+            );
             self.centered_text(
                 "JungleFever10outline",
-                &format!("20,000 shells - available {balance}"),
+                &format!("{},000 shells - available {balance}", price / 1000),
                 284.0,
                 WHITE,
             );
@@ -2614,6 +2648,7 @@ impl Presentation {
                 PetKind::Angie => ("IMAGE_ANGIE", 90.0, updates % 20 / 2),
                 PetKind::Presto => ("IMAGE_PRESTO", 90.0, updates % 20 / 2),
                 PetKind::Brinkley => ("IMAGE_BRINKLEY", 90.0, updates % 20 / 2),
+                PetKind::Nostradamus => ("IMAGE_NOSTRADAMUS", 90.0, updates % 20 / 2),
             };
             let (preview_x, preview_width, preview_height) = if pet == PetKind::Amp {
                 (236.0, 160.0, 60.0)
@@ -2665,6 +2700,7 @@ impl Presentation {
                     PetKind::Angie => "ANGIE the Angelfish",
                     PetKind::Presto => "PRESTO",
                     PetKind::Brinkley => "BRINKLEY",
+                    PetKind::Nostradamus => "NOSTRADAMUS",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -2762,6 +2798,7 @@ impl Presentation {
                 PetKind::Angie => ["ANGIE can resurrect", "dead fish.", ""],
                 PetKind::Presto => ["PRESTO has joined", "your pet collection.", ""],
                 PetKind::Brinkley => ["BRINKLEY eats food", "and drops coins.", ""],
+                PetKind::Nostradamus => ["NOSTRADAMUS makes", "special food.", ""],
             };
             for (index, line) in description.iter().enumerate() {
                 self.centered_text(
@@ -2855,6 +2892,7 @@ impl Presentation {
                 PetKind::Angie => "IMAGE_SCL_ANGIE",
                 PetKind::Presto => "IMAGE_SCL_PRESTO",
                 PetKind::Brinkley => "IMAGE_SCL_BRINKLEY",
+                PetKind::Nostradamus => "IMAGE_SCL_NOSTRADAMUS",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
@@ -3087,6 +3125,12 @@ impl Presentation {
                     "IMAGE_BRINKLEY",
                     "BRINKLEY",
                     ["BRINKLEY eats food", "and drops coins.", ""],
+                    90.0,
+                ),
+                PetKind::Nostradamus => (
+                    "IMAGE_NOSTRADAMUS",
+                    "NOSTRADAMUS",
+                    ["NOSTRADAMUS makes", "special food.", ""],
                     90.0,
                 ),
             };
@@ -3366,6 +3410,24 @@ impl Presentation {
                     Color::from_rgba(180, 250, 90, 255),
                 );
             }
+        }
+        if matches!(
+            session.phase,
+            AdventurePhase::Playing | AdventurePhase::TimeTrialPlaying
+        ) && session.board.as_ref().is_some_and(|board| {
+            board
+                .invasion
+                .as_ref()
+                .is_some_and(|wave| wave.sneeze_shake_ticks > 0)
+        }) {
+            // Project presentation: the retail message lifetime is not yet
+            // established, so the saved source-owned shake clock bounds it.
+            self.centered_text(
+                "ContinuumBold14outback",
+                "Attack Postponed by Sneeze of Power!",
+                462.0,
+                YELLOW,
+            );
         }
         if matches!(
             session.phase,
@@ -4047,7 +4109,7 @@ pub async fn run(
                     }
                     AdventurePhase::BonusResults { ref result }
                         if !result.purchase.confirming
-                            && result.purchase.offered_cursor == 0
+                            && results_offer(result.purchase.offered_cursor).is_some()
                             && result.updates >= 30
                             && results_offer_rect().contains(pointer) =>
                     {
@@ -4086,7 +4148,7 @@ pub async fn run(
                             .and_then(|run| run.result.as_ref())
                             .is_some_and(|result| {
                                 !result.purchase.confirming
-                                    && result.purchase.offered_cursor == 0
+                                    && results_offer(result.purchase.offered_cursor).is_some()
                                     && result.updates >= 30
                             })
                             && results_offer_rect().contains(pointer) =>
