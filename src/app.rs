@@ -7,9 +7,9 @@ use crate::{
     fish_pet::FishPetKind,
     fish_songs::{FishSongPlayer, SongCatalog},
     font::BitmapFont,
-    help::{HelpController, HelpExit, HelpReturn, HelpView},
+    help::{HelpController, HelpExit, HelpReturn, demo::HelpAction},
     install::{self, InstallIdentity},
-    interlude::{InterludeController, MusicStage, RowContent},
+    interlude::{InterludeController, MusicStage},
     invasion::{InvasionEvent, InvasionTip},
     missile::MissileKind,
     music::{MusicCue, MusicOwner, MusicReport},
@@ -40,12 +40,58 @@ use std::{
     io::{BufWriter, Write},
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use turbofish_screenhost::{MonitorPowerGuard, OwnWindow, PreviewStatus, ScreenCommand};
 
 #[path = "app/bubble_runtime.rs"]
 mod bubble_runtime;
 use bubble_runtime::BubbleRuntime;
+#[path = "app/title_runtime.rs"]
+mod title_runtime;
+use title_runtime::TitleRuntime;
+#[path = "app/finale_runtime.rs"]
+mod finale_runtime;
+use finale_runtime::FinaleRuntime;
+#[path = "app/help_runtime.rs"]
+mod help_runtime;
+
+const FONT_IDS: &[&str] = &[
+    "JungleFever10outline",
+    "JungleFever17outline",
+    "JungleFever15outline",
+    "JungleFever12outline",
+    "ContinuumBold12",
+    "ContinuumBold14",
+    "ContinuumBold14outback",
+    "Pix118",
+];
+
+fn presentation_image_ids() -> Vec<&'static str> {
+    let mut ids = IMAGE_IDS.to_vec();
+    ids.extend(crate::title_screen::TitleImage::ALL.map(|image| image.resource_id()));
+    ids.extend(help_runtime::REQUIRED_IMAGES.map(|image| image.asset_id()));
+    ids.extend_from_slice(finale_runtime::REQUIRED_IMAGE_IDS);
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+fn presentation_font_ids() -> Vec<&'static str> {
+    let mut ids = FONT_IDS.to_vec();
+    ids.extend(help_runtime::REQUIRED_FONTS.map(help_runtime::font_file_name));
+    ids.extend_from_slice(finale_runtime::REQUIRED_FONT_NAMES);
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+fn title_loading_tasks(muted: bool) -> u64 {
+    (presentation_image_ids().len()
+        + presentation_font_ids().len()
+        + if muted { 0 } else { SOUND_IDS.len() }
+        + 2) as u64
+}
 
 const IMAGE_IDS: &[&str] = &[
     "IMAGE_AQUARIUM1",
@@ -460,17 +506,28 @@ impl Presentation {
         game_root: &Path,
         assets: &GameAssets,
         muted: bool,
+        mut title: Option<&mut TitleRuntime>,
     ) -> Result<Self, Box<dyn Error>> {
         let mut images = HashMap::new();
         let mut image_cells = HashMap::new();
-        for id in IMAGE_IDS {
+        for id in presentation_image_ids() {
+            if let Some((image, cells)) =
+                title.as_ref().and_then(|loader| loader.bootstrap_image(id))
+            {
+                images.insert(id.into(), image);
+                image_cells.insert(id.into(), cells);
+                continue;
+            }
             let image = assets.load_image(id)?;
-            image_cells.insert((*id).into(), (image.cols, image.rows));
+            image_cells.insert(id.into(), (image.cols, image.rows));
             let width = u16::try_from(image.width)?;
             let height = u16::try_from(image.height)?;
             let texture = Texture2D::from_rgba8(width, height, &image.pixels);
             texture.set_filter(FilterMode::Linear);
-            images.insert((*id).into(), texture);
+            images.insert(id.into(), texture);
+            if let Some(loader) = title.as_deref_mut() {
+                loader.task_completed().await?;
+            }
         }
         let mut sounds = HashMap::new();
         if !muted {
@@ -486,20 +543,17 @@ impl Presentation {
                 rodio::Decoder::try_from(std::io::Cursor::new(sound.clone()))
                     .map_err(|error| format!("{id}: {error}"))?;
                 sounds.insert((*id).into(), sound);
+                if let Some(loader) = title.as_deref_mut() {
+                    loader.task_completed().await?;
+                }
             }
         }
         let mut fonts = HashMap::new();
-        for name in [
-            "JungleFever10outline",
-            "JungleFever17outline",
-            "JungleFever15outline",
-            "JungleFever12outline",
-            "ContinuumBold12",
-            "ContinuumBold14",
-            "ContinuumBold14outback",
-            "Pix118",
-        ] {
+        for name in presentation_font_ids() {
             fonts.insert(name.into(), RenderedFont::load(game_root, assets, name)?);
+            if let Some(loader) = title.as_deref_mut() {
+                loader.task_completed().await?;
+            }
         }
         let additive = load_material(
             ShaderSource::Glsl {
@@ -524,6 +578,9 @@ impl Presentation {
             },
         )
         .map_err(|error| format!("additive sprite material creation failed: {error}"))?;
+        if let Some(loader) = title {
+            loader.task_completed().await?;
+        }
         Ok(Self {
             images,
             image_cells,
@@ -3516,38 +3573,6 @@ impl Presentation {
         self.main_button(Rect::new(525.0, 4.0, 80.0, height), "Menu");
     }
 
-    fn draw_adventure_finale_interlude(&self, interlude: Option<&InterludeController>) {
-        self.sprite("IMAGE_SCREENBACK", 0.0, 0.0, None, false, 1.0, 1.0);
-        if let Some(interlude) = interlude {
-            for row in interlude.visible_rows() {
-                let (line, size, color) = match row.content {
-                    RowContent::Heading(line) => (line.to_owned(), 28.0, YELLOW),
-                    RowContent::Text(line) => (line.to_owned(), 21.0, WHITE),
-                    RowContent::Cast(pet) => (format!("{pet:?}"), 21.0, WHITE),
-                };
-                let width = measure_text(&line, None, size as u16, 1.0).width;
-                draw_text(&line, row.x as f32 - width / 2.0, row.y as f32, size, color);
-            }
-            for pose in interlude.resurrection_poses() {
-                draw_circle(
-                    pose.x as f32 + 40.0,
-                    pose.y as f32 + 40.0,
-                    17.0,
-                    Color::new(1.0, 0.9, 0.45, f32::from(pose.alpha) / 255.0),
-                );
-                draw_text(
-                    format!("{:?}", pose.pet),
-                    pose.x as f32,
-                    pose.y as f32 + 75.0,
-                    16.0,
-                    WHITE,
-                );
-            }
-        }
-        let height = self.images["IMAGE_MAINBUTTON"].height();
-        self.main_button(Rect::new(186.0, 445.0, 264.0, height), "Main Menu");
-    }
-
     fn draw_virtual_bubbulator(
         &self,
         session: &AdventureSession,
@@ -4239,7 +4264,7 @@ impl Presentation {
         paused: bool,
         pointer: Vec2,
         healing_warning_until_tick: Option<u64>,
-        interlude: Option<&InterludeController>,
+        finale: Option<(&FinaleRuntime, &InterludeController)>,
     ) {
         match session.phase {
             AdventurePhase::VirtualTank
@@ -4253,7 +4278,11 @@ impl Presentation {
             AdventurePhase::Hatch { pet, updates } => self.draw_hatch(pet, updates),
             AdventurePhase::TankFourFinaleHatch { updates } => self.draw_finale_hatch(updates),
             AdventurePhase::AdventureFinaleInterlude => {
-                self.draw_adventure_finale_interlude(interlude)
+                if let Some((runtime, controller)) = finale {
+                    runtime.draw(self, session, controller);
+                } else {
+                    self.sprite("IMAGE_SCREENBACK", 0.0, 0.0, None, false, 1.0, 1.0);
+                }
             }
             AdventurePhase::Bonus { ref state } => self.draw_bonus(state),
             AdventurePhase::BonusResults { ref result } => {
@@ -5131,38 +5160,6 @@ fn ui_button(rect: Rect, label: &str) {
     draw_text(label, rect.x + 8.0, rect.y + rect.h * 0.7, 18.0, WHITE);
 }
 
-fn draw_help(view: HelpView) {
-    draw_rectangle(0.0, 0.0, 640.0, 480.0, Color::new(0.01, 0.05, 0.08, 0.98));
-    draw_text(view.title, 30.0, 48.0, 32.0, YELLOW);
-    if view.is_instructions() {
-        for (index, line) in view.lines.iter().enumerate() {
-            draw_text(line, 50.0, 138.0 + index as f32 * 44.0, 21.0, WHITE);
-        }
-        ui_button(Rect::new(220.0, 405.0, 200.0, 42.0), "Continue");
-        return;
-    }
-    for page in 1..=crate::help::LAST_PAGE {
-        let rect = Rect::new(20.0 + f32::from(page - 1) * 75.0, 72.0, 70.0, 32.0);
-        ui_button(rect, &page.to_string());
-        if page == view.page {
-            draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 3.0, ORANGE);
-        }
-    }
-    draw_text(
-        format!("Page {} of 8", view.page),
-        30.0,
-        142.0,
-        19.0,
-        YELLOW,
-    );
-    for (index, line) in view.lines.iter().enumerate() {
-        draw_text(line, 35.0, 185.0 + index as f32 * 43.0, 19.0, WHITE);
-    }
-    ui_button(Rect::new(35.0, 410.0, 100.0, 36.0), "Prev");
-    ui_button(Rect::new(145.0, 410.0, 100.0, 36.0), "Next");
-    ui_button(Rect::new(500.0, 410.0, 105.0, 36.0), "Return");
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StoryInput {
     Previous,
@@ -5354,36 +5351,36 @@ fn draw_story(
     ui_button(Rect::new(455.0, 435.0, 160.0, 34.0), "Back to menu");
 }
 
-fn help_input(help: &mut HelpController, pointer: Vec2) -> Option<HelpExit> {
+fn help_input(
+    presentation: &Presentation,
+    help: &mut HelpController,
+    pointer: Vec2,
+) -> Option<HelpExit> {
     let view = help.view()?;
-    let click = is_mouse_button_pressed(MouseButton::Left);
-    if view.is_instructions() {
-        if is_key_pressed(KeyCode::Enter)
-            || (click && Rect::new(220.0, 405.0, 200.0, 42.0).contains(pointer))
-        {
-            return help.continue_intro();
+    let action = if view.is_instructions() && is_key_pressed(KeyCode::Enter) {
+        Some(HelpAction::Continue)
+    } else if !view.is_instructions() && is_key_pressed(KeyCode::Escape) {
+        Some(HelpAction::Return)
+    } else if !view.is_instructions() && is_key_pressed(KeyCode::Left) {
+        Some(HelpAction::Previous)
+    } else if !view.is_instructions() && is_key_pressed(KeyCode::Right) {
+        Some(HelpAction::Next)
+    } else if is_mouse_button_pressed(MouseButton::Left) {
+        help_runtime::hit_control(presentation, help, pointer)
+    } else {
+        None
+    };
+    match action? {
+        HelpAction::Continue => return help.continue_intro(),
+        HelpAction::Return => return help.close(),
+        HelpAction::Previous => {
+            help.previous();
         }
-        return None;
-    }
-    if is_key_pressed(KeyCode::Escape)
-        || (click && Rect::new(500.0, 410.0, 105.0, 36.0).contains(pointer))
-    {
-        return help.close();
-    }
-    if is_key_pressed(KeyCode::Left)
-        || (click && Rect::new(35.0, 410.0, 100.0, 36.0).contains(pointer))
-    {
-        help.previous();
-    } else if is_key_pressed(KeyCode::Right)
-        || (click && Rect::new(145.0, 410.0, 100.0, 36.0).contains(pointer))
-    {
-        help.next_page();
-    } else if click {
-        for page in 1..=crate::help::LAST_PAGE {
-            if Rect::new(20.0 + f32::from(page - 1) * 75.0, 72.0, 70.0, 32.0).contains(pointer) {
-                help.select_page(page);
-                break;
-            }
+        HelpAction::Next => {
+            help.next_page();
+        }
+        HelpAction::Page(page) => {
+            help.select_page(page);
         }
     }
     None
@@ -6023,13 +6020,29 @@ pub async fn run(
     mut profiles: Profiles,
     mut settings: SettingsSave,
 ) -> Result<(), Box<dyn Error>> {
+    let app_started_at = get_time();
+    prevent_quit();
     let opened_at = wall_seconds();
     if let Some(current) = profiles.current_mut() {
         current
             .session
             .resume_virtual_from_save(opened_at, opened_at / 86_400 * 86_400);
     }
-    let presentation = Presentation::load(&game_root, &assets, options.muted).await?;
+    let mut title = TitleRuntime::bootstrap(
+        &assets,
+        crate::title_screen::TitleMode::Application,
+        title_loading_tasks(options.muted),
+        app_started_at,
+        options.quit_after,
+    )?;
+    let presentation =
+        match Presentation::load(&game_root, &assets, options.muted, Some(&mut title)).await {
+            Ok(presentation) => presentation,
+            Err(error) => {
+                title.fail()?;
+                return Err(error);
+            }
+        };
     let (mut music, mut music_unavailable) = if options.muted {
         (None, None)
     } else {
@@ -6049,6 +6062,14 @@ pub async fn run(
         backend.set_fullscreen(settings.settings.fullscreen)?;
         backend.set_custom_cursor(settings.settings.custom_cursor)?;
     }
+    title.task_completed().await?;
+    title.succeed()?;
+    let target = title.wait_start(&presentation, music.as_ref()).await?;
+    if target != crate::title_screen::FinishTarget::GameSelector {
+        return Err("ordinary title requested an unexpected route".into());
+    }
+    // Preserve the selected saved scene until the transient selector adapter
+    // owns routing; title presentation never replaces progression or a Board.
     let mut evidence = options
         .evidence_dir
         .as_ref()
@@ -6063,10 +6084,11 @@ pub async fn run(
             )
         })
         .transpose()?;
-    let started = get_time();
+    let started = app_started_at;
     let mut start_session_tick = profiles.current().map_or(0, |entry| entry.session.ticks);
     let mut clock = StepClock::new(options.test_speed);
     let mut preview_clock = StepClock::new(1);
+    let mut interlude_clock = StepClock::new(1);
     let mut bubbles = BubbleRuntime::new(options.seed);
     let mut preview_bubbles = BubbleRuntime::new(options.seed ^ 0x0050_5245_5649_4557);
     let screensaver_path = options.save_dir.join("screensaver.json");
@@ -6122,6 +6144,14 @@ pub async fn run(
     let mut song_title = String::new();
     let mut song_title_until = 0.0_f64;
     let mut interlude = None::<InterludeController>;
+    let mut finale = None::<FinaleRuntime>;
+    let focus_window = match OwnWindow::capture_active() {
+        Ok(window) => Some(window),
+        Err(error) => {
+            eprintln!("UI focus observation unavailable: {error}");
+            None
+        }
+    };
     prevent_quit();
     loop {
         let elapsed = get_time() - started;
@@ -6148,8 +6178,9 @@ pub async fn run(
             help.open_instructions(HelpReturn::Selector);
         }
         let help_was_active = help.view().is_some();
+        help.advance_demo(Duration::from_secs_f32(get_frame_time().clamp(0.0, 0.2)));
         let help_exit = if help_was_active {
-            help_input(&mut help, pointer)
+            help_input(&presentation, &mut help, pointer)
         } else {
             None
         };
@@ -6345,6 +6376,8 @@ pub async fn run(
                         pending_song_kind = None;
                         song_title.clear();
                         interlude = None;
+                        finale = None;
+                        interlude_clock.clear_backlog();
                         help = HelpController::new();
                         help_restore_paused = None;
                         story_browser_open = false;
@@ -6493,9 +6526,7 @@ pub async fn run(
                     YELLOW,
                 );
             }
-            if let Some(view) = help.view() {
-                draw_help(view);
-            }
+            help_runtime::draw(&presentation, &help);
             if story_browser_open {
                 draw_story(
                     &presentation,
@@ -6566,8 +6597,25 @@ pub async fn run(
         }
         if session.phase == AdventurePhase::AdventureFinaleInterlude && interlude.is_none() {
             interlude = InterludeController::new(&session.finale_fallen_pets).ok();
+            finale = Some(FinaleRuntime::new(&game_root.join(&identity.executable)));
+            interlude_clock.clear_backlog();
         } else if session.phase != AdventurePhase::AdventureFinaleInterlude {
             interlude = None;
+            finale = None;
+            interlude_clock.clear_backlog();
+        }
+        if let (Some(controller), Some(runtime)) = (interlude.as_mut(), finale.as_mut()) {
+            let has_focus = focus_window.as_ref().is_none_or(OwnWindow::has_focus);
+            if paused || ui_active || !has_focus {
+                interlude_clock.clear_backlog();
+            } else {
+                interlude_clock.add_frame(get_frame_time(), false);
+                while interlude_clock.step_due() {
+                    interlude_clock.consume_step(false);
+                    runtime.advance(controller, has_focus);
+                    let _ = controller.advance(has_focus);
+                }
+            }
         }
         if session.phase == AdventurePhase::GameSelector && !ui_active {
             for (pressed, key) in [
@@ -7627,13 +7675,12 @@ pub async fn run(
                         }
                         None => bubbles.clear(),
                     }
-                    if session.phase == AdventurePhase::AdventureFinaleInterlude {
-                        if interlude.is_none() {
-                            interlude = InterludeController::new(&session.finale_fallen_pets).ok();
-                        }
-                        if let Some(controller) = interlude.as_mut() {
-                            let _ = controller.advance(true);
-                        }
+                    if session.phase == AdventurePhase::AdventureFinaleInterlude
+                        && interlude.is_none()
+                    {
+                        interlude = InterludeController::new(&session.finale_fallen_pets).ok();
+                        finale = Some(FinaleRuntime::new(&game_root.join(&identity.executable)));
+                        interlude_clock.clear_backlog();
                     }
                     if session.phase == AdventurePhase::VirtualTank {
                         for fish in session
@@ -7949,7 +7996,7 @@ pub async fn run(
             paused,
             pointer,
             healing_warning_until_tick,
-            interlude.as_ref(),
+            finale.as_ref().zip(interlude.as_ref()),
         );
         if bubble_board_clock(session).is_some() {
             bubbles.draw(&presentation);
@@ -7979,9 +8026,7 @@ pub async fn run(
                 screensaver_load_error.as_deref(),
             );
         }
-        if let Some(view) = help.view() {
-            draw_help(view);
-        }
+        help_runtime::draw(&presentation, &help);
         if story_browser_open {
             draw_story(
                 &presentation,
@@ -8155,7 +8200,28 @@ pub async fn run_screensaver(
         Err(error) => return Err(error),
     };
     let muted = options.muted || matches!(command, ScreenCommand::Preview(_));
-    let presentation = Presentation::load(&game_root, &assets, muted).await?;
+    let app_started_at = get_time();
+    prevent_quit();
+    let mut title = if matches!(command, ScreenCommand::Fullscreen) {
+        Some(TitleRuntime::bootstrap(
+            &assets,
+            crate::title_screen::TitleMode::Screensaver,
+            title_loading_tasks(muted),
+            app_started_at,
+            options.quit_after,
+        )?)
+    } else {
+        None
+    };
+    let presentation = match Presentation::load(&game_root, &assets, muted, title.as_mut()).await {
+        Ok(presentation) => presentation,
+        Err(error) => {
+            if let Some(loader) = title.as_mut() {
+                loader.fail()?;
+            }
+            return Err(error);
+        }
+    };
     let mut music = if muted {
         None
     } else {
@@ -8170,6 +8236,15 @@ pub async fn run_screensaver(
     if let Some(owner) = music.as_ref() {
         owner.set_music_volume(settings.settings.music_volume)?;
         owner.set_effects_volume(settings.settings.effects_volume)?;
+    }
+    if let Some(loader) = title.as_mut() {
+        loader.task_completed().await?;
+        loader.succeed()?;
+        if loader.wait_start(&presentation, music.as_ref()).await?
+            != crate::title_screen::FinishTarget::ScreensaverBoard
+        {
+            return Err("saver title requested an unexpected route".into());
+        }
     }
     let mut preview_settings = file.settings;
     if matches!(command, ScreenCommand::Preview(_)) {
@@ -8231,7 +8306,7 @@ pub async fn run_screensaver(
     let mut help = HelpController::new();
     let mut dirty = false;
     let mut mouse_anchor = mouse_position();
-    let started = get_time();
+    let started = app_started_at;
     prevent_quit();
     loop {
         if is_quit_requested() || wall_deadline_reached(get_time() - started, options.quit_after) {

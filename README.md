@@ -10,7 +10,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 
 ## Start here
 
-- Current36/profile3 adds [saver fish continuation](docs/screensaver.md#scene-continuation) and [transient Board bubbles](docs/bubbles.md#runtime-integration). One handoff case/build/package passed; strict lint passed before fixture-only corrections. [Virtual Tank](docs/virtual-tank.md), [Sandbox](docs/sandbox.md), [shared interface/ending](docs/shared-interface.md), [Challenge](docs/challenge.md) and [Adventure replay](docs/adventure-replay.md) remain integrated. Next: incoming title/finale/Help/score/Story/VT/menu controllers. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
+- E111 joins [Title/loading](docs/title-screen.md#runtime-integration), [illustrated Help](docs/help.md#runtime-integration) and [full finale](docs/finale.md#runtime-integration); formatting/lint/build passed without new presentation tests. Current36/profile3/bank2 [saver continuation](docs/screensaver.md#scene-continuation) and [Board bubbles](docs/bubbles.md#runtime-integration) remain committed. Next: main menu, tank chooser, Story/Hall, VT UI and shell gifting joins. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
 - Agents: read [AGENTS.md](AGENTS.md), then follow its startup order.
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).

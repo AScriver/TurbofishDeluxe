@@ -37,6 +37,7 @@ pub mod starcatcher;
 pub mod story;
 pub mod time_trial;
 pub mod timing;
+pub mod title_screen;
 pub mod ultra;
 pub mod virtual_board;
 pub mod virtual_combat;

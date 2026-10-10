@@ -1,10 +1,14 @@
 # Title screen and loading controller
 
-This isolated increment adds a transient, renderer-independent controller in
+This model increment adds a transient, renderer-independent controller in
 [`src/title_screen.rs`](../src/title_screen.rs). Shared startup integration belongs
 to the main checkout. The controller owns presentation progress, animation and
 Start input only. The caller owns real loading, texture readiness, errors, clocks,
 audio and the final application transition. No timer declares assets ready.
+
+## Runtime integration
+
+E111 registers the controller and [`app/title_runtime.rs`](../src/app/title_runtime.rs). Startup counts actual successful image uploads, enabled sound decodes, font loads, material creation and backend readiness. Seven bootstrap images are uploaded once and reused; the owned title/mask overlay is composed locally. Loading yields painted frames and honors quit/deadline. Ordinary Start currently preserves the selected saved scene; the incoming transient selector join owns the remaining ordinary routing. Fullscreen saver auto-finishes into its clone; embedded/configuration previews skip interactive Title. Title has an independent1x28ms UI clock. Native loading/input/mask/audio and retail timing are not tested. [STATUS](../STATUS.md#current-build-verification) owns combined integration checks.
 
 ## Design and source boundary
 

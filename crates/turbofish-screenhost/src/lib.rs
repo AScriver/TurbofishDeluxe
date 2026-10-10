@@ -132,10 +132,10 @@ mod platform {
         UI::{
             Input::KeyboardAndMouse::GetActiveWindow,
             WindowsAndMessaging::{
-                GA_ROOT, GWL_STYLE, GetAncestor, GetClientRect, GetParent, GetWindowLongPtrW,
-                GetWindowThreadProcessId, IsWindow, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER,
-                SetParent, SetWindowLongPtrW, SetWindowPos, WS_BORDER, WS_CAPTION, WS_CHILD,
-                WS_DLGFRAME, WS_POPUP, WS_THICKFRAME,
+                GA_ROOT, GWL_STYLE, GetAncestor, GetClientRect, GetForegroundWindow, GetParent,
+                GetWindowLongPtrW, GetWindowThreadProcessId, IsWindow, SWP_FRAMECHANGED,
+                SWP_NOACTIVATE, SWP_NOZORDER, SetParent, SetWindowLongPtrW, SetWindowPos,
+                WS_BORDER, WS_CAPTION, WS_CHILD, WS_DLGFRAME, WS_POPUP, WS_THICKFRAME,
             },
         },
     };
@@ -303,6 +303,13 @@ mod platform {
             })
         }
 
+        /// Read focus only for the captured, still-owned window. No activation
+        /// or input is sent to this or any external process.
+        pub fn has_focus(&self) -> bool {
+            let window = hwnd(self.raw);
+            own_window(window) && unsafe { GetForegroundWindow() } == window
+        }
+
         /// Attach this project-owned top-level window to an external preview
         /// parent. Call on its UI thread after window creation.
         pub fn attach_preview(&self, parent: ParentWindow) -> Result<PreviewAttachment, HostError> {
@@ -420,6 +427,9 @@ mod platform {
     impl OwnWindow {
         pub fn capture_active() -> Result<Self, HostError> {
             Err(HostError::UnsupportedPlatform)
+        }
+        pub fn has_focus(&self) -> bool {
+            false
         }
         pub fn attach_preview(
             &self,

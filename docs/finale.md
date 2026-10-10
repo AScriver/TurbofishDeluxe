@@ -1,5 +1,9 @@
 # Adventure finale presentation
 
+## Runtime integration
+
+E111 replaces the summary renderer with [`app/finale_runtime.rs`](../src/app/finale_runtime.rs): bounded owned-executable catalog, conditional narrative/cast/credits, actual sheets and Liddie fonts, two transient bubble managers, Bilaterus pieces and resurrection layers. Scroll/halo/effects use a separate1x28ms UI clock; pause/modal or lost owned-window focus clears backlog. The captured-window focus query is read-only and checks ownership; unavailable capture is logged and leaves the earlier focused fallback explicitly unverified. Profile change/phase exit discard transient state. The existing session still owns completion/unlocks, menu return and music. Native visuals, exact focus/cadence, audio and retail/human fidelity remain not tested. [STATUS](../STATUS.md#current-build-verification) owns combined integration checks; the delegated model receipts below are historical.
+
 ## Scope and ownership
 
 This increment completes the source-informed narrative, conditional death-count rows, fish/alien/pet cast and credits model. The existing session remains the sole authority for the fallen-pet snapshot, result credit, progression and menu transition. The interlude controller remains transient. App loading, rendering, input, audio and bubble integration belong to the primary chat.
