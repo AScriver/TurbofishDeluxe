@@ -16,7 +16,7 @@ use crate::{
     grubber::{DeadGrubber, GrubberPrey, GrubberState},
     invasion::{BilaterusChild, Invasion1_2, InvasionEvent, WavePlan},
     larva::{LARVA_VALUE, LarvaState, LarvaUpdate},
-    missile::{ClassicMissile, MissilePreyView},
+    missile::{ClassicMissile, MissilePreyView, StanleyTargetView},
     missile::{MissileKind, MissileShot},
     niko::{NikoEvent, NikoPearl, NikoState, PEARL_VALUE, PearlPhase, PearlUpdate},
     oscar::{DeadOscar, OscarPrey, OscarState},
@@ -111,6 +111,7 @@ pub enum PetKind {
     Presto,
     Brinkley,
     Nostradamus,
+    Stanley,
 }
 
 /// Fresh ordinary Tank5 entry clears retail selection flags before this
@@ -1096,6 +1097,26 @@ pub enum Event {
         missile_id: u64,
         target_id: u64,
     },
+    StanleyMissileLaunched {
+        tick: u64,
+        missile_id: u64,
+        target_id: u64,
+        pet_id: u64,
+    },
+    StanleyMissileDiverted {
+        tick: u64,
+        missile_id: u64,
+        pet_id: u64,
+    },
+    StanleyMissileImpacted {
+        tick: u64,
+        missile_id: u64,
+        target_id: u64,
+    },
+    StanleyMissileRemoved {
+        tick: u64,
+        missile_id: u64,
+    },
     RufusHit {
         tick: u64,
         pet_id: u64,
@@ -1524,7 +1545,8 @@ impl AdventureState {
                 | PetKind::Angie
                 | PetKind::Presto
                 | PetKind::Brinkley
-                | PetKind::Nostradamus => {
+                | PetKind::Nostradamus
+                | PetKind::Stanley => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1588,7 +1610,8 @@ impl AdventureState {
                 | PetKind::Angie
                 | PetKind::Presto
                 | PetKind::Brinkley
-                | PetKind::Nostradamus => {
+                | PetKind::Nostradamus
+                | PetKind::Stanley => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1658,7 +1681,8 @@ impl AdventureState {
                 | PetKind::Angie
                 | PetKind::Presto
                 | PetKind::Brinkley
-                | PetKind::Nostradamus => {
+                | PetKind::Nostradamus
+                | PetKind::Stanley => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1729,7 +1753,8 @@ impl AdventureState {
                 | PetKind::Angie
                 | PetKind::Presto
                 | PetKind::Brinkley
-                | PetKind::Nostradamus => {
+                | PetKind::Nostradamus
+                | PetKind::Stanley => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1808,7 +1833,8 @@ impl AdventureState {
                 | PetKind::Angie
                 | PetKind::Presto
                 | PetKind::Brinkley
-                | PetKind::Nostradamus => {
+                | PetKind::Nostradamus
+                | PetKind::Stanley => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1895,7 +1921,8 @@ impl AdventureState {
                 | PetKind::Angie
                 | PetKind::Presto
                 | PetKind::Brinkley
-                | PetKind::Nostradamus => {
+                | PetKind::Nostradamus
+                | PetKind::Stanley => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -2356,6 +2383,7 @@ impl AdventureState {
             FishPetKind::Presto => PetKind::Presto,
             FishPetKind::Brinkley => PetKind::Brinkley,
             FishPetKind::Nostradamus => PetKind::Nostradamus,
+            FishPetKind::Stanley => PetKind::Stanley,
         }
     }
 
@@ -2378,6 +2406,7 @@ impl AdventureState {
             PetKind::Presto => Some(FishPetKind::Presto),
             PetKind::Brinkley => Some(FishPetKind::Brinkley),
             PetKind::Nostradamus => Some(FishPetKind::Nostradamus),
+            PetKind::Stanley => Some(FishPetKind::Stanley),
             _ => None,
         }
     }
@@ -2487,6 +2516,7 @@ impl AdventureState {
                         | (PetKind::Angie, FishPetKind::Angie)
                         | (PetKind::Brinkley, FishPetKind::Brinkley)
                         | (PetKind::Nostradamus, FishPetKind::Nostradamus)
+                        | (PetKind::Stanley, FishPetKind::Stanley)
                 )
             }),
         }
@@ -2563,6 +2593,7 @@ impl AdventureState {
                     PetKind::Angie => FishPetKind::Angie,
                     PetKind::Brinkley => FishPetKind::Brinkley,
                     PetKind::Nostradamus => FishPetKind::Nostradamus,
+                    PetKind::Stanley => FishPetKind::Stanley,
                     _ => return Err("unsupported Time Trial pet".into()),
                 };
                 self.spawn_fish_pet(fish_kind);
@@ -2714,7 +2745,7 @@ impl AdventureState {
                 PetKind::Amp => self.spawn_fish_pet(FishPetKind::Amp),
                 PetKind::Gash => self.spawn_fish_pet(FishPetKind::Gash),
                 PetKind::Angie => self.spawn_fish_pet(FishPetKind::Angie),
-                PetKind::Presto | PetKind::Brinkley | PetKind::Nostradamus => {
+                PetKind::Presto | PetKind::Brinkley | PetKind::Nostradamus | PetKind::Stanley => {
                     unreachable!("extra pets are not in the fixed Tank4 or Tank5 roster")
                 }
             }
@@ -2806,7 +2837,8 @@ impl AdventureState {
                 | PetKind::Angie
                 | PetKind::Presto
                 | PetKind::Brinkley
-                | PetKind::Nostradamus => {
+                | PetKind::Nostradamus
+                | PetKind::Stanley => {
                     unreachable!("pet unlock follows stage 3-5")
                 }
             }
@@ -3662,6 +3694,7 @@ impl AdventureState {
                 FishPetKind::Presto => PetKind::Presto,
                 FishPetKind::Brinkley => PetKind::Brinkley,
                 FishPetKind::Nostradamus => PetKind::Nostradamus,
+                FishPetKind::Stanley => PetKind::Stanley,
             };
             if pet.nostra_converted {
                 continue;
@@ -4467,7 +4500,13 @@ impl AdventureState {
                 (self.tank, self.level),
                 (3, 2 | 4 | 5) | (4, 4..=5) | (5, 1)
             );
-        if !self.missiles.is_empty() && !projectile_stage {
+        if self.missiles.iter().any(|missile| {
+            if missile.kind == MissileKind::Stanley {
+                !self.pets.contains(&PetKind::Stanley) && !self.pets.contains(&PetKind::Presto)
+            } else {
+                !projectile_stage
+            }
+        }) {
             return Err("Destructor missiles outside supported Adventure stage".into());
         }
         if !self.time_trial
@@ -4489,7 +4528,8 @@ impl AdventureState {
             {
                 return Err("Tank 5 missile without living boss".into());
             }
-            if !self.time_trial
+            if missile.kind != MissileKind::Stanley
+                && !self.time_trial
                 && !matches!(self.tank, 4 | 5)
                 && (matches!((self.tank, self.level), (3, 4 | 5))
                     != (missile.kind == MissileKind::EnergyBall))
@@ -4500,24 +4540,47 @@ impl AdventureState {
                 && (self
                     .stinky
                     .iter()
-                    .any(|pet| pet.combat_id == Some(missile.target_id))
+                    .any(|pet| pet.combat_id == missile.target_id)
                     || self
                         .niko
                         .iter()
-                        .any(|pet| pet.owner_id == missile.target_id)
-                    || self.clyde.iter().any(|pet| pet.id == missile.target_id)
-                    || self.rufus.iter().any(|pet| pet.id == missile.target_id)
-                    || self.rhubarb.iter().any(|pet| pet.id == missile.target_id)
-                    || self.fish_pets.iter().any(|pet| pet.id == missile.target_id));
-            if !assigned.insert(missile.target_id)
-                || !(self.live_prey_exists(missile.target_id) || live_tank5_pet)
-            {
-                return Err("duplicate or missing classic missile target".into());
+                        .any(|pet| Some(pet.owner_id) == missile.target_id)
+                    || self
+                        .clyde
+                        .iter()
+                        .any(|pet| Some(pet.id) == missile.target_id)
+                    || self
+                        .rufus
+                        .iter()
+                        .any(|pet| Some(pet.id) == missile.target_id)
+                    || self
+                        .rhubarb
+                        .iter()
+                        .any(|pet| Some(pet.id) == missile.target_id)
+                    || self
+                        .fish_pets
+                        .iter()
+                        .any(|pet| Some(pet.id) == missile.target_id));
+            if let Some(target_id) = missile.target_id {
+                let target_valid = if missile.kind == MissileKind::Stanley {
+                    self.invasion.as_ref().is_some_and(|wave| {
+                        wave.actors.iter().any(|actor| actor.id == target_id)
+                            || wave.bilaterus.iter().any(|group| group.id == target_id)
+                    })
+                } else {
+                    self.live_prey_exists(target_id) || live_tank5_pet
+                };
+                if !assigned.insert(target_id) || !target_valid {
+                    return Err("duplicate or missing missile target".into());
+                }
             }
         }
         if !self.time_trial
             && (self.tank, self.level) == (3, 5)
-            && !self.missiles.is_empty()
+            && self
+                .missiles
+                .iter()
+                .any(|missile| missile.kind != MissileKind::Stanley)
             && self
                 .invasion
                 .as_ref()
@@ -4833,7 +4896,12 @@ impl AdventureState {
             return false;
         };
         let missile = self.missiles.remove(index);
-        if missile.kind == MissileKind::EnergyBall {
+        if missile.kind == MissileKind::Stanley {
+            events.push(Event::StanleyMissileRemoved {
+                tick: self.tick,
+                missile_id: id,
+            });
+        } else if missile.kind == MissileKind::EnergyBall {
             events.push(Event::EnergyBallRemoved {
                 tick: self.tick,
                 missile_id: id,
@@ -4902,7 +4970,7 @@ impl AdventureState {
         if let Some(id) = self
             .missiles
             .iter()
-            .find(|missile| missile.target_id == target_id)
+            .find(|missile| missile.target_id == Some(target_id))
             .map(|missile| missile.id)
         {
             self.remove_missile(id, events);
@@ -4997,6 +5065,33 @@ impl AdventureState {
             })
     }
 
+    fn stanley_target_view(&self, target_id: u64) -> Option<StanleyTargetView> {
+        let wave = self.invasion.as_ref()?;
+        if let Some(group) = wave.bilaterus.iter().find(|group| group.id == target_id) {
+            return Some(StanleyTargetView {
+                id: group.id,
+                widget_x: group.widget_x,
+                widget_y: group.widget_y,
+                group: true,
+                kind_six: false,
+            });
+        }
+        wave.actors
+            .iter()
+            .find(|actor| actor.id == target_id)
+            .map(|actor| {
+                StanleyTargetView {
+                    id: actor.id,
+                    widget_x: actor.widget_x,
+                    widget_y: actor.widget_y,
+                    group: false,
+                    // Class+8c==6 is Ultra, not Alien raw6/Ulysses. The current
+                    // target factories admit ordinary Alien classes only.
+                    kind_six: false,
+                }
+            })
+    }
+
     fn update_missiles(&mut self, events: &mut Vec<Event>) {
         // The original Board may synchronously remove an earlier reservation
         // while a later reflected ball's collision is still in progress.
@@ -5015,6 +5110,78 @@ impl AdventureState {
             else {
                 continue;
             };
+            if self.missiles[index].kind == MissileKind::Stanley {
+                let target = self.missiles[index]
+                    .target_id
+                    .and_then(|target_id| self.stanley_target_view(target_id));
+                let bilaterus_present = self
+                    .invasion
+                    .as_ref()
+                    .is_some_and(|wave| !wave.bilaterus.is_empty());
+                let threats_present = self
+                    .invasion
+                    .as_ref()
+                    .is_some_and(|wave| !wave.actors.is_empty() || !wave.bilaterus.is_empty());
+                let update = self.missiles[index].begin_stanley_tick(
+                    target,
+                    bilaterus_present,
+                    threats_present,
+                );
+                if update.remove {
+                    self.remove_missile(missile_id, events);
+                    self.finish_destructor_battle(events);
+                    continue;
+                }
+                if let Some(target_id) = update.impact_target {
+                    let mut rng_state = self.rng_state;
+                    let mut next_id = self.next_id;
+                    let result = if target.is_some_and(|view| view.group) {
+                        self.invasion.as_mut().and_then(|wave| {
+                            wave.stanley_hit_bilaterus(
+                                target_id,
+                                || Self::advance_rng(&mut rng_state) as u32,
+                                || {
+                                    let id = next_id;
+                                    next_id += 1;
+                                    id
+                                },
+                            )
+                        })
+                    } else {
+                        self.invasion
+                            .as_mut()
+                            .and_then(|wave| wave.stanley_hit_alien(target_id))
+                    };
+                    self.rng_state = rng_state;
+                    self.next_id = next_id;
+                    if let Some((_, wave_events)) = result {
+                        self.record_invasion_events(wave_events, events);
+                    }
+                    events.push(Event::StanleyMissileImpacted {
+                        tick: self.tick,
+                        missile_id,
+                        target_id,
+                    });
+                }
+                if let Some(index) = self
+                    .missiles
+                    .iter()
+                    .position(|missile| missile.id == missile_id)
+                    && self.missiles[index].finish_stanley_tick()
+                {
+                    self.remove_missile(missile_id, events);
+                    self.finish_destructor_battle(events);
+                }
+                continue;
+            }
+            if self.missiles[index].diversion_clock > 0
+                && self.missiles[index].diversion_clock.saturating_add(1)
+                    >= self.missiles[index].diversion_limit
+            {
+                self.remove_missile(missile_id, events);
+                self.finish_destructor_battle(events);
+                continue;
+            }
             if self.missiles[index].kind == MissileKind::EnergyBall
                 && self.missiles[index].reflected
             {
@@ -5032,7 +5199,9 @@ impl AdventureState {
                     .position(|missile| missile.id == missile_id)
                     .expect("live reflected missile identity was just checked");
             }
-            let view = self.missile_prey_view(self.missiles[index].target_id);
+            let view = self.missiles[index]
+                .target_id
+                .and_then(|target_id| self.missile_prey_view(target_id));
             let update = self.missiles[index].tick(view);
             if let Some(target_id) = update.impact_target {
                 self.remove_tank5_pet(target_id);
@@ -7504,13 +7673,25 @@ impl AdventureState {
     }
 
     fn record_invasion_events(&mut self, wave_events: Vec<InvasionEvent>, events: &mut Vec<Event>) {
+        // S3/S4: an ordinary Alien or final Bilaterus group loses its attached
+        // raw2 before death/reward event handling and battle completion. A
+        // first-head swap keeps the group's reservation. Self-impact has
+        // already cleared its own association before calling invasion damage.
+        let mut detached_target = false;
+        for target_id in wave_events.iter().filter_map(|event| match event {
+            InvasionEvent::AlienDefeated { id } | InvasionEvent::BilaterusDefeated { id } => {
+                Some(*id)
+            }
+            _ => None,
+        }) {
+            detached_target |= self.detach_missile_target(target_id, events);
+        }
         let alien_defeated = wave_events.iter().any(|event| {
             matches!(
                 event,
                 InvasionEvent::AlienDefeated { .. } | InvasionEvent::BilaterusDefeated { .. }
             )
         });
-        let mut detached_target = false;
         for event in wave_events {
             match event {
                 InvasionEvent::PreyEaten { prey_id, .. }
@@ -8356,7 +8537,7 @@ impl AdventureState {
                             }) {
                                 if missiles
                                     .iter()
-                                    .any(|missile| missile.target_id == candidate.id)
+                                    .any(|missile| missile.target_id == Some(candidate.id))
                                 {
                                     continue;
                                 }
@@ -8384,7 +8565,7 @@ impl AdventureState {
                             }) {
                                 if missiles
                                     .iter()
-                                    .any(|missile| missile.target_id == candidate.id)
+                                    .any(|missile| missile.target_id == Some(candidate.id))
                                 {
                                     continue;
                                 }
@@ -8613,6 +8794,93 @@ impl AdventureState {
         }
     }
 
+    fn stanley_launch_target(&self, x: f64, y: f64) -> Option<u64> {
+        let wave = self.invasion.as_ref()?;
+        let (center_x, center_y) = (x + 40.0, y + 40.0);
+        let mut best = 10_000;
+        let mut target = None;
+        // PB05 004e5fc0 uses one strict shared score across the group vector
+        // and then the ordinary Alien vector. Equal scores retain first order.
+        for (id, x, y, eligible) in wave
+            .bilaterus
+            .iter()
+            .map(|group| (group.id, group.widget_x + 40, group.widget_y + 40, true))
+            .chain(wave.actors.iter().map(|actor| {
+                (
+                    actor.id,
+                    actor.widget_x + 80,
+                    actor.widget_y + 80,
+                    !actor.healing,
+                )
+            }))
+        {
+            if !eligible
+                || self
+                    .missiles
+                    .iter()
+                    .any(|missile| missile.target_id == Some(id))
+            {
+                continue;
+            }
+            // PB05 004e6071..60e8/004e62be..6335 converts each
+            // continuous-center delta to integer, then rounds D and sqrt
+            // through float32 before the final integer comparison.
+            let dx = (f64::from(x) - center_x) as i32;
+            let dy = (f64::from(y) - center_y) as i32;
+            let squared = i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy);
+            let score = (f64::from(squared as f32).sqrt() as f32) as i32;
+            if score < best {
+                best = score;
+                target = Some(id);
+            }
+        }
+        target
+    }
+
+    fn divert_missile_from_stanley(
+        &mut self,
+        pet_id: u64,
+        widget_x: i32,
+        widget_y: i32,
+        events: &mut Vec<Event>,
+    ) -> bool {
+        let mut winner: Option<(usize, u8, i64)> = None;
+        for (index, missile) in self.missiles.iter().enumerate() {
+            let rank = match missile.kind {
+                MissileKind::Classic => 0,
+                MissileKind::EnergyBall if !missile.reflected => 1,
+                MissileKind::EnergyBall => 2,
+                MissileKind::Stanley => continue,
+            };
+            if missile.immunity_ticks >= 11 || missile.diversion_clock != 0 {
+                continue;
+            }
+            let Some(target) = missile.target_id.and_then(|id| self.missile_prey_view(id)) else {
+                continue;
+            };
+            let dx = i64::from(target.widget_x - missile.widget_x);
+            let dy = i64::from(target.widget_y - missile.widget_y);
+            let score = dx * dx + dy * dy;
+            if winner.is_none_or(|(_, best_rank, best_score)| {
+                rank > best_rank || rank == best_rank && score < best_score
+            }) {
+                winner = Some((index, rank, score));
+            }
+        }
+        if let Some((index, _, _)) = winner {
+            let missile_id = self.missiles[index].id;
+            self.missiles[index].divert_from_stanley(widget_x + 40, widget_y + 10);
+            events.push(Event::StanleyMissileDiverted {
+                tick: self.tick,
+                missile_id,
+                pet_id,
+            });
+            true
+        } else {
+            false
+        }
+    }
+
     fn update_fish_pets(&mut self, events: &mut Vec<Event>) {
         if self.tank == 5 {
             let mut rng_state = self.rng_state;
@@ -8664,7 +8932,45 @@ impl AdventureState {
             let guppy_count = self.fish.iter().filter(|fish| fish.alive).count();
             let pet_id = self.fish_pets[index].id;
             let mut rng_state = self.rng_state;
-            let update = if self.fish_pets[index].kind == FishPetKind::Nostradamus {
+            let update = if self.fish_pets[index].kind == FishPetKind::Stanley {
+                let (widget_x, widget_y) = (
+                    self.fish_pets[index].widget_x,
+                    self.fish_pets[index].widget_y,
+                );
+                if self.fish_pets[index].begin_stanley()
+                    && self.divert_missile_from_stanley(pet_id, widget_x, widget_y, events)
+                {
+                    let draw = Self::advance_rng(&mut rng_state) % 100;
+                    self.fish_pets[index].commit_stanley_diversion(draw);
+                }
+                if self.fish_pets[index].finish_stanley_action()
+                    && let Some(target_id) =
+                        self.stanley_launch_target(self.fish_pets[index].x, self.fish_pets[index].y)
+                {
+                    let missile_id = self.id();
+                    let visual_draw = Self::advance_rng(&mut rng_state) as u32;
+                    let launch_x = if self.fish_pets[index].vx >= 0.0 {
+                        widget_x + 40
+                    } else {
+                        widget_x
+                    };
+                    self.missiles.push(ClassicMissile::launch_stanley(
+                        missile_id,
+                        target_id,
+                        launch_x,
+                        widget_y,
+                        visual_draw,
+                    ));
+                    events.push(Event::StanleyMissileLaunched {
+                        tick: self.tick,
+                        missile_id,
+                        target_id,
+                        pet_id,
+                    });
+                }
+                self.fish_pets[index]
+                    .finish_stanley(&mut |upper| Self::advance_rng(&mut rng_state) % upper)
+            } else if self.fish_pets[index].kind == FishPetKind::Nostradamus {
                 if let Some((x, y)) = self.fish_pets[index].begin_nostradamus(aliens.is_empty()) {
                     let food_id = self.id();
                     // 005434e0 constructs Food before the common FishTypePet
@@ -14087,7 +14393,7 @@ mod tests {
                 .iter()
                 .map(|missile| missile.target_id)
                 .collect::<Vec<_>>(),
-            [first, second, third_id]
+            [Some(first), Some(second), Some(third_id)]
         );
         assert_eq!(
             events
@@ -14411,7 +14717,7 @@ mod tests {
         let resumed: AdventureState =
             serde_json::from_str(&serde_json::to_string(&board).unwrap()).unwrap();
         resumed.validate().unwrap();
-        assert_eq!(resumed.missiles[0].target_id, target_id);
+        assert_eq!(resumed.missiles[0].target_id, Some(target_id));
         board.fish[0].hunger = 0;
         let mut events = Vec::new();
         board.update_fish(&mut events);
@@ -14479,7 +14785,7 @@ mod tests {
                 .iter()
                 .map(|missile| missile.target_id)
                 .collect::<Vec<_>>(),
-            [first_expected, second_expected]
+            [Some(first_expected), Some(second_expected)]
         );
         assert!(
             board
@@ -14511,7 +14817,7 @@ mod tests {
         assert!(!board.missiles[0].reflected && board.bomb_shots.len() == 1);
         board.missiles[0].immunity_ticks = 0;
         assert!(board.shoot_first_missile(140, 140, &mut events));
-        assert!(board.missiles[0].reflected && board.missiles[0].target_id == target_id);
+        assert!(board.missiles[0].reflected && board.missiles[0].target_id == Some(target_id));
         assert_eq!(board.bomb_shots.len(), 2);
         assert!(!events.iter().any(|event| matches!(
             event,
@@ -16279,5 +16585,285 @@ mod tests {
             Event::NostradamusFoodCredited { food_id: id, .. } if *id == food_id
         )));
         board.validate().unwrap();
+    }
+
+    #[test]
+    fn stanley_self_lethal_impact_keeps_targetless_child_after_reward_and_reopen() {
+        let mut board = AdventureState::new_time_trial(0x3941, 1, &[PetKind::Stanley]).unwrap();
+        let alien_id = board.id();
+        let mut alien =
+            crate::alien::WeakSylvester::spawn_kind(SylvesterKind::Weak, alien_id, 300, 200, 1, 5);
+        alien.health = 15.0;
+        let wave = board.invasion.as_mut().unwrap();
+        wave.actors.push(alien);
+        wave.battle_active = true;
+        let missile_id = board.id();
+        board.missiles.push(ClassicMissile::launch_stanley(
+            missile_id, alien_id, 300, 200, 0,
+        ));
+        board.validate().unwrap();
+        let mut events = Vec::new();
+        board.update_missiles(&mut events);
+        assert!(board.invasion.as_ref().unwrap().actors.is_empty());
+        assert_eq!(board.missiles.len(), 1);
+        assert_eq!(
+            (board.missiles[0].target_id, board.missiles[0].stanley_hit),
+            (None, true)
+        );
+        assert_eq!(events.iter().filter(|event| matches!(event,
+            Event::Invasion { event: InvasionEvent::AlienDefeated { id }, .. } if *id == alien_id
+        )).count(), 1);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event,
+                    Event::StanleyMissileImpacted { missile_id: id, .. } if *id == missile_id
+                ))
+                .count(),
+            1
+        );
+        board.validate().unwrap();
+        let restored: AdventureState =
+            serde_json::from_slice(&serde_json::to_vec(&board).unwrap()).unwrap();
+        restored.validate().unwrap();
+        assert_eq!(restored.missiles[0].target_id, None);
+    }
+
+    #[test]
+    fn stanley_external_alien_death_detaches_child_before_reward_event() {
+        let mut board = AdventureState::new_time_trial(0x3943, 1, &[PetKind::Stanley]).unwrap();
+        let alien_id = board.id();
+        let mut alien =
+            crate::alien::WeakSylvester::spawn_kind(SylvesterKind::Weak, alien_id, 300, 200, 1, 5);
+        alien.health = 30.0;
+        let wave = board.invasion.as_mut().unwrap();
+        wave.actors.push(alien);
+        wave.battle_active = true;
+        let missile_id = board.id();
+        board.missiles.push(ClassicMissile::launch_stanley(
+            missile_id, alien_id, 80, 200, 0,
+        ));
+        board.validate().unwrap();
+        let (_, wave_events) = board
+            .invasion
+            .as_mut()
+            .unwrap()
+            .reflected_energy_hit(alien_id)
+            .unwrap();
+        let mut events = Vec::new();
+        board.record_invasion_events(wave_events, &mut events);
+        assert!(board.missiles.is_empty());
+        let removed = events
+            .iter()
+            .position(|event| {
+                matches!(event,
+                    Event::StanleyMissileRemoved { missile_id: id, .. } if *id == missile_id
+                )
+            })
+            .unwrap();
+        let reward = events.iter().position(|event| matches!(event,
+            Event::Invasion { event: InvasionEvent::DiamondDropped { alien_id: id, .. }, .. } if *id == alien_id
+        )).unwrap();
+        assert!(removed < reward);
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn stanley_healing_contact_consumes_reservation_without_damage() {
+        let mut board = AdventureState::new_time_trial(0x3946, 3, &[PetKind::Stanley]).unwrap();
+        let alien_id = board.id();
+        let mut alien = crate::alien::WeakSylvester::spawn_kind(
+            SylvesterKind::Psychosquid,
+            alien_id,
+            300,
+            200,
+            3,
+            5,
+        );
+        alien.healing = true;
+        alien.ever_healed = true;
+        alien.movement_divisor = 2.0;
+        let health = alien.health;
+        let wave = board.invasion.as_mut().unwrap();
+        wave.actors.push(alien);
+        wave.battle_active = true;
+        let missile_id = board.id();
+        board.missiles.push(ClassicMissile::launch_stanley(
+            missile_id, alien_id, 300, 200, 0,
+        ));
+        board.validate().unwrap();
+        let mut events = Vec::new();
+        board.update_missiles(&mut events);
+        assert_eq!(board.invasion.as_ref().unwrap().actors[0].health, health);
+        assert_eq!(board.missiles.len(), 1);
+        let child = &board.missiles[0];
+        assert!(child.stanley_hit);
+        assert_eq!(child.target_id, None);
+        assert_eq!(child.movement_divisor, 1.5);
+        assert!(events.iter().any(|event| matches!(event,
+            Event::StanleyMissileImpacted { missile_id: id, .. } if *id == missile_id
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Event::Invasion {
+                event: InvasionEvent::AlienDefeated { .. } | InvasionEvent::DiamondDropped { .. },
+                ..
+            }
+        )));
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn stanley_bilaterus_head_promotion_and_final_death_preserve_correct_children() {
+        for self_impact in [false, true] {
+            let mut board = AdventureState::new_time_trial(0x3947, 4, &[PetKind::Stanley]).unwrap();
+            let group_id = board.id();
+            let mut group = crate::bilaterus::BilaterusState::spawn(group_id, 300, 200, &mut || 1);
+            group.emergence_ticks = 0;
+            board.invasion.as_mut().unwrap().bilaterus.push(group);
+            board.invasion.as_mut().unwrap().battle_active = true;
+            let mut events = Vec::new();
+            for final_head in [false, true] {
+                board.invasion.as_mut().unwrap().bilaterus[0]
+                    .active_mut()
+                    .health = if self_impact { 15.0 } else { 30.0 };
+                if !final_head || self_impact {
+                    let missile_id = board.id();
+                    board.missiles.push(ClassicMissile::launch_stanley(
+                        missile_id,
+                        group_id,
+                        if self_impact { 300 } else { 80 },
+                        200,
+                        0,
+                    ));
+                }
+                board.validate().unwrap();
+                events.clear();
+                if self_impact {
+                    board.update_missiles(&mut events);
+                } else {
+                    let mut next_id = board.next_id;
+                    let (_, wave_events) = board
+                        .invasion
+                        .as_mut()
+                        .unwrap()
+                        .reflected_energy_hit_bilaterus(
+                            group_id,
+                            || 1,
+                            || {
+                                let id = next_id;
+                                next_id += 1;
+                                id
+                            },
+                        )
+                        .unwrap();
+                    board.next_id = next_id;
+                    board.record_invasion_events(wave_events, &mut events);
+                }
+                if !final_head {
+                    assert!(board.invasion.as_ref().unwrap().bilaterus[0].first_head_lost);
+                    assert_eq!(board.missiles.len(), 1);
+                    assert_eq!(
+                        board.missiles[0].target_id,
+                        if self_impact { None } else { Some(group_id) }
+                    );
+                    assert!(
+                        !events
+                            .iter()
+                            .any(|event| matches!(event, Event::StanleyMissileRemoved { .. }))
+                    );
+                } else {
+                    assert!(board.invasion.as_ref().unwrap().bilaterus.is_empty());
+                    if self_impact {
+                        assert_eq!(board.missiles.len(), 2);
+                        assert!(
+                            board
+                                .missiles
+                                .iter()
+                                .all(|child| child.stanley_hit && child.target_id.is_none())
+                        );
+                    } else {
+                        assert!(board.missiles.is_empty());
+                        let removed = events
+                            .iter()
+                            .position(|event| matches!(event, Event::StanleyMissileRemoved { .. }))
+                            .unwrap();
+                        let reward = events.iter().position(|event| matches!(event,
+                            Event::Invasion { event: InvasionEvent::DiamondDropped { alien_id, .. }, .. }
+                                if *alien_id == group_id
+                        )).unwrap();
+                        assert!(removed < reward);
+                    }
+                }
+                board.validate().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn stanley_fractional_center_tie_keeps_group_then_occupied_falls_through() {
+        let mut board = AdventureState::new_time_trial(0x3944, 4, &[PetKind::Stanley]).unwrap();
+        let group_id = board.id();
+        let alien_id = board.id();
+        let group = crate::bilaterus::BilaterusState::spawn(group_id, 101, 100, &mut || 1);
+        let alien = crate::alien::WeakSylvester::spawn_kind(
+            SylvesterKind::Psychosquid,
+            alien_id,
+            60,
+            60,
+            4,
+            5,
+        );
+        let wave = board.invasion.as_mut().unwrap();
+        wave.bilaterus.push(group);
+        wave.actors.push(alien);
+        // Group centre141 and Alien centre140 both truncate to distance0
+        // from the pet's continuous centre140.9; vector order wins the tie.
+        assert_eq!(board.stanley_launch_target(100.9, 100.0), Some(group_id));
+        let missile_id = board.id();
+        board.missiles.push(ClassicMissile::launch_stanley(
+            missile_id, group_id, 100, 100, 0,
+        ));
+        assert_eq!(board.stanley_launch_target(100.9, 100.0), Some(alien_id));
+    }
+
+    #[test]
+    fn stanley_diversion_prefers_hit_energy_over_classic_and_keeps_target_links() {
+        let mut board = AdventureState::new_time_trial(0x3945, 1, &[PetKind::Stanley]).unwrap();
+        assert!(board.fish.len() >= 2);
+        let classic_id = board.id();
+        let energy_id = board.id();
+        board.missiles.push(ClassicMissile::launch(
+            classic_id,
+            board.fish[0].id,
+            100,
+            100,
+            0,
+        ));
+        let mut energy = ClassicMissile::launch_energy(energy_id, board.fish[1].id, 500, 300, 0);
+        energy.immunity_ticks = 0;
+        energy.reflected = true;
+        board.missiles.push(energy);
+        let pet_id = board.fish_pets[0].id;
+        let (x, y) = (board.fish_pets[0].widget_x, board.fish_pets[0].widget_y);
+        let mut events = Vec::new();
+        assert!(board.divert_missile_from_stanley(pet_id, x, y, &mut events));
+        assert_eq!(
+            (
+                board.missiles[0].diversion_clock,
+                board.missiles[1].diversion_clock
+            ),
+            (0, 1)
+        );
+        assert_eq!(board.missiles[1].target_id, Some(board.fish[1].id));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event,
+                    Event::StanleyMissileDiverted { missile_id, .. } if *missile_id == energy_id
+                ))
+                .count(),
+            1
+        );
     }
 }

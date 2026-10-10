@@ -27,6 +27,7 @@ pub enum FishPetKind {
     Presto,
     Brinkley,
     Nostradamus,
+    Stanley,
 }
 
 /// Constructor-owned flag and recharge clock for a Presto-origin pet:
@@ -246,6 +247,11 @@ pub struct FishPetState {
     pub nostra_threshold: u16,
     /// Raw21 +240 marks a Food conversion, independent of Presto's flag.
     pub nostra_converted: bool,
+    /// Raw22 +220 counts active updates toward the strict >100 action gate.
+    pub stanley_action_ticks: u16,
+    /// Raw22 +23c: decremented before action dispatch, shared native slot
+    /// with Brinkley's cooldown but active only for this concrete kind.
+    pub stanley_diversion_cooldown: u8,
     /// The actor owns the source +238 cooldown and transformed-form flag.
     #[serde(default)]
     pub presto_form: Option<PrestoForm>,
@@ -429,6 +435,8 @@ impl FishPetState {
             nostra_elapsed: 0,
             nostra_threshold,
             nostra_converted: false,
+            stanley_action_ticks: 0,
+            stanley_diversion_cooldown: 0,
             presto_form: (kind == FishPetKind::Presto).then_some(PrestoForm { remaining_ticks: 0 }),
             published_x: widget_x,
             published_y: widget_y,
@@ -556,6 +564,10 @@ impl FishPetState {
                 && (self.nostra_elapsed != 0
                     || self.nostra_threshold != 0
                     || self.nostra_converted))
+            || (self.kind == FishPetKind::Stanley && self.stanley_action_ticks > 100)
+            || (self.kind != FishPetKind::Stanley && self.stanley_action_ticks != 0)
+            || (self.kind == FishPetKind::Stanley && self.stanley_diversion_cooldown > 90)
+            || (self.kind != FishPetKind::Stanley && self.stanley_diversion_cooldown != 0)
             || self
                 .presto_form
                 .is_some_and(|form| form.remaining_ticks > 360)
@@ -640,9 +652,10 @@ impl FishPetState {
                 }
             }
             FishPetKind::Angie => u8::from(self.turn_ticks != 0),
-            FishPetKind::Presto | FishPetKind::Brinkley | FishPetKind::Nostradamus => {
-                u8::from(self.turn_ticks != 0)
-            }
+            FishPetKind::Presto
+            | FishPetKind::Brinkley
+            | FishPetKind::Nostradamus
+            | FishPetKind::Stanley => u8::from(self.turn_ticks != 0),
         }
     }
 
@@ -763,6 +776,47 @@ impl FishPetState {
         self.tick_inner(&[], 0, &[], PetTargetViews::None, false, rand_range)
     }
 
+    /// Common +23c decrement precedes +220 and the Board diversion scan.
+    pub fn begin_stanley(&mut self) -> bool {
+        assert_eq!(self.kind, FishPetKind::Stanley);
+        self.stanley_diversion_cooldown = self.stanley_diversion_cooldown.saturating_sub(1);
+        self.stanley_action_ticks += 1;
+        self.stanley_diversion_cooldown == 0
+    }
+
+    pub fn commit_stanley_diversion(&mut self, draw: u64) {
+        assert_eq!(self.kind, FishPetKind::Stanley);
+        assert_eq!(self.stanley_diversion_cooldown, 0);
+        self.stanley_diversion_cooldown = if draw < 10 {
+            30
+        } else if draw < 60 {
+            60
+        } else {
+            90
+        };
+        self.stanley_action_ticks = 0;
+    }
+
+    /// A threshold attempt still resets and starts cooldown when no enemy can
+    /// be acquired. Diversion has already had its opportunity this update.
+    pub fn finish_stanley_action(&mut self) -> bool {
+        assert_eq!(self.kind, FishPetKind::Stanley);
+        if self.stanley_action_ticks > 100 {
+            self.stanley_action_ticks = 0;
+            if self.stanley_diversion_cooldown == 0 {
+                self.stanley_diversion_cooldown = 50;
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn finish_stanley(&mut self, rand_range: &mut impl FnMut(u64) -> u64) -> FishPetUpdate {
+        assert_eq!(self.kind, FishPetKind::Stanley);
+        self.tick_inner(&[], 0, &[], PetTargetViews::None, false, rand_range)
+    }
+
     /// W1 supplies steering and target order; this returns requests rather
     /// than mutating Board-owned health or fish membership. The Board applies
     /// contacts before calling finish_gash_clock with fresh threat membership.
@@ -833,6 +887,7 @@ impl FishPetState {
                     | FishPetKind::Angie
                     | FishPetKind::Brinkley
                     | FishPetKind::Nostradamus
+                    | FishPetKind::Stanley
             ),
             "Zorf, Nimbus, Amp, Gash, Angie, Brinkley and Nostradamus need subtype updates"
         );
@@ -1049,6 +1104,8 @@ impl FishPetState {
     pub fn tick_tank5(&mut self, rand_range: &mut impl FnMut(u64) -> u64) -> FishPetUpdate {
         if self.kind == FishPetKind::Brinkley {
             self.brinkley_cooldown = self.brinkley_cooldown.saturating_sub(1);
+        } else if self.kind == FishPetKind::Stanley {
+            self.stanley_diversion_cooldown = self.stanley_diversion_cooldown.saturating_sub(1);
         }
         self.tick_inner(&[], 0, &[], PetTargetViews::Tank5, false, rand_range)
     }
@@ -3403,5 +3460,40 @@ mod tests {
         pet.finish_nostradamus(&mut |_| 0);
         assert_eq!(pet.nostra_elapsed, 1);
         pet.validate().unwrap();
+    }
+
+    #[test]
+    fn stanley_action_clock_resets_at_one_hundred_one_even_without_target() {
+        let mut pet = FishPetState::spawn_tank1(7, FishPetKind::Stanley, &mut |_| 0);
+        for _ in 0..100 {
+            assert!(pet.begin_stanley());
+            assert!(!pet.finish_stanley_action());
+        }
+        assert_eq!(pet.stanley_action_ticks, 100);
+        assert!(pet.begin_stanley());
+        assert!(pet.finish_stanley_action());
+        assert_eq!(
+            (pet.stanley_action_ticks, pet.stanley_diversion_cooldown),
+            (0, 50)
+        );
+        assert!(!pet.begin_stanley());
+        assert_eq!(pet.stanley_diversion_cooldown, 49);
+        pet.validate().unwrap();
+    }
+
+    #[test]
+    fn stanley_diversion_roll_resets_action_and_selects_exact_cooldown_bands() {
+        for (draw, expected) in [(9, 30), (10, 60), (59, 60), (60, 90)] {
+            let mut pet = FishPetState::spawn_tank1(7, FishPetKind::Stanley, &mut |_| 0);
+            pet.stanley_action_ticks = 100;
+            assert!(pet.begin_stanley());
+            pet.commit_stanley_diversion(draw);
+            assert_eq!(
+                (pet.stanley_action_ticks, pet.stanley_diversion_cooldown),
+                (0, expected)
+            );
+            assert!(!pet.finish_stanley_action());
+            pet.validate().unwrap();
+        }
     }
 }

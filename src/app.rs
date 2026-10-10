@@ -1124,6 +1124,7 @@ impl Presentation {
                 FishPetKind::Presto => "IMAGE_PRESTO",
                 FishPetKind::Brinkley => "IMAGE_BRINKLEY",
                 FishPetKind::Nostradamus => "IMAGE_NOSTRADAMUS",
+                FishPetKind::Stanley => "IMAGE_STANLEY",
             };
             let (cell_width, cell_height) = if pet.kind == FishPetKind::Amp {
                 (160.0, 60.0)
@@ -1666,6 +1667,15 @@ impl Presentation {
                             Color::from_rgba(100, 100, 255, 255),
                         );
                     }
+                    MissileKind::Stanley => self.sprite(
+                        "IMAGE_MISSILE",
+                        missile.widget_x as f32,
+                        missile.widget_y as f32,
+                        Some(Rect::new(f32::from(missile.frame) * 80.0, 0.0, 80.0, 80.0)),
+                        false,
+                        0.625,
+                        1.0,
+                    ),
                 }
             }
             for laser in &wave.lasers {
@@ -2478,6 +2488,7 @@ impl Presentation {
         let name = match pet {
             PetKind::Brinkley => "BRINKLEY",
             PetKind::Nostradamus => "NOSTRADAMUS",
+            PetKind::Stanley => "STANLEY",
             _ => unreachable!("implemented results offer"),
         };
         if receipt.purchased {
@@ -2649,6 +2660,7 @@ impl Presentation {
                 PetKind::Presto => ("IMAGE_PRESTO", 90.0, updates % 20 / 2),
                 PetKind::Brinkley => ("IMAGE_BRINKLEY", 90.0, updates % 20 / 2),
                 PetKind::Nostradamus => ("IMAGE_NOSTRADAMUS", 90.0, updates % 20 / 2),
+                PetKind::Stanley => ("IMAGE_STANLEY", 90.0, updates % 20 / 2),
             };
             let (preview_x, preview_width, preview_height) = if pet == PetKind::Amp {
                 (236.0, 160.0, 60.0)
@@ -2701,6 +2713,7 @@ impl Presentation {
                     PetKind::Presto => "PRESTO",
                     PetKind::Brinkley => "BRINKLEY",
                     PetKind::Nostradamus => "NOSTRADAMUS",
+                    PetKind::Stanley => "STANLEY",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -2799,6 +2812,7 @@ impl Presentation {
                 PetKind::Presto => ["PRESTO has joined", "your pet collection.", ""],
                 PetKind::Brinkley => ["BRINKLEY eats food", "and drops coins.", ""],
                 PetKind::Nostradamus => ["NOSTRADAMUS makes", "special food.", ""],
+                PetKind::Stanley => ["STANLEY launches", "missiles at aliens.", ""],
             };
             for (index, line) in description.iter().enumerate() {
                 self.centered_text(
@@ -2893,6 +2907,7 @@ impl Presentation {
                 PetKind::Presto => "IMAGE_SCL_PRESTO",
                 PetKind::Brinkley => "IMAGE_SCL_BRINKLEY",
                 PetKind::Nostradamus => "IMAGE_SCL_NOSTRADAMUS",
+                PetKind::Stanley => "IMAGE_SCL_STANLEY",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
@@ -3131,6 +3146,12 @@ impl Presentation {
                     "IMAGE_NOSTRADAMUS",
                     "NOSTRADAMUS",
                     ["NOSTRADAMUS makes", "special food.", ""],
+                    90.0,
+                ),
+                PetKind::Stanley => (
+                    "IMAGE_STANLEY",
+                    "STANLEY",
+                    ["STANLEY launches", "missiles at aliens.", ""],
                     90.0,
                 ),
             };

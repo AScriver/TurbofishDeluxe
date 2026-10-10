@@ -38,13 +38,13 @@ pub const SUPPORTED_PETS: [PetKind; 19] = [
     PetKind::Angie,
 ];
 
-/// Initial choices and Presto forms include purchased raw20–21. Pet eggs retain
+/// Initial choices and Presto forms include purchased raw20–22. Pet eggs retain
 /// the separate ordinary raw0..18 candidate set above.
 pub fn selectable_pet(pet: PetKind) -> bool {
     SUPPORTED_PETS.contains(&pet)
         || matches!(
             pet,
-            PetKind::Presto | PetKind::Brinkley | PetKind::Nostradamus
+            PetKind::Presto | PetKind::Brinkley | PetKind::Nostradamus | PetKind::Stanley
         )
 }
 

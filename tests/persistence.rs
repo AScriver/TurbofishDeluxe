@@ -981,7 +981,7 @@ fn current_tank_four_second_pause_keeps_live_board_while_session_time_advances()
 fn current_tank_four_third_accepts_seventeen_rosters_and_persists_live_amp_setup() {
     use turbofish_deluxe::{alien::SylvesterKind, fish_pet::FishPetKind, invasion::EncounterKind};
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 28);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 29);
     let canonical = tank_four_third_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 17);
     for pet in canonical {
@@ -1242,7 +1242,7 @@ fn current_tank_four_fourth_accepts_eighteen_rosters_and_persists_gash_setup() {
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 28);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 29);
     let canonical = tank_four_fourth_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 18);
     for pet in canonical {
@@ -1495,7 +1495,7 @@ fn current_tank_four_finale_accepts_nineteen_rosters_and_starts_with_bilaterus()
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 28);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 29);
     let canonical = tank_four_finale_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 19);
     for pet in canonical {
@@ -1567,7 +1567,7 @@ fn current_twenty_one_requires_revival_clock_on_all_seven_valid_corpse_kinds() {
                 .remove("revival_ticks");
             let error = cli::decode_save(&serde_json::to_vec(&missing).unwrap()).unwrap_err();
             assert!(
-                error.to_string().contains("Incomplete format-twenty-eight"),
+                error.to_string().contains("Incomplete format-twenty-nine"),
                 "missing {list}[0].revival_ticks: {error}"
             );
         }
@@ -1961,7 +1961,7 @@ fn current_tank_five_live_ulysses_launches_energyball_then_reopens_mid_flight() 
         .find(|ball| ball.id == launched.0)
         .unwrap();
     assert_eq!(ball.kind, MissileKind::EnergyBall);
-    assert_eq!(ball.target_id, launched.1);
+    assert_eq!(ball.target_id, Some(launched.1));
     assert!(
         board.fish_pets.iter().any(|pet| pet.id == launched.1)
             || board.stinky.first().and_then(|pet| pet.combat_id) == Some(launched.1)
@@ -2960,7 +2960,8 @@ fn current_finale_rejects_classic_projectile_with_psychosquid_or_alien_free_tail
             session.validate().unwrap();
         }
         let board = session.board.as_mut().unwrap();
-        board.missiles[0] = ClassicMissile::launch(original.id, original.target_id, 100, 110, 3);
+        board.missiles[0] =
+            ClassicMissile::launch(original.id, original.target_id.unwrap(), 100, 110, 3);
         let invalid = cli::ProjectSave {
             format_version: cli::SAVE_FORMAT_VERSION,
             session,
@@ -3059,6 +3060,12 @@ fn current_energyball_requires_kind_reflection_and_rejects_invalid_reservations(
         "immunity_ticks",
         "vx",
         "vy",
+        "stanley_hit",
+        "diversion_clock",
+        "diversion_limit",
+        "diversion_x",
+        "diversion_y",
+        "movement_divisor",
     ] {
         let mut missing = current.clone();
         missing
@@ -4782,6 +4789,8 @@ fn current_nostradamus_actor_food_and_inflight_pickup_require_complete_state() {
         "/session/board/fish_pets/0/nostra_elapsed",
         "/session/board/fish_pets/0/nostra_threshold",
         "/session/board/fish_pets/0/nostra_converted",
+        "/session/board/fish_pets/0/stanley_action_ticks",
+        "/session/board/fish_pets/0/stanley_diversion_cooldown",
         "/session/board/food/0/food_type",
         "/session/board/food/0/picked_up",
         "/session/board/invasion/sneeze_shake_ticks",
@@ -4819,6 +4828,120 @@ fn current_nostradamus_actor_food_and_inflight_pickup_require_complete_state() {
     }
     assert_eq!(reopened.board.as_ref().unwrap().food.len(), 0);
     reopened.validate().unwrap();
+}
+
+fn stanley_time_trial_session() -> AdventureSession {
+    let mut session = AdventureSession::new(0x3942);
+    session.progress.tank = 2;
+    session.progress.level = 1;
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Brinkley,
+        PetKind::Nostradamus,
+        PetKind::Stanley,
+    ];
+    session.progress.purchase_cursor = 3;
+    session.board = None;
+    session.phase = AdventurePhase::GameSelector;
+    session.apply_actions(&[
+        Action::PlayTimeTrial,
+        Action::SelectTimeTrialTank { tank: 1 },
+        Action::TogglePet {
+            pet: PetKind::Stanley,
+        },
+        Action::Continue,
+    ]);
+    session.validate().unwrap();
+    session
+}
+
+#[test]
+fn current_stanley_initial_selection_reopens_action_clock_without_egg_admission() {
+    let mut session = stanley_time_trial_session();
+    let board = session.board.as_mut().unwrap();
+    assert_eq!(board.pets, [PetKind::Stanley]);
+    board.fish_pets[0].stanley_action_ticks = 99;
+    let mut reopened = cli::decode_save(&current_bytes(session.clone())).unwrap();
+    assert_eq!(
+        reopened.board.as_ref().unwrap().fish_pets[0].stanley_action_ticks,
+        99
+    );
+    for _ in 0..3 {
+        assert_eq!(
+            serde_json::to_value(session.step(&[])).unwrap(),
+            serde_json::to_value(reopened.step(&[])).unwrap()
+        );
+    }
+    reopened.validate().unwrap();
+    let purchased = reopened.apply_actions(&[Action::BuyEgg]);
+    assert!(!purchased.iter().any(|event| matches!(
+        event,
+        turbofish_deluxe::sim::Event::TimeTrialPetAcquired {
+            pet: PetKind::Stanley,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn current_stanley_missile_requires_target_key_across_envelope_labels() {
+    use turbofish_deluxe::{
+        alien::{SylvesterKind, WeakSylvester},
+        missile::ClassicMissile,
+    };
+    let mut fixture = serde_json::to_value(stanley_time_trial_session()).unwrap();
+    let target_id = fixture["board"]["next_id"].as_u64().unwrap();
+    let missile_id = target_id + 1;
+    fixture["board"]["next_id"] = (missile_id + 1).into();
+    let mut session: AdventureSession = serde_json::from_value(fixture).unwrap();
+    let board = session.board.as_mut().unwrap();
+    let mut alien = WeakSylvester::spawn_kind(SylvesterKind::Weak, target_id, 300, 200, 1, 5);
+    alien.health = 15.0;
+    let wave = board.invasion.as_mut().unwrap();
+    wave.actors.push(alien);
+    wave.battle_active = true;
+    board.missiles.push(ClassicMissile::launch_stanley(
+        missile_id, target_id, 300, 200, 0,
+    ));
+    session.validate().unwrap();
+    session.step(&[]);
+    assert!(session.board.as_ref().unwrap().missiles[0].stanley_hit);
+    session.validate().unwrap();
+    let current = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: session.clone(),
+    })
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(cli::decode_save(&serde_json::to_vec(&current).unwrap()).unwrap())
+            .unwrap(),
+        serde_json::to_value(session).unwrap()
+    );
+    for version in [cli::SAVE_FORMAT_VERSION, 28] {
+        let mut missing = current.clone();
+        missing["format_version"] = version.into();
+        missing
+            .pointer_mut("/session/board/missiles/0")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("target_id");
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "accepted missing target_id with envelope {version}"
+        );
+    }
+    let mut attached_null = current.clone();
+    attached_null["session"]["board"]["missiles"][0]["stanley_hit"] = false.into();
+    attached_null["session"]["board"]["missiles"][0]["movement_divisor"] = 0.8.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&attached_null).unwrap()).is_err());
+    let mut hit_with_target = current;
+    hit_with_target["session"]["board"]["missiles"][0]["target_id"] = target_id.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&hit_with_target).unwrap()).is_err());
 }
 
 #[test]

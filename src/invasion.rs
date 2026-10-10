@@ -720,6 +720,37 @@ impl Invasion1_2 {
         Some((health, events))
     }
 
+    /// Raw2 consumes its Board-owned target relation before this callback.
+    /// A Psychosquid that became healing after launch receives no HP loss.
+    pub fn stanley_hit_alien(&mut self, id: u64) -> Option<(f64, Vec<InvasionEvent>)> {
+        let actor = self.actor_by_id_mut(id)?;
+        if actor.healing {
+            return Some((actor.health, Vec::new()));
+        }
+        actor.health -= 15.0;
+        let health = actor.health;
+        let events = if health <= 0.0 {
+            self.remove_registered_alien(id)
+        } else {
+            Vec::new()
+        };
+        Some((health, events))
+    }
+
+    pub fn stanley_hit_bilaterus(
+        &mut self,
+        id: u64,
+        next_random: impl FnMut() -> u32,
+        next_id: impl FnMut() -> u64,
+    ) -> Option<(f64, Vec<InvasionEvent>)> {
+        let (health, transition) = self.bilaterus_by_id_mut(id)?.stanley_hit();
+        let mut events = vec![InvasionEvent::BilaterusHeadHit { id, health }];
+        if let Some(outcome) = transition {
+            events.extend(self.commit_bilaterus_transition(id, outcome, next_random, next_id));
+        }
+        Some((health, events))
+    }
+
     pub fn reflected_energy_hit_bilaterus(
         &mut self,
         id: u64,
