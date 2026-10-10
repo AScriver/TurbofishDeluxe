@@ -154,6 +154,15 @@ impl ScreensaverPreview {
         self.settings = settings;
     }
 
+    /// Positive clone income, independent of whether the overlay is visible.
+    /// Only the standalone saver host may bank it; previews discard it.
+    pub fn collected_shells(&self) -> u32 {
+        self.scene
+            .virtual_tank
+            .board_shells
+            .saturating_sub(self.initial_board_shells)
+    }
+
     /// Step only the cloned VT scene. Pet coin collection may run in the normal
     /// Board path, so discard its temporary wallet credit while retaining the
     /// clone's Board shell counter (Board.cpp:2320-24 has a separate saver path).
@@ -183,12 +192,7 @@ impl ScreensaverPreview {
             } else {
                 0
             },
-            shells_collected: self.settings.show_money.then(|| {
-                self.scene
-                    .virtual_tank
-                    .board_shells
-                    .saturating_sub(self.initial_board_shells)
-            }),
+            shells_collected: self.settings.show_money.then(|| self.collected_shells()),
             sound_enabled: self.settings.sound,
         }
     }

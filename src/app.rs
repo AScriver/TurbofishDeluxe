@@ -17,6 +17,7 @@ use crate::{
     profiles::{Profiles, ScoreTab},
     sandbox::{EntryCode, SelectorKey},
     screensaver::{ScreensaverPreview, ScreensaverSettings, ScreensaverSettingsFile},
+    screensaver_bank::ScreensaverBank,
     settings::{GameSettings, SettingChange, SettingsBackend, SettingsCapabilities, SettingsSave},
     sim::{
         Action, AdventureState, CoinKind, Event, FishPose, FishSize, FoodType, PetKind, TICK_MS,
@@ -6031,6 +6032,7 @@ pub async fn run(
         };
     let mut screensaver_dirty = false;
     let mut screensaver_preview = None::<ScreensaverPreview>;
+    let mut screensaver_claim_error = None::<String>;
     // Keep the thread power policy alive until preview closes; Drop restores it.
     let mut _screensaver_power_guard = None::<MonitorPowerGuard>;
     let mut pending_actions = Vec::new();
@@ -6312,6 +6314,15 @@ pub async fn run(
                         if let Some(entry) = profiles.current() {
                             start_session_tick = entry.session.ticks;
                         }
+                        if profiles.current().is_some() {
+                            match profiles.claim_screensaver(&options.save_dir) {
+                                Ok(_) => screensaver_claim_error = None,
+                                Err(error) => {
+                                    screensaver_claim_error = Some(error.to_string());
+                                    eprintln!("Screensaver credit claim pending: {error}");
+                                }
+                            }
+                        }
                     }
                 }
                 Err(error) => selector_ui.error = error.to_string(),
@@ -6401,6 +6412,18 @@ pub async fn run(
                 screensaver_dirty,
                 screensaver_load_error.as_deref(),
             );
+            if let Some(error) = screensaver_claim_error.as_deref() {
+                draw_text(
+                    format!(
+                        "Saver credit pending: {}",
+                        error.chars().take(65).collect::<String>()
+                    ),
+                    12.0,
+                    442.0,
+                    16.0,
+                    YELLOW,
+                );
+            }
             if let Some(view) = help.view() {
                 draw_help(view);
             }
@@ -7884,6 +7907,18 @@ pub async fn run(
         if music_unavailable.is_some() {
             draw_text("Music unavailable", 425.0, 470.0, 18.0, YELLOW);
         }
+        if let Some(error) = screensaver_claim_error.as_deref() {
+            draw_text(
+                format!(
+                    "Saver credit pending: {}",
+                    error.chars().take(65).collect::<String>()
+                ),
+                12.0,
+                442.0,
+                16.0,
+                YELLOW,
+            );
+        }
         set_default_camera();
         if let Some(evidence) = evidence.as_ref() {
             let request = evidence.root.join("capture.request");
@@ -7895,6 +7930,24 @@ pub async fn run(
             }
         }
         profiles.record_events(&options.save_dir.join("profiles.json"), &events)?;
+        if phase_transitioned
+            && profiles.current().is_some_and(|entry| {
+                matches!(
+                    entry.session.phase,
+                    AdventurePhase::GameSelector
+                        | AdventurePhase::VirtualStore
+                        | AdventurePhase::VirtualSetup
+                )
+            })
+        {
+            match profiles.claim_screensaver(&options.save_dir) {
+                Ok(_) => screensaver_claim_error = None,
+                Err(error) => {
+                    screensaver_claim_error = Some(error.to_string());
+                    eprintln!("Screensaver credit claim pending: {error}");
+                }
+            }
+        }
         if save_due {
             cli::save_profiles_checkpoint(&options, &profiles)?;
         }
@@ -7938,6 +7991,10 @@ pub async fn run_screensaver(
         parent.validate()?;
     }
     let configuring = matches!(command, ScreenCommand::Configure(_));
+    let saver_key = profiles.current().map(|entry| entry.screensaver_key());
+    if matches!(command, ScreenCommand::Fullscreen) && saver_key.is_none() {
+        return Err("Fullscreen screensaver needs a selected saved profile".into());
+    }
     if configuring && options.evidence_dir.is_some() {
         return Err("Screensaver evidence requires an active /s or /p scene".into());
     }
@@ -8204,6 +8261,30 @@ pub async fn run_screensaver(
     drop(attachment);
     drop(power_guard);
     show_mouse(true);
+    let deposited_delta = if matches!(command, ScreenCommand::Fullscreen) {
+        preview
+            .as_ref()
+            .map_or(0, ScreensaverPreview::collected_shells)
+    } else {
+        0
+    };
+    let cumulative = if matches!(command, ScreenCommand::Fullscreen) {
+        let bank = ScreensaverBank::new(options.save_dir.as_path());
+        let key = saver_key
+            .as_ref()
+            .expect("fullscreen profile checked above");
+        Some(if deposited_delta > 0 {
+            bank.append(key, u64::from(deposited_delta)).map_err(|error| {
+                format!(
+                    "Screensaver earned {deposited_delta} shells but could not deposit them: {error}"
+                )
+            })?
+        } else {
+            bank.read(key)?
+        })
+    } else {
+        None
+    };
     let after = install::identify(&game_root)?;
     if after.inventory_sha256 != identity.inventory_sha256 {
         return Err("Owned installation changed during screensaver run".into());
@@ -8212,7 +8293,7 @@ pub async fn run_screensaver(
         evidence.record(&[], &[], scene.scene(), get_time() - started, false)?;
         cli::write_json(
             &evidence.root.join("final.local.json"),
-            &serde_json::json!({"session":scene.scene(),"game_after":after,"elapsed_seconds":get_time()-started,"test_speed":1,"time_mode":"normal","disposable_screensaver":true,"earned_playable_claim":false,"game_unchanged":true}),
+            &serde_json::json!({"session":scene.scene(),"game_after":after,"elapsed_seconds":get_time()-started,"test_speed":1,"time_mode":"normal","disposable_screensaver":true,"profile_scene_saved":false,"deposited_delta":deposited_delta,"bank_cumulative":cumulative,"bank_key":saver_key.as_ref().map(|key| serde_json::json!({"profile_id":key.profile_id,"generation":&key.generation})),"earned_playable_claim":false,"game_unchanged":true}),
         )?;
     }
     Ok(())
