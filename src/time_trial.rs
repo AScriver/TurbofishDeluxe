@@ -44,7 +44,11 @@ pub fn selectable_pet(pet: PetKind) -> bool {
     SUPPORTED_PETS.contains(&pet)
         || matches!(
             pet,
-            PetKind::Presto | PetKind::Brinkley | PetKind::Nostradamus | PetKind::Stanley
+            PetKind::Presto
+                | PetKind::Brinkley
+                | PetKind::Nostradamus
+                | PetKind::Stanley
+                | PetKind::Walter
         )
 }
 

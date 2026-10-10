@@ -4,6 +4,7 @@
 //! (f919b3c); the actor has not been runtime verified.
 //! The Board owns IDs, shared RNG, prey removal, Pearl construction and death.
 
+use crate::walter::WalterImpact;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,6 +59,7 @@ pub struct GekkoState {
     pub coin_timer: u16,
     pub coin_threshold: u16,
     pub bought_timer: u8,
+    pub walter: WalterImpact,
     pub speed_mod: f64,
     pub movement_state: u8,
     pub movement_timer: u8,
@@ -155,6 +157,7 @@ impl GekkoState {
             coin_timer: 0,
             coin_threshold,
             bought_timer: 0,
+            walter: WalterImpact::default(),
             speed_mod,
             movement_state,
             movement_timer: 0,
@@ -202,6 +205,7 @@ impl GekkoState {
             || !(-19..=19).contains(&self.turn_ticks)
             || self.eating_ticks > 20
             || self.hunger_animation_ticks > 5
+            || !self.walter.validate()
         {
             return Err("invalid ordinary Gekko state".into());
         }
@@ -318,6 +322,8 @@ impl GekkoState {
                 }
             }
         }
+        self.x += self.walter.tick_recoil();
+        self.walter.secondary = self.walter.secondary.saturating_sub(1);
         // Common Fish tail clamps before final Move, so a small overshoot is
         // legal in the serialized doubles and integer widget coordinates.
         match self.vx {

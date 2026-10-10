@@ -981,7 +981,6 @@ fn current_tank_four_second_pause_keeps_live_board_while_session_time_advances()
 fn current_tank_four_third_accepts_seventeen_rosters_and_persists_live_amp_setup() {
     use turbofish_deluxe::{alien::SylvesterKind, fish_pet::FishPetKind, invasion::EncounterKind};
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 29);
     let canonical = tank_four_third_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 17);
     for pet in canonical {
@@ -1242,7 +1241,6 @@ fn current_tank_four_fourth_accepts_eighteen_rosters_and_persists_gash_setup() {
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 29);
     let canonical = tank_four_fourth_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 18);
     for pet in canonical {
@@ -1495,7 +1493,6 @@ fn current_tank_four_finale_accepts_nineteen_rosters_and_starts_with_bilaterus()
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 29);
     let canonical = tank_four_finale_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 19);
     for pet in canonical {
@@ -1567,7 +1564,9 @@ fn current_twenty_one_requires_revival_clock_on_all_seven_valid_corpse_kinds() {
                 .remove("revival_ticks");
             let error = cli::decode_save(&serde_json::to_vec(&missing).unwrap()).unwrap_err();
             assert!(
-                error.to_string().contains("Incomplete format-twenty-nine"),
+                error
+                    .to_string()
+                    .contains("required state fields are missing"),
                 "missing {list}[0].revival_ticks: {error}"
             );
         }
@@ -4857,6 +4856,133 @@ fn stanley_time_trial_session() -> AdventureSession {
     ]);
     session.validate().unwrap();
     session
+}
+
+#[test]
+fn current_walter_state_and_nullable_glove_are_required_in_direct_board_and_envelope() {
+    let mut session = stanley_time_trial_session();
+    session.board.as_mut().unwrap().fish_pets[0].walter.recoil = 1;
+    session.board.as_mut().unwrap().fish_pets[0].walter.impulse = 0.25;
+    let encoded = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    for (path, field) in [
+        ("/session/board/fish_pets/0", "glove"),
+        ("/session/board/fish_pets/0", "age"),
+        ("/session/board/fish_pets/0", "walter"),
+        ("/session/board/fish/0", "walter"),
+    ] {
+        let mut missing = encoded.clone();
+        missing
+            .pointer_mut(path)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "{path}/{field}"
+        );
+        if path.contains("fish_pets") {
+            let board = missing.pointer("/session/board").unwrap().clone();
+            assert!(
+                serde_json::from_value::<AdventureState>(board).is_err(),
+                "direct {field}"
+            );
+        }
+    }
+    let mut relabeled = encoded;
+    relabeled["format_version"] = 29.into();
+    relabeled
+        .pointer_mut("/session/board/fish_pets/0")
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .remove("glove");
+    assert!(cli::decode_save(&serde_json::to_vec(&relabeled).unwrap()).is_err());
+}
+
+#[test]
+fn current_walter_entitled_punch_and_active_glove_resume_identically() {
+    let mut session = AdventureSession::new(0x3930);
+    session.progress.tank = 2;
+    session.progress.level = 1;
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Brinkley,
+        PetKind::Nostradamus,
+        PetKind::Stanley,
+        PetKind::Walter,
+    ];
+    session.progress.purchase_cursor = 4;
+    session.board = None;
+    session.phase = AdventurePhase::GameSelector;
+    session.apply_actions(&[
+        Action::PlayTimeTrial,
+        Action::SelectTimeTrialTank { tank: 1 },
+        Action::TogglePet {
+            pet: PetKind::Walter,
+        },
+        Action::Continue,
+    ]);
+    assert_eq!(session.phase, AdventurePhase::TimeTrialPlaying);
+    session.validate().unwrap();
+    let pet = &session.board.as_ref().unwrap().fish_pets[0];
+    assert_eq!(pet.kind, turbofish_deluxe::fish_pet::FishPetKind::Walter);
+    let (x, y) = (pet.widget_x + 40, pet.widget_y + 40);
+    let clicked = session.apply_actions(&[Action::Click {
+        x: x as f32,
+        y: y as f32,
+    }]);
+    assert!(
+        clicked
+            .iter()
+            .any(|event| matches!(event, turbofish_deluxe::sim::Event::WalterPunched { .. }))
+    );
+    for _ in 0..6 {
+        session.step(&[]);
+    }
+    {
+        let board = session.board.as_mut().unwrap();
+        let pet = &board.fish_pets[0];
+        assert_eq!(pet.walter_punches, 1);
+        assert_eq!(pet.glove.unwrap().lifetime, 29);
+        board.fish[0].walter.recoil = 12;
+        board.fish[0].walter.secondary = 34;
+        board.fish[0].walter.impulse = 2.5;
+    }
+    session.validate().unwrap();
+    let saved = current_bytes(session.clone());
+    let mut reopened = cli::decode_save(&saved).unwrap();
+    assert_eq!(
+        serde_json::to_value(&reopened).unwrap(),
+        serde_json::to_value(&session).unwrap()
+    );
+    for _ in 0..3 {
+        reopened.paused_step();
+        session.paused_step();
+    }
+    assert_eq!(
+        serde_json::to_value(&reopened).unwrap(),
+        serde_json::to_value(&session).unwrap()
+    );
+    reopened = cli::decode_save(&current_bytes(reopened)).unwrap();
+    for _ in 0..12 {
+        assert_eq!(
+            serde_json::to_value(reopened.step(&[])).unwrap(),
+            serde_json::to_value(session.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&reopened).unwrap(),
+            serde_json::to_value(&session).unwrap()
+        );
+    }
 }
 
 #[test]

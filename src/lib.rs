@@ -26,3 +26,4 @@ pub mod starcatcher;
 pub mod time_trial;
 pub mod timing;
 pub mod ultra;
+pub mod walter;

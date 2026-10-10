@@ -112,6 +112,7 @@ pub enum PetKind {
     Brinkley,
     Nostradamus,
     Stanley,
+    Walter,
 }
 
 /// Fresh ordinary Tank5 entry clears retail selection flags before this
@@ -334,6 +335,7 @@ pub struct Fish {
     pub growth_ticks: u8,
     pub coin_timer: u16,
     pub coin_threshold: u16,
+    pub walter: crate::walter::WalterImpact,
     pub alive: bool,
     #[serde(default)]
     pub cannot_be_eaten_ticks: u8,
@@ -680,6 +682,10 @@ pub enum Event {
         new_id: u64,
         from: PetKind,
         to: PetKind,
+    },
+    WalterPunched {
+        tick: u64,
+        pet_id: u64,
     },
     TimeTrialExpired {
         tick: u64,
@@ -1546,7 +1552,8 @@ impl AdventureState {
                 | PetKind::Presto
                 | PetKind::Brinkley
                 | PetKind::Nostradamus
-                | PetKind::Stanley => {
+                | PetKind::Stanley
+                | PetKind::Walter => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1611,7 +1618,8 @@ impl AdventureState {
                 | PetKind::Presto
                 | PetKind::Brinkley
                 | PetKind::Nostradamus
-                | PetKind::Stanley => {
+                | PetKind::Stanley
+                | PetKind::Walter => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1682,7 +1690,8 @@ impl AdventureState {
                 | PetKind::Presto
                 | PetKind::Brinkley
                 | PetKind::Nostradamus
-                | PetKind::Stanley => {
+                | PetKind::Stanley
+                | PetKind::Walter => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1754,7 +1763,8 @@ impl AdventureState {
                 | PetKind::Presto
                 | PetKind::Brinkley
                 | PetKind::Nostradamus
-                | PetKind::Stanley => {
+                | PetKind::Stanley
+                | PetKind::Walter => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1834,7 +1844,8 @@ impl AdventureState {
                 | PetKind::Presto
                 | PetKind::Brinkley
                 | PetKind::Nostradamus
-                | PetKind::Stanley => {
+                | PetKind::Stanley
+                | PetKind::Walter => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1922,7 +1933,8 @@ impl AdventureState {
                 | PetKind::Presto
                 | PetKind::Brinkley
                 | PetKind::Nostradamus
-                | PetKind::Stanley => {
+                | PetKind::Stanley
+                | PetKind::Walter => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -2384,6 +2396,7 @@ impl AdventureState {
             FishPetKind::Brinkley => PetKind::Brinkley,
             FishPetKind::Nostradamus => PetKind::Nostradamus,
             FishPetKind::Stanley => PetKind::Stanley,
+            FishPetKind::Walter => PetKind::Walter,
         }
     }
 
@@ -2407,6 +2420,7 @@ impl AdventureState {
             PetKind::Brinkley => Some(FishPetKind::Brinkley),
             PetKind::Nostradamus => Some(FishPetKind::Nostradamus),
             PetKind::Stanley => Some(FishPetKind::Stanley),
+            PetKind::Walter => Some(FishPetKind::Walter),
             _ => None,
         }
     }
@@ -2433,6 +2447,48 @@ impl AdventureState {
         if old.remaining_ticks != 0 {
             return Ok(PrestoChangeEligibility::CoolingDown);
         }
+        self.commit_presto_replacement(old, target, events)?;
+        Ok(PrestoChangeEligibility::Ready)
+    }
+
+    fn return_presto_after_walter_hit(
+        &mut self,
+        old_id: u64,
+        events: &mut Vec<Event>,
+    ) -> Result<(), String> {
+        let old = self.presto_actor().ok_or("missing Presto incarnation")?;
+        let valid = self.fish_pets.iter().any(|pet| {
+            pet.id == old_id
+                && pet.presto_form.is_some()
+                && pet.kind != FishPetKind::Presto
+                && pet.walter.recoil < 41
+                && pet
+                    .presto_form
+                    .is_some_and(|form| form.remaining_ticks == 0)
+        });
+        if !valid || old.id != old_id {
+            return Err("invalid Walter recoil replacement".into());
+        }
+        self.commit_presto_replacement(old, PetKind::Presto, events)
+    }
+
+    fn commit_presto_replacement(
+        &mut self,
+        old: PrestoActorView,
+        target: PetKind,
+        events: &mut Vec<Event>,
+    ) -> Result<(), String> {
+        let carry = if matches!(
+            (old.kind, target),
+            (PetKind::Presto, PetKind::Walter) | (PetKind::Walter, PetKind::Presto)
+        ) {
+            self.fish_pets
+                .iter()
+                .find(|pet| pet.id == old.id)
+                .map(|pet| (pet.walter_punches, pet.walter_cooldown))
+        } else {
+            None
+        };
         let id = self.id();
         let mut rng_state = self.rng_state;
         let mut draw = |upper| Self::advance_rng(&mut rng_state) % upper;
@@ -2463,6 +2519,12 @@ impl AdventureState {
             )),
         }
         self.rng_state = rng_state;
+        if let Some((punches, cooldown)) = carry
+            && let Some(pet) = self.fish_pets.iter_mut().find(|pet| pet.id == id)
+        {
+            pet.walter_punches = punches;
+            pet.walter_cooldown = cooldown;
+        }
         self.stinky.retain(|pet| pet.combat_id != Some(old.id));
         self.niko.retain(|pet| pet.owner_id != old.id);
         self.clyde.retain(|pet| pet.id != old.id);
@@ -2479,7 +2541,7 @@ impl AdventureState {
             from: old.kind,
             to: target,
         });
-        Ok(PrestoChangeEligibility::Ready)
+        Ok(())
     }
 
     fn has_live_pet_kind(&self, kind: PetKind) -> bool {
@@ -2517,6 +2579,7 @@ impl AdventureState {
                         | (PetKind::Brinkley, FishPetKind::Brinkley)
                         | (PetKind::Nostradamus, FishPetKind::Nostradamus)
                         | (PetKind::Stanley, FishPetKind::Stanley)
+                        | (PetKind::Walter, FishPetKind::Walter)
                 )
             }),
         }
@@ -2594,6 +2657,7 @@ impl AdventureState {
                     PetKind::Brinkley => FishPetKind::Brinkley,
                     PetKind::Nostradamus => FishPetKind::Nostradamus,
                     PetKind::Stanley => FishPetKind::Stanley,
+                    PetKind::Walter => FishPetKind::Walter,
                     _ => return Err("unsupported Time Trial pet".into()),
                 };
                 self.spawn_fish_pet(fish_kind);
@@ -2745,7 +2809,11 @@ impl AdventureState {
                 PetKind::Amp => self.spawn_fish_pet(FishPetKind::Amp),
                 PetKind::Gash => self.spawn_fish_pet(FishPetKind::Gash),
                 PetKind::Angie => self.spawn_fish_pet(FishPetKind::Angie),
-                PetKind::Presto | PetKind::Brinkley | PetKind::Nostradamus | PetKind::Stanley => {
+                PetKind::Presto
+                | PetKind::Brinkley
+                | PetKind::Nostradamus
+                | PetKind::Stanley
+                | PetKind::Walter => {
                     unreachable!("extra pets are not in the fixed Tank4 or Tank5 roster")
                 }
             }
@@ -2838,7 +2906,8 @@ impl AdventureState {
                 | PetKind::Presto
                 | PetKind::Brinkley
                 | PetKind::Nostradamus
-                | PetKind::Stanley => {
+                | PetKind::Stanley
+                | PetKind::Walter => {
                     unreachable!("pet unlock follows stage 3-5")
                 }
             }
@@ -3695,6 +3764,7 @@ impl AdventureState {
                 FishPetKind::Brinkley => PetKind::Brinkley,
                 FishPetKind::Nostradamus => PetKind::Nostradamus,
                 FishPetKind::Stanley => PetKind::Stanley,
+                FishPetKind::Walter => PetKind::Walter,
             };
             if pet.nostra_converted {
                 continue;
@@ -3730,6 +3800,9 @@ impl AdventureState {
     /// Validate durable board relationships before accepting a project save.
     /// The profile and screen phase are checked by AdventureSession separately.
     pub fn validate(&self) -> Result<(), String> {
+        if self.fish.iter().any(|fish| !fish.walter.validate()) {
+            return Err("Fish Walter impact state exceeds bounds".into());
+        }
         if self.fish_pets.iter().any(|pet| {
             pet.kind == FishPetKind::Nostradamus && !(300..=599).contains(&pet.nostra_threshold)
         }) {
@@ -6111,6 +6184,23 @@ impl AdventureState {
             None
         };
         let on_collectible = pearl_id.is_some() || coin_id.is_some() || nostra_food_id.is_some();
+        // FishTypePet's +0xd8 input slot reaches 004fb680 for raw23.
+        // Its handler consumes an eligible click; an ineligible widget lets
+        // the Board's other click routes continue. The 80x80 rectangle is a
+        // provisional projection of the parent widget pending its inset read.
+        if !on_collectible
+            && let Some(index) = self.fish_pets.iter().rposition(|pet| {
+                pet.walter_hitbox_contains(world_x, world_y) && pet.walter_ready_for_input()
+            })
+        {
+            if self.fish_pets[index].try_punch_walter() {
+                events.push(Event::WalterPunched {
+                    tick: self.tick,
+                    pet_id: self.fish_pets[index].id,
+                });
+            }
+            return;
+        }
         // PB66 separates Amp's clock from normal widget mouse availability.
         // Existing raised collectibles retain their input precedence; exact
         // installed overlap/modal routing remains qualified in the contract.
@@ -6726,6 +6816,7 @@ impl AdventureState {
             growth_ticks: 0,
             coin_timer: 0,
             coin_threshold,
+            walter: crate::walter::WalterImpact::default(),
             alive: true,
             cannot_be_eaten_ticks: 0,
             speed_mod,
@@ -6947,6 +7038,8 @@ impl AdventureState {
                         fish.bought_timer -= 1;
                         fish.vy *= 0.9;
                     }
+                    fish.x += fish.walter.tick_recoil() as f32;
+                    fish.walter.secondary = fish.walter.secondary.saturating_sub(1);
                     Self::advance_animation(fish);
                     fish.facing_right = fish.vx >= 0.0;
                     fish.x = (fish.x + fish.vx / fish.speed_mod).clamp(10.0, 540.0);
@@ -7148,7 +7241,9 @@ impl AdventureState {
         let old_widget_x = fish.x.trunc();
         let old_widget_y = fish.y.trunc();
         fish.cannot_be_eaten_ticks = fish.cannot_be_eaten_ticks.saturating_sub(1);
-        fish.vx = if fish.vx < 0.0 { -0.5 } else { 0.5 };
+        if fish.walter.recoil == 0 {
+            fish.vx = if fish.vx < 0.0 { -0.5 } else { 0.5 };
+        }
         if fish.bought_timer == 0 {
             fish.vy = 0.0;
         }
@@ -7182,6 +7277,8 @@ impl AdventureState {
             fish.bought_timer -= 1;
             fish.vy *= 0.9;
         }
+        fish.x += fish.walter.tick_recoil() as f32;
+        fish.walter.secondary = fish.walter.secondary.saturating_sub(1);
         // Fish::Update clamps before its final integration, then eases the
         // horizontal velocity near an edge. The final Move may overshoot.
         fish.x = fish.x.clamp(10.0, 540.0);
@@ -8881,16 +8978,205 @@ impl AdventureState {
         }
     }
 
-    fn update_fish_pets(&mut self, events: &mut Vec<Event>) {
-        if self.tank == 5 {
-            let mut rng_state = self.rng_state;
-            for pet in &mut self.fish_pets {
-                pet.tick_tank5(&mut |upper| Self::advance_rng(&mut rng_state) % upper);
+    /// A derived contact view preserves physical membership as the sole
+    /// authority. Each candidate is reacquired after preceding contacts.
+    fn walter_glove_contacts(&mut self, parent_id: u64, center: (i32, i32)) {
+        let mut targets = Vec::new();
+        targets.extend(
+            self.fish
+                .iter()
+                .filter(|fish| fish.alive)
+                .map(|fish| (fish.id, 0u8)),
+        );
+        targets.extend(
+            self.oscars
+                .iter()
+                .filter(|fish| fish.alive)
+                .map(|fish| (fish.id, 1)),
+        );
+        targets.extend(
+            self.ultras
+                .iter()
+                .filter(|fish| fish.alive)
+                .map(|fish| (fish.id, 2)),
+        );
+        targets.extend(
+            self.gekkos
+                .iter()
+                .filter(|fish| fish.alive)
+                .map(|fish| (fish.id, 3)),
+        );
+        targets.extend(
+            self.fish_pets
+                .iter()
+                .filter(|pet| pet.id != parent_id && pet.kind != FishPetKind::Prego)
+                .map(|pet| (pet.id, 4)),
+        );
+        targets.sort_unstable_by_key(|&(id, _)| id);
+        let right = self
+            .fish_pets
+            .iter()
+            .find(|pet| pet.id == parent_id)
+            .and_then(|pet| pet.glove)
+            .is_some_and(|glove| glove.right);
+        let mut hit = false;
+        for (id, class) in targets {
+            let eligible = match class {
+                0 => self
+                    .fish
+                    .iter()
+                    .find(|fish| fish.id == id && fish.alive)
+                    .map(|fish| {
+                        (
+                            (fish.x as i32) + 40,
+                            (fish.y as i32) + 40,
+                            fish.walter.recoil == 0,
+                        )
+                    }),
+                1 => self
+                    .oscars
+                    .iter()
+                    .find(|fish| fish.id == id && fish.alive)
+                    .map(|fish| {
+                        (
+                            fish.widget_x + 40,
+                            fish.widget_y + 40,
+                            fish.walter.recoil == 0,
+                        )
+                    }),
+                2 => self
+                    .ultras
+                    .iter()
+                    .find(|fish| fish.id == id && fish.alive)
+                    .map(|fish| {
+                        (
+                            fish.widget_x + 80,
+                            fish.widget_y + 80,
+                            fish.walter.recoil == 0,
+                        )
+                    }),
+                3 => self
+                    .gekkos
+                    .iter()
+                    .find(|fish| fish.id == id && fish.alive)
+                    .map(|fish| {
+                        (
+                            fish.widget_x + 40,
+                            fish.widget_y + 40,
+                            fish.walter.recoil == 0,
+                        )
+                    }),
+                _ => self
+                    .fish_pets
+                    .iter()
+                    .find(|pet| {
+                        pet.id == id && pet.id != parent_id && pet.kind != FishPetKind::Prego
+                    })
+                    .map(|pet| {
+                        (
+                            pet.widget_x + if pet.kind == FishPetKind::Amp { 80 } else { 40 },
+                            pet.widget_y + 40,
+                            pet.walter.recoil == 0 && (pet.presto_form.is_none() || pet.age > 29),
+                        )
+                    }),
+            };
+            let Some((x, y, ready)) = eligible else {
+                continue;
+            };
+            if !ready || (x - center.0).abs() >= 40 || (y - center.1).abs() >= 40 {
+                continue;
             }
-            self.rng_state = rng_state;
+            let amount = (if self.rand_range(2) == 0 { 15.0 } else { 10.0 })
+                * (if right { 1.0 } else { -1.0 });
+            match class {
+                0 => {
+                    if let Some(fish) = self
+                        .fish
+                        .iter_mut()
+                        .find(|fish| fish.id == id && fish.alive)
+                    {
+                        fish.coin_timer = fish.coin_threshold.saturating_sub(5);
+                        fish.walter.hit(amount);
+                    }
+                }
+                1 => {
+                    if let Some(fish) = self
+                        .oscars
+                        .iter_mut()
+                        .find(|fish| fish.id == id && fish.alive)
+                    {
+                        fish.coin_timer = fish.coin_threshold.saturating_sub(5);
+                        fish.walter.hit(amount);
+                    }
+                }
+                2 => {
+                    if let Some(fish) = self
+                        .ultras
+                        .iter_mut()
+                        .find(|fish| fish.id == id && fish.alive)
+                    {
+                        fish.coin_timer = fish.coin_threshold.saturating_sub(5);
+                        fish.walter.hit(amount);
+                    }
+                }
+                3 => {
+                    if let Some(fish) = self
+                        .gekkos
+                        .iter_mut()
+                        .find(|fish| fish.id == id && fish.alive)
+                    {
+                        fish.coin_timer = fish.coin_threshold.saturating_sub(5);
+                        fish.walter.hit(amount);
+                    }
+                }
+                _ => {
+                    if let Some(pet) = self.fish_pets.iter_mut().find(|pet| pet.id == id) {
+                        match pet.kind {
+                            FishPetKind::Vert => pet.coin_timer = 216 - 5,
+                            FishPetKind::Shrapnel => pet.coin_timer = pet.bomb_threshold - 5,
+                            FishPetKind::Amp => pet.amp_timer = pet.amp_threshold - 5,
+                            FishPetKind::Nostradamus => {
+                                pet.nostra_elapsed = pet.nostra_threshold - 10
+                            }
+                            _ => {}
+                        }
+                        pet.walter.hit(amount);
+                    }
+                }
+            }
+            hit = true;
+        }
+        if hit && let Some(parent) = self.fish_pets.iter_mut().find(|pet| pet.id == parent_id) {
+            parent.set_glove_feedback();
+        }
+    }
+
+    fn update_fish_pets(&mut self, events: &mut Vec<Event>) {
+        let physical_ids = self.fish_pets.iter().map(|pet| pet.id).collect::<Vec<_>>();
+        if self.tank == 5 {
+            for pet_id in physical_ids {
+                let Some(index) = self.fish_pets.iter().position(|pet| pet.id == pet_id) else {
+                    continue;
+                };
+                let contact = self.fish_pets[index].begin_common_update();
+                if let Some(center) = contact {
+                    self.walter_glove_contacts(pet_id, center);
+                }
+                let mut rng_state = self.rng_state;
+                let update = self.fish_pets[index]
+                    .tick_tank5(&mut |upper| Self::advance_rng(&mut rng_state) % upper);
+                self.rng_state = rng_state;
+                if update.walter_return {
+                    self.return_presto_after_walter_hit(pet_id, events)
+                        .expect("validated flagged FishPet recoil return");
+                }
+            }
             return;
         }
-        for index in 0..self.fish_pets.len() {
+        for physical_id in physical_ids {
+            let Some(index) = self.fish_pets.iter().position(|pet| pet.id == physical_id) else {
+                continue;
+            };
             // Alien::Update and its removal transaction have already run.
             // Include registered nonpositive-health aliens for Itchy contact;
             // they remain members until the next active alien update.
@@ -8930,7 +9216,14 @@ impl AdventureState {
                 aliens = groups;
             }
             let guppy_count = self.fish.iter().filter(|fish| fish.alive).count();
-            let pet_id = self.fish_pets[index].id;
+            let pet_id = physical_id;
+            let contact = self.fish_pets[index].begin_common_update();
+            if let Some(center) = contact {
+                self.walter_glove_contacts(pet_id, center);
+            }
+            if self.fish_pets[index].kind == FishPetKind::Gash {
+                self.fish_pets[index].defer_gash_tail();
+            }
             let mut rng_state = self.rng_state;
             let update = if self.fish_pets[index].kind == FishPetKind::Stanley {
                 let (widget_x, widget_y) = (
@@ -9172,6 +9465,7 @@ impl AdventureState {
                 })
             };
             self.rng_state = rng_state;
+            let mut forced_return = update.walter_return;
             if let Some(corpse_id) = update.angie_revive {
                 self.mark_corpse_for_revival(pet_id, corpse_id, events);
             }
@@ -9343,6 +9637,10 @@ impl AdventureState {
                         .as_ref()
                         .is_none_or(|wave| wave.actors.is_empty() && wave.bilaterus.is_empty());
                 self.fish_pets[index].finish_gash_clock(clock_allowed);
+                let mut tail_rng = self.rng_state;
+                forced_return = self.fish_pets[index]
+                    .finish_gash_tail(&mut |upper| Self::advance_rng(&mut tail_rng) % upper);
+                self.rng_state = tail_rng;
             } else if let Some(alien_id) = update.damaged_alien
                 && let Some(wave) = self.invasion.as_mut()
                 && let Some(health) = if wave.bilaterus_by_id(alien_id).is_some() {
@@ -9457,6 +9755,10 @@ impl AdventureState {
                     pet_id,
                     food_id,
                 });
+            }
+            if forced_return {
+                self.return_presto_after_walter_hit(pet_id, events)
+                    .expect("validated flagged FishPet recoil return");
             }
         }
     }
@@ -10358,6 +10660,243 @@ impl AdventureState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn walter_requires_consumed_pointer_input_and_does_not_auto_punch() {
+        let mut board = AdventureState::new_time_trial(0x3952, 1, &[PetKind::Walter]).unwrap();
+        board.update_fish_pets(&mut Vec::new());
+        let pet = &board.fish_pets[0];
+        assert!(pet.glove.is_none());
+        assert_eq!(pet.walter_punches, 0);
+        board.fish_pets[0].turn_ticks = 0;
+        board.fish_pets[0].vx = 1.0;
+        let pet = &board.fish_pets[0];
+        let (x, y) = (pet.widget_x + 40, pet.widget_y + 40);
+        let events = board.apply(Action::Click {
+            x: x as f32,
+            y: y as f32,
+        });
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::WalterPunched { .. }))
+        );
+        assert!(board.fish_pets[0].glove.is_some());
+        assert_eq!(board.fish_pets[0].walter_punches, 1);
+        let events = board.apply(Action::Click {
+            x: x as f32,
+            y: y as f32,
+        });
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::WalterPunched { .. }))
+        );
+    }
+
+    #[test]
+    fn walter_contact_uses_strict_center_edges_and_current_recoil() {
+        let mut board = AdventureState::new_time_trial(0x3950, 1, &[PetKind::Walter]).unwrap();
+        let parent = &mut board.fish_pets[0];
+        parent.x = 100.0;
+        parent.y = 100.0;
+        parent.widget_x = 100;
+        parent.widget_y = 100;
+        parent.published_x = 100;
+        parent.published_y = 100;
+        parent.walter_action = 35;
+        parent.glove = Some(crate::walter::Glove::new(true));
+        board.fish[0].x = 120.0;
+        board.fish[0].y = 100.0;
+        board.fish[1].x = 160.0;
+        board.fish[1].y = 100.0;
+        board.update_fish_pets(&mut Vec::new());
+        assert_eq!(board.fish[0].walter.recoil, 50);
+        assert_eq!(board.fish[0].coin_timer, board.fish[0].coin_threshold - 5);
+        assert_eq!(board.fish[1].walter.recoil, 0);
+        assert_eq!(board.fish_pets[0].glove.unwrap().lifetime, 29);
+    }
+
+    #[test]
+    fn flagged_walter_returns_after_recoil_40_without_second_pass_tick() {
+        let mut board =
+            AdventureState::new_time_trial(0x3951, 1, &[PetKind::Presto, PetKind::Itchy]).unwrap();
+        let opener = board.presto_actor().unwrap().id;
+        board
+            .change_presto_form(opener, PetKind::Walter, &mut Vec::new())
+            .unwrap();
+        board.fish_pets.swap(0, 1);
+        let old = board.fish_pets[0].id;
+        let peer = board.fish_pets[1].id;
+        board.fish_pets[0].walter.recoil = 41;
+        board.fish_pets[0].walter.impulse = 10.0;
+        board.update_fish_pets(&mut Vec::new());
+        assert!(!board.fish_pets.iter().any(|pet| pet.id == old));
+        assert_eq!(
+            board
+                .fish_pets
+                .iter()
+                .find(|pet| pet.id == peer)
+                .unwrap()
+                .age,
+            1
+        );
+        let fresh = board
+            .fish_pets
+            .iter()
+            .find(|pet| pet.kind == FishPetKind::Presto)
+            .unwrap();
+        assert_eq!(fresh.age, 0);
+        assert_eq!(fresh.walter.recoil, 0);
+        assert!(fresh.glove.is_none());
+    }
+
+    #[test]
+    fn walter_tank5_commits_glove_contact_and_flagged_return_once() {
+        let mut board =
+            AdventureState::new_profile_stage(0x3953, 5, 1, &[PetKind::Presto, PetKind::Walter], 0)
+                .unwrap();
+        let opener = board.presto_actor().unwrap().id;
+        board
+            .change_presto_form(opener, PetKind::Walter, &mut Vec::new())
+            .unwrap();
+        let flagged = board.presto_actor().unwrap().id;
+        let ordinary = board
+            .fish_pets
+            .iter()
+            .find(|pet| pet.id != flagged && pet.kind == FishPetKind::Walter)
+            .unwrap()
+            .id;
+        {
+            let parent = board
+                .fish_pets
+                .iter_mut()
+                .find(|pet| pet.id == ordinary)
+                .unwrap();
+            parent.widget_x = 100;
+            parent.widget_y = 100;
+            parent.x = 100.0;
+            parent.y = 100.0;
+            parent.walter_action = 35;
+            parent.glove = Some(crate::walter::Glove::new(true));
+        }
+        {
+            let target = board
+                .fish_pets
+                .iter_mut()
+                .find(|pet| pet.id == flagged)
+                .unwrap();
+            target.widget_x = 120;
+            target.widget_y = 100;
+            target.x = 120.0;
+            target.y = 100.0;
+            target.age = 30;
+        }
+        let mut events = Vec::new();
+        board.update_fish_pets(&mut events);
+        assert_eq!(
+            board
+                .fish_pets
+                .iter()
+                .find(|pet| pet.id == flagged)
+                .unwrap()
+                .walter
+                .recoil,
+            49
+        );
+        board
+            .fish_pets
+            .iter_mut()
+            .find(|pet| pet.id == ordinary)
+            .unwrap()
+            .glove = None;
+        board
+            .fish_pets
+            .iter_mut()
+            .find(|pet| pet.id == flagged)
+            .unwrap()
+            .walter
+            .recoil = 41;
+        board.update_fish_pets(&mut events);
+        assert!(!board.fish_pets.iter().any(|pet| pet.id == flagged));
+        assert_eq!(board.presto_actor().unwrap().kind, PetKind::Presto);
+        assert_eq!(events.iter().filter(|event| matches!(event, Event::PrestoChanged { old_id, .. } if *old_id == flagged)).count(), 1);
+        let fresh_id = board.presto_actor().unwrap().id;
+        assert_eq!(
+            board
+                .fish_pets
+                .iter()
+                .find(|pet| pet.id == fresh_id)
+                .unwrap()
+                .age,
+            0
+        );
+    }
+
+    #[test]
+    fn walter_recoil_one_returns_flagged_form_but_idle_zero_does_not() {
+        let mut board = AdventureState::new_time_trial(0x3954, 1, &[PetKind::Presto]).unwrap();
+        let opener = board.presto_actor().unwrap().id;
+        board
+            .change_presto_form(opener, PetKind::Walter, &mut Vec::new())
+            .unwrap();
+        let old = board.presto_actor().unwrap().id;
+        let target = board
+            .fish_pets
+            .iter_mut()
+            .find(|pet| pet.id == old)
+            .unwrap();
+        target.walter.recoil = 1;
+        target.walter.impulse = 10.0;
+        board.update_fish_pets(&mut Vec::new());
+        assert_eq!(board.presto_actor().unwrap().kind, PetKind::Presto);
+        assert_ne!(board.presto_actor().unwrap().id, old);
+        let opener = board.presto_actor().unwrap().id;
+        board
+            .change_presto_form(opener, PetKind::Walter, &mut Vec::new())
+            .unwrap();
+        let idle = board.presto_actor().unwrap().id;
+        board.update_fish_pets(&mut Vec::new());
+        assert_eq!(board.presto_actor().unwrap().id, idle);
+    }
+
+    #[test]
+    fn walter_flagged_gash_owes_meal_and_clock_before_recoil_return() {
+        let mut board = AdventureState::new_time_trial(0x3955, 1, &[PetKind::Presto]).unwrap();
+        let opener = board.presto_actor().unwrap().id;
+        board
+            .change_presto_form(opener, PetKind::Gash, &mut Vec::new())
+            .unwrap();
+        let gash_id = board.presto_actor().unwrap().id;
+        let prey_id = board.fish[0].id;
+        board.fish[0].x = 100.0;
+        board.fish[0].y = 100.0;
+        board.fish[0].size = FishSize::Large;
+        board.fish[1].x = 500.0;
+        board.fish[1].y = 300.0;
+        let gash = board
+            .fish_pets
+            .iter_mut()
+            .find(|pet| pet.id == gash_id)
+            .unwrap();
+        gash.x = 100.0;
+        gash.y = 100.0;
+        gash.widget_x = 100;
+        gash.widget_y = 100;
+        gash.gash_timer = 1571;
+        gash.walter.recoil = 41;
+        gash.walter.impulse = 10.0;
+        let mut events = Vec::new();
+        board.update_fish_pets(&mut events);
+        assert!(events.iter().any(
+            |event| matches!(event, Event::GashAteGuppy { guppy_id, .. } if *guppy_id == prey_id)
+        ));
+        assert!(!board.fish.iter().any(|fish| fish.id == prey_id));
+        assert_eq!(board.presto_actor().unwrap().kind, PetKind::Presto);
+        assert!(events.iter().any(
+            |event| matches!(event, Event::PrestoChanged { old_id, .. } if *old_id == gash_id)
+        ));
+    }
 
     #[test]
     fn unflagged_stinky_constructor_uses_primary_anchor_across_adventure_tanks() {

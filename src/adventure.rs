@@ -20,6 +20,7 @@ pub(crate) fn results_offer(cursor: u8) -> Option<(PetKind, u32)> {
         0 => Some((PetKind::Brinkley, 20_000)),
         1 => Some((PetKind::Nostradamus, 25_000)),
         2 => Some((PetKind::Stanley, 30_000)),
+        3 => Some((PetKind::Walter, 35_000)),
         _ => None,
     }
 }
@@ -701,7 +702,10 @@ impl AdventureSession {
         if self.progress.purchase_cursor >= 3 {
             expected_unlocks.push(PetKind::Stanley);
         }
-        if self.progress.purchase_cursor > 3
+        if self.progress.purchase_cursor >= 4 {
+            expected_unlocks.push(PetKind::Walter);
+        }
+        if self.progress.purchase_cursor > 4
             || self.progress.unlocked_pets != expected_unlocks
             || (!self.progress.adventure_completed
                 && (self.progress.tank, self.progress.level) == (5, 2))
@@ -747,6 +751,15 @@ impl AdventureSession {
                     .any(|pet| pet.kind == crate::fish_pet::FishPetKind::Stanley)
         }) {
             return Err("Stanley actor exceeds profile pet entitlement".into());
+        }
+        if self.board.as_ref().is_some_and(|board| {
+            !self.progress.has_pet(PetKind::Walter)
+                && board
+                    .fish_pets
+                    .iter()
+                    .any(|pet| pet.kind == crate::fish_pet::FishPetKind::Walter)
+        }) {
+            return Err("Walter actor exceeds profile pet entitlement".into());
         }
         if self.mode == GameMode::TimeTrial {
             return self.validate_time_trial();
@@ -3284,6 +3297,64 @@ mod tests {
                 .apply_actions(&[Action::ConfirmBonusPurchase { accept: true }])
                 .iter()
                 .any(|event| matches!(event, Event::BonusPurchaseCommitted { .. }))
+        );
+    }
+
+    #[test]
+    fn bonus_purchase_cursor_three_walter_debits_once_and_ends_at_four() {
+        let mut session = bonus_purchase_session(35_000, 0, 30);
+        session.progress.purchase_cursor = 3;
+        session.progress.unlocked_pets.extend([
+            PetKind::Brinkley,
+            PetKind::Nostradamus,
+            PetKind::Stanley,
+        ]);
+        let AdventurePhase::BonusResults { result } = &mut session.phase else {
+            unreachable!()
+        };
+        result.purchase.offered_cursor = 3;
+        session.validate().unwrap();
+        assert!(
+            session
+                .apply_actions(&[Action::OfferBonusPurchase])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::BonusPurchaseOffered {
+                        pet: PetKind::Walter,
+                        price: 35_000,
+                        ..
+                    }
+                ))
+        );
+        let events = session.apply_actions(&[Action::ConfirmBonusPurchase { accept: true }]);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::BonusPurchaseCommitted {
+                        pet: PetKind::Walter,
+                        price: 35_000,
+                        shell_balance: 0,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(session.progress.purchase_cursor, 4);
+        assert_eq!(
+            session.progress.unlocked_pets.last(),
+            Some(&PetKind::Walter)
+        );
+        assert!(session.board.is_none());
+        session.validate().unwrap();
+        assert!(
+            !session
+                .apply_actions(&[Action::OfferBonusPurchase])
+                .iter()
+                .any(|event| matches!(event, Event::BonusPurchaseOffered { .. }))
         );
     }
 

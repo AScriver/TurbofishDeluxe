@@ -1125,6 +1125,7 @@ impl Presentation {
                 FishPetKind::Brinkley => "IMAGE_BRINKLEY",
                 FishPetKind::Nostradamus => "IMAGE_NOSTRADAMUS",
                 FishPetKind::Stanley => "IMAGE_STANLEY",
+                FishPetKind::Walter => "IMAGE_WALTER",
             };
             let (cell_width, cell_height) = if pet.kind == FishPetKind::Amp {
                 (160.0, 60.0)
@@ -1146,6 +1147,23 @@ impl Presentation {
                 1.0,
                 1.0,
             );
+            if pet.kind == FishPetKind::Walter
+                && let Some(glove) = pet.glove
+            {
+                // IMAGE_WALTER is the installed 10x3, 80px-cell atlas.
+                // Row 2/column 5 is its Glove artwork. Its pose comes
+                // from the physical parent's persisted child state.
+                // Retail Draw ordering and effects remain unverified.
+                self.sprite(
+                    "IMAGE_WALTER",
+                    (glove.x + 40) as f32,
+                    glove.y as f32,
+                    Some(Rect::new(400.0, 160.0, 80.0, 80.0)),
+                    glove.right,
+                    1.0,
+                    1.0,
+                );
+            }
             if pet.kind == FishPetKind::Angie {
                 self.additive_tinted_sprite(
                     "IMAGE_HALO",
@@ -2489,6 +2507,7 @@ impl Presentation {
             PetKind::Brinkley => "BRINKLEY",
             PetKind::Nostradamus => "NOSTRADAMUS",
             PetKind::Stanley => "STANLEY",
+            PetKind::Walter => "WALTER",
             _ => unreachable!("implemented results offer"),
         };
         if receipt.purchased {
@@ -2661,6 +2680,7 @@ impl Presentation {
                 PetKind::Brinkley => ("IMAGE_BRINKLEY", 90.0, updates % 20 / 2),
                 PetKind::Nostradamus => ("IMAGE_NOSTRADAMUS", 90.0, updates % 20 / 2),
                 PetKind::Stanley => ("IMAGE_STANLEY", 90.0, updates % 20 / 2),
+                PetKind::Walter => ("IMAGE_WALTER", 90.0, updates % 40 / 4),
             };
             let (preview_x, preview_width, preview_height) = if pet == PetKind::Amp {
                 (236.0, 160.0, 60.0)
@@ -2714,6 +2734,7 @@ impl Presentation {
                     PetKind::Brinkley => "BRINKLEY",
                     PetKind::Nostradamus => "NOSTRADAMUS",
                     PetKind::Stanley => "STANLEY",
+                    PetKind::Walter => "WALTER",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -2813,6 +2834,7 @@ impl Presentation {
                 PetKind::Brinkley => ["BRINKLEY eats food", "and drops coins.", ""],
                 PetKind::Nostradamus => ["NOSTRADAMUS makes", "special food.", ""],
                 PetKind::Stanley => ["STANLEY launches", "missiles at aliens.", ""],
+                PetKind::Walter => ["WALTER punches fish", "with his glove.", ""],
             };
             for (index, line) in description.iter().enumerate() {
                 self.centered_text(
@@ -2908,6 +2930,7 @@ impl Presentation {
                 PetKind::Brinkley => "IMAGE_SCL_BRINKLEY",
                 PetKind::Nostradamus => "IMAGE_SCL_NOSTRADAMUS",
                 PetKind::Stanley => "IMAGE_SCL_STANLEY",
+                PetKind::Walter => "IMAGE_SCL_WALTER",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
@@ -3152,6 +3175,12 @@ impl Presentation {
                     "IMAGE_STANLEY",
                     "STANLEY",
                     ["STANLEY launches", "missiles at aliens.", ""],
+                    90.0,
+                ),
+                PetKind::Walter => (
+                    "IMAGE_WALTER",
+                    "WALTER",
+                    ["WALTER punches fish", "with his glove.", ""],
                     90.0,
                 ),
             };
@@ -4706,6 +4735,7 @@ pub async fn run(
                         | Event::TimeTrialStarted { .. }
                         | Event::TimeTrialPetAcquired { .. }
                         | Event::PrestoChanged { .. }
+                        | Event::WalterPunched { .. }
                         | Event::TimeTrialExpired { .. }
                         | Event::TimeTrialShellsCredited { .. }
                         | Event::Invasion {

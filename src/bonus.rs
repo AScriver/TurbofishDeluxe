@@ -137,9 +137,9 @@ impl PurchaseReceipt {
     }
 
     pub fn validate(&self, updates: u32) -> Result<(), String> {
-        if self.offered_cursor > 3
-            || (self.confirming && (self.purchased || self.offered_cursor >= 3 || updates < 30))
-            || (self.purchased && (self.offered_cursor >= 3 || updates < 30))
+        if self.offered_cursor > 4
+            || (self.confirming && (self.purchased || self.offered_cursor >= 4 || updates < 30))
+            || (self.purchased && (self.offered_cursor >= 4 || updates < 30))
         {
             return Err("invalid results purchase receipt".into());
         }

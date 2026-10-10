@@ -4,6 +4,7 @@
 //! for their full movement and animation remains partial. Board membership,
 //! alien health, guppy construction, sounds, and effects belong to the caller.
 
+use crate::walter::{Glove, WalterImpact};
 use serde::{Deserialize, Serialize};
 
 const GASH_MEAL_THRESHOLD: i32 = 1570;
@@ -28,6 +29,7 @@ pub enum FishPetKind {
     Brinkley,
     Nostradamus,
     Stanley,
+    Walter,
 }
 
 /// Constructor-owned flag and recharge clock for a Presto-origin pet:
@@ -134,6 +136,8 @@ pub struct NimbusFoodRequest {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FishPetUpdate {
+    /// Board replaces a flagged target after committing this update's actions.
+    pub walter_return: bool,
     pub damaged_alien: Option<u64>,
     pub born_at: Option<(i32, i32)>,
     pub free_food: Option<ZorfFoodRequest>,
@@ -252,6 +256,14 @@ pub struct FishPetState {
     /// Raw22 +23c: decremented before action dispatch, shared native slot
     /// with Brinkley's cooldown but active only for this concrete kind.
     pub stanley_diversion_cooldown: u8,
+    /// Independent GameObject age, shared recoil and raw19/23 punch state.
+    pub age: u32,
+    pub walter: WalterImpact,
+    pub walter_action: u8,
+    pub walter_punches: u8,
+    pub walter_cooldown: u16,
+    #[serde(deserialize_with = "Option::<Glove>::deserialize")]
+    pub glove: Option<Glove>,
     /// The actor owns the source +238 cooldown and transformed-form flag.
     #[serde(default)]
     pub presto_form: Option<PrestoForm>,
@@ -267,6 +279,10 @@ pub struct FishPetState {
     /// Source +0x1bc capped steering counter (may retain values above five).
     vx_abs: u8,
     swim_counter: u8,
+    #[serde(skip)]
+    common_prepared: bool,
+    #[serde(skip)]
+    defer_gash_tail: bool,
 }
 
 impl FishPetState {
@@ -437,6 +453,12 @@ impl FishPetState {
             nostra_converted: false,
             stanley_action_ticks: 0,
             stanley_diversion_cooldown: 0,
+            age: 0,
+            walter: WalterImpact::default(),
+            walter_action: 0,
+            walter_punches: 0,
+            walter_cooldown: 0,
+            glove: None,
             presto_form: (kind == FishPetKind::Presto).then_some(PrestoForm { remaining_ticks: 0 }),
             published_x: widget_x,
             published_y: widget_y,
@@ -456,6 +478,8 @@ impl FishPetState {
             x_direction: 1,
             vx_abs: 0,
             swim_counter: 0,
+            common_prepared: false,
+            defer_gash_tail: false,
         }
     }
 
@@ -504,7 +528,7 @@ impl FishPetState {
                     79
                 } else if self.kind == FishPetKind::Shrapnel {
                     59
-                } else if self.kind == FishPetKind::Nimbus {
+                } else if matches!(self.kind, FishPetKind::Nimbus | FishPetKind::Walter) {
                     39
                 } else {
                     19
@@ -568,6 +592,15 @@ impl FishPetState {
             || (self.kind != FishPetKind::Stanley && self.stanley_action_ticks != 0)
             || (self.kind == FishPetKind::Stanley && self.stanley_diversion_cooldown > 90)
             || (self.kind != FishPetKind::Stanley && self.stanley_diversion_cooldown != 0)
+            || !self.walter.validate()
+            || self.walter_action > 40
+            || self.walter_punches > 4
+            || self.walter_cooldown > 360
+            || self.glove.is_some_and(|glove| !glove.validate())
+            || (self.kind != FishPetKind::Walter
+                && (self.walter_action != 0 || self.glove.is_some()))
+            || (!matches!(self.kind, FishPetKind::Walter | FishPetKind::Presto)
+                && (self.walter_punches != 0 || self.walter_cooldown != 0))
             || self
                 .presto_form
                 .is_some_and(|form| form.remaining_ticks > 360)
@@ -582,6 +615,89 @@ impl FishPetState {
             return self.turn_ticks > 0;
         }
         self.vx >= 0.0 && (self.vx as i32 != 0 || self.previous_vx >= 0.0)
+    }
+
+    /// Board invokes this before subtype begin actions; standalone tick wrappers
+    /// invoke it through tick_inner. Child coordinates are last widget pose.
+    pub fn begin_common_update(&mut self) -> Option<(i32, i32)> {
+        self.common_prepared = true;
+        self.age = self.age.saturating_add(1);
+        let mut contact = None;
+        if let Some(mut glove) = self.glove
+            && self.walter_action <= 35
+        {
+            glove.x = self.widget_x - if glove.right { 20 } else { 60 };
+            glove.y = self.widget_y;
+            glove.lifetime -= 1;
+            if glove.lifetime > 0 {
+                glove.feedback = glove.feedback.saturating_sub(1);
+                if glove.lifetime > 12 {
+                    contact = Some(glove.center());
+                }
+                self.glove = Some(glove);
+            } else {
+                self.glove = None;
+            }
+        }
+        self.walter_cooldown = self.walter_cooldown.saturating_sub(1);
+        contact
+    }
+
+    pub fn set_glove_feedback(&mut self) {
+        if let Some(glove) = &mut self.glove
+            && glove.feedback == 0
+        {
+            glove.feedback = 5;
+        }
+    }
+
+    pub fn walter_ready_for_input(&self) -> bool {
+        self.kind == FishPetKind::Walter
+            && self.walter_action == 0
+            && self.turn_ticks == 0
+            && self.glove.is_none()
+            && self.walter_cooldown == 0
+    }
+
+    /// Returns whether a child was made. A ready widget still consumes an
+    /// input when the direction helper supplies the zero/zero no-child case.
+    pub fn try_punch_walter(&mut self) -> bool {
+        if !self.walter_ready_for_input() {
+            return false;
+        }
+        let right = if self.vx < 0.0 || (self.vx < 1.0 && self.previous_vx < 0.0) {
+            false
+        } else if self.vx == 0.0 && self.previous_vx == 0.0 {
+            return false;
+        } else {
+            true
+        };
+        self.glove = Some(Glove::new(right));
+        self.walter_action = 40;
+        self.walter_punches += 1;
+        if self.walter_punches > 4 {
+            self.walter_punches = 0;
+            self.walter_cooldown = 360;
+            // 004fb680 fifth-child path clears FishTypePet +1ac.
+            self.movement_state = 0;
+        }
+        true
+    }
+
+    pub fn walter_hitbox_contains(&self, x: i32, y: i32) -> bool {
+        self.kind == FishPetKind::Walter
+            && (self.widget_x..self.widget_x + 80).contains(&x)
+            && (self.widget_y..self.widget_y + 80).contains(&y)
+    }
+
+    pub fn defer_gash_tail(&mut self) {
+        self.defer_gash_tail = true;
+    }
+
+    pub fn finish_gash_tail(&mut self, rand_range: &mut impl FnMut(u64) -> u64) -> bool {
+        assert_eq!(self.kind, FishPetKind::Gash);
+        self.defer_gash_tail = false;
+        self.common_tail(false, rand_range)
     }
 
     pub fn sprite_pose(&self) -> FishPetPose {
@@ -655,7 +771,8 @@ impl FishPetState {
             FishPetKind::Presto
             | FishPetKind::Brinkley
             | FishPetKind::Nostradamus
-            | FishPetKind::Stanley => u8::from(self.turn_ticks != 0),
+            | FishPetKind::Stanley
+            | FishPetKind::Walter => u8::from(self.turn_ticks != 0),
         }
     }
 
@@ -1094,7 +1211,8 @@ impl FishPetState {
                 (self.widget_x + 4, self.widget_y + 2),
             ]);
         }
-        let _motion = self.tick_inner(&[], 0, &[], PetTargetViews::None, false, rand_range);
+        let motion = self.tick_inner(&[], 0, &[], PetTargetViews::None, false, rand_range);
+        ward.walter_return = motion.walter_return;
         ward
     }
 
@@ -1119,6 +1237,10 @@ impl FishPetState {
         amp_charge_clock_allowed: bool,
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> FishPetUpdate {
+        if !self.common_prepared {
+            self.begin_common_update();
+        }
+        self.common_prepared = false;
         let mut update = FishPetUpdate::default();
         let tank5 = matches!(targets, PetTargetViews::Tank5);
         let hunting = self.kind == FishPetKind::Itchy && !aliens.is_empty();
@@ -1149,7 +1271,9 @@ impl FishPetState {
         self.movement_timer += 1;
         if self.movement_timer > 20 {
             self.movement_timer = 0;
-            if rand_range(10) == 0 {
+            if rand_range(10) == 0
+                && (self.kind != FishPetKind::Walter || self.walter_cooldown == 0)
+            {
                 self.movement_state = rand_range(9) as u8 + 1;
             }
         }
@@ -1210,6 +1334,31 @@ impl FishPetState {
             self.amp_timer = self.amp_timer.wrapping_add(1);
             update.amp_became_ready = self.amp_timer == self.amp_threshold;
         }
+        if self.defer_gash_tail {
+            return update;
+        }
+        update.walter_return = self.common_tail(!aliens.is_empty(), rand_range);
+        update
+    }
+
+    fn common_tail(
+        &mut self,
+        aliens_present: bool,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> bool {
+        let had_recoil = self.walter.recoil > 0;
+        self.x += self.walter.tick_recoil();
+        if self.presto_form.is_some()
+            && self.kind != FishPetKind::Presto
+            && had_recoil
+            && self.walter.recoil < 41
+        {
+            if let Some(form) = &mut self.presto_form {
+                form.remaining_ticks = 0;
+            }
+            return true;
+        }
+        self.walter.secondary = self.walter.secondary.saturating_sub(1);
         if self.kind == FishPetKind::Amp {
             self.vy = self.vy.clamp(-0.5, 0.5);
         } else {
@@ -1256,7 +1405,7 @@ impl FishPetState {
                 self.glint_phase = -1.0;
             }
         }
-        if self.kind == FishPetKind::Gumbo && !aliens.is_empty() && self.turn_ticks == 0 {
+        if self.kind == FishPetKind::Gumbo && aliens_present && self.turn_ticks == 0 {
             self.glint_phase += 0.1;
             if self.glint_phase >= 1.0 {
                 self.glint_phase = -1.0;
@@ -1284,7 +1433,7 @@ impl FishPetState {
         if let Some(form) = &mut self.presto_form {
             form.remaining_ticks = form.remaining_ticks.saturating_sub(1);
         }
-        update
+        false
     }
 
     /// W1 FishTypePet::Hungry/FindNearestFood/HungryBehavior/CollideWithFood.
@@ -1649,7 +1798,11 @@ impl FishPetState {
     fn wander(&mut self) {
         match self.movement_state {
             0 => {
-                self.vy = 0.5;
+                self.vy = if self.kind == FishPetKind::Walter && self.walter_cooldown > 0 {
+                    1.0
+                } else {
+                    0.5
+                };
                 if self.special_timer >= 40 {
                     self.special_timer = 0;
                     if self.vx < -0.5 {
@@ -1727,16 +1880,27 @@ impl FishPetState {
         let reversing =
             (self.previous_vx < 0.0 && self.vx > 0.0) || (self.previous_vx > 0.0 && self.vx < 0.0);
         if reversing {
-            if self.kind == FishPetKind::Prego && self.birth_timer > self.birth_threshold - 220 {
+            if (self.kind == FishPetKind::Walter && self.glove.is_some())
+                || (self.kind == FishPetKind::Prego
+                    && self.birth_timer > self.birth_threshold - 220)
+            {
                 self.vx = 0.0;
             } else {
                 self.turn_ticks = if self.vx > 0.0 { -20 } else { 20 };
             }
         }
+        let turn_before = self.turn_ticks;
         if self.turn_ticks > 0 {
             self.turn_ticks -= 1;
         } else if self.turn_ticks < 0 {
             self.turn_ticks += 1;
+        }
+        if self.kind == FishPetKind::Walter {
+            if turn_before != 0 && self.turn_ticks == 0 {
+                self.walter_action = 0;
+            } else if turn_before == 0 {
+                self.walter_action = self.walter_action.saturating_sub(1);
+            }
         }
         if self.turn_ticks != 0 {
             self.frame = if self.turn_ticks > 0 {
@@ -1761,7 +1925,7 @@ impl FishPetState {
                     79
                 } else if self.kind == FishPetKind::Shrapnel {
                     59
-                } else if self.kind == FishPetKind::Nimbus {
+                } else if matches!(self.kind, FishPetKind::Nimbus | FishPetKind::Walter) {
                     39
                 } else {
                     19
@@ -1789,7 +1953,7 @@ impl FishPetState {
                     self.glint_phase = -1.0;
                 }
                 self.swim_counter / 2
-            } else if self.kind == FishPetKind::Nimbus {
+            } else if matches!(self.kind, FishPetKind::Nimbus | FishPetKind::Walter) {
                 self.swim_counter / 4
             } else {
                 self.swim_counter / 2
@@ -1807,6 +1971,87 @@ impl FishPetState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn walter_glove_pose_bounds_accept_birth_and_reject_overflow() {
+        let mut glove = Glove::new(true);
+        assert!(glove.validate());
+        glove.x = 530;
+        glove.y = 550;
+        assert!(glove.validate());
+        glove.x = 531;
+        assert!(!glove.validate());
+        glove.x = i32::MAX;
+        assert!(!glove.validate());
+    }
+
+    #[test]
+    fn walter_glove_waits_for_action_35_then_tracks_parent_and_fifth_punch_cools() {
+        let mut pet = FishPetState::spawn_tank1(7, FishPetKind::Walter, &mut |_| 0);
+        assert!(pet.try_punch_walter());
+        assert_eq!(pet.glove.unwrap().x, -200);
+        assert_eq!(pet.walter_action, 40);
+        pet.walter_action = 36;
+        assert_eq!(pet.begin_common_update(), None);
+        assert_eq!(pet.glove.unwrap().lifetime, 30);
+        pet.walter_action = 35;
+        assert_eq!(
+            pet.begin_common_update(),
+            Some((pet.widget_x + 60, pet.widget_y + 40))
+        );
+        assert_eq!(pet.glove.unwrap().lifetime, 29);
+        pet.movement_state = 3;
+        for _ in 1..5 {
+            pet.glove = None;
+            pet.walter_action = 0;
+            assert!(pet.try_punch_walter());
+        }
+        assert_eq!((pet.walter_punches, pet.walter_cooldown), (0, 360));
+        assert_eq!(pet.movement_state, 0);
+        pet.movement_timer = 20;
+        pet.common_prepared = false;
+        let mut draws = Vec::new();
+        pet.tick(&[], 0, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(pet.walter_cooldown, 359);
+        assert_eq!(pet.vy, 1.0);
+        assert_eq!(pet.movement_state, 0);
+        assert_eq!(draws, [10]);
+        assert!(!pet.try_punch_walter());
+        // The very update that expires cooldown sees ordinary state-zero
+        // vertical speed and admits the second random state draw again.
+        pet.walter_cooldown = 1;
+        pet.movement_timer = 20;
+        pet.common_prepared = false;
+        draws.clear();
+        pet.tick(&[], 0, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(pet.walter_cooldown, 0);
+        assert_eq!(pet.vy, 0.5);
+        assert_eq!(pet.movement_state, 1);
+        assert_eq!(draws, [10, 9]);
+    }
+
+    #[test]
+    fn walter_direction_and_required_nullable_glove_are_independent() {
+        let mut pet = FishPetState::spawn_tank1(7, FishPetKind::Walter, &mut |_| 0);
+        pet.vx = 0.5;
+        pet.previous_vx = -1.0;
+        assert!(pet.try_punch_walter());
+        assert!(!pet.glove.unwrap().right);
+        pet.glove = None;
+        pet.walter_action = 0;
+        pet.vx = 1.0;
+        assert!(pet.try_punch_walter());
+        assert!(pet.glove.unwrap().right);
+        let mut encoded = serde_json::to_value(&pet).unwrap();
+        encoded.as_object_mut().unwrap().remove("glove");
+        assert!(serde_json::from_value::<FishPetState>(encoded).is_err());
+    }
 
     #[test]
     fn presto_constructor_distinguishes_raw_and_flagged_forms_and_position_draws() {

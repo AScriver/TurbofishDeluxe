@@ -5,6 +5,7 @@
 //! W1 bubble membership/constructors and optional meal particles are not
 //! modeled, so the RNG schedule is only bounded through constructor draws.
 
+use crate::walter::WalterImpact;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +59,7 @@ pub struct OscarState {
     pub coin_timer: u16,
     pub coin_threshold: u16,
     pub bought_timer: u8,
+    pub walter: WalterImpact,
     speed_mod: f64,
     previous_vx: f64,
     movement_state: u8,
@@ -276,6 +278,7 @@ impl OscarState {
             coin_timer: 0,
             coin_threshold,
             bought_timer: 0,
+            walter: WalterImpact::default(),
             speed_mod,
             previous_vx: if vx < 0.0 { -1.0 } else { 1.0 },
             movement_state,
@@ -358,6 +361,7 @@ impl OscarState {
             || self.eating_ticks > 20
             || self.bought_timer > 54
             || self.hunger_animation_ticks > 5
+            || !self.walter.validate()
         {
             return Err("invalid ordinary Oscar save state".into());
         }
@@ -436,6 +440,8 @@ impl OscarState {
                 }
             }
         }
+        self.x += self.walter.tick_recoil();
+        self.walter.secondary = self.walter.secondary.saturating_sub(1);
         if self.vx == 0.0 {
             self.y += 1.0 / self.speed_mod;
         }
