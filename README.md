@@ -10,7 +10,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 
 ## Start here
 
-- Current36 integrates [paged Help/earned Stories](docs/shared-interface.md#help-and-earned-stories) and [screensaver preferences/preview/Windows host](docs/screensaver.md). Focused checks/build/package passed. [Virtual Tank](docs/virtual-tank.md), [Sandbox](docs/sandbox.md), [shared interface/ending](docs/shared-interface.md), [Challenge](docs/challenge.md) and [Adventure replay](docs/adventure-replay.md) remain integrated. Next: saver income and remaining functional omissions. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
+- Current36/profile2 integrates [paged Help/earned Stories](docs/shared-interface.md#help-and-earned-stories) and [screensaver preview/Windows host/credit transactions](docs/screensaver.md). Focused checks/build/package passed. [Virtual Tank](docs/virtual-tank.md), [Sandbox](docs/sandbox.md), [shared interface/ending](docs/shared-interface.md), [Challenge](docs/challenge.md) and [Adventure replay](docs/adventure-replay.md) remain integrated. Next: saver fish continuation and remaining functional omissions. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
 - Agents: read [AGENTS.md](AGENTS.md), then follow its startup order.
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).
@@ -103,7 +103,7 @@ $buildIdentityPath = Read-Host 'Associated host build receipt path'
 .\scripts\New-ScreensaverPackage.ps1 -BuildIdentityPath $buildIdentityPath
 ```
 
-The package command was exercised: it verifies associated build artifacts and places a byte-identical `.scr`, DLLs/notices and host license under ignored `target/screensaver/<build-id>`. It does not register or activate Windows settings. `/p <HWND>` supports a supplied preview parent; actual embedding/focus/dismissal/monitor/audio acceptance is pending. [Screensaver](docs/screensaver.md#windows-boundary) owns limitations; persistent saver earnings are the next increment.
+The package command was exercised: it verifies associated build artifacts and places a byte-identical `.scr`, DLLs/notices and host license under ignored `target/screensaver/<build-id>`. It does not register or activate Windows settings. `/s` requires an existing current project profile and banks income on graceful exit; normal profile entry claims it once. Previews do not earn persistent shells. Profile manager format2 rejects older managers/missing metadata without backfill; session format stays36. `/p <HWND>` supports a supplied preview parent; actual embedding/focus/dismissal/monitor/audio acceptance is pending. [Screensaver](docs/screensaver.md) owns limitations; fish-state continuation remains pending.
 
 After changing a PowerShell script, run the host validator first; its `-ArgumentList` forwards focused options:
 
