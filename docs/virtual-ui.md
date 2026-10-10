@@ -174,3 +174,13 @@ owned commit. Validation identity is base`d782184` plus only the six new owned
 Rust modules and this note; core/model/app/Cargo files are unchanged in this
 increment. Incoming unrelated main commits do not convert these checks into
 native acceptance.
+
+After fetching main at`ae57ee4c00c018f11eeec76975db3669260fcd9d`, the owned
+implementation commit`b540ac2ef160bcd2436fab5decbf963c9e6ffd4d` merged without
+conflicts as`2a4781b4355114241d17cc5296df2a8f21a51ce5`. The incoming changes
+leave `virtual_tank.rs`, `sim.rs`, Cargo files and VT transaction handlers
+unchanged; `adventure.rs` adds only separate saver-continuation methods.
+Strict harness lint/compile and build passed against the merged production
+crate. No unchanged contract filters were repeated for this reconciliation.
+The receipt in ignored `.scratch/virtual-ui/validation.local.json` retains the
+owned source, dependency lock, unit executable and merged library digests.
