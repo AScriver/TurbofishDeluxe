@@ -108,24 +108,52 @@ impl AdventureProgress {
 pub enum AdventurePhase {
     Playing,
     TimeTrialTankSelection,
-    TimeTrialPetSelection { tank: u8, selected: Vec<PetKind> },
+    TimeTrialPetSelection {
+        tank: u8,
+        selected: Vec<PetKind>,
+    },
     TimeTrialPlaying,
-    TimeTrialInvasionTutorial { tip: InvasionTip },
+    TimeTrialPrestoDialog {
+        opener_id: u64,
+        pressed: Option<PetKind>,
+    },
+    TimeTrialInvasionTutorial {
+        tip: InvasionTip,
+    },
     TimeTrialTimesUp,
     TimeTrialResults,
-    TimeTrialGameOver { updates: u32 },
+    TimeTrialGameOver {
+        updates: u32,
+    },
     FirstTankRescue,
-    InvasionTutorial { tip: InvasionTip },
-    GameOver { updates: u32 },
+    InvasionTutorial {
+        tip: InvasionTip,
+    },
+    GameOver {
+        updates: u32,
+    },
     GameSelector,
     HelpScreen,
-    Hatch { pet: PetKind, updates: u32 },
-    TankFourFinaleHatch { updates: u32 },
+    Hatch {
+        pet: PetKind,
+        updates: u32,
+    },
+    TankFourFinaleHatch {
+        updates: u32,
+    },
     AdventureFinaleInterlude,
-    PetSelection { selected: Vec<PetKind> },
-    PetSelectionConfirmation { selected: Vec<PetKind> },
-    Bonus { state: BonusState },
-    BonusResults { result: BonusResult },
+    PetSelection {
+        selected: Vec<PetKind>,
+    },
+    PetSelectionConfirmation {
+        selected: Vec<PetKind>,
+    },
+    Bonus {
+        state: BonusState,
+    },
+    BonusResults {
+        result: BonusResult,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -738,7 +766,7 @@ impl AdventureSession {
                     && self.progress.unlocked_pets.len() >= 4
                     && selected.len() <= 3
                     && selected.iter().all(|pet| {
-                        time_trial::SUPPORTED_PETS.contains(pet) && self.progress.has_pet(*pet)
+                        time_trial::selectable_pet(*pet) && self.progress.has_pet(*pet)
                     })
                     && self
                         .progress
@@ -757,6 +785,7 @@ impl AdventureSession {
             }
             (
                 AdventurePhase::TimeTrialPlaying
+                | AdventurePhase::TimeTrialPrestoDialog { .. }
                 | AdventurePhase::TimeTrialInvasionTutorial { .. }
                 | AdventurePhase::TimeTrialTimesUp
                 | AdventurePhase::TimeTrialResults
@@ -786,14 +815,12 @@ impl AdventureSession {
                             != run.initial_pets)
                     || (self.progress.unlocked_pets.len() < 4
                         && run.initial_pets != self.progress.unlocked_pets)
-                    || run
-                        .initial_pets
-                        .iter()
-                        .chain(&run.acquired_pets)
-                        .any(|pet| {
-                            !time_trial::SUPPORTED_PETS.contains(pet)
-                                || !self.progress.has_pet(*pet)
-                        })
+                    || run.initial_pets.iter().any(|pet| {
+                        !time_trial::selectable_pet(*pet) || !self.progress.has_pet(*pet)
+                    })
+                    || run.acquired_pets.iter().any(|pet| {
+                        !time_trial::SUPPORTED_PETS.contains(pet) || !self.progress.has_pet(*pet)
+                    })
                     || run
                         .initial_pets
                         .iter()
@@ -808,6 +835,14 @@ impl AdventureSession {
                             .invasion
                             .as_ref()
                             .is_some_and(|wave| wave.pending_modal.is_some()))
+                    || (matches!(self.phase, AdventurePhase::TimeTrialPrestoDialog { .. })
+                        && !matches!(self.phase,
+                            AdventurePhase::TimeTrialPrestoDialog { opener_id, pressed }
+                                if board.presto_actor().is_some_and(|actor|
+                                    actor.id == opener_id && actor.remaining_ticks == 0)
+                                    && pressed.is_none_or(|pet|
+                                        time_trial::selectable_pet(pet)
+                                            && self.progress.has_pet(pet))))
                     || (matches!(self.phase, AdventurePhase::TimeTrialInvasionTutorial { .. })
                         && board.invasion.as_ref().and_then(|wave| wave.pending_modal)
                             != match &self.phase {
@@ -907,8 +942,7 @@ impl AdventureSession {
                     });
                     match action {
                         Action::TogglePet { pet }
-                            if self.progress.has_pet(*pet)
-                                && time_trial::SUPPORTED_PETS.contains(pet) =>
+                            if self.progress.has_pet(*pet) && time_trial::selectable_pet(*pet) =>
                         {
                             if let Some(i) = selected.iter().position(|old| old == pet) {
                                 selected.remove(i);
@@ -950,7 +984,27 @@ impl AdventureSession {
                     let Some(board) = self.board.as_mut() else {
                         continue;
                     };
-                    if *action == Action::BuyEgg {
+                    if let Action::RightClick { x, y } = action {
+                        events.push(Event::Action {
+                            tick: board.tick,
+                            action: action.clone(),
+                        });
+                        if let Some(opener_id) = board.presto_hit(*x as i32, *y as i32)
+                            && board
+                                .presto_actor()
+                                .is_some_and(|actor| actor.remaining_ticks == 0)
+                        {
+                            self.phase = AdventurePhase::TimeTrialPrestoDialog {
+                                opener_id,
+                                pressed: None,
+                            };
+                        } else {
+                            events.push(Event::Rejected {
+                                tick: board.tick,
+                                reason: Rejection::Locked,
+                            });
+                        }
+                    } else if *action == Action::BuyEgg {
                         events.push(Event::Action {
                             tick: board.tick,
                             action: action.clone(),
@@ -992,6 +1046,59 @@ impl AdventureSession {
                         }
                     } else {
                         events.extend(board.apply(action.clone()));
+                    }
+                }
+                AdventurePhase::TimeTrialPrestoDialog {
+                    opener_id,
+                    mut pressed,
+                } => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    match action {
+                        Action::PrestoPress { pet }
+                            if time_trial::selectable_pet(*pet) && self.progress.has_pet(*pet) =>
+                        {
+                            pressed = Some(*pet);
+                            self.phase =
+                                AdventurePhase::TimeTrialPrestoDialog { opener_id, pressed };
+                        }
+                        Action::PrestoRelease { pet } => {
+                            if let Some(target) = (*pet).filter(|kind| {
+                                Some(*kind) == pressed
+                                    && time_trial::selectable_pet(*kind)
+                                    && self.progress.has_pet(*kind)
+                            }) {
+                                match self.board.as_mut().unwrap().change_presto_form(
+                                    opener_id,
+                                    target,
+                                    &mut events,
+                                ) {
+                                    Ok(crate::fish_pet::PrestoChangeEligibility::CoolingDown) => {
+                                        events.push(Event::Rejected {
+                                            tick: self.ticks,
+                                            reason: Rejection::Locked,
+                                        })
+                                    }
+                                    Ok(_) => {}
+                                    Err(_) => events.push(Event::Rejected {
+                                        tick: self.ticks,
+                                        reason: Rejection::Locked,
+                                    }),
+                                }
+                            }
+                            self.phase = AdventurePhase::TimeTrialPlaying;
+                            entered_playing = true;
+                        }
+                        Action::PrestoCancel | Action::OpenMenu => {
+                            self.phase = AdventurePhase::TimeTrialPlaying;
+                            entered_playing = true;
+                        }
+                        _ => events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        }),
                     }
                 }
                 AdventurePhase::TimeTrialInvasionTutorial { .. } => {
@@ -1499,6 +1606,7 @@ impl AdventureSession {
             }
             AdventurePhase::Playing
             | AdventurePhase::TimeTrialPlaying
+            | AdventurePhase::TimeTrialPrestoDialog { .. }
             | AdventurePhase::TimeTrialInvasionTutorial { .. }
             | AdventurePhase::TimeTrialTankSelection
             | AdventurePhase::TimeTrialPetSelection { .. }
@@ -1542,7 +1650,9 @@ impl AdventureSession {
 
     pub fn paused_step(&mut self) {
         self.ticks += 1;
-        if let Some(board) = &mut self.board {
+        if !matches!(self.phase, AdventurePhase::TimeTrialPrestoDialog { .. })
+            && let Some(board) = &mut self.board
+        {
             board.paused_board_update();
         }
     }
@@ -2115,6 +2225,105 @@ mod tests {
         assert_eq!(session.board.as_ref().unwrap().egg_price, 99_999);
         assert_eq!(session.time_trial.as_ref().unwrap().egg_purchases, 10);
         session.validate().unwrap();
+    }
+
+    #[test]
+    fn time_trial_commits_unlocked_presto_but_pet_eggs_still_exclude_raw_nineteen() {
+        let mut session = tank_five_session(0);
+        session.progress.tank = 5;
+        session.progress.level = 2;
+        session.progress.adventure_completed = true;
+        session.progress.unlocked_pets.push(PetKind::Presto);
+        session.board = None;
+        session.phase = AdventurePhase::GameSelector;
+        session.apply_actions(&[Action::PlayTimeTrial]);
+        session.apply_actions(&[Action::SelectTimeTrialTank { tank: 2 }]);
+        session.apply_actions(&[Action::TogglePet {
+            pet: PetKind::Presto,
+        }]);
+        session.apply_actions(&[Action::Continue]);
+        assert_eq!(session.phase, AdventurePhase::TimeTrialPlaying);
+        assert_eq!(
+            session.time_trial.as_ref().unwrap().initial_pets,
+            [PetKind::Presto]
+        );
+        let board = session.board.as_ref().unwrap();
+        assert_eq!(board.pets, [PetKind::Presto]);
+        assert_eq!(board.presto_actor().unwrap().kind, PetKind::Presto);
+        assert_eq!(
+            board
+                .time_trial_candidates(&session.progress.unlocked_pets)
+                .len(),
+            19
+        );
+        assert!(
+            !board
+                .time_trial_candidates(&session.progress.unlocked_pets)
+                .contains(&PetKind::Presto)
+        );
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn time_trial_presto_dialog_matches_release_and_survives_pause_reload() {
+        let mut session = tank_five_session(0);
+        session.progress.tank = 5;
+        session.progress.level = 2;
+        session.progress.adventure_completed = true;
+        session.progress.unlocked_pets.push(PetKind::Presto);
+        session.board = None;
+        session.phase = AdventurePhase::GameSelector;
+        session.apply_actions(&[
+            Action::PlayTimeTrial,
+            Action::SelectTimeTrialTank { tank: 1 },
+            Action::TogglePet {
+                pet: PetKind::Presto,
+            },
+            Action::Continue,
+        ]);
+        let actor = session.board.as_ref().unwrap().presto_actor().unwrap();
+        let tick = session.board.as_ref().unwrap().tick;
+        session.apply_actions(&[Action::RightClick {
+            x: (actor.widget_x + 4) as f32,
+            y: (actor.widget_y + 4) as f32,
+        }]);
+        assert!(
+            matches!(session.phase, AdventurePhase::TimeTrialPrestoDialog {
+            opener_id, pressed: None } if opener_id == actor.id)
+        );
+        session.apply_actions(&[Action::PrestoPress { pet: PetKind::Niko }]);
+        for _ in 0..8 {
+            session.step(&[]);
+            session.paused_step();
+        }
+        assert_eq!(session.board.as_ref().unwrap().tick, tick);
+        let bytes = serde_json::to_vec(&session).unwrap();
+        let mut resumed: AdventureSession = serde_json::from_slice(&bytes).unwrap();
+        resumed.validate().unwrap();
+        resumed.apply_actions(&[Action::PrestoRelease {
+            pet: Some(PetKind::Prego),
+        }]);
+        assert_eq!(resumed.phase, AdventurePhase::TimeTrialPlaying);
+        assert_eq!(
+            resumed.board.as_ref().unwrap().presto_actor().unwrap(),
+            actor
+        );
+        resumed.apply_actions(&[
+            Action::RightClick {
+                x: (actor.widget_x + 4) as f32,
+                y: (actor.widget_y + 4) as f32,
+            },
+            Action::PrestoPress { pet: PetKind::Niko },
+            Action::PrestoRelease {
+                pet: Some(PetKind::Niko),
+            },
+        ]);
+        let next = resumed.board.as_ref().unwrap().presto_actor().unwrap();
+        assert_ne!(next.id, actor.id);
+        assert_eq!(next.kind, PetKind::Niko);
+        assert_eq!(next.remaining_ticks, 360);
+        assert_eq!(resumed.board.as_ref().unwrap().pets, [PetKind::Presto]);
+        resumed.validate().unwrap();
     }
 
     #[test]

@@ -37,6 +37,12 @@ pub const SUPPORTED_PETS: [PetKind; 19] = [
     PetKind::Angie,
 ];
 
+/// Raw 19 is a committed initial choice after the finale, but never a pet egg
+/// candidate. Forms 20..23 remain unsupported by the current actor model.
+pub fn selectable_pet(pet: PetKind) -> bool {
+    SUPPORTED_PETS.contains(&pet) || pet == PetKind::Presto
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct TimeTrialScores {
     pub personal_best: [i32; 4],

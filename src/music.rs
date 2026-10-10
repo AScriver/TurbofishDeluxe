@@ -75,6 +75,7 @@ impl MusicCue {
             | AdventurePhase::TimeTrialResults => Some(Self::PetSelection),
             AdventurePhase::Playing
             | AdventurePhase::TimeTrialPlaying
+            | AdventurePhase::TimeTrialPrestoDialog { .. }
             | AdventurePhase::TimeTrialInvasionTutorial { .. }
             | AdventurePhase::FirstTankRescue
             | AdventurePhase::InvasionTutorial { .. } => {

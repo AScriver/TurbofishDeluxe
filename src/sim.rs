@@ -9,7 +9,8 @@ use crate::{
     clyde::{ClydeCoinView, ClydeState},
     fish_pet::{
         AmpTap, AngieCorpseView, FishPetKind, FishPetState, GashFishView, NimbusCoinView,
-        NimbusFoodView, PetAlienView, WardFishView, ZorfHungryView,
+        NimbusFoodView, PetAlienView, PrestoChangeEligibility, PrestoForm, WardFishView,
+        ZorfHungryView,
     },
     gekko::{DeadGekko, GekkoPrey, GekkoPreyKind, GekkoState},
     grubber::{DeadGrubber, GrubberPrey, GrubberState},
@@ -133,6 +134,17 @@ pub(crate) const TANK5_PETS: [PetKind; 18] = [
     PetKind::Gash,
 ];
 
+/// A transient view of the single physical actor backing logical Presto.
+/// The actor collections remain the only durable current-form authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PrestoActorView {
+    pub id: u64,
+    pub kind: PetKind,
+    pub widget_x: i32,
+    pub widget_y: i32,
+    pub remaining_ticks: u16,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StinkyOrigin {
     StageStart,
@@ -145,6 +157,7 @@ pub enum StinkyOrigin {
 pub struct StinkyState {
     /// Project identity for Tank5 targeting; ordinary Stinky is not prey.
     pub combat_id: Option<u64>,
+    pub presto_form: Option<PrestoForm>,
     pub x: f64,
     pub y: f64,
     pub vx: f64,
@@ -183,6 +196,9 @@ impl StinkyState {
             return Err("invalid Stinky motion".into());
         }
         if self.frame >= 10
+            || self
+                .presto_form
+                .is_some_and(|form| form.remaining_ticks > 360)
             || !(-20..=20).contains(&self.turn_animation_timer)
             || self.specialty_timer > 9
             || self.movement_state > 9
@@ -557,6 +573,10 @@ pub struct NoteState {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Action {
     Click { x: f32, y: f32 },
+    RightClick { x: f32, y: f32 },
+    PrestoPress { pet: PetKind },
+    PrestoRelease { pet: Option<PetKind> },
+    PrestoCancel,
     BuyGuppy,
     BuyEgg,
     BuyFoodQuality,
@@ -638,6 +658,13 @@ pub enum Event {
         tick: u64,
         pet: PetKind,
         price: i32,
+    },
+    PrestoChanged {
+        tick: u64,
+        old_id: u64,
+        new_id: u64,
+        from: PetKind,
+        to: PetKind,
     },
     TimeTrialExpired {
         tick: u64,
@@ -1911,7 +1938,7 @@ impl AdventureState {
             || pets.len() > 3
             || pets
                 .iter()
-                .any(|pet| !crate::time_trial::SUPPORTED_PETS.contains(pet))
+                .any(|pet| !crate::time_trial::selectable_pet(*pet))
             || pets
                 .iter()
                 .enumerate()
@@ -1954,6 +1981,194 @@ impl AdventureState {
             .collect()
     }
 
+    pub(crate) fn presto_actor(&self) -> Option<PrestoActorView> {
+        for pet in &self.stinky {
+            if let (Some(id), Some(form)) = (pet.combat_id, pet.presto_form) {
+                return Some(PrestoActorView {
+                    id,
+                    kind: PetKind::Stinky,
+                    widget_x: pet.x as i32,
+                    widget_y: pet.y as i32,
+                    remaining_ticks: form.remaining_ticks,
+                });
+            }
+        }
+        for pet in &self.niko {
+            if let Some(form) = pet.presto_form {
+                return Some(PrestoActorView {
+                    id: pet.owner_id,
+                    kind: PetKind::Niko,
+                    widget_x: pet.anchor_x,
+                    widget_y: pet.anchor_y,
+                    remaining_ticks: form.remaining_ticks,
+                });
+            }
+        }
+        for pet in &self.clyde {
+            if let Some(form) = pet.presto_form {
+                return Some(PrestoActorView {
+                    id: pet.id,
+                    kind: PetKind::Clyde,
+                    widget_x: pet.widget_x,
+                    widget_y: pet.widget_y,
+                    remaining_ticks: form.remaining_ticks,
+                });
+            }
+        }
+        for pet in &self.rufus {
+            if let Some(form) = pet.presto_form {
+                return Some(PrestoActorView {
+                    id: pet.id,
+                    kind: PetKind::Rufus,
+                    widget_x: pet.widget_x,
+                    widget_y: pet.widget_y,
+                    remaining_ticks: form.remaining_ticks,
+                });
+            }
+        }
+        for pet in &self.rhubarb {
+            if let Some(form) = pet.presto_form {
+                return Some(PrestoActorView {
+                    id: pet.id,
+                    kind: PetKind::Rhubarb,
+                    widget_x: pet.widget_x,
+                    widget_y: pet.widget_y,
+                    remaining_ticks: form.remaining_ticks,
+                });
+            }
+        }
+        self.fish_pets.iter().find_map(|pet| {
+            pet.presto_form.map(|form| PrestoActorView {
+                id: pet.id,
+                kind: Self::pet_kind_from_fish(pet.kind),
+                widget_x: pet.widget_x,
+                widget_y: pet.widget_y,
+                remaining_ticks: form.remaining_ticks,
+            })
+        })
+    }
+
+    pub(crate) fn presto_hit(&self, x: i32, y: i32) -> Option<u64> {
+        self.presto_actor()
+            .filter(|actor| {
+                (actor.widget_x..actor.widget_x + 80).contains(&x)
+                    && (actor.widget_y..actor.widget_y + 80).contains(&y)
+            })
+            .map(|actor| actor.id)
+    }
+
+    fn pet_kind_from_fish(kind: FishPetKind) -> PetKind {
+        match kind {
+            FishPetKind::Itchy => PetKind::Itchy,
+            FishPetKind::Prego => PetKind::Prego,
+            FishPetKind::Zorf => PetKind::Zorf,
+            FishPetKind::Vert => PetKind::Vert,
+            FishPetKind::Meryl => PetKind::Meryl,
+            FishPetKind::Wadsworth => PetKind::Wadsworth,
+            FishPetKind::Seymour => PetKind::Seymour,
+            FishPetKind::Shrapnel => PetKind::Shrapnel,
+            FishPetKind::Gumbo => PetKind::Gumbo,
+            FishPetKind::Blip => PetKind::Blip,
+            FishPetKind::Nimbus => PetKind::Nimbus,
+            FishPetKind::Amp => PetKind::Amp,
+            FishPetKind::Gash => PetKind::Gash,
+            FishPetKind::Angie => PetKind::Angie,
+            FishPetKind::Presto => PetKind::Presto,
+        }
+    }
+
+    fn fish_kind_from_pet(kind: PetKind) -> Option<FishPetKind> {
+        match kind {
+            PetKind::Itchy => Some(FishPetKind::Itchy),
+            PetKind::Prego => Some(FishPetKind::Prego),
+            PetKind::Zorf => Some(FishPetKind::Zorf),
+            PetKind::Vert => Some(FishPetKind::Vert),
+            PetKind::Meryl => Some(FishPetKind::Meryl),
+            PetKind::Wadsworth => Some(FishPetKind::Wadsworth),
+            PetKind::Seymour => Some(FishPetKind::Seymour),
+            PetKind::Shrapnel => Some(FishPetKind::Shrapnel),
+            PetKind::Gumbo => Some(FishPetKind::Gumbo),
+            PetKind::Blip => Some(FishPetKind::Blip),
+            PetKind::Nimbus => Some(FishPetKind::Nimbus),
+            PetKind::Amp => Some(FishPetKind::Amp),
+            PetKind::Gash => Some(FishPetKind::Gash),
+            PetKind::Angie => Some(FishPetKind::Angie),
+            PetKind::Presto => Some(FishPetKind::Presto),
+            _ => None,
+        }
+    }
+
+    /// Construct/attach/remove/detach is one Board-owned transaction. Neither
+    /// a partially changed roster nor a stale target can cross a save boundary.
+    pub(crate) fn change_presto_form(
+        &mut self,
+        opener_id: u64,
+        target: PetKind,
+        events: &mut Vec<Event>,
+    ) -> Result<PrestoChangeEligibility, String> {
+        let old = self.presto_actor().ok_or("missing Presto incarnation")?;
+        if !self.time_trial
+            || !self.pets.contains(&PetKind::Presto)
+            || old.id != opener_id
+            || !crate::time_trial::selectable_pet(target)
+        {
+            return Err("invalid Presto replacement opener or target".into());
+        }
+        if old.kind == target {
+            return Ok(PrestoChangeEligibility::SameForm);
+        }
+        if old.remaining_ticks != 0 {
+            return Ok(PrestoChangeEligibility::CoolingDown);
+        }
+        let id = self.id();
+        let mut rng_state = self.rng_state;
+        let mut draw = |upper| Self::advance_rng(&mut rng_state) % upper;
+        let (x, y) = (old.widget_x, old.widget_y);
+        match target {
+            PetKind::Stinky => self
+                .stinky
+                .push(Self::spawn_stinky_form_at(id, x, y, &mut draw)),
+            PetKind::Niko => self
+                .niko
+                .push(NikoState::spawn_presto_form_at(id, x, y, false, &mut draw)),
+            PetKind::Clyde => self
+                .clyde
+                .push(ClydeState::spawn_presto_form_at(id, x, y, false, &mut draw)),
+            PetKind::Rufus => self
+                .rufus
+                .push(RufusState::spawn_presto_form_at(id, x, y, false, &mut draw)),
+            PetKind::Rhubarb => self.rhubarb.push(RhubarbState::spawn_presto_form_at(
+                id, x, y, false, &mut draw,
+            )),
+            other => self.fish_pets.push(FishPetState::spawn_presto_form_at(
+                id,
+                Self::fish_kind_from_pet(other).ok_or("unsupported Presto form")?,
+                x,
+                y,
+                false,
+                &mut draw,
+            )),
+        }
+        self.rng_state = rng_state;
+        self.stinky.retain(|pet| pet.combat_id != Some(old.id));
+        self.niko.retain(|pet| pet.owner_id != old.id);
+        self.clyde.retain(|pet| pet.id != old.id);
+        self.rufus.retain(|pet| pet.id != old.id);
+        self.rhubarb.retain(|pet| pet.id != old.id);
+        self.fish_pets.retain(|pet| pet.id != old.id);
+        if self.detach_missile_target(old.id, events) {
+            self.finish_destructor_battle(events);
+        }
+        events.push(Event::PrestoChanged {
+            tick: self.tick,
+            old_id: old.id,
+            new_id: id,
+            from: old.kind,
+            to: target,
+        });
+        Ok(PrestoChangeEligibility::Ready)
+    }
+
     fn has_live_pet_kind(&self, kind: PetKind) -> bool {
         match kind {
             PetKind::Stinky => !self.stinky.is_empty(),
@@ -1961,7 +2176,14 @@ impl AdventureState {
             PetKind::Clyde => !self.clyde.is_empty(),
             PetKind::Rufus => !self.rufus.is_empty(),
             PetKind::Rhubarb => !self.rhubarb.is_empty(),
-            PetKind::Presto => false,
+            PetKind::Presto => {
+                self.fish_pets.iter().any(|pet| pet.presto_form.is_some())
+                    || self.stinky.iter().any(|pet| pet.presto_form.is_some())
+                    || self.niko.iter().any(|pet| pet.presto_form.is_some())
+                    || self.clyde.iter().any(|pet| pet.presto_form.is_some())
+                    || self.rufus.iter().any(|pet| pet.presto_form.is_some())
+                    || self.rhubarb.iter().any(|pet| pet.presto_form.is_some())
+            }
             other => self.fish_pets.iter().any(|pet| {
                 matches!(
                     (other, pet.kind),
@@ -1991,7 +2213,7 @@ impl AdventureState {
 
     pub(crate) fn spawn_time_trial_pet(&mut self, kind: PetKind) -> Result<(), String> {
         if !self.time_trial
-            || !crate::time_trial::SUPPORTED_PETS.contains(&kind)
+            || !crate::time_trial::selectable_pet(kind)
             || self.has_live_pet_kind(kind)
         {
             return Err("invalid Time Trial pet admission".into());
@@ -2036,6 +2258,7 @@ impl AdventureState {
                     }));
                 self.rng_state = rng_state;
             }
+            PetKind::Presto => self.spawn_fish_pet(FishPetKind::Presto),
             other => {
                 let fish_kind = match other {
                     PetKind::Itchy => FishPetKind::Itchy,
@@ -2395,6 +2618,7 @@ impl AdventureState {
         let _unused_y = self.rand_range(520) + 20;
         StinkyState {
             combat_id,
+            presto_form: None,
             x,
             // PB05 004eb5c0 fixes unflagged raw0 to00596ed0=370,
             // independently of both application mode and Board tank.
@@ -2413,6 +2637,38 @@ impl AdventureState {
             angry_timer: 0,
             random_timer: self.rand_range(250) as u16 + 250,
             origin,
+        }
+    }
+
+    /// PB05 flagged raw0 preserves the old widget pose and consumes only the
+    /// two common constructor draws; the ordinary coordinate draws stay above.
+    fn spawn_stinky_form_at(
+        id: u64,
+        x: i32,
+        y: i32,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> StinkyState {
+        StinkyState {
+            combat_id: Some(id),
+            presto_form: Some(PrestoForm {
+                remaining_ticks: 360,
+            }),
+            x: f64::from(x),
+            y: f64::from(y),
+            vx: 0.0,
+            vy: 0.0,
+            target_vx: 0.0,
+            previous_vx: 1.0,
+            frame: 0,
+            movement_state: rand_range(10) as u8,
+            movement_state_change_timer: 0,
+            chase_timer: 40,
+            movement_animation_timer: 0,
+            turn_animation_timer: 0,
+            specialty_timer: 0,
+            angry_timer: 0,
+            random_timer: rand_range(250) as u16 + 250,
+            origin: StinkyOrigin::StageStart,
         }
     }
 
@@ -2720,13 +2976,12 @@ impl AdventureState {
             || self
                 .pets
                 .iter()
-                .any(|pet| !crate::time_trial::SUPPORTED_PETS.contains(pet))
-            || self.fish_pets.iter().any(|pet| pet.presto_form.is_some())
-            || self.stinky.len() > 1
-            || self.niko.len() > 1
-            || self.clyde.len() > 1
-            || self.rufus.len() > 1
-            || self.rhubarb.len() > 1
+                .any(|pet| !crate::time_trial::selectable_pet(*pet))
+            || self.stinky.len() > 2
+            || self.niko.len() > 2
+            || self.clyde.len() > 2
+            || self.rufus.len() > 2
+            || self.rhubarb.len() > 2
             || self.upgrades.quality > 2
             || !(1..=9).contains(&self.upgrades.quantity)
             || (!self.upgrades.quality_unlocked && self.upgrades.quality > 0)
@@ -2744,10 +2999,13 @@ impl AdventureState {
                     || (food.free_from_zorf
                         && (food.quality != 1
                             || food.direction == 0
-                            || !self.pets.contains(&PetKind::Zorf)))
+                            || !(self.pets.contains(&PetKind::Zorf)
+                                || self.pets.contains(&PetKind::Presto))))
                     || (!food.free_from_zorf && food.direction != 0)
                     || (food.nimbus_rising
-                        && (!self.pets.contains(&PetKind::Nimbus) || food.direction != 0))
+                        && (!(self.pets.contains(&PetKind::Nimbus)
+                            || self.pets.contains(&PetKind::Presto))
+                            || food.direction != 0))
                     || (food.quality == 3 && (self.tank != 2 || !self.potion_unlocked))
             })
             || !(2..=12).contains(&self.weapon_strength)
@@ -2760,8 +3018,12 @@ impl AdventureState {
                     || !coin.x.is_finite()
                     || !coin.y.is_finite()
                     || (coin.kind == CoinKind::ShrapnelBomb
-                        && (!self.pets.contains(&PetKind::Shrapnel) || coin.fade_ticks != 0))
-                    || (coin.kind.is_shell() && !self.pets.contains(&PetKind::Nimbus))
+                        && (!(self.pets.contains(&PetKind::Shrapnel)
+                            || self.pets.contains(&PetKind::Presto))
+                            || coin.fade_ticks != 0))
+                    || (coin.kind.is_shell()
+                        && !(self.pets.contains(&PetKind::Nimbus)
+                            || self.pets.contains(&PetKind::Presto)))
                     || (coin.kind == CoinKind::Treasure && self.tank != 4)
                     || (coin.kind == CoinKind::DiamondPenta && self.tank != 2)
             })
@@ -2771,16 +3033,39 @@ impl AdventureState {
         {
             return Err("invalid Time Trial board counters or roster".into());
         }
-        let mut live_kinds = Vec::new();
-        for (kind, present) in [
-            (PetKind::Stinky, !self.stinky.is_empty()),
-            (PetKind::Niko, !self.niko.is_empty()),
-            (PetKind::Clyde, !self.clyde.is_empty()),
-            (PetKind::Rufus, !self.rufus.is_empty()),
-            (PetKind::Rhubarb, !self.rhubarb.is_empty()),
+        let mut plain_kinds = Vec::new();
+        let mut flagged = 0;
+        for (kind, forms) in [
+            (
+                PetKind::Stinky,
+                self.stinky
+                    .iter()
+                    .map(|pet| pet.presto_form)
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                PetKind::Niko,
+                self.niko.iter().map(|pet| pet.presto_form).collect(),
+            ),
+            (
+                PetKind::Clyde,
+                self.clyde.iter().map(|pet| pet.presto_form).collect(),
+            ),
+            (
+                PetKind::Rufus,
+                self.rufus.iter().map(|pet| pet.presto_form).collect(),
+            ),
+            (
+                PetKind::Rhubarb,
+                self.rhubarb.iter().map(|pet| pet.presto_form).collect(),
+            ),
         ] {
-            if present {
-                live_kinds.push(kind);
+            for form in forms {
+                if form.is_some() {
+                    flagged += 1;
+                } else {
+                    plain_kinds.push(kind);
+                }
             }
         }
         for pet in &self.fish_pets {
@@ -2799,19 +3084,30 @@ impl AdventureState {
                 FishPetKind::Amp => PetKind::Amp,
                 FishPetKind::Gash => PetKind::Gash,
                 FishPetKind::Angie => PetKind::Angie,
-                FishPetKind::Presto => return Err("Presto Time Trial form is pending".into()),
+                FishPetKind::Presto => PetKind::Presto,
             };
-            if live_kinds.contains(&kind) {
-                return Err("duplicate Time Trial pet kind".into());
+            if pet.presto_form.is_some() {
+                flagged += 1;
+            } else {
+                plain_kinds.push(kind);
             }
-            live_kinds.push(kind);
         }
-        if live_kinds.iter().any(|kind| !self.pets.contains(kind))
+        if flagged != usize::from(self.pets.contains(&PetKind::Presto))
+            || plain_kinds
+                .iter()
+                .any(|kind| *kind == PetKind::Presto || !self.pets.contains(kind))
+            || plain_kinds.len() != self.pets.len() - flagged
+            || plain_kinds
+                .iter()
+                .enumerate()
+                .any(|(i, kind)| plain_kinds[..i].contains(kind))
             || self
                 .notes
                 .iter()
                 .any(|note| note.age_ticks > 100 || note.y < 0 || note.y > 550)
-            || (!self.notes.is_empty() && !self.pets.contains(&PetKind::Meryl))
+            || (!self.notes.is_empty()
+                && !self.pets.contains(&PetKind::Meryl)
+                && !self.pets.contains(&PetKind::Presto))
         {
             return Err("Time Trial physical pets or notes disagree".into());
         }
@@ -2822,10 +3118,11 @@ impl AdventureState {
     /// The profile and screen phase are checked by AdventureSession separately.
     pub fn validate(&self) -> Result<(), String> {
         let tank5 = (self.tank, self.level) == (5, 1);
-        if self.clyde.iter().any(|pet| pet.presto_form.is_some())
-            || self.niko.iter().any(|pet| pet.presto_form.is_some())
-            || self.rufus.iter().any(|pet| pet.presto_form.is_some())
-            || self.rhubarb.iter().any(|pet| pet.presto_form.is_some())
+        if !self.time_trial
+            && (self.clyde.iter().any(|pet| pet.presto_form.is_some())
+                || self.niko.iter().any(|pet| pet.presto_form.is_some())
+                || self.rufus.iter().any(|pet| pet.presto_form.is_some())
+                || self.rhubarb.iter().any(|pet| pet.presto_form.is_some()))
         {
             return Err("flagged Presto forms require a logical Presto board".into());
         }
@@ -3482,7 +3779,9 @@ impl AdventureState {
         }
         for stinky in &self.stinky {
             stinky.validate()?;
-            if tank5 != stinky.combat_id.is_some() {
+            if (tank5 || self.time_trial && stinky.presto_form.is_some())
+                != stinky.combat_id.is_some()
+            {
                 return Err("Stinky combat identity disagrees with Adventure stage".into());
             }
         }
@@ -3633,6 +3932,7 @@ impl AdventureState {
             } else {
                 (!self.time_trial && !matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=5)))
                     || !(self.pets.contains(&PetKind::Shrapnel)
+                        || (self.time_trial && self.pets.contains(&PetKind::Presto))
                         || ((self.time_trial || matches!((self.tank, self.level), (4, 3..=5)))
                             && self.pets.contains(&PetKind::Amp)))
             }
@@ -3648,15 +3948,19 @@ impl AdventureState {
             } else {
                 niko.validate()?;
             }
-            if (self.tank == 1
+            if (niko.presto_form.is_none()
+                && self.tank == 1
                 && (niko.anchor_x, niko.anchor_y) != (crate::niko::NIKO_X, crate::niko::NIKO_Y))
-                || (self.tank == 2
+                || (niko.presto_form.is_none()
+                    && self.tank == 2
                     && (niko.anchor_x, niko.anchor_y)
                         != (crate::niko::NIKO_TANK2_X, crate::niko::NIKO_TANK2_Y))
-                || (self.tank == 3
+                || (niko.presto_form.is_none()
+                    && self.tank == 3
                     && (niko.anchor_x, niko.anchor_y)
                         != (crate::niko::NIKO_TANK3_X, crate::niko::NIKO_TANK3_Y))
-                || (self.tank == 4
+                || (niko.presto_form.is_none()
+                    && self.tank == 4
                     && (niko.anchor_x, niko.anchor_y)
                         != (crate::niko::NIKO_TANK4_X, crate::niko::NIKO_TANK4_Y))
             {
@@ -3666,13 +3970,15 @@ impl AdventureState {
         for pearl in &self.pearls {
             pearl.validate()?;
             if pearl.phase == PearlPhase::Finished
-                || (!self.niko.is_empty()
+                || (!self.time_trial
+                    && !tank5
+                    && !self.niko.is_empty()
                     && self.niko.iter().all(|niko| pearl.owner_id != niko.owner_id))
             {
                 return Err("pearl owner or lifecycle disagrees".into());
             }
         }
-        if !tank5 && self.niko.is_empty() && !self.pearls.is_empty() {
+        if !tank5 && !self.time_trial && self.niko.is_empty() && !self.pearls.is_empty() {
             return Err("pearl without Niko owner".into());
         }
         // The project retains an inactive guppy record beside its same-ID
@@ -3797,6 +4103,19 @@ impl AdventureState {
                 || self.pearls.iter().any(|pearl| pearl.owner_id != owner)
             {
                 return Err("Tank 5 retired pearl owner is invalid".into());
+            }
+        }
+        if self.time_trial {
+            for pearl in &self.pearls {
+                if self.niko.iter().any(|niko| niko.owner_id == pearl.owner_id) {
+                    continue;
+                }
+                if pearl.owner_id == 0
+                    || pearl.owner_id >= self.next_id
+                    || ids.contains(&pearl.owner_id)
+                {
+                    return Err("retired pearl owner is invalid".into());
+                }
             }
         }
         Ok(())
@@ -4852,6 +5171,10 @@ impl AdventureState {
             | Action::PlayAdventure
             | Action::PlayTimeTrial
             | Action::SelectTimeTrialTank { .. }
+            | Action::RightClick { .. }
+            | Action::PrestoPress { .. }
+            | Action::PrestoRelease { .. }
+            | Action::PrestoCancel
             | Action::Continue
             | Action::TogglePet { .. }
             | Action::ConfirmPetSelection { .. }
@@ -8124,6 +8447,12 @@ impl AdventureState {
             .is_some_and(Invasion1_2::has_live_alien);
         let starcatcher_live = self.starcatchers.iter().any(|actor| actor.alive);
         for mut stinky in std::mem::take(&mut self.stinky) {
+            if stinky.presto_form.is_some() && stinky.y < 380.0 {
+                stinky.vy += 0.1;
+            }
+            if let Some(form) = &mut stinky.presto_form {
+                form.remaining_ticks = form.remaining_ticks.saturating_sub(1);
+            }
             // The installed payload ranks integer coin centers by squared distance
             // from Stinky's double center. W1's recovered source expression differs;
             // equal-distance candidates retain their original coin-list order.
@@ -8239,7 +8568,11 @@ impl AdventureState {
             }
 
             stinky.x = stinky.x.clamp(10.0, 550.0);
+            let above_floor = stinky.y > 370.0;
             stinky.y = stinky.y.clamp(95.0, 370.0);
+            if above_floor {
+                stinky.vy = 0.0;
+            }
             if stinky.x > 535.0 && stinky.vx > 0.1 {
                 stinky.movement_state = 1;
             }
@@ -13997,5 +14330,339 @@ mod tests {
             board.update_breeders(&mut Vec::new());
             assert_eq!(board.breeders[0].hunger, 399, "size={size:?}");
         }
+    }
+
+    #[test]
+    fn time_trial_presto_maps_all_twenty_raw_forms_with_new_physical_identity() {
+        for target in [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+            PetKind::Clyde,
+            PetKind::Vert,
+            PetKind::Rufus,
+            PetKind::Meryl,
+            PetKind::Wadsworth,
+            PetKind::Seymour,
+            PetKind::Shrapnel,
+            PetKind::Gumbo,
+            PetKind::Blip,
+            PetKind::Rhubarb,
+            PetKind::Nimbus,
+            PetKind::Amp,
+            PetKind::Gash,
+            PetKind::Angie,
+            PetKind::Presto,
+        ] {
+            let mut board = AdventureState::new_time_trial(0x3750, 3, &[PetKind::Presto]).unwrap();
+            let first = board.presto_actor().unwrap();
+            let before = serde_json::to_value(&board).unwrap();
+            let mut events = Vec::new();
+            let eligibility = board
+                .change_presto_form(first.id, target, &mut events)
+                .unwrap();
+            if target == PetKind::Presto {
+                assert_eq!(eligibility, PrestoChangeEligibility::SameForm);
+                assert_eq!(serde_json::to_value(&board).unwrap(), before);
+                continue;
+            }
+            assert_eq!(eligibility, PrestoChangeEligibility::Ready, "{target:?}");
+            let next = board.presto_actor().unwrap();
+            assert_eq!(next.kind, target);
+            assert_eq!(
+                (next.widget_x, next.widget_y),
+                (first.widget_x, first.widget_y)
+            );
+            assert!(next.id > first.id);
+            assert_eq!(next.remaining_ticks, 360);
+            assert_eq!(board.pets, [PetKind::Presto]);
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| matches!(event, Event::PrestoChanged { .. }))
+                    .count(),
+                1
+            );
+            board
+                .validate()
+                .unwrap_or_else(|error| panic!("{target:?}: {error}"));
+        }
+    }
+
+    #[test]
+    fn time_trial_presto_counterpart_and_recharge_boundary_preserve_roster_and_rng() {
+        let mut board =
+            AdventureState::new_time_trial(0x3751, 1, &[PetKind::Stinky, PetKind::Presto]).unwrap();
+        let first = board.presto_actor().unwrap();
+        board
+            .change_presto_form(first.id, PetKind::Stinky, &mut Vec::new())
+            .unwrap();
+        assert_eq!(board.stinky.len(), 2);
+        assert_eq!(
+            board
+                .stinky
+                .iter()
+                .filter(|pet| pet.presto_form.is_some())
+                .count(),
+            1
+        );
+        board.validate().unwrap();
+        let form = board.presto_actor().unwrap();
+        let before = serde_json::to_value(&board).unwrap();
+        assert_eq!(
+            board
+                .change_presto_form(form.id, PetKind::Niko, &mut Vec::new())
+                .unwrap(),
+            PrestoChangeEligibility::CoolingDown
+        );
+        assert_eq!(serde_json::to_value(&board).unwrap(), before);
+        board
+            .stinky
+            .iter_mut()
+            .find(|pet| pet.combat_id == Some(form.id))
+            .unwrap()
+            .presto_form
+            .as_mut()
+            .unwrap()
+            .remaining_ticks = 1;
+        board.update_stinky(&mut Vec::new());
+        assert_eq!(board.presto_actor().unwrap().remaining_ticks, 0);
+        board
+            .change_presto_form(form.id, PetKind::Niko, &mut Vec::new())
+            .unwrap();
+        assert_eq!(board.stinky.len(), 1);
+        assert_eq!(board.niko.len(), 1);
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn presto_replacement_detaches_an_assignment_to_the_retired_identity() {
+        let mut board = AdventureState::new_time_trial(0x3756, 3, &[PetKind::Presto]).unwrap();
+        let old_id = board.presto_actor().unwrap().id;
+        let missile_id = board.id();
+        // Exercise the Board transaction with an assigned missile directly.
+        // Ordinary Time Trial projectile targeting does not select pets.
+        board
+            .missiles
+            .push(ClassicMissile::launch(missile_id, old_id, 200, 200, 0));
+        board.invasion.as_mut().unwrap().battle_active = true;
+        let mut events = Vec::new();
+        board
+            .change_presto_form(old_id, PetKind::Stinky, &mut events)
+            .unwrap();
+        assert!(board.missiles.is_empty());
+        assert!(events.iter().any(|event| {
+            matches!(event, Event::MissileRemoved { missile_id: removed, .. } if *removed == missile_id)
+        }));
+        assert!(board.presto_actor().unwrap().id > old_id);
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn flagged_stinky_at_exact_floor_overshoots_before_strict_next_tick_clamp() {
+        let mut board = AdventureState::new_time_trial(0x3752, 1, &[PetKind::Presto]).unwrap();
+        let first = board.presto_actor().unwrap();
+        let fish = board
+            .fish_pets
+            .iter_mut()
+            .find(|pet| pet.id == first.id)
+            .unwrap();
+        fish.y = 370.0;
+        fish.widget_y = 370;
+        board
+            .change_presto_form(first.id, PetKind::Stinky, &mut Vec::new())
+            .unwrap();
+        board.update_stinky(&mut Vec::new());
+        assert!(board.stinky[0].y > 370.0);
+        assert_eq!(board.stinky[0].presto_form.unwrap().remaining_ticks, 359);
+        board.update_stinky(&mut Vec::new());
+        assert_eq!(board.stinky[0].y, 370.0);
+        assert_eq!(board.stinky[0].vy, 0.0);
+    }
+
+    #[test]
+    fn time_trial_retired_presto_niko_pearls_keep_distinct_owners_and_credit_once() {
+        let mut board =
+            AdventureState::new_time_trial(0x3753, 2, &[PetKind::Niko, PetKind::Presto]).unwrap();
+        let original = board.presto_actor().unwrap();
+        board
+            .change_presto_form(original.id, PetKind::Niko, &mut Vec::new())
+            .unwrap();
+        let first_owner = board.presto_actor().unwrap().id;
+        let first_pearl = board.id();
+        board
+            .pearls
+            .push(NikoPearl::spawn(first_pearl, first_owner, 100, 100));
+        board
+            .niko
+            .iter_mut()
+            .find(|pet| pet.owner_id == first_owner)
+            .unwrap()
+            .presto_form
+            .as_mut()
+            .unwrap()
+            .remaining_ticks = 0;
+        board
+            .change_presto_form(first_owner, PetKind::Prego, &mut Vec::new())
+            .unwrap();
+        let prego_id = board.presto_actor().unwrap().id;
+        board
+            .fish_pets
+            .iter_mut()
+            .find(|pet| pet.id == prego_id)
+            .unwrap()
+            .presto_form
+            .as_mut()
+            .unwrap()
+            .remaining_ticks = 0;
+        board
+            .change_presto_form(prego_id, PetKind::Niko, &mut Vec::new())
+            .unwrap();
+        let second_owner = board.presto_actor().unwrap().id;
+        let second_pearl = board.id();
+        board
+            .pearls
+            .push(NikoPearl::spawn(second_pearl, second_owner, 170, 100));
+        board
+            .niko
+            .iter_mut()
+            .find(|pet| pet.owner_id == second_owner)
+            .unwrap()
+            .presto_form
+            .as_mut()
+            .unwrap()
+            .remaining_ticks = 0;
+        board
+            .change_presto_form(second_owner, PetKind::Presto, &mut Vec::new())
+            .unwrap();
+        assert_ne!(first_owner, second_owner);
+        assert_eq!(board.niko.len(), 1); // The unrelated ordinary Niko persists.
+        board.validate().unwrap();
+        let resumed: AdventureState =
+            serde_json::from_slice(&serde_json::to_vec(&board).unwrap()).unwrap();
+        resumed.validate().unwrap();
+        let mut aliased = board.clone();
+        aliased.pearls[0].owner_id = aliased.fish[0].id;
+        assert!(aliased.validate().is_err());
+        aliased.pearls[0].owner_id = aliased.pearls[1].id;
+        assert!(aliased.validate().is_err());
+        let events = board.apply(Action::Click { x: 104.0, y: 104.0 });
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::PearlCollectionStarted {
+            owner_id, .. } if *owner_id == first_owner))
+        );
+        assert!(!board.niko[0].pearl_taken);
+        board.pearls[0].x = 100.0;
+        board.pearls[0].y = 35.0;
+        board.pearls[0].widget_x = 100;
+        board.pearls[0].widget_y = 35;
+        let balance = board.balance;
+        board.update_pearls(&mut Vec::new());
+        assert_eq!(board.balance, balance + PEARL_VALUE);
+        board.update_pearls(&mut Vec::new());
+        assert_eq!(board.balance, balance + PEARL_VALUE);
+        board.validate().unwrap();
+    }
+
+    #[test]
+    fn time_trial_presto_children_survive_later_form_changes_without_emitter_ids() {
+        let mut board = AdventureState::new_time_trial(0x3754, 3, &[PetKind::Presto]).unwrap();
+        let zorf_food = board.id();
+        board.food.push(Food {
+            id: zorf_food,
+            x: 110.0,
+            y: 120.0,
+            frame: 0,
+            ineligible_ticks: 0,
+            removal_ticks: 0,
+            quality: 1,
+            direction: 1,
+            vx: 0.0,
+            vy: 0.0,
+            animation_period: 3,
+            free_from_zorf: true,
+            nimbus_rising: false,
+        });
+        let nimbus_food = board.id();
+        board.food.push(Food {
+            id: nimbus_food,
+            x: 120.0,
+            y: 130.0,
+            frame: 0,
+            ineligible_ticks: 0,
+            removal_ticks: 0,
+            quality: 0,
+            direction: 0,
+            vx: 0.0,
+            vy: 0.0,
+            animation_period: 3,
+            free_from_zorf: false,
+            nimbus_rising: true,
+        });
+        let bomb_id = board.id();
+        board.coins.push(Coin {
+            id: bomb_id,
+            x: 180.0,
+            y: 160.0,
+            kind: CoinKind::ShrapnelBomb,
+            frame: 0,
+            animation_ticks: 0,
+            hazard_age_ticks: 0,
+            collecting: false,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+            penta_rising: false,
+        });
+        let shell_id = board.id();
+        board.coins.push(Coin {
+            id: shell_id,
+            x: 200.0,
+            y: 160.0,
+            kind: CoinKind::ShellGold,
+            frame: 0,
+            animation_ticks: 0,
+            hazard_age_ticks: 0,
+            collecting: false,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+            penta_rising: false,
+        });
+        let note_id = board.id();
+        board.notes.push(NoteState {
+            id: note_id,
+            x: 200,
+            y: 180,
+            age_ticks: 0,
+        });
+        board.bomb_shots.push(BombShot {
+            shot_type: 3,
+            x: 180,
+            y: 160,
+            age_ticks: 0,
+            frame: -1,
+            delay_ticks: 0,
+            alpha: 100,
+        });
+        let old = board.presto_actor().unwrap();
+        board
+            .change_presto_form(old.id, PetKind::Itchy, &mut Vec::new())
+            .unwrap();
+        assert_eq!(board.presto_actor().unwrap().kind, PetKind::Itchy);
+        board.validate().unwrap();
+        let resumed: AdventureState =
+            serde_json::from_slice(&serde_json::to_vec(&board).unwrap()).unwrap();
+        resumed.validate().unwrap();
+        let mut invalid = resumed;
+        invalid
+            .coins
+            .iter_mut()
+            .find(|coin| coin.id == bomb_id)
+            .unwrap()
+            .fade_ticks = 1;
+        assert!(invalid.validate().is_err());
     }
 }

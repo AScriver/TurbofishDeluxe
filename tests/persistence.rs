@@ -10,7 +10,7 @@ use turbofish_deluxe::{
 };
 
 fn historical_envelope(save: cli::ProjectSave) -> serde_json::Value {
-    assert!(save.format_version < 24);
+    assert!(save.format_version < 25);
     let mut value = serde_json::to_value(save).unwrap();
     let session = value["session"].as_object_mut().unwrap();
     session.remove("mode");
@@ -116,6 +116,40 @@ fn current_time_trial_purchase_and_board_continuation_survive_decode() {
 }
 
 #[test]
+fn current_time_trial_rejects_acquired_presto_claim_even_with_a_valid_physical_roster() {
+    let mut session = prepared_tank_five_session(0);
+    session.progress.tank = 5;
+    session.progress.level = 2;
+    session.progress.adventure_completed = true;
+    session.progress.unlocked_pets.push(PetKind::Presto);
+    session.board = None;
+    session.phase = AdventurePhase::GameSelector;
+    session.apply_actions(&[
+        Action::PlayTimeTrial,
+        Action::SelectTimeTrialTank { tank: 1 },
+        Action::TogglePet {
+            pet: PetKind::Stinky,
+        },
+        Action::Continue,
+    ]);
+    session.validate().unwrap();
+
+    session.board =
+        Some(AdventureState::new_time_trial(42, 1, &[PetKind::Stinky, PetKind::Presto]).unwrap());
+    let board = session.board.as_mut().unwrap();
+    board.egg_price = 200;
+    board.validate().unwrap();
+    let run = session.time_trial.as_mut().unwrap();
+    run.acquired_pets.push(PetKind::Presto);
+    run.egg_purchases = 1;
+    run.last_purchase_candidates = Some(1);
+    run.egg_maxed = true;
+
+    assert!(session.validate().is_err());
+    assert!(cli::decode_save(&current_bytes(session)).is_err());
+}
+
+#[test]
 fn current_tank_five_other_pets_have_canonical_arrays_and_reject_duplicate_roster() {
     let session = prepared_tank_five_session(0);
     let encoded = serde_json::to_value(cli::ProjectSave {
@@ -206,6 +240,23 @@ fn current_plain_roster_rejects_unowned_presto_form() {
     encoded["session"]["board"]["fish_pets"][0]["presto_form"] =
         serde_json::json!({"remaining_ticks":0});
     assert!(cli::decode_save(&serde_json::to_vec(&encoded).unwrap()).is_err());
+}
+
+#[test]
+fn current_twenty_five_requires_stinky_form_field_without_rewriting_old_saves() {
+    let encoded = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: second_stage_session(),
+    })
+    .unwrap();
+    assert!(encoded["session"]["board"]["stinky"][0]["presto_form"].is_null());
+    let mut missing = encoded.clone();
+    missing["session"]["board"]["stinky"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("presto_form");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+    assert!(cli::decode_save(&serde_json::to_vec(&encoded).unwrap()).is_ok());
 }
 
 fn vert_session() -> AdventureSession {
@@ -847,7 +898,7 @@ fn current_tank_four_second_pause_keeps_live_board_while_session_time_advances()
 fn current_tank_four_third_accepts_seventeen_rosters_and_persists_live_amp_setup() {
     use turbofish_deluxe::{alien::SylvesterKind, fish_pet::FishPetKind, invasion::EncounterKind};
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 24);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 25);
     let canonical = tank_four_third_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 17);
     for pet in canonical {
@@ -1108,7 +1159,7 @@ fn current_tank_four_fourth_accepts_eighteen_rosters_and_persists_gash_setup() {
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 24);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 25);
     let canonical = tank_four_fourth_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 18);
     for pet in canonical {
@@ -1361,7 +1412,7 @@ fn current_tank_four_finale_accepts_nineteen_rosters_and_starts_with_bilaterus()
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 24);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 25);
     let canonical = tank_four_finale_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 19);
     for pet in canonical {
@@ -1433,7 +1484,7 @@ fn current_twenty_one_requires_revival_clock_on_all_seven_valid_corpse_kinds() {
                 .remove("revival_ticks");
             let error = cli::decode_save(&serde_json::to_vec(&missing).unwrap()).unwrap_err();
             assert!(
-                error.to_string().contains("Incomplete format-twenty-four"),
+                error.to_string().contains("Incomplete format-twenty-five"),
                 "missing {list}[0].revival_ticks: {error}"
             );
         }

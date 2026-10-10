@@ -141,7 +141,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 24;
+pub const SAVE_FORMAT_VERSION: u32 = 25;
 
 #[cfg(test)]
 mod current_twenty_one_tests {
@@ -229,11 +229,11 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             );
         }
     }
-    if version_number == Some(24) {
+    if version_number.is_some_and(|version| (24..=25).contains(&version)) {
         let session = value
             .get("session")
             .and_then(serde_json::Value::as_object)
-            .ok_or("Format-twenty-four session missing")?;
+            .ok_or("Format-twenty-five session missing")?;
         if ["mode", "time_trial_scores", "time_trial"]
             .iter()
             .any(|field| !session.contains_key(*field))
@@ -247,7 +247,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                         .is_none()
                 })
         {
-            return Err("Incomplete format-twenty-four mode or Time Trial state".into());
+            return Err("Incomplete format-twenty-five mode or Time Trial state".into());
         }
     } else if version_number.is_some_and(|version| version < 24)
         && value.pointer("/session/mode").is_some()
@@ -350,7 +350,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=24) => {
+        Some(version @ 5..=25) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -445,7 +445,10 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                 .get("stinky")
                                 .and_then(serde_json::Value::as_array)
                                 .is_some_and(|pets| {
-                                    pets.iter().any(|pet| pet.get("combat_id").is_none())
+                                    pets.iter().any(|pet| {
+                                        pet.get("combat_id").is_none()
+                                            || (version >= 25 && pet.get("presto_form").is_none())
+                                    })
                                 }))
                         || (version >= 24
                             && ["clyde", "niko", "rufus", "rhubarb"].iter().any(|field| {
@@ -682,6 +685,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     22 => "twenty-two",
                     23 => "twenty-three",
                     24 => "twenty-four",
+                    25 => "twenty-five",
                     _ => unreachable!("bounded format range"),
                 };
                 return Err(format!(
