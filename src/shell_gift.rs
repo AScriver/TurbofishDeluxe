@@ -448,6 +448,7 @@ mod tests {
                 donor.session.board = None;
                 donor.session.phase = AdventurePhase::GameSelector;
                 donor.screensaver_claimed = 17;
+                donor.screensaver_scene_consumed = 9;
                 draft.entries[1].session.progress.shell_balance = 20;
                 draft.entries[2].session.progress.shell_balance = 77;
                 draft.global_scores.record(

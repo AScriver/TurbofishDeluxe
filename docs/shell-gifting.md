@@ -170,3 +170,28 @@ Before any Git mutation the script validator rejected an unbraced variable befor
 a colon in the private commit helper. Delimiting that variable corrected the
 parser error; no Git mutation occurred during the rejected attempt. Runtime
 checks were unaffected and were not repeated for this helper/document edit.
+
+### Main reconciliation and current receipt verification
+
+Owned-file implementation commit `4d848f68f31fc74da3db154bb7ced406f2c7253d`
+was reconciled with concurrent main in merge
+`460efc3c2d2fdbbcab4f3e84c53afc81dfa491c8`. Incoming main changes the production
+manager to profile format3 and adds `screensaver_scene_consumed`. Gift production
+logic remained unchanged; the disposable fixture now sets that receipt to9 as
+well as its existing claimed watermark17, so full-envelope comparisons prove
+both survive ordinary/capped transfers and failed writes.
+
+On the merge plus that one fixture change, formatting, strict isolated-harness
+lint, the five wallet/save cases and build passed again. The new production
+profile/session/writer inputs made those checks material; no native, broader
+runtime suite or unrelated passing filters were repeated. Current module SHA-256
+`A71E9B5634B4C2158ABBEE4411975B8F745618214495F53BCFE4FF7978F576CE`;
+`.scratch/shell-gift/verify-inputs-03.local.json` owns the updated production
+input digests. Current log `.scratch/shell-gift/verify-03.log` SHA-256
+`96A631FEB78BDD5F72B1D2DFE498A5C52631124BACE5A1C07B1A30538A3D8C7A`;
+current test executable SHA-256
+`CD86F6FE3C06B2B53BB36048694DB1E4281B3B21C20E3A54C5D39C006A237EFE`.
+The previous receipts remain historical. All owned temp saves were cleaned and
+processes exited; module registration/app/modal/render/native joins remain the
+primary owner's responsibility. The incoming selector module now defines the
+agreed `OpenGiveDialog` outcome; this chunk did not edit it.
