@@ -7,6 +7,7 @@ use crate::{
     fish_pet::FishPetKind,
     fish_songs::{FishSongPlayer, SongCatalog},
     font::BitmapFont,
+    help::{HelpController, HelpExit, HelpReturn, HelpView},
     install::{self, InstallIdentity},
     interlude::{InterludeController, MusicStage, RowContent},
     invasion::{InvasionEvent, InvasionTip},
@@ -20,6 +21,7 @@ use crate::{
         Action, AdventureState, CoinKind, Event, FishPose, FishSize, FoodType, PetKind, TICK_MS,
         VirtualPetAction,
     },
+    story::{StoryBrowser, StoryCatalog, StoryId},
     timing::{InputPress, StepClock, wall_deadline_reached},
     ultra::UltraPose,
     virtual_tank::{
@@ -143,6 +145,8 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_BOSS",
     "IMAGE_MINISYLV",
     "IMAGE_PRESTO",
+    "IMAGE_STANLEY",
+    "IMAGE_WALTER",
     "IMAGE_SCL_PRESTO",
     "IMAGE_BRINKLEY",
     "IMAGE_SCL_BRINKLEY",
@@ -241,6 +245,7 @@ void main() {
 
 pub struct Presentation {
     images: HashMap<String, Texture2D>,
+    image_cells: HashMap<String, (u32, u32)>,
     sounds: HashMap<String, Arc<[u8]>>,
     fonts: HashMap<String, RenderedFont>,
     additive: Material,
@@ -442,8 +447,10 @@ impl Presentation {
         muted: bool,
     ) -> Result<Self, Box<dyn Error>> {
         let mut images = HashMap::new();
+        let mut image_cells = HashMap::new();
         for id in IMAGE_IDS {
             let image = assets.load_image(id)?;
+            image_cells.insert((*id).into(), (image.cols, image.rows));
             let width = u16::try_from(image.width)?;
             let height = u16::try_from(image.height)?;
             let texture = Texture2D::from_rgba8(width, height, &image.pixels);
@@ -504,6 +511,7 @@ impl Presentation {
         .map_err(|error| format!("additive sprite material creation failed: {error}"))?;
         Ok(Self {
             images,
+            image_cells,
             sounds,
             fonts,
             additive,
@@ -4629,24 +4637,6 @@ impl Presentation {
                 "Continue",
             );
         }
-        if let AdventurePhase::ChallengeInterlude { tank } = session.phase {
-            draw_rectangle(72.0, 123.0, 496.0, 252.0, Color::new(0.02, 0.1, 0.15, 0.96));
-            self.centered_text(
-                "JungleFever17outline",
-                &format!("TANK {tank} COMPLETE"),
-                180.0,
-                YELLOW,
-            );
-            self.main_button(
-                Rect::new(
-                    186.0,
-                    310.0,
-                    264.0,
-                    self.images["IMAGE_MAINBUTTON"].height(),
-                ),
-                "Menu",
-            );
-        }
         if session.phase == AdventurePhase::TimeTrialTimesUp {
             draw_rectangle(72.0, 123.0, 496.0, 252.0, Color::new(0.02, 0.1, 0.15, 0.96));
             self.centered_text("JungleFever17outline", "TIME'S UP!", 180.0, YELLOW);
@@ -4739,14 +4729,15 @@ impl Presentation {
         if paused {
             draw_rectangle(
                 150.0,
-                170.0,
+                160.0,
                 340.0,
-                130.0,
+                165.0,
                 Color::new(0.02, 0.1, 0.15, 0.94),
             );
             draw_text("Paused", 266.0, 207.0, 28.0, WHITE);
             draw_text("Esc: resume    S: save", 203.0, 247.0, 21.0, WHITE);
             draw_text("Q: save and exit", 235.0, 277.0, 21.0, WHITE);
+            draw_text("F1: help", 271.0, 307.0, 21.0, WHITE);
         }
     }
 }
@@ -5083,7 +5074,6 @@ enum SelectorPanel {
     Profiles,
     Options,
     Scores,
-    Help,
 }
 
 #[derive(Clone, Copy)]
@@ -5099,6 +5089,7 @@ enum UiCommand {
     Rename(u64, String),
     Delete(u64),
     Setting(SettingChange),
+    Stories,
     Quit,
 }
 
@@ -5138,6 +5129,264 @@ fn ui_button(rect: Rect, label: &str) {
     draw_text(label, rect.x + 8.0, rect.y + rect.h * 0.7, 18.0, WHITE);
 }
 
+fn draw_help(view: HelpView) {
+    draw_rectangle(0.0, 0.0, 640.0, 480.0, Color::new(0.01, 0.05, 0.08, 0.98));
+    draw_text(view.title, 30.0, 48.0, 32.0, YELLOW);
+    if view.is_instructions() {
+        for (index, line) in view.lines.iter().enumerate() {
+            draw_text(line, 50.0, 138.0 + index as f32 * 44.0, 21.0, WHITE);
+        }
+        ui_button(Rect::new(220.0, 405.0, 200.0, 42.0), "Continue");
+        return;
+    }
+    for page in 1..=crate::help::LAST_PAGE {
+        let rect = Rect::new(20.0 + f32::from(page - 1) * 75.0, 72.0, 70.0, 32.0);
+        ui_button(rect, &page.to_string());
+        if page == view.page {
+            draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 3.0, ORANGE);
+        }
+    }
+    draw_text(
+        format!("Page {} of 8", view.page),
+        30.0,
+        142.0,
+        19.0,
+        YELLOW,
+    );
+    for (index, line) in view.lines.iter().enumerate() {
+        draw_text(line, 35.0, 185.0 + index as f32 * 43.0, 19.0, WHITE);
+    }
+    ui_button(Rect::new(35.0, 410.0, 100.0, 36.0), "Prev");
+    ui_button(Rect::new(145.0, 410.0, 100.0, 36.0), "Next");
+    ui_button(Rect::new(500.0, 410.0, 105.0, 36.0), "Return");
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StoryInput {
+    Previous,
+    Next,
+    Close,
+}
+
+fn story_input(pointer: Vec2, scroll: &mut usize) -> Option<StoryInput> {
+    let click = is_mouse_button_pressed(MouseButton::Left);
+    if is_key_pressed(KeyCode::Escape)
+        || is_key_pressed(KeyCode::Enter)
+        || (click && Rect::new(455.0, 435.0, 160.0, 34.0).contains(pointer))
+    {
+        return Some(StoryInput::Close);
+    }
+    if is_key_pressed(KeyCode::Left)
+        || (click && Rect::new(25.0, 435.0, 115.0, 34.0).contains(pointer))
+    {
+        return Some(StoryInput::Previous);
+    }
+    if is_key_pressed(KeyCode::Right)
+        || (click && Rect::new(150.0, 435.0, 115.0, 34.0).contains(pointer))
+    {
+        return Some(StoryInput::Next);
+    }
+    let wheel = mouse_wheel().1;
+    if is_key_pressed(KeyCode::PageDown) || is_key_pressed(KeyCode::Down) || wheel < 0.0 {
+        *scroll = scroll.saturating_add(3);
+    } else if is_key_pressed(KeyCode::PageUp) || is_key_pressed(KeyCode::Up) || wheel > 0.0 {
+        *scroll = scroll.saturating_sub(3);
+    }
+    None
+}
+
+fn story_lines(text: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    for paragraph in text.lines() {
+        let mut line = String::new();
+        for word in paragraph.split_whitespace() {
+            let candidate = if line.is_empty() {
+                word.to_owned()
+            } else {
+                format!("{line} {word}")
+            };
+            if !line.is_empty() && measure_text(&candidate, None, 18, 1.0).width > 550.0 {
+                lines.push(std::mem::take(&mut line));
+                line.push_str(word);
+            } else {
+                line = candidate;
+            }
+        }
+        lines.push(line);
+    }
+    lines
+}
+
+fn clamp_story_scroll(scroll: &mut usize, story: Option<StoryId>, catalog: Option<&StoryCatalog>) {
+    *scroll = match (story, catalog) {
+        (Some(id), Some(catalog)) => {
+            (*scroll).min(story_lines(&catalog.entry(id).text).len().saturating_sub(8))
+        }
+        _ => 0,
+    };
+}
+
+fn draw_story(
+    presentation: &Presentation,
+    story: Option<StoryId>,
+    catalog: Option<&StoryCatalog>,
+    unavailable: Option<&str>,
+    scroll: usize,
+) {
+    draw_rectangle(0.0, 0.0, 640.0, 480.0, Color::new(0.03, 0.16, 0.28, 1.0));
+    draw_rectangle(0.0, 0.0, 640.0, 40.0, BLACK);
+    draw_rectangle(0.0, 430.0, 640.0, 50.0, BLACK);
+    draw_text("THE STORY OF", 220.0, 65.0, 25.0, WHITE);
+    match story {
+        None => {
+            draw_text(
+                "No stories earned for this profile yet.",
+                75.0,
+                190.0,
+                23.0,
+                WHITE,
+            );
+            draw_text(
+                "Complete a Challenge to unlock one.",
+                75.0,
+                226.0,
+                20.0,
+                WHITE,
+            );
+        }
+        Some(id) => {
+            draw_text(
+                format!("{} of 33", u16::from(id.get()) + 1),
+                285.0,
+                28.0,
+                19.0,
+                WHITE,
+            );
+            if let Some(catalog) = catalog {
+                let entry = catalog.entry(id);
+                let title_size = if entry.title.len() > 38 { 19.0 } else { 23.0 };
+                let width = measure_text(&entry.title, None, title_size as u16, 1.0).width;
+                draw_text(&entry.title, 320.0 - width / 2.0, 99.0, title_size, YELLOW);
+                let image_id = if id.is_pet() {
+                    [
+                        "IMAGE_STINKY",
+                        "IMAGE_NIKO",
+                        "IMAGE_ITCHY",
+                        "IMAGE_PREGO",
+                        "IMAGE_ZORF",
+                        "IMAGE_CLYDE",
+                        "IMAGE_VERT",
+                        "IMAGE_RUFUS",
+                        "IMAGE_MERYL",
+                        "IMAGE_WADSWORTH",
+                        "IMAGE_SEYMOUR",
+                        "IMAGE_SHRAPNEL",
+                        "IMAGE_GUMBO",
+                        "IMAGE_BLIP",
+                        "IMAGE_RHUBARB",
+                        "IMAGE_NIMBUS",
+                        "IMAGE_AMP",
+                        "IMAGE_GASH",
+                        "IMAGE_ANGIE",
+                        "IMAGE_PRESTO",
+                        "IMAGE_BRINKLEY",
+                        "IMAGE_NOSTRADAMUS",
+                        "IMAGE_STANLEY",
+                        "IMAGE_WALTER",
+                    ][usize::from(id.portrait_slot())]
+                } else {
+                    [
+                        "IMAGE_SYLV",
+                        "IMAGE_BALROG",
+                        "IMAGE_GUS",
+                        "IMAGE_DESTRUCTOR",
+                        "IMAGE_ULYSSES",
+                        "IMAGE_PSYCHOSQUID",
+                        "IMAGE_BILATERUS",
+                        "IMAGE_MINISYLV",
+                        "IMAGE_BOSS",
+                    ][usize::from(id.portrait_slot())]
+                };
+                if let (Some(texture), Some(&(cols, rows))) = (
+                    presentation.images.get(image_id),
+                    presentation.image_cells.get(image_id),
+                ) {
+                    let cell = vec2(
+                        texture.width() / cols as f32,
+                        texture.height() / rows as f32,
+                    );
+                    let scale = (130.0 / cell.x).min(130.0 / cell.y).min(1.5);
+                    let size = cell * scale;
+                    draw_texture_ex(
+                        texture,
+                        320.0 - size.x / 2.0,
+                        116.0 + (130.0 - size.y) / 2.0,
+                        WHITE,
+                        DrawTextureParams {
+                            source: Some(Rect::new(0.0, 0.0, cell.x, cell.y)),
+                            dest_size: Some(size),
+                            ..Default::default()
+                        },
+                    );
+                }
+                let lines = story_lines(&entry.text);
+                let start = scroll.min(lines.len().saturating_sub(8));
+                for (index, line) in lines.iter().skip(start).take(8).enumerate() {
+                    draw_text(line, 45.0, 273.0 + index as f32 * 19.0, 18.0, WHITE);
+                }
+                if lines.len() > 8 {
+                    draw_text("Up/Down: scroll", 475.0, 423.0, 14.0, YELLOW);
+                }
+            } else {
+                draw_text("Story catalog unavailable", 160.0, 205.0, 24.0, YELLOW);
+                if let Some(reason) = unavailable {
+                    for (index, line) in story_lines(reason).iter().take(3).enumerate() {
+                        draw_text(line, 45.0, 265.0 + index as f32 * 24.0, 18.0, WHITE);
+                    }
+                }
+            }
+        }
+    }
+    ui_button(Rect::new(25.0, 435.0, 115.0, 34.0), "Previous");
+    ui_button(Rect::new(150.0, 435.0, 115.0, 34.0), "Next");
+    ui_button(Rect::new(455.0, 435.0, 160.0, 34.0), "Back to menu");
+}
+
+fn help_input(help: &mut HelpController, pointer: Vec2) -> Option<HelpExit> {
+    let view = help.view()?;
+    let click = is_mouse_button_pressed(MouseButton::Left);
+    if view.is_instructions() {
+        if is_key_pressed(KeyCode::Enter)
+            || (click && Rect::new(220.0, 405.0, 200.0, 42.0).contains(pointer))
+        {
+            return help.continue_intro();
+        }
+        return None;
+    }
+    if is_key_pressed(KeyCode::Escape)
+        || (click && Rect::new(500.0, 410.0, 105.0, 36.0).contains(pointer))
+    {
+        return help.close();
+    }
+    if is_key_pressed(KeyCode::Left)
+        || (click && Rect::new(35.0, 410.0, 100.0, 36.0).contains(pointer))
+    {
+        help.previous();
+    } else if is_key_pressed(KeyCode::Right)
+        || (click && Rect::new(145.0, 410.0, 100.0, 36.0).contains(pointer))
+    {
+        help.next_page();
+    } else if click {
+        for page in 1..=crate::help::LAST_PAGE {
+            if Rect::new(20.0 + f32::from(page - 1) * 75.0, 72.0, 70.0, 32.0).contains(pointer) {
+                help.select_page(page);
+                break;
+            }
+        }
+    }
+    None
+}
+
 fn typed_profile_name(name: &mut String) {
     if is_key_pressed(KeyCode::Backspace) {
         name.pop();
@@ -5158,6 +5407,7 @@ impl SelectorUi {
         settings: GameSettings,
         pointer: Vec2,
         selector_open: bool,
+        help: &mut HelpController,
     ) -> (bool, Option<UiCommand>) {
         if !selector_open {
             self.panel = None;
@@ -5309,7 +5559,6 @@ impl SelectorUi {
                             self.page += 1;
                         }
                     }
-                    SelectorPanel::Help => {}
                 }
             }
             return (true, None);
@@ -5319,7 +5568,6 @@ impl SelectorUi {
                 SelectorPanel::Profiles,
                 SelectorPanel::Options,
                 SelectorPanel::Scores,
-                SelectorPanel::Help,
             ]
             .into_iter()
             .enumerate()
@@ -5332,8 +5580,15 @@ impl SelectorUi {
                     return (true, None);
                 }
             }
+            if Rect::new(380.0, 8.0, 118.0, 32.0).contains(pointer) {
+                help.open_pages(HelpReturn::Selector);
+                return (true, None);
+            }
             if Rect::new(504.0, 8.0, 118.0, 32.0).contains(pointer) {
                 return (true, Some(UiCommand::Quit));
+            }
+            if Rect::new(8.0, 44.0, 118.0, 32.0).contains(pointer) {
+                return (true, Some(UiCommand::Stories));
             }
         }
         (false, None)
@@ -5350,8 +5605,9 @@ impl SelectorUi {
                     title,
                 );
             }
+            ui_button(Rect::new(8.0, 44.0, 118.0, 32.0), "Stories");
             if let Some(entry) = profiles.current() {
-                draw_text(format!("Player: {}", entry.name), 20.0, 74.0, 20.0, WHITE);
+                draw_text(format!("Player: {}", entry.name), 140.0, 67.0, 20.0, WHITE);
             }
             return;
         }
@@ -5499,22 +5755,6 @@ impl SelectorUi {
                 ui_button(Rect::new(85.0, 365.0, 85.0, 30.0), "Prev");
                 ui_button(Rect::new(455.0, 365.0, 85.0, 30.0), "Next");
             }
-            SelectorPanel::Help => {
-                draw_text("HELP", 85.0, 100.0, 29.0, YELLOW);
-                for (index, line) in [
-                    "Adventure: feed fish, collect coins, buy eggs.",
-                    "Time Trial: score before the tank timer expires.",
-                    "Challenge: finish each tank against rising prices.",
-                    "Virtual Tank: keep fish, visit store, collect shells.",
-                    "Sandbox: enter selector code after seventh pet slot.",
-                    "Esc pauses tanks; S saves; Q exits while paused.",
-                ]
-                .into_iter()
-                .enumerate()
-                {
-                    draw_text(line, 90.0, 150.0 + index as f32 * 38.0, 20.0, WHITE);
-                }
-            }
         }
         if !self.error.is_empty() {
             draw_text(&self.error, 85.0, 410.0, 18.0, ORANGE);
@@ -5545,6 +5785,23 @@ impl SelectorUi {
             ui_button(Rect::new(145.0, 310.0, 145.0, 38.0), "Confirm");
             ui_button(Rect::new(350.0, 310.0, 145.0, 38.0), "Cancel");
         }
+    }
+}
+
+fn presentation_music_cue(
+    session: &AdventureSession,
+    story_browser_open: bool,
+    interlude: Option<&InterludeController>,
+) -> Option<MusicCue> {
+    if story_browser_open {
+        Some(MusicCue::Interlude)
+    } else if session.phase == AdventurePhase::AdventureFinaleInterlude {
+        Some(match interlude.map(InterludeController::music_stage) {
+            Some(MusicStage::Lullaby) => MusicCue::Lullaby,
+            _ => MusicCue::Interlude,
+        })
+    } else {
+        MusicCue::for_session(session)
     }
 }
 
@@ -5608,6 +5865,22 @@ pub async fn run(
     let mut held_fire_at = None::<InputPress>;
     let mut healing_warning_until_tick = None::<u64>;
     let mut selector_ui = SelectorUi::default();
+    let mut help = HelpController::new();
+    let mut help_restore_paused = None::<bool>;
+    let (story_catalog, story_unavailable) =
+        match StoryCatalog::load(&game_root.join(&identity.executable)) {
+            Ok(catalog) => (Some(catalog), None),
+            Err(error) => {
+                eprintln!("Story catalog unavailable: {error}");
+                (None, Some(error.to_string()))
+            }
+        };
+    let mut story_browser_open = false;
+    let mut story_browser = None::<StoryBrowser>;
+    let mut remembered_story = StoryId::new(0).ok_or("Story ID zero is invalid")?;
+    let mut story_scroll = 0_usize;
+    let mut challenge_story_scroll = 0_usize;
+    let mut last_challenge_story = None::<StoryId>;
     let mut entry_code = EntryCode::default();
     let song_catalog = match SongCatalog::load_from_install(&game_root) {
         Ok(catalog) => Some(catalog),
@@ -5642,9 +5915,74 @@ pub async fn run(
         if profiles.current().is_none() {
             selector_ui.panel = Some(SelectorPanel::Profiles);
         }
-        let (ui_owned_input, ui_command) =
-            selector_ui.input(&profiles, settings.settings, pointer, selector_open);
-        let ui_active = selector_ui.panel.is_some() || profiles.current().is_none();
+        if profiles
+            .current()
+            .is_some_and(|entry| entry.session.phase == AdventurePhase::HelpScreen)
+            && help.view().is_none()
+            && !pending_actions.contains(&Action::Continue)
+        {
+            help.open_instructions(HelpReturn::Selector);
+        }
+        let help_was_active = help.view().is_some();
+        let help_exit = if help_was_active {
+            help_input(&mut help, pointer)
+        } else {
+            None
+        };
+        let story_was_active = story_browser_open;
+        if story_was_active {
+            match story_input(pointer, &mut story_scroll) {
+                Some(StoryInput::Close) => {
+                    story_browser_open = false;
+                    clock.clear_backlog();
+                }
+                Some(direction @ (StoryInput::Previous | StoryInput::Next)) => {
+                    if let (Some(browser), Some(current)) =
+                        (story_browser.as_mut(), profiles.current())
+                    {
+                        remembered_story = browser.step(
+                            &current.session.progress.stories,
+                            if direction == StoryInput::Next { 1 } else { -1 },
+                        );
+                        story_scroll = 0;
+                    }
+                }
+                None => {}
+            }
+            clamp_story_scroll(
+                &mut story_scroll,
+                story_browser.map(|browser| browser.current),
+                story_catalog.as_ref(),
+            );
+        }
+        let (ui_owned_input, ui_command) = if help_was_active || story_was_active {
+            (true, None)
+        } else {
+            selector_ui.input(
+                &profiles,
+                settings.settings,
+                pointer,
+                selector_open,
+                &mut help,
+            )
+        };
+        let mut help_active_frame = help_was_active || help.view().is_some();
+        let story_active_frame = story_was_active || story_browser_open;
+        let mut ui_active = selector_ui.panel.is_some()
+            || profiles.current().is_none()
+            || help_active_frame
+            || story_active_frame;
+        if let Some(exit) = help_exit {
+            match exit {
+                HelpExit::Continue => pending_actions.push(Action::Continue),
+                HelpExit::ReturnTo(HelpReturn::PausedTank) => {
+                    paused = help_restore_paused.take().unwrap_or(true);
+                }
+                HelpExit::ReturnTo(HelpReturn::Selector) => {}
+            }
+            clock.clear_backlog();
+            ui_active = true;
+        }
         if let Some(command) = ui_command {
             let profiles_path = options.save_dir.join("profiles.json");
             let result = match command {
@@ -5698,6 +6036,22 @@ pub async fn run(
                         },
                     }
                 }
+                UiCommand::Stories => {
+                    story_browser = profiles.current().and_then(|entry| {
+                        entry
+                            .session
+                            .progress
+                            .stories
+                            .open_browser(remembered_story)
+                    });
+                    if let Some(browser) = story_browser {
+                        remembered_story = browser.current;
+                    }
+                    story_scroll = 0;
+                    story_browser_open = true;
+                    ui_active = true;
+                    Ok(false)
+                }
                 UiCommand::Quit => {
                     cli::save_profiles_checkpoint(&options, &profiles)?;
                     break;
@@ -5716,6 +6070,12 @@ pub async fn run(
                         pending_song_kind = None;
                         song_title.clear();
                         interlude = None;
+                        help = HelpController::new();
+                        help_restore_paused = None;
+                        story_browser_open = false;
+                        story_browser = None;
+                        story_scroll = 0;
+                        last_challenge_story = None;
                         paused = false;
                         pending_actions.clear();
                         clock.clear_backlog();
@@ -5753,6 +6113,18 @@ pub async fn run(
                 }
                 .capabilities(),
             );
+            if let Some(view) = help.view() {
+                draw_help(view);
+            }
+            if story_browser_open {
+                draw_story(
+                    &presentation,
+                    story_browser.map(|browser| browser.current),
+                    story_catalog.as_ref(),
+                    story_unavailable.as_deref(),
+                    story_scroll,
+                );
+            }
             if settings.settings.custom_cursor {
                 draw_circle(pointer.x, pointer.y, 5.0, YELLOW);
             }
@@ -5761,6 +6133,57 @@ pub async fn run(
             continue;
         }
         let session = &mut profiles.current_mut().ok_or("No current profile")?.session;
+        if !ui_active
+            && is_key_pressed(KeyCode::F1)
+            && !matches!(
+                session.phase,
+                AdventurePhase::GameSelector | AdventurePhase::HelpScreen
+            )
+        {
+            help_restore_paused = Some(paused);
+            paused = true;
+            help.open_pages(HelpReturn::PausedTank);
+            help_active_frame = true;
+            ui_active = true;
+            clock.clear_backlog();
+            feed_press_at = None;
+            held_feed_at = None;
+            held_fire_at = None;
+        }
+        if let AdventurePhase::ChallengeInterlude { story, .. } = session.phase {
+            if last_challenge_story != Some(story) {
+                last_challenge_story = Some(story);
+                remembered_story = story;
+                challenge_story_scroll = 0;
+            }
+        } else {
+            last_challenge_story = None;
+        }
+        let story_interlude_input = if !paused
+            && !ui_active
+            && matches!(session.phase, AdventurePhase::ChallengeInterlude { .. })
+        {
+            story_input(pointer, &mut challenge_story_scroll)
+        } else {
+            None
+        };
+        if let Some(input) = story_interlude_input {
+            pending_actions.push(match input {
+                StoryInput::Previous => Action::StoryPrevious,
+                StoryInput::Next => Action::StoryNext,
+                StoryInput::Close => Action::OpenMenu,
+            });
+            if input == StoryInput::Close {
+                clock.clear_backlog();
+            }
+        }
+        if let AdventurePhase::ChallengeInterlude { story, .. } = session.phase {
+            clamp_story_scroll(
+                &mut challenge_story_scroll,
+                Some(story),
+                story_catalog.as_ref(),
+            );
+        }
         if session.phase == AdventurePhase::AdventureFinaleInterlude && interlude.is_none() {
             interlude = InterludeController::new(&session.finale_fallen_pets).ok();
         } else if session.phase != AdventurePhase::AdventureFinaleInterlude {
@@ -5787,7 +6210,11 @@ pub async fn run(
                 pending_actions.push(Action::SandboxKeyChar { character });
             }
         }
-        if !ui_owned_input && !ui_active && is_key_pressed(KeyCode::Escape) {
+        if !ui_owned_input
+            && !ui_active
+            && story_interlude_input.is_none()
+            && is_key_pressed(KeyCode::Escape)
+        {
             if matches!(session.phase, AdventurePhase::VirtualPurchaseConfirm { .. }) {
                 let now_seconds = wall_seconds();
                 pending_actions.push(Action::VirtualConfirmPurchase {
@@ -5887,7 +6314,11 @@ pub async fn run(
                 }
             }
         }
-        if !ui_owned_input && !ui_active && is_mouse_button_pressed(MouseButton::Left) {
+        if !ui_owned_input
+            && !ui_active
+            && !matches!(session.phase, AdventurePhase::ChallengeInterlude { .. })
+            && is_mouse_button_pressed(MouseButton::Left)
+        {
             if matches!(
                 session.phase,
                 AdventurePhase::TimeTrialPrestoDialog { .. }
@@ -6162,7 +6593,7 @@ pub async fn run(
                     {
                         Action::ChallengeStory
                     }
-                    AdventurePhase::ChallengeLost | AdventurePhase::ChallengeInterlude { .. }
+                    AdventurePhase::ChallengeLost
                         if Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
                     {
                         Action::Continue
@@ -6644,7 +7075,12 @@ pub async fn run(
                 | AdventurePhase::PetSelection { .. }
         ) || matches!(session.phase, AdventurePhase::GameOver { updates } | AdventurePhase::TimeTrialGameOver { updates } if updates > 30)
             || matches!(session.phase, AdventurePhase::BonusResults { ref result } if result.updates >= 30);
-        if !paused && !ui_active && is_key_pressed(KeyCode::Enter) && enter_continues {
+        if !paused
+            && !ui_active
+            && story_interlude_input.is_none()
+            && is_key_pressed(KeyCode::Enter)
+            && enter_continues
+        {
             pending_actions.push(Action::Continue);
         }
         if !paused
@@ -6673,13 +7109,16 @@ pub async fn run(
         }
         let save_requested = !ui_active && is_key_pressed(KeyCode::S);
         let mut exit_requested = is_quit_requested()
-            || (paused && is_key_pressed(KeyCode::Q))
+            || (paused && !help_active_frame && !story_active_frame && is_key_pressed(KeyCode::Q))
             || wall_deadline_reached(elapsed, options.quit_after);
         let mut events = Vec::new();
         let mut event_stamps = Vec::new();
         let mut phase_transitioned = false;
         if let Some(owner) = music.as_mut() {
-            owner.sync(session, paused);
+            owner.sync_cue(
+                presentation_music_cue(session, story_browser_open, interlude.as_ref()),
+                paused,
+            );
         }
         if save_requested || exit_requested {
             // Inputs already accepted by this window belong to the checkpoint.
@@ -6723,7 +7162,10 @@ pub async fn run(
                     pending_actions.clear();
                     break;
                 }
-                if paused || ui_active {
+                if help_active_frame || story_active_frame {
+                    // Reading screens are app-lived; even a paused Board update would
+                    // advance durable ticks or modal timers.
+                } else if paused || ui_active {
                     session.paused_step();
                 } else {
                     let before_fish_hunger: HashMap<_, _> =
@@ -6890,7 +7332,10 @@ pub async fn run(
                         }
                     }
                     if let Some(owner) = music.as_mut() {
-                        owner.sync(session, paused);
+                        owner.sync_cue(
+                            presentation_music_cue(session, story_browser_open, interlude.as_ref()),
+                            paused,
+                        );
                     }
                     phase_transitioned |= previous_phase != std::mem::discriminant(&session.phase);
                     if feed_press_at
@@ -6948,6 +7393,7 @@ pub async fn run(
         // render pass. Publish that durable observation before saving or
         // recording this frame, including when the board is paused.
         let observed_connector_change = !exit_requested
+            && !help_active_frame
             && matches!(
                 session.phase,
                 AdventurePhase::Playing
@@ -7044,14 +7490,10 @@ pub async fn run(
             }
         }
         if let Some(owner) = music.as_mut() {
-            owner.sync(session, paused);
-            if session.phase == AdventurePhase::AdventureFinaleInterlude {
-                let cue = match interlude.as_ref().map(InterludeController::music_stage) {
-                    Some(MusicStage::Lullaby) => MusicCue::Lullaby,
-                    _ => MusicCue::Interlude,
-                };
-                owner.sync_cue(Some(cue), paused);
-            }
+            owner.sync_cue(
+                presentation_music_cue(session, story_browser_open, interlude.as_ref()),
+                paused,
+            );
             music_reports.extend(owner.drain_reports());
             if let Some(reason) = owner.unavailable() {
                 music_unavailable.get_or_insert_with(|| reason.to_owned());
@@ -7100,6 +7542,15 @@ pub async fn run(
             healing_warning_until_tick,
             interlude.as_ref(),
         );
+        if let AdventurePhase::ChallengeInterlude { story, .. } = session.phase {
+            draw_story(
+                &presentation,
+                Some(story),
+                story_catalog.as_ref(),
+                story_unavailable.as_deref(),
+                challenge_story_scroll,
+            );
+        }
         if session.phase == AdventurePhase::VirtualTank && get_time() < song_title_until {
             draw_text(&song_title, 24.0, 105.0, 20.0, YELLOW);
         }
@@ -7111,6 +7562,18 @@ pub async fn run(
                     audio: music.as_ref(),
                 }
                 .capabilities(),
+            );
+        }
+        if let Some(view) = help.view() {
+            draw_help(view);
+        }
+        if story_browser_open {
+            draw_story(
+                &presentation,
+                story_browser.map(|browser| browser.current),
+                story_catalog.as_ref(),
+                story_unavailable.as_deref(),
+                story_scroll,
             );
         }
         if settings.settings.custom_cursor {

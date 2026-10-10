@@ -1,6 +1,6 @@
 # Shared interface and ending
 
-The bulk current34 increment passed focused compilation/lint and affected data-integrity/behavior checks; native execution remains not tested. [STATUS](../STATUS.md) owns E102 and the current goal/checkpoint; [coverage](compatibility.md) retains the full requirements and deferred acceptance.
+The bulk current34 increment and current36 Help/Story join passed focused compilation/lint and affected data-integrity/behavior checks; native execution remains not tested. [STATUS](../STATUS.md) owns the current goal/checkpoint; [coverage](compatibility.md) retains the full requirements and deferred acceptance.
 
 ## Ownership and usable paths
 
@@ -15,6 +15,16 @@ Global score rows are a separate copied-name ledger from personal session bests.
 Installed `fishsongs/*.txt` supply bounded parsed scores, three timed voices and optional applause. The app owns transient song admission/title and pause/exit handling; the audio owner plays the original tone samples at the requested pitch/gain. Parsed score lengths schedule notes, not sample truncation. Exact song selection/RNG, rare timing and audible fidelity remain pending.
 
 The finale retains the actual absent fixed Tank5 pet kinds before retiring the Board. A transient Interlude controller uses that saved snapshot for scroll, pet return/heal cues, later Lullaby selection and menu exit. Text rows are short project summaries, with owned sprites loaded at runtime; complete retail narration/credits, bubbles, exact layout/fades and human judgment remain deferred. A renderer/controller alone does not establish playable or retail-equivalent behavior.
+
+## Help and earned stories
+
+Current36 joins the existing instruction phase with an app-lived Help controller: page0 instructions, remembered ordinary pages1–8, direct tabs and wrapped navigation. Selector Help and tank F1 use explicit return destinations; tank Help restores its prior pause state. Both Help and selector Story browsing suspend ordinary and paused session updates and clear accumulated time on return. Their text/layout is project-authored; original Help art and animated examples remain pending.
+
+Challenge Story selection is a once-only session transaction. The profile owns a32-bit seen mask and separate Cyrax flag. PB05`00552e50` supports the four eight-story groups and gates only extra-pet stories20–23, correcting W1's all-pet gate. After all32 ordinary stories and purchase cursor>5, selection earns Cyrax32; later selection draws among earned possibilities. Browsing wraps33 IDs, skips unearned stories, and cannot unlock, advance a Board or repeat a result credit. Challenge interlude retains its earned Story ID across current36 save/reopen. Required ownership fields reject missing/pre36 saves without migration/backfill; historical constructors retained in source do not provide an import route.
+
+The catalog loads33 titles and bodies read-only from the identified owned English Steam executable. Its digest and study boundary belong to [provenance](provenance.md); no extracted lore enters Git. Unsupported identities show unavailable text. Selector Stories and Challenge interlude use this catalog, owned portraits, bounded scrolling and the existing music owner. One presentation cue function chooses Story/interlude/finale music consistently at all sync sites, avoiding competing requests each frame. Exact retail talk-show art, portrait animation, screen input and audible fidelity remain pending.
+
+E106 passed two new Story-rule cases, one Challenge ownership/browse/reopen/no-repeat-credit case and one opt-in actual owned-catalog case. An initial lint stop ran no cases. A later static join check found selector Story browsing still invoked paused bookkeeping; the UI hold was corrected, then compile/lint/build alone revalidated that presentation change. The four passing cases were not repeated. [MODLOG](../MODLOG.md#2026-10-10--integrate-help-and-earned-stories) owns the retained receipts. No native/manual/visual/audio/retail/human acceptance was performed.
 
 ## Source and verification boundaries
 

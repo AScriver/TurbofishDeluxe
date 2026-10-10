@@ -16,6 +16,7 @@ use crate::sim::VirtualBoardState;
 use crate::sim::{
     Action, AdventureState, BonusPurchaseOutcome, EGG_PRICE, Event, Rejection, TICK_MS,
 };
+use crate::story::{StoryId, StoryState};
 use crate::time_trial::{self, TimeTrialResult, TimeTrialRun, TimeTrialScores};
 use crate::virtual_tank::{
     self, FishBiography, PurchaseConfirmation, PurchaseResult, VirtualTankState,
@@ -70,6 +71,8 @@ pub struct AdventureProgress {
     pub purchase_cursor: u8,
     /// Profile completion bytes for Challenge tanks 1–4.
     pub challenge_completed: [bool; 4],
+    /// Profile+7c story bits and separate Profile+80 Cyrax flag.
+    pub stories: StoryState,
 }
 
 fn default_pet_capacity() -> u8 {
@@ -333,6 +336,7 @@ pub enum AdventurePhase {
     ChallengeLost,
     ChallengeInterlude {
         tank: u8,
+        story: StoryId,
     },
     VirtualTank,
     VirtualPrestoDialog {
@@ -1056,6 +1060,7 @@ impl AdventureSession {
                 adventure_completions: 0,
                 purchase_cursor: 0,
                 challenge_completed: [false; 4],
+                stories: StoryState::default(),
             },
             board: Some(board),
             phase: AdventurePhase::Playing,
@@ -1114,6 +1119,7 @@ impl AdventureSession {
                     adventure_completions: 0,
                     purchase_cursor: 0,
                     challenge_completed: [false; 4],
+                    stories: StoryState::default(),
                 },
                 board: None,
                 phase: AdventurePhase::Hatch {
@@ -1158,6 +1164,7 @@ impl AdventureSession {
                 adventure_completions: 0,
                 purchase_cursor: 0,
                 challenge_completed: [false; 4],
+                stories: StoryState::default(),
             },
             board: Some(board),
             phase: AdventurePhase::Playing,
@@ -1245,6 +1252,9 @@ impl AdventureSession {
             || !self.progress.adventure_completed && !self.finale_fallen_pets.is_empty()
         {
             return Err("invalid fallen Tank 5 pet snapshot".into());
+        }
+        if self.progress.stories.cyrax_unlocked && self.progress.stories.seen_mask != u32::MAX {
+            return Err("Cyrax story requires all ordinary stories".into());
         }
         self.virtual_tank
             .validate()
@@ -2183,7 +2193,8 @@ impl AdventureSession {
                             if board.presto_actor().is_some_and(|actor| actor.id == opener_id && actor.remaining_ticks == 0)
                                 && pressed.is_none_or(|pet| self.progress.has_pet(pet))))
                     || (matches!(self.phase, AdventurePhase::ChallengeResults | AdventurePhase::ChallengeInterlude { .. }) && (!board.victory || board.eggs != 3))
-                    || (matches!(self.phase, AdventurePhase::ChallengeInterlude { tank } if tank != run.tank))
+                    || (matches!(self.phase, AdventurePhase::ChallengeInterlude { tank, story }
+                        if tank != run.tank || !self.progress.stories.is_unlocked(story)))
                 {
                     return Err("Challenge phase, roster, or Board disagree".into());
                 }
@@ -2554,7 +2565,8 @@ impl AdventureSession {
                     } else if !result.purchase.confirming && *action == Action::Continue {
                         self.leave_challenge(&mut events);
                     } else if !result.purchase.confirming && *action == Action::ChallengeStory {
-                        self.phase = AdventurePhase::ChallengeInterlude { tank: result.tank };
+                        let tank = result.tank;
+                        self.open_challenge_story(tank, &mut events);
                     } else {
                         events.push(Event::Rejected {
                             tick: self.ticks,
@@ -2562,13 +2574,28 @@ impl AdventureSession {
                         });
                     }
                 }
-                AdventurePhase::ChallengeInterlude { .. } => {
+                AdventurePhase::ChallengeInterlude { tank, story } => {
                     events.push(Event::Action {
                         tick: self.ticks,
                         action: action.clone(),
                     });
                     if matches!(action, Action::Continue | Action::OpenMenu) {
                         self.leave_challenge(&mut events);
+                    } else if matches!(action, Action::StoryNext | Action::StoryPrevious) {
+                        let mut browser = self
+                            .progress
+                            .stories
+                            .open_browser(story)
+                            .expect("active Challenge story is earned");
+                        let direction = if *action == Action::StoryNext { 1 } else { -1 };
+                        let next = browser.step(&self.progress.stories, direction);
+                        self.phase = AdventurePhase::ChallengeInterlude { tank, story: next };
+                        events.push(Event::ChallengeStorySelected {
+                            tick: self.ticks,
+                            tank,
+                            story: next,
+                            newly_unlocked: false,
+                        });
                     } else {
                         events.push(Event::Rejected {
                             tick: self.ticks,
@@ -3680,6 +3707,40 @@ impl AdventureSession {
             tick: self.ticks,
             amount: reward,
             shell_balance: self.progress.shell_balance,
+        });
+    }
+
+    fn open_challenge_story(&mut self, tank: u8, events: &mut Vec<Event>) {
+        let extra_pets = [
+            PetKind::Brinkley,
+            PetKind::Nostradamus,
+            PetKind::Stanley,
+            PetKind::Walter,
+        ]
+        .map(|pet| self.progress.has_pet(pet));
+        let board = self
+            .board
+            .as_mut()
+            .expect("retained Challenge result Board");
+        let selection = self
+            .progress
+            .stories
+            .select_after_challenge(
+                tank,
+                u32::from(self.progress.purchase_cursor),
+                |id| extra_pets[usize::from(id - 20)],
+                |limit| board.draw_story_roll(limit),
+            )
+            .expect("Challenge result tank is one through four");
+        self.phase = AdventurePhase::ChallengeInterlude {
+            tank,
+            story: selection.id,
+        };
+        events.push(Event::ChallengeStorySelected {
+            tick: self.ticks,
+            tank,
+            story: selection.id,
+            newly_unlocked: selection.newly_unlocked,
         });
     }
 

@@ -141,7 +141,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 35;
+pub const SAVE_FORMAT_VERSION: u32 = 36;
 
 #[cfg(test)]
 mod current_twenty_one_tests {
@@ -207,6 +207,12 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     let version_number = value
         .get("format_version")
         .and_then(serde_json::Value::as_u64);
+    // Story ownership has no evidence-backed reconstruction from earlier
+    // project envelopes. Retain historical constructors without exposing a
+    // zero-story backfill through the current decoder.
+    if version_number.is_some_and(|version| version < u64::from(SAVE_FORMAT_VERSION)) {
+        return Err("Project saves before format thirty-six lack earned Story state".into());
+    }
     if let Some(board) = value
         .pointer("/session/board")
         .and_then(serde_json::Value::as_object)
@@ -229,7 +235,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             );
         }
     }
-    if version_number.is_some_and(|version| (24..=35).contains(&version)) {
+    if version_number.is_some_and(|version| (24..=36).contains(&version)) {
         let session = value
             .get("session")
             .and_then(serde_json::Value::as_object)
@@ -689,6 +695,17 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             return Err("Incomplete format-thirty-five Virtual Tank state".into());
         }
     }
+    if version_number.is_some_and(|version| version >= 36)
+        && value
+            .pointer("/session/progress/stories")
+            .is_none_or(|stories| {
+                ["seen_mask", "cyrax_unlocked"]
+                    .iter()
+                    .any(|key| stories.get(*key).is_none())
+            })
+    {
+        return Err("Incomplete format-thirty-six Story state".into());
+    }
     if let Some(version @ 1..=6) = version_number {
         validate_legacy_boundary(&value, version)?;
     }
@@ -785,7 +802,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=35) => {
+        Some(version @ 5..=36) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)

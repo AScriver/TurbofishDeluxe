@@ -663,6 +663,8 @@ pub enum Action {
         character: char,
     },
     ChallengeStory,
+    StoryNext,
+    StoryPrevious,
     Continue,
     HatchHold {
         down: bool,
@@ -875,6 +877,12 @@ pub enum Event {
         tick: u64,
         amount: u32,
         shell_balance: u32,
+    },
+    ChallengeStorySelected {
+        tick: u64,
+        tank: u8,
+        story: crate::story::StoryId,
+        newly_unlocked: bool,
     },
     ChallengeLost {
         tick: u64,
@@ -3425,6 +3433,12 @@ impl AdventureState {
 
     pub(crate) fn transition_seed(&self) -> u64 {
         self.rng_state
+    }
+
+    /// The retained Challenge Board supplies the story selector's shared
+    /// draw, so leaving its interlude carries the advanced RNG state onward.
+    pub(crate) fn draw_story_roll(&mut self, limit: u64) -> u64 {
+        self.rand_range(limit)
     }
 
     pub(crate) fn has_live_fish(&self) -> bool {
@@ -6723,6 +6737,8 @@ impl AdventureState {
             | Action::OpenSandbox
             | Action::SandboxKeyChar { .. }
             | Action::ChallengeStory
+            | Action::StoryNext
+            | Action::StoryPrevious
             | Action::RightClick { .. }
             | Action::PrestoPress { .. }
             | Action::PrestoRelease { .. }

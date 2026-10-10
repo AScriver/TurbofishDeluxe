@@ -3,6 +3,30 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use turbofish_deluxe::assets::{GameAssets, SoundData};
 
+#[test]
+#[ignore = "requires OWNED_GAME_DIR pointing to the recognized owned installation"]
+fn owned_story_catalog_loads_identified_titles_and_lore() {
+    use turbofish_deluxe::story::{StoryCatalog, StoryId};
+    let root = PathBuf::from(std::env::var_os("OWNED_GAME_DIR").expect("owned installation"));
+    let executable = if root.join("InsaniquariumDeluxe.exe").is_file() {
+        root.join("InsaniquariumDeluxe.exe")
+    } else {
+        root.join("Insaniquarium.exe")
+    };
+    let catalog = StoryCatalog::load(&executable).expect("identified owned story catalog");
+    let first = catalog.entry(StoryId::new(0).unwrap());
+    assert_eq!(first.title, "STINKY the Snail");
+    assert!(first.text.contains("STINKY"));
+    let finale = catalog.entry(StoryId::new(32).unwrap());
+    assert!(finale.title.starts_with("CYRAX"));
+    assert!(finale.text.contains("Cyrax"));
+    for value in 0..=32 {
+        let entry = catalog.entry(StoryId::new(value).unwrap());
+        assert!(!entry.title.trim().is_empty());
+        assert!(!entry.text.trim().is_empty());
+    }
+}
+
 struct Fixture(PathBuf);
 
 impl Fixture {

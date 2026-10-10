@@ -713,6 +713,105 @@ fn current_challenge_requires_state_keys_and_resumes_shop_and_clock() {
     }
 }
 
+#[test]
+fn current_story_earns_browses_and_reopens_without_recrediting_challenge() {
+    // Prepared Challenge result; story ownership and the result receipt are
+    // separate durable authorities.
+    let mut session = prepared_tank_five_session(0);
+    session.progress.level = 2;
+    session.progress.adventure_completed = true;
+    session.progress.adventure_completions = 1;
+    session.progress.unlocked_pets.push(PetKind::Presto);
+    session.board = None;
+    session.phase = AdventurePhase::GameSelector;
+    session.apply_actions(&[
+        Action::PlayChallenge,
+        Action::SelectChallengeTank { tank: 1 },
+        Action::TogglePet {
+            pet: PetKind::Stinky,
+        },
+        Action::TogglePet { pet: PetKind::Niko },
+        Action::TogglePet {
+            pet: PetKind::Itchy,
+        },
+        Action::Continue,
+    ]);
+    assert_eq!(session.phase, AdventurePhase::ChallengePlaying);
+    session.board.as_mut().unwrap().balance = 30_000;
+    session.apply_actions(&[Action::BuyEgg, Action::BuyEgg, Action::BuyEgg]);
+    assert_eq!(session.phase, AdventurePhase::ChallengeResults);
+    let credited_wallet = session.progress.shell_balance;
+    // An already earned alien story makes the browser skip the locked IDs.
+    session.progress.stories.seen_mask |= 1 << 24;
+    let events = session.apply_actions(&[Action::ChallengeStory]);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        turbofish_deluxe::sim::Event::ChallengeStorySelected {
+            story,
+            newly_unlocked: true,
+            ..
+        } if story.get() == 0
+    )));
+    assert!(
+        matches!(session.phase, AdventurePhase::ChallengeInterlude { story, .. } if story.get() == 0)
+    );
+    assert_eq!(session.progress.stories.seen_mask, (1 << 0) | (1 << 24));
+    let result_board_tick = session.board.as_ref().unwrap().tick;
+    session.step(&[]);
+    assert_eq!(session.board.as_ref().unwrap().tick, result_board_tick);
+    session.apply_actions(&[Action::StoryNext]);
+    assert!(
+        matches!(session.phase, AdventurePhase::ChallengeInterlude { story, .. } if story.get() == 24)
+    );
+    session.apply_actions(&[Action::StoryPrevious]);
+    assert!(
+        matches!(session.phase, AdventurePhase::ChallengeInterlude { story, .. } if story.get() == 0)
+    );
+    let repeat = session.apply_actions(&[Action::ChallengeStory]);
+    assert!(!repeat.iter().any(|event| matches!(
+        event,
+        turbofish_deluxe::sim::Event::ChallengeStorySelected {
+            newly_unlocked: true,
+            ..
+        }
+    )));
+    assert_eq!(session.progress.shell_balance, credited_wallet);
+    session.validate().unwrap();
+
+    let value = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: session.clone(),
+    })
+    .unwrap();
+    let reopened = cli::decode_save(&serde_json::to_vec(&value).unwrap()).unwrap();
+    assert_eq!(reopened.progress.stories, session.progress.stories);
+    assert_eq!(reopened.phase, session.phase);
+    assert_eq!(reopened.progress.shell_balance, credited_wallet);
+
+    for (path, key) in [
+        ("/session/progress", "stories"),
+        ("/session/progress/stories", "seen_mask"),
+        ("/session/progress/stories", "cyrax_unlocked"),
+    ] {
+        let mut missing = value.clone();
+        missing
+            .pointer_mut(path)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(key);
+        assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+    }
+    let mut bad_active = value.clone();
+    *bad_active
+        .pointer_mut("/session/phase/ChallengeInterlude/story")
+        .unwrap() = 33.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&bad_active).unwrap()).is_err());
+    let mut relabeled = value;
+    relabeled["format_version"] = 35.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&relabeled).unwrap()).is_err());
+}
+
 fn prepared_tank_five_session(attempts: u32) -> AdventureSession {
     // Prepared unit fixture at the post-4-5 boundary; it is not earned
     // progression or native-game evidence.
