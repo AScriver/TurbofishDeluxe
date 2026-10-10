@@ -10,6 +10,9 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 
+mod retained_modes;
+pub use retained_modes::RetainedScene;
+
 use crate::challenge::{self, ChallengeResult, ChallengeRun, ChallengeScores};
 pub use crate::sim::PetKind;
 use crate::sim::VirtualBoardState;
@@ -423,6 +426,9 @@ pub struct AdventureSession {
     pub challenge_scores: ChallengeScores,
     #[serde(deserialize_with = "Option::<ChallengeRun>::deserialize")]
     pub challenge: Option<ChallengeRun>,
+    pub retained_adventure: Option<RetainedScene>,
+    pub retained_time_trial: Option<RetainedScene>,
+    pub retained_challenge: Option<RetainedScene>,
     pub virtual_tank: VirtualTankState,
     #[serde(deserialize_with = "Option::<VirtualBoardState>::deserialize")]
     pub virtual_board: Option<VirtualBoardState>,
@@ -1145,6 +1151,9 @@ impl AdventureSession {
             time_trial: None,
             challenge_scores: ChallengeScores::new(),
             challenge: None,
+            retained_adventure: None,
+            retained_time_trial: None,
+            retained_challenge: None,
             virtual_tank: VirtualTankState::default(),
             virtual_board: None,
             virtual_saved_at_seconds: 0,
@@ -1207,6 +1216,9 @@ impl AdventureSession {
                 time_trial: None,
                 challenge_scores: ChallengeScores::new(),
                 challenge: None,
+                retained_adventure: None,
+                retained_time_trial: None,
+                retained_challenge: None,
                 virtual_tank: VirtualTankState::default(),
                 virtual_board: None,
                 virtual_saved_at_seconds: 0,
@@ -1249,6 +1261,9 @@ impl AdventureSession {
             time_trial: None,
             challenge_scores: ChallengeScores::new(),
             challenge: None,
+            retained_adventure: None,
+            retained_time_trial: None,
+            retained_challenge: None,
             virtual_tank: VirtualTankState::default(),
             virtual_board: None,
             virtual_saved_at_seconds: 0,
@@ -1268,6 +1283,7 @@ impl AdventureSession {
 
     /// Reject a decoded session whose board, profile, and screen disagree.
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_retained_scenes()?;
         if self.mode == GameMode::Sandbox {
             let board = self
                 .sandbox_board
@@ -1752,11 +1768,14 @@ impl AdventureSession {
                 {
                     return Err("profile-populated board disagrees with committed selection".into());
                 }
-            } else if self.progress.adventure_completed
+            } else if (self.progress.adventure_completed
                 || self.progress.purchase_cursor > 0
                 || self.progress.unlocked_pets.len() >= 4
-                    && (self.progress.tank, self.progress.level) != (5, 1)
-                    && board.pets != self.progress.selected_pets
+                    && (self.progress.tank, self.progress.level) != (5, 1))
+                && board.pets != self.progress.selected_pets
+                && !(self.progress.selected_pets.is_empty()
+                    && board.pets.len() < 4
+                    && self.progress.unlocked_pets.starts_with(&board.pets))
             {
                 return Err("active pet roster disagrees with committed selection".into());
             }
@@ -9032,5 +9051,56 @@ mod tests {
         assert!(session.board.is_none());
         session.apply_actions(&[Action::HatchHold { down: false }]);
         assert!(!session.hatch_held);
+    }
+
+    #[test]
+    fn retained_mode_roundtrip_preserves_both_boards_and_session_clock() {
+        let mut session = tank_four_first_session();
+        session.validate().unwrap();
+        let adventure_board = serde_json::to_value(&session.board).unwrap();
+        let selected = session.progress.selected_pets.clone();
+        let initial_seed = session.next_seed;
+
+        session.select_mode(GameMode::TimeTrial, 0, 0).unwrap();
+        session.apply_actions(&[Action::SelectTimeTrialTank { tank: 1 }]);
+        session.apply_actions(&[Action::Continue]);
+        assert_eq!(session.phase, AdventurePhase::TimeTrialPlaying);
+        session.step(&[]);
+        let trial_board = serde_json::to_value(&session.board).unwrap();
+        let trial_clock = session.board.as_ref().unwrap().tick;
+        let session_clock = session.ticks;
+
+        session.select_mode(GameMode::Adventure, 0, 0).unwrap();
+        assert_eq!(
+            serde_json::to_value(&session.board).unwrap(),
+            adventure_board
+        );
+        assert_eq!(session.progress.selected_pets, selected);
+        assert_eq!(session.next_seed, initial_seed);
+        assert_eq!(session.ticks, session_clock);
+
+        let bytes = serde_json::to_vec(&crate::cli::ProjectSave {
+            format_version: crate::cli::SAVE_FORMAT_VERSION,
+            session,
+        })
+        .unwrap();
+        let mut restored = crate::cli::decode_save(&bytes).unwrap();
+        restored.select_mode(GameMode::TimeTrial, 0, 0).unwrap();
+        assert_eq!(serde_json::to_value(&restored.board).unwrap(), trial_board);
+        assert_eq!(restored.board.as_ref().unwrap().tick, trial_clock);
+        assert_eq!(restored.ticks, session_clock);
+
+        restored.finish_time_trial(&mut Vec::new());
+        restored.apply_actions(&[Action::Continue]);
+        assert_eq!(restored.phase, AdventurePhase::TimeTrialResults);
+        restored.apply_actions(&[Action::OpenMenu]);
+        assert_eq!(restored.phase, AdventurePhase::GameSelector);
+        restored.validate().unwrap();
+        restored.select_mode(GameMode::Adventure, 0, 0).unwrap();
+        assert_eq!(
+            serde_json::to_value(&restored.board).unwrap(),
+            adventure_board
+        );
+        assert_eq!(restored.progress.selected_pets, selected);
     }
 }

@@ -29,6 +29,7 @@ const MAX_REPORT_BACKLOG: usize = 128;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MusicCue {
+    Menu,
     Tank1,
     Tank2,
     Tank3,
@@ -46,6 +47,7 @@ pub enum MusicCue {
 impl MusicCue {
     pub fn source(self) -> (&'static str, u32) {
         match self {
+            Self::Menu => ("Insaniq2.mo3", 0),
             Self::Tank1 => ("Insaniq2.mo3", 0),
             Self::Tank2 => ("Insaniq2.mo3", 12),
             Self::Tank3 => ("Insaniq2.mo3", 25),

@@ -160,6 +160,17 @@ Tool identities, invocation constraints, and the distinction between fresh check
 
 ## New work and adaptations
 
+E115 studies the existing W1 revision's `source/WinFish/GameSelector.cpp:86,378–440`
+and `source/WinFish/WinFishApp.cpp:1869–1903,1945–1956,2111–2123` for mode-specific
+save/reload and selector music. [Retained mode scenes](mode-continuation.md)
+records the original Rust payload-move/shared-manager implementation, transient
+startup owner, receipt integrity policy and current37 admission adaptation in
+`src/adventure/retained_modes.rs`, `adventure.rs`, `app.rs`, `cli.rs` and `music.rs`.
+No upstream code, proprietary prose/assets or new primary export is incorporated.
+The bounded [biography follow-up](virtual-ui.md#owned-biography-catalog-follow-up)
+reuses PB05 and W1's `SimFishScreen.cpp` tables/consumers only; failed literal scans
+are evidence against a count-only loader, not recovered table mapping.
+
 E114 joins the existing W1-informed VT controllers (`StoreScreen.cpp`,
 `StoreButtonWidget.cpp`, `SimFishScreen.cpp`, `FishButtonWidget.cpp`,
 `SimSetupScreen.cpp`; revision and studied ranges in [VT source record](virtual-ui.md#source-and-explicit-limits))
