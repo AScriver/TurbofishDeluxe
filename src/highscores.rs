@@ -2,7 +2,13 @@
 //!
 //! Ordering and capacities adapt pinned W1 `HighScoreMgr.cpp` as secondary
 //! source. These entries belong in the project's atomic Profiles envelope;
-//! retail `highscores.dat` defaults/import are intentionally separate.
+//! Presets and presentation are explicit, separate operations; neither changes
+//! empty `Default` behavior or imports retail `highscores.dat`.
+
+#[path = "highscore_presets.rs"]
+pub mod presets;
+#[path = "highscore_screen.rs"]
+pub mod screen;
 
 use serde::{Deserialize, Serialize};
 use std::array;
