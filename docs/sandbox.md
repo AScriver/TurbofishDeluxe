@@ -1,6 +1,6 @@
 # Sandbox and Relax
 
-Integration follows [Virtual Tank](virtual-tank.md) and its seven-slot purchase. `src/sandbox.rs` currently supplies unregistered admission, selector-code and keyboard helpers; runtime integration and checks are pending. [STATUS](../STATUS.md) owns current verification and [BR04](binary-recovery.md#br04--sandbox-and-relax) owns the primary outline.
+Current34 integrates selector-code entry, a disposable Board, keyboard/input and exit/save handling after [Virtual Tank](virtual-tank.md)'s seven-slot purchase. [STATUS](../STATUS.md) owns E102 focused verification and [BR04](binary-recovery.md#br04--sandbox-and-relax) owns the primary outline. Native acceptance remains not tested.
 
 ## Contract
 
@@ -10,6 +10,6 @@ Pinned W1`f919b3c241cfd611c547f1653fb3514f500f761b`, `source/WinFish/GameSelecto
 
 Relax is the separate App+880 flag. Setup00541a20 independently selects cash200, food limit3 and weapon field8;00541200's eager12-slot refresh belongs to this flag. The older BR04 wording attributing that refresh to Sandbox mode3 is corrected. Retail Relax activation remains unknown; represent its supported configuration without inventing an unlock/menu route. Normal selectors cap4 and Virtual Tank caps7 even after Sandbox raises Profile capacity to11.
 
-## Remaining integration
+## Current34 integration and limits
 
-Wire selector input, disposable Board construction, source shortcuts, full actor ownership/update/input, shop exit and save exclusion after the seven-slot consumer. Preserve keyboard-spawned actors across pause during the live scene without storing a resumable Sandbox over Adventure. Focused checks must cover admission, retained-scene conservation and exit without rewards; native/manual/render/audio/retail acceptance stays deferred. Private bounded brief`.scratch/runtime/a41-sandbox-relax-recovery/implementation-02.md` records actual source paths and five reused bodies with no new queries.
+Selector input admits the recovered code after the actual cursor gate. The transient scene uses the last selected non-Adventure tank, source keyboard spawns, ordinary simulation/input and Presto modal, with Menu/egg exit. Profile capacity rises to11 while ordinary and VT consumers retain4/7 caps. `checkpoint_without_sandbox` restores the retained mode/phase/seed before manager serialization, preserving Adventure, TT or Challenge. A required-field current34 persistence regression exercised admission, live actor/pause state and retained-scene conservation without completion/reward credit. Formatting, strict lint and locked build passed; this establishes code behavior, not native playability. Relax activation, source-exact simultaneous spawn ordering and input/render/audio/retail/human acceptance remain deferred. Private bounded brief`.scratch/runtime/a41-sandbox-relax-recovery/implementation-02.md` records source paths and five reused bodies with no new queries.

@@ -438,6 +438,7 @@ struct Voice {
 pub struct FishSongPlayer {
     active_id: Option<i32>,
     voices: Vec<Voice>,
+    applause_requested: bool,
     applause_at: Option<u64>,
     applause_done_at: Option<u64>,
     paused_at: Option<u64>,
@@ -478,7 +479,8 @@ impl FishSongPlayer {
             return Err(SongError::at(0, "song has no notes"));
         }
         self.active_id = Some(song_id);
-        self.applause_at = with_applause.then_some(0);
+        self.applause_requested = with_applause;
+        self.applause_at = None;
         self.applause_done_at = None;
         self.paused_at = None;
         Ok(())
@@ -517,9 +519,12 @@ impl FishSongPlayer {
             }
         }
         self.voices.retain(|voice| voice.next < voice.notes.len());
-        if self.voices.is_empty() && self.active_id.take().is_some() && self.applause_at.is_some() {
-            self.applause_at = now_ms.checked_add(400);
-            self.applause_done_at = now_ms.checked_add(500);
+        if self.voices.is_empty() && self.active_id.take().is_some() {
+            if self.applause_requested {
+                self.applause_at = now_ms.checked_add(400);
+                self.applause_done_at = now_ms.checked_add(500);
+            }
+            self.applause_requested = false;
         }
         if self.applause_at.is_some_and(|due| due <= now_ms) {
             self.applause_at = None;
@@ -567,6 +572,7 @@ impl FishSongPlayer {
     pub fn clear(&mut self) {
         self.active_id = None;
         self.voices.clear();
+        self.applause_requested = false;
         self.applause_at = None;
         self.applause_done_at = None;
         self.paused_at = None;
@@ -587,7 +593,9 @@ mod tests {
         assert_eq!(score.voices[0][1].at_ms, 96);
         assert_eq!(score.voices[1][1].at_ms, 96);
         assert_eq!(score.voices[1][2].at_ms, 168);
-        assert_eq!(score.voices[1][2].pitch, Some(21.0));
+        // W1 NoteData::Parse makes A3 = 9 + (3 - 4) * 12 = -3;
+        // FishSongData::Parse then adds this voice's local shift of +12.
+        assert_eq!(score.voices[1][2].pitch, Some(9.0));
         assert!(score.is_long());
         let mut player = FishSongPlayer::default();
         player.start(&score, 7, 1_000, true).unwrap();

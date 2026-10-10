@@ -3,8 +3,9 @@
 //! Positions are logical 640x480 coordinates and advance in 28 ms ticks.
 
 use crate::challenge::{self, ChallengeShop};
-use crate::virtual_tank::{
-    FeedResult, GuppyFood, VirtualCoinKind, VirtualFishKind, VirtualProduction, VirtualTankState,
+pub use crate::virtual_board::{
+    VirtualBoardState, VirtualCoinPose, VirtualFishPose, VirtualFoodPose, VirtualPetPose,
+    VirtualPreyPose,
 };
 use crate::{
     alien::{AlienFoodView, AlienRuntimeRequest, PreyView, SylvesterKind},
@@ -39,263 +40,6 @@ pub const TICK_MS: u32 = 28;
 pub const BOARD_WIDTH: f32 = 640.0;
 pub const BOARD_HEIGHT: f32 = 480.0;
 
-/// Mode-five Board state contains only physical poses and short-lived objects.
-/// VirtualTankState owns every fish identity and its durable attributes.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct VirtualBoardState {
-    pub tick: u64,
-    pub poses: Vec<VirtualFishPose>,
-    pub food: Vec<VirtualFoodPose>,
-    pub coins: Vec<VirtualCoinPose>,
-    pub next_object_id: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct VirtualFishPose {
-    pub fish_id: u16,
-    pub x: f32,
-    pub y: f32,
-    pub vx: f32,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct VirtualFoodPose {
-    pub x: f32,
-    pub y: f32,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct VirtualCoinPose {
-    pub id: u64,
-    pub x: f32,
-    pub y: f32,
-    pub kind: VirtualCoinKind,
-}
-
-impl VirtualBoardState {
-    pub fn new(tank: &VirtualTankState) -> Self {
-        let mut board = Self {
-            tick: 0,
-            poses: Vec::new(),
-            food: Vec::new(),
-            coins: Vec::new(),
-            next_object_id: 1,
-        };
-        board.sync_fish(tank);
-        board
-    }
-
-    pub fn sync_fish(&mut self, tank: &VirtualTankState) {
-        self.poses.retain(|pose| {
-            tank.active_fish()
-                .any(|fish| fish.id == pose.fish_id && fish.shown)
-        });
-        for fish in tank.active_fish().filter(|fish| fish.shown) {
-            if !self.poses.iter().any(|pose| pose.fish_id == fish.id) {
-                let ordinal = u32::from(fish.id);
-                self.poses.push(VirtualFishPose {
-                    fish_id: fish.id,
-                    x: 96.0 + (ordinal.wrapping_mul(61) % 440) as f32,
-                    y: 96.0 + (ordinal.wrapping_mul(43) % 280) as f32,
-                    vx: if ordinal % 2 == 0 { 0.65 } else { -0.65 },
-                });
-            }
-        }
-        self.poses.sort_by_key(|pose| pose.fish_id);
-    }
-
-    pub fn clear_ephemeral(&mut self) {
-        self.food.clear();
-        self.coins.clear();
-    }
-
-    pub fn validate(&self, tank: &VirtualTankState) -> Result<(), String> {
-        let expected = tank.active_fish().filter(|fish| fish.shown).count();
-        if self.poses.len() != expected
-            || self.poses.iter().enumerate().any(|(index, pose)| {
-                (index > 0 && self.poses[index - 1].fish_id >= pose.fish_id)
-                    || !tank
-                        .active_fish()
-                        .any(|fish| fish.id == pose.fish_id && fish.shown)
-                    || !pose.x.is_finite()
-                    || !(20.0..=620.0).contains(&pose.x)
-                    || !pose.y.is_finite()
-                    || !(55.0..=455.0).contains(&pose.y)
-                    || !pose.vx.is_finite()
-                    || pose.vx.abs() > 4.0
-            })
-            || self.food.iter().any(|food| {
-                !food.x.is_finite()
-                    || !food.y.is_finite()
-                    || !(20.0..=620.0).contains(&food.x)
-                    || !(55.0..=455.0).contains(&food.y)
-            })
-            || self.coins.iter().any(|coin| {
-                coin.id == 0
-                    || coin.id >= self.next_object_id
-                    || !coin.x.is_finite()
-                    || !coin.y.is_finite()
-                    || !(20.0..=620.0).contains(&coin.x)
-                    || !(55.0..=455.0).contains(&coin.y)
-            })
-        {
-            return Err("Virtual Tank Board and durable fish disagree".into());
-        }
-        let mut ids = HashSet::new();
-        if self.coins.iter().any(|coin| !ids.insert(coin.id)) {
-            return Err("Virtual Tank coin identities repeat".into());
-        }
-        Ok(())
-    }
-
-    pub fn feed(&mut self, x: f32, y: f32) -> bool {
-        if !(20.0..=620.0).contains(&x) || !(55.0..=455.0).contains(&y) || self.food.len() >= 12 {
-            return false;
-        }
-        self.food.push(VirtualFoodPose { x, y });
-        true
-    }
-
-    pub fn collect(
-        &mut self,
-        x: f32,
-        y: f32,
-        tank: &mut VirtualTankState,
-        shells: &mut u32,
-    ) -> Option<u32> {
-        let index = self
-            .coins
-            .iter()
-            .position(|coin| (coin.x - x).abs() < 25.0 && (coin.y - y).abs() < 25.0)?;
-        let coin = self.coins.remove(index);
-        Some(tank.collect_coin(shells, coin.kind, 1, false))
-    }
-
-    pub fn update(
-        &mut self,
-        tank: &mut VirtualTankState,
-        now_seconds: u64,
-        day_start_seconds: u64,
-    ) {
-        self.tick = self.tick.saturating_add(1);
-        self.sync_fish(tank);
-        for food in &mut self.food {
-            food.y = (food.y + 1.2).min(455.0);
-        }
-        self.food.retain(|food| food.y < 455.0);
-        for coin in &mut self.coins {
-            coin.y = (coin.y + 0.9).min(455.0);
-        }
-        self.coins.retain(|coin| coin.y < 455.0);
-        let meryl = tank.selected_pets.contains(&PetKind::Meryl);
-        let mut newborns = Vec::new();
-        for pose in &mut self.poses {
-            pose.x += pose.vx;
-            if pose.x <= 24.0 || pose.x >= 616.0 {
-                pose.x = pose.x.clamp(24.0, 616.0);
-                pose.vx = -pose.vx;
-            }
-            let Some(kind) = tank
-                .fish
-                .iter()
-                .find(|fish| fish.id == pose.fish_id && fish.alive)
-                .map(|fish| fish.kind)
-            else {
-                continue;
-            };
-            if let Some(fish) = tank
-                .fish
-                .iter_mut()
-                .find(|fish| fish.id == pose.fish_id && fish.alive)
-            {
-                fish.tick_hunger(true);
-            }
-            if let Some(index) = self
-                .food
-                .iter()
-                .position(|food| (food.x - pose.x).abs() < 30.0 && (food.y - pose.y).abs() < 26.0)
-            {
-                let fed = if kind == VirtualFishKind::Guppy {
-                    tank.feed_guppy(
-                        pose.fish_id,
-                        GuppyFood::Basic,
-                        now_seconds,
-                        day_start_seconds,
-                    )
-                    .ok()
-                } else {
-                    tank.fish
-                        .iter_mut()
-                        .find(|fish| fish.id == pose.fish_id && fish.alive)
-                        .map(|fish| {
-                            fish.hunger = fish.hunger.saturating_add(500).min(1400);
-                            let _ = fish.record_qualifying_feed(now_seconds, day_start_seconds);
-                            FeedResult::Fed
-                        })
-                };
-                if fed.is_some() {
-                    self.food.remove(index);
-                }
-            }
-            if let Some(fish) = tank
-                .fish
-                .iter_mut()
-                .find(|fish| fish.id == pose.fish_id && fish.alive)
-            {
-                match fish.tick_production(
-                    tank.settings.drop_shells,
-                    false,
-                    0,
-                    tank.board_shells,
-                    meryl,
-                ) {
-                    Some(VirtualProduction::Coin(kind)) => {
-                        self.coins.push(VirtualCoinPose {
-                            id: self.next_object_id,
-                            x: pose.x,
-                            y: pose.y,
-                            kind,
-                        });
-                        self.next_object_id = self.next_object_id.saturating_add(1);
-                    }
-                    Some(VirtualProduction::CookieFoodDue) if self.food.len() < 12 => {
-                        self.food.push(VirtualFoodPose {
-                            x: pose.x,
-                            y: pose.y,
-                        });
-                    }
-                    Some(VirtualProduction::BreederBirthDue) => newborns.push(pose.fish_id),
-                    _ => {}
-                }
-            }
-        }
-        for parent_id in newborns {
-            let properties = tank
-                .active_fish()
-                .find(|fish| fish.id == parent_id)
-                .map(|fish| fish.properties);
-            if let Some(properties) = properties {
-                let mut seed = self.tick ^ (u64::from(parent_id) << 32);
-                let offer =
-                    crate::virtual_tank::source_offer(VirtualFishKind::Guppy, properties, || {
-                        seed = seed
-                            .wrapping_mul(6364136223846793005)
-                            .wrapping_add(1442695040888963407);
-                        (seed >> 32) as u32
-                    });
-                let _ = tank.birth_from_breeder(
-                    parent_id,
-                    now_seconds,
-                    day_start_seconds,
-                    offer.initial_hunger,
-                    offer.food_needed_to_grow,
-                    offer.coin_threshold,
-                );
-            }
-        }
-        self.sync_fish(tank);
-    }
-}
 pub const FOOD_PRICE: i32 = 5;
 pub const GUPPY_PRICE: i32 = 100;
 pub const EGG_PRICE: i32 = 150;
@@ -914,6 +658,10 @@ pub enum Action {
     SelectChallengeTank {
         tank: u8,
     },
+    OpenSandbox,
+    SandboxKeyChar {
+        character: char,
+    },
     ChallengeStory,
     Continue,
     HatchHold {
@@ -1053,6 +801,13 @@ pub enum Event {
     ChallengeStarted {
         tick: u64,
         tank: u8,
+    },
+    SandboxStarted {
+        tick: u64,
+        tank: u8,
+    },
+    SandboxExited {
+        tick: u64,
     },
     ChallengeEggBought {
         tick: u64,
@@ -1613,6 +1368,8 @@ pub enum Event {
         settled_amount: i32,
         final_balance: i32,
         personal_best_seconds: u64,
+        /// Tank 5 high-score unit: physical pet survivors at completion.
+        survivors: Option<u32>,
     },
     FirstTankRescueStarted {
         tick: u64,
@@ -1758,6 +1515,13 @@ pub struct AdventureState {
     held_feed: Option<(f32, f32, u32)>,
     #[serde(skip)]
     held_fire: Option<(f32, f32, u32)>,
+    /// The Sandbox Board is disposable; these live flags never enter a save.
+    #[serde(skip)]
+    pub sandbox: bool,
+    #[serde(skip)]
+    pub sandbox_relax: bool,
+    #[serde(skip)]
+    pub sandbox_background: u8,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1848,6 +1612,9 @@ impl AdventureState {
             rng_state: Self::initial_rng(seed),
             held_feed: None,
             held_fire: None,
+            sandbox: false,
+            sandbox_relax: false,
+            sandbox_background: 0,
         }
     }
 
@@ -2749,6 +2516,82 @@ impl AdventureState {
         Ok(state)
     }
 
+    /// Disposable mode-three Board. It uses the ordinary physical actor
+    /// factories, but never becomes the resumable Adventure Board.
+    pub fn new_sandbox(
+        seed: u64,
+        tank: u8,
+        selected_pets: &[PetKind],
+        relax: bool,
+    ) -> Result<Self, String> {
+        if !(1..=5).contains(&tank)
+            || selected_pets.len() > usize::from(crate::sandbox::CAPACITY_FLOOR)
+            || selected_pets
+                .windows(2)
+                .any(|pair| pair[0] as u8 >= pair[1] as u8)
+        {
+            return Err("invalid Sandbox tank or selected pets".into());
+        }
+        let mut state = Self::empty_board(seed);
+        let initial = crate::sandbox::initial_values(relax);
+        state.tank = tank;
+        state.level = 5;
+        state.balance = initial.cash;
+        state.upgrades.quantity = initial.food_limit;
+        state.weapon_strength = initial.weapon_level;
+        state.sandbox = true;
+        state.sandbox_relax = relax;
+        state.sandbox_background = match tank {
+            1 => 1,
+            2 => 2,
+            3 => 4,
+            4 => 5,
+            5 => 6,
+            _ => unreachable!(),
+        };
+        state.profile_population = true;
+        state.invasion = Some(Invasion1_2::new_sandbox(tank));
+        state.egg_price = 0;
+        state.egg_unlocked = true;
+        if tank != 5 {
+            state.guppy_unlocked = true;
+            state.oscar_unlocked = true;
+            state.starcatcher_unlocked = true;
+            state.grubber_unlocked = true;
+            state.gekko_unlocked = true;
+            state.breeder_unlocked = true;
+            state.ultra_unlocked = true;
+            state.weapon_unlocked = true;
+            state.potion_unlocked = true;
+            state.upgrades.quality_unlocked = true;
+            state.upgrades.quantity_unlocked = true;
+        }
+        for pet in selected_pets {
+            state.spawn_profile_pet(*pet);
+        }
+        if relax {
+            state.spawn_starter_guppies(false);
+        } else if tank == 4 {
+            let x = state.rand_range(520) as i32 + 20;
+            let y = state.rand_range(265) as i32 + 105;
+            let id = state.id();
+            let mut rng_state = state.rng_state;
+            state
+                .breeders
+                .push(BreederState::spawn_starter(id, x, y, &mut |upper| {
+                    Self::advance_rng(&mut rng_state) % upper
+                }));
+            state.rng_state = rng_state;
+        } else if tank == 5 {
+            for pet in TANK5_PETS {
+                state.spawn_profile_pet(pet);
+            }
+        } else {
+            state.spawn_starter_guppies(false);
+        }
+        Ok(state)
+    }
+
     pub(crate) fn time_trial_candidates(&self, unlocked: &[PetKind]) -> Vec<PetKind> {
         crate::time_trial::SUPPORTED_PETS
             .iter()
@@ -3040,6 +2883,16 @@ impl AdventureState {
                 )
             }),
         }
+    }
+
+    /// Retail interlude snapshot checks presence of each fixed Tank 5 pet
+    /// kind before the completed Board is retired. Duplicate selected pets
+    /// do not count as additional fallen kinds.
+    pub(crate) fn fallen_tank5_pets(&self) -> Vec<PetKind> {
+        TANK5_PETS
+            .into_iter()
+            .filter(|pet| !self.has_live_pet_kind(*pet))
+            .collect()
     }
 
     pub(crate) fn choose_time_trial_pet(&mut self, candidates: &[PetKind]) -> Option<PetKind> {
@@ -3543,6 +3396,15 @@ impl AdventureState {
             || !self.rufus.is_empty()
             || !self.rhubarb.is_empty()
             || !self.fish_pets.is_empty()
+    }
+
+    pub(crate) fn live_pet_count(&self) -> u32 {
+        (self.stinky.len()
+            + self.niko.len()
+            + self.clyde.len()
+            + self.rufus.len()
+            + self.rhubarb.len()
+            + self.fish_pets.len()) as u32
     }
 
     fn living_finale_boss(&self) -> bool {
@@ -6332,6 +6194,100 @@ impl AdventureState {
         id
     }
 
+    /// Board::KeyChar constructs actors directly, without shop debit or
+    /// entitlement checks. The containing session admits this only in Sandbox.
+    pub(crate) fn apply_sandbox_key(&mut self, character: char) -> Vec<Event> {
+        if !self.sandbox {
+            return vec![Event::Rejected {
+                tick: self.tick,
+                reason: Rejection::Locked,
+            }];
+        }
+        let first_alien_is_gus = self.invasion.as_ref().is_some_and(|wave| {
+            wave.actors
+                .first()
+                .is_some_and(|actor| actor.kind == SylvesterKind::Gus)
+        });
+        let Some(command) = crate::sandbox::command(character, first_alien_is_gus) else {
+            return Vec::new();
+        };
+        match command {
+            crate::sandbox::Command::Fish(kind) => {
+                use crate::sandbox::FishSpawn;
+                match kind {
+                    FishSpawn::Guppy => {
+                        self.spawn_bought_guppy();
+                    }
+                    FishSpawn::StarGuppy => {
+                        let id = self.spawn_bought_guppy();
+                        self.fish
+                            .iter_mut()
+                            .find(|fish| fish.id == id)
+                            .unwrap()
+                            .size = FishSize::Star;
+                    }
+                    other => {
+                        let id = self.id();
+                        let mut rng_state = self.rng_state;
+                        let mut next = |upper| Self::advance_rng(&mut rng_state) % upper;
+                        match other {
+                            FishSpawn::Oscar => {
+                                self.oscars.push(OscarState::spawn_bought(id, &mut next))
+                            }
+                            // W1's Penta is the project's Starcatcher actor.
+                            FishSpawn::Penta => self
+                                .starcatchers
+                                .push(StarcatcherState::spawn_bought(id, &mut next)),
+                            FishSpawn::Grubber => self
+                                .grubbers
+                                .push(GrubberState::spawn_bought(id, &mut next)),
+                            FishSpawn::Gekko => {
+                                self.gekkos.push(GekkoState::spawn_bought(id, &mut next))
+                            }
+                            FishSpawn::Breeder => self
+                                .breeders
+                                .push(BreederState::spawn_bought(id, &mut next)),
+                            FishSpawn::Ultra => {
+                                self.ultras.push(UltraState::spawn_bought(id, &mut next))
+                            }
+                            FishSpawn::Guppy | FishSpawn::StarGuppy => unreachable!(),
+                        }
+                        self.rng_state = rng_state;
+                    }
+                }
+            }
+            crate::sandbox::Command::Pet(kind) => self.spawn_profile_pet(kind),
+            crate::sandbox::Command::Alien(kind) => {
+                let mut rng_state = self.rng_state;
+                let mut next_id = self.next_id;
+                let wave_events = self
+                    .invasion
+                    .as_mut()
+                    .expect("Sandbox invasion")
+                    .spawn_sandbox_encounter(
+                        kind,
+                        || Self::advance_rng(&mut rng_state) as u32,
+                        || {
+                            let id = next_id;
+                            next_id += 1;
+                            id
+                        },
+                    );
+                self.rng_state = rng_state;
+                self.next_id = next_id;
+                let mut events = Vec::new();
+                self.record_invasion_events(wave_events, &mut events);
+                return events;
+            }
+            crate::sandbox::Command::Background(direction) => {
+                self.sandbox_background = i16::from(self.sandbox_background)
+                    .saturating_add(i16::from(direction))
+                    .clamp(1, 6) as u8;
+            }
+        }
+        Vec::new()
+    }
+
     /// Apply an ordered input without advancing simulation time.
     pub fn apply(&mut self, action: Action) -> Vec<Event> {
         let mut events = vec![Event::Action {
@@ -6358,7 +6314,7 @@ impl AdventureState {
             }
             Action::BuyGuppy => {
                 let price = self.price_for_slot(0, GUPPY_PRICE);
-                if self.tank == 4 || !self.guppy_unlocked {
+                if (!self.sandbox && self.tank == 4) || !self.guppy_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -6381,7 +6337,7 @@ impl AdventureState {
             }
             Action::BuyBreeder => {
                 let price = self.price_for_slot(1, BREEDER_PRICE);
-                if self.tank != 4 || !self.breeder_unlocked {
+                if (!self.sandbox && self.tank != 4) || !self.breeder_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -6500,7 +6456,7 @@ impl AdventureState {
             }
             Action::BuyOscar => {
                 let price = self.price_for_slot(4, OSCAR_PRICE);
-                if !matches!(self.tank, 1 | 4) || !self.oscar_unlocked {
+                if (!self.sandbox && !matches!(self.tank, 1 | 4)) || !self.oscar_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -6535,7 +6491,9 @@ impl AdventureState {
             }
             Action::BuyUltra => {
                 let price = self.price_for_slot(9, ULTRA_PRICE);
-                if !matches!((self.tank, self.level), (4, 2..=5)) || !self.ultra_unlocked {
+                if (!self.sandbox && !matches!((self.tank, self.level), (4, 2..=5)))
+                    || !self.ultra_unlocked
+                {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -6563,7 +6521,9 @@ impl AdventureState {
             }
             Action::BuyStarcatcher => {
                 let price = self.price_for_slot(6, STARCATCHER_PRICE);
-                if !(self.tank == 2 && (2..=5).contains(&self.level) && self.starcatcher_unlocked) {
+                if !(self.sandbox || self.tank == 2 && (2..=5).contains(&self.level))
+                    || !self.starcatcher_unlocked
+                {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -6593,7 +6553,9 @@ impl AdventureState {
             }
             Action::BuyGrubber => {
                 let price = self.price_for_slot(7, GRUBBER_PRICE);
-                if self.tank != 3 || !(1..=5).contains(&self.level) || !self.grubber_unlocked {
+                if (!self.sandbox && (self.tank != 3 || !(1..=5).contains(&self.level)))
+                    || !self.grubber_unlocked
+                {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -6626,7 +6588,9 @@ impl AdventureState {
             }
             Action::BuyGekko => {
                 let price = self.price_for_slot(8, GEKKO_PRICE);
-                if self.tank != 3 || !(2..=5).contains(&self.level) || !self.gekko_unlocked {
+                if (!self.sandbox && (self.tank != 3 || !(2..=5).contains(&self.level)))
+                    || !self.gekko_unlocked
+                {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
@@ -6661,7 +6625,8 @@ impl AdventureState {
                     _ => WEAPON_PRICE,
                 };
                 let price = self.price_for_slot(10, ordinary_price);
-                if !(self.tank == 1
+                if !(self.sandbox
+                    || self.tank == 1
                     || (self.tank == 2 && (2..=5).contains(&self.level))
                     || (self.tank == 3 && (2..=5).contains(&self.level))
                     || matches!((self.tank, self.level), (4, 2..=5)))
@@ -6707,6 +6672,8 @@ impl AdventureState {
             | Action::SelectTimeTrialTank { .. }
             | Action::PlayChallenge
             | Action::SelectChallengeTank { .. }
+            | Action::OpenSandbox
+            | Action::SandboxKeyChar { .. }
             | Action::ChallengeStory
             | Action::RightClick { .. }
             | Action::PrestoPress { .. }

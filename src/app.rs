@@ -5,18 +5,23 @@ use crate::{
     bonus::{BonusResult, BonusState, PurchaseReceipt, ShellKind, ShellState},
     cli::{self, Options},
     fish_pet::FishPetKind,
+    fish_songs::{FishSongPlayer, SongCatalog},
     font::BitmapFont,
     install::{self, InstallIdentity},
+    interlude::{InterludeController, MusicStage, RowContent},
     invasion::{InvasionEvent, InvasionTip},
     missile::MissileKind,
-    music::{MusicOwner, MusicReport},
+    music::{MusicCue, MusicOwner, MusicReport},
     oscar::OscarPose,
+    profiles::{Profiles, ScoreTab},
+    sandbox::{EntryCode, SelectorKey},
+    settings::{GameSettings, SettingChange, SettingsBackend, SettingsCapabilities, SettingsSave},
     sim::{
         Action, AdventureState, CoinKind, Event, FishPose, FishSize, FoodType, PetKind, TICK_MS,
     },
     timing::{InputPress, StepClock, wall_deadline_reached},
     ultra::UltraPose,
-    virtual_tank::{StoreProduct, VirtualFishKind},
+    virtual_tank::{NamedFish, StoreProduct, VirtualFishKind},
 };
 use macroquad::miniquad::{BlendFactor, BlendState, BlendValue, Equation};
 use macroquad::prelude::*;
@@ -32,6 +37,7 @@ use std::{
 const IMAGE_IDS: &[&str] = &[
     "IMAGE_AQUARIUM1",
     "IMAGE_AQUARIUM2",
+    "IMAGE_AQUARIUM3",
     "IMAGE_AQUARIUM4",
     "IMAGE_AQUARIUM5",
     "IMAGE_AQUARIUM6",
@@ -155,6 +161,11 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_BONUS3",
 ];
 const SOUND_IDS: &[&str] = &[
+    "SOUND_APPLAUSE",
+    "SOUND_TONE",
+    "SOUND_TONEHI",
+    "SOUND_TONELO",
+    "SOUND_TONESUPERHI",
     "SOUND_DROPFOOD",
     "SOUND_SLURP",
     "SOUND_GROW",
@@ -782,11 +793,22 @@ impl Presentation {
 
     fn draw_board(&self, state: &AdventureState) {
         self.sprite(
-            match state.tank {
+            match if state.sandbox_background > 0 {
+                state.sandbox_background
+            } else {
+                match state.tank {
+                    2 => 2,
+                    3 => 4,
+                    4 => 5,
+                    5 => 6,
+                    _ => 1,
+                }
+            } {
                 2 => "IMAGE_AQUARIUM2",
-                3 => "IMAGE_AQUARIUM4",
-                4 => "IMAGE_AQUARIUM5",
-                5 => "IMAGE_AQUARIUM6",
+                3 => "IMAGE_AQUARIUM3",
+                4 => "IMAGE_AQUARIUM4",
+                5 => "IMAGE_AQUARIUM5",
+                6 => "IMAGE_AQUARIUM6",
                 _ => "IMAGE_AQUARIUM1",
             },
             0.0,
@@ -3414,19 +3436,34 @@ impl Presentation {
         self.main_button(Rect::new(525.0, 4.0, 80.0, height), "Menu");
     }
 
-    fn draw_adventure_finale_interlude(&self) {
-        // The installed binary routes the post-Hatch state to InterludeScreen.
-        // Its detailed layout remains unrecovered; this projects the committed
-        // progression without recreating a Board or implying another stage.
+    fn draw_adventure_finale_interlude(&self, interlude: Option<&InterludeController>) {
         self.sprite("IMAGE_SCREENBACK", 0.0, 0.0, None, false, 1.0, 1.0);
-        self.centered_text("JungleFever17outline", "Adventure Complete", 120.0, YELLOW);
-        self.centered_text(
-            "JungleFever15outline",
-            "PRESTO has joined your pets",
-            206.0,
-            WHITE,
-        );
-        self.centered_text("JungleFever15outline", "5,000 shells awarded", 250.0, WHITE);
+        if let Some(interlude) = interlude {
+            for row in interlude.visible_rows() {
+                let (line, size, color) = match row.content {
+                    RowContent::Heading(line) => (line.to_owned(), 28.0, YELLOW),
+                    RowContent::Text(line) => (line.to_owned(), 21.0, WHITE),
+                    RowContent::Cast(pet) => (format!("{pet:?}"), 21.0, WHITE),
+                };
+                let width = measure_text(&line, None, size as u16, 1.0).width;
+                draw_text(&line, row.x as f32 - width / 2.0, row.y as f32, size, color);
+            }
+            for pose in interlude.resurrection_poses() {
+                draw_circle(
+                    pose.x as f32 + 40.0,
+                    pose.y as f32 + 40.0,
+                    17.0,
+                    Color::new(1.0, 0.9, 0.45, f32::from(pose.alpha) / 255.0),
+                );
+                draw_text(
+                    format!("{:?}", pose.pet),
+                    pose.x as f32,
+                    pose.y as f32 + 75.0,
+                    16.0,
+                    WHITE,
+                );
+            }
+        }
         let height = self.images["IMAGE_MAINBUTTON"].height();
         self.main_button(Rect::new(186.0, 445.0, 264.0, height), "Main Menu");
     }
@@ -3442,14 +3479,23 @@ impl Presentation {
         self.sprite(background, 0.0, 0.0, None, false, 1.0, 1.0);
         if let Some(board) = &session.virtual_board {
             for food in &board.food {
-                self.sprite(
-                    "IMAGE_FOOD",
-                    food.x - 20.0,
-                    food.y - 20.0,
-                    Some(Rect::new(0.0, 0.0, 40.0, 40.0)),
-                    false,
-                    1.0,
-                    1.0,
+                let color = match food.kind {
+                    crate::virtual_tank::VirtualFoodKind::Basic => ORANGE,
+                    crate::virtual_tank::VirtualFoodKind::Upgraded => YELLOW,
+                    crate::virtual_tank::VirtualFoodKind::Snot => GREEN,
+                    crate::virtual_tank::VirtualFoodKind::Star => GOLD,
+                    _ => WHITE,
+                };
+                draw_circle(food.x, food.y, 6.0, color);
+            }
+            for prey in &board.prey {
+                draw_circle(prey.x, prey.y, 11.0, SKYBLUE);
+                draw_text(
+                    format!("{:?}", prey.kind),
+                    prey.x - 14.0,
+                    prey.y - 13.0,
+                    13.0,
+                    WHITE,
                 );
             }
             for pose in &board.poses {
@@ -3498,6 +3544,27 @@ impl Presentation {
                     1.0,
                     1.0,
                 );
+            }
+            for pet in &board.pets {
+                let image_id = format!("IMAGE_SCL_{:?}", pet.kind).to_uppercase();
+                if let Some(image) = self.images.get(&image_id) {
+                    let width = image.width() / 10.0;
+                    let height = image.height();
+                    self.sprite(
+                        &image_id,
+                        pet.x - width / 2.0,
+                        pet.y - height / 2.0,
+                        Some(Rect::new(
+                            (board.tick % 10) as f32 * width,
+                            0.0,
+                            width,
+                            height,
+                        )),
+                        false,
+                        1.0,
+                        1.0,
+                    );
+                }
             }
         }
         draw_rectangle(0.0, 0.0, 640.0, 70.0, Color::new(0.02, 0.08, 0.13, 0.94));
@@ -3658,6 +3725,7 @@ impl Presentation {
         paused: bool,
         pointer: Vec2,
         healing_warning_until_tick: Option<u64>,
+        interlude: Option<&InterludeController>,
     ) {
         match session.phase {
             AdventurePhase::VirtualTank
@@ -3669,7 +3737,9 @@ impl Presentation {
             | AdventurePhase::VirtualRename { .. } => self.draw_virtual_tank(session),
             AdventurePhase::Hatch { pet, updates } => self.draw_hatch(pet, updates),
             AdventurePhase::TankFourFinaleHatch { updates } => self.draw_finale_hatch(updates),
-            AdventurePhase::AdventureFinaleInterlude => self.draw_adventure_finale_interlude(),
+            AdventurePhase::AdventureFinaleInterlude => {
+                self.draw_adventure_finale_interlude(interlude)
+            }
             AdventurePhase::Bonus { ref state } => self.draw_bonus(state),
             AdventurePhase::BonusResults { ref result } => {
                 self.draw_bonus_results(result, session.progress.shell_balance)
@@ -3681,7 +3751,9 @@ impl Presentation {
             | AdventurePhase::ChallengePetSelectionConfirmation { ref selected, .. } => {
                 self.draw_pet_selection(session, selected, pointer);
             }
-            AdventurePhase::Playing
+            AdventurePhase::SandboxPlaying
+            | AdventurePhase::SandboxPrestoDialog { .. }
+            | AdventurePhase::Playing
             | AdventurePhase::TimeTrialPlaying
             | AdventurePhase::TimeTrialPrestoDialog { .. }
             | AdventurePhase::AdventurePrestoDialog { .. }
@@ -3698,11 +3770,28 @@ impl Presentation {
             | AdventurePhase::FirstTankRescue
             | AdventurePhase::InvasionTutorial { .. }
             | AdventurePhase::GameOver { .. } => {
-                if let Some(board) = &session.board {
+                if let Some(board) = if matches!(
+                    session.phase,
+                    AdventurePhase::SandboxPlaying | AdventurePhase::SandboxPrestoDialog { .. }
+                ) {
+                    session.sandbox_board.as_ref()
+                } else {
+                    session.board.as_ref()
+                } {
                     self.draw_board(board);
+                    if session.phase == AdventurePhase::SandboxPlaying {
+                        draw_text(
+                            "SANDBOX: keys spawn fish, pets, aliens; egg exits",
+                            70.0,
+                            430.0,
+                            18.0,
+                            YELLOW,
+                        );
+                    }
                     if let AdventurePhase::TimeTrialPrestoDialog { pressed, .. }
                     | AdventurePhase::AdventurePrestoDialog { pressed, .. }
-                    | AdventurePhase::ChallengePrestoDialog { pressed, .. } = session.phase
+                    | AdventurePhase::ChallengePrestoDialog { pressed, .. }
+                    | AdventurePhase::SandboxPrestoDialog { pressed, .. } = session.phase
                     {
                         draw_rectangle(0.0, 0.0, 640.0, 480.0, Color::new(0.0, 0.0, 0.0, 0.82));
                         self.centered_text(
@@ -4466,15 +4555,527 @@ mod accelerated_event_timing_tests {
     }
 }
 
+struct RuntimeSettingsBackend<'a> {
+    audio: Option<&'a MusicOwner>,
+}
+
+impl SettingsBackend for RuntimeSettingsBackend<'_> {
+    fn capabilities(&self) -> SettingsCapabilities {
+        SettingsCapabilities {
+            music_volume: self.audio.is_some(),
+            effects_volume: self.audio.is_some(),
+            fullscreen: true,
+            custom_cursor: true,
+        }
+    }
+
+    fn set_music_volume(&mut self, value: f32) -> Result<(), String> {
+        self.audio
+            .ok_or("music output unavailable")?
+            .set_music_volume(value)
+    }
+
+    fn set_effects_volume(&mut self, value: f32) -> Result<(), String> {
+        self.audio
+            .ok_or("effect output unavailable")?
+            .set_effects_volume(value)
+    }
+
+    fn set_fullscreen(&mut self, value: bool) -> Result<(), String> {
+        macroquad::window::set_fullscreen(value);
+        Ok(())
+    }
+
+    fn set_custom_cursor(&mut self, value: bool) -> Result<(), String> {
+        show_mouse(!value);
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SelectorPanel {
+    Profiles,
+    Options,
+    Scores,
+    Help,
+}
+
+#[derive(Clone, Copy)]
+enum ProfileForm {
+    Create,
+    Rename(u64),
+    Delete(u64),
+}
+
+enum UiCommand {
+    Create(String),
+    Select(u64),
+    Rename(u64, String),
+    Delete(u64),
+    Setting(SettingChange),
+    Quit,
+}
+
+struct SelectorUi {
+    panel: Option<SelectorPanel>,
+    form: Option<ProfileForm>,
+    name: String,
+    page: usize,
+    score_tab: ScoreTab,
+    score_focus: Option<usize>,
+    error: String,
+}
+
+impl Default for SelectorUi {
+    fn default() -> Self {
+        Self {
+            panel: None,
+            form: None,
+            name: String::new(),
+            page: 0,
+            score_tab: ScoreTab::Adventure,
+            score_focus: None,
+            error: String::new(),
+        }
+    }
+}
+
+fn ui_button(rect: Rect, label: &str) {
+    draw_rectangle(
+        rect.x,
+        rect.y,
+        rect.w,
+        rect.h,
+        Color::new(0.05, 0.2, 0.26, 0.96),
+    );
+    draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 1.0, YELLOW);
+    draw_text(label, rect.x + 8.0, rect.y + rect.h * 0.7, 18.0, WHITE);
+}
+
+fn typed_profile_name(name: &mut String) {
+    if is_key_pressed(KeyCode::Backspace) {
+        name.pop();
+    }
+    while let Some(character) = get_char_pressed() {
+        if !character.is_control() && name.len() + character.len_utf8() <= 64 {
+            name.push(character);
+        }
+    }
+}
+
+impl SelectorUi {
+    /// Returns whether this frame's selector input belongs to UI and any
+    /// persistent action to commit before borrowing the live session.
+    fn input(
+        &mut self,
+        profiles: &Profiles,
+        settings: GameSettings,
+        pointer: Vec2,
+        selector_open: bool,
+    ) -> (bool, Option<UiCommand>) {
+        if !selector_open {
+            self.panel = None;
+            self.form = None;
+            return (false, None);
+        }
+        let click = is_mouse_button_pressed(MouseButton::Left);
+        if let Some(panel) = self.panel {
+            if let Some(form) = self.form {
+                if matches!(form, ProfileForm::Create | ProfileForm::Rename(_)) {
+                    typed_profile_name(&mut self.name);
+                }
+                if is_key_pressed(KeyCode::Escape)
+                    || (click && Rect::new(350.0, 310.0, 145.0, 38.0).contains(pointer))
+                {
+                    self.form = None;
+                    self.error.clear();
+                    return (true, None);
+                }
+                let confirm = is_key_pressed(KeyCode::Enter)
+                    || (click && Rect::new(145.0, 310.0, 145.0, 38.0).contains(pointer));
+                if confirm {
+                    self.form = None;
+                    return (
+                        true,
+                        Some(match form {
+                            ProfileForm::Create => UiCommand::Create(self.name.clone()),
+                            ProfileForm::Rename(id) => UiCommand::Rename(id, self.name.clone()),
+                            ProfileForm::Delete(id) => UiCommand::Delete(id),
+                        }),
+                    );
+                }
+                return (true, None);
+            }
+            if is_key_pressed(KeyCode::Escape)
+                || (click && Rect::new(510.0, 73.0, 65.0, 30.0).contains(pointer))
+            {
+                if panel == SelectorPanel::Scores && self.score_focus.is_some() {
+                    self.score_focus = None;
+                } else {
+                    self.panel = None;
+                }
+                self.error.clear();
+                return (true, None);
+            }
+            if click {
+                match panel {
+                    SelectorPanel::Profiles => {
+                        for (row, entry) in profiles
+                            .entries
+                            .iter()
+                            .skip(self.page * 6)
+                            .take(6)
+                            .enumerate()
+                        {
+                            if Rect::new(95.0, 132.0 + row as f32 * 36.0, 440.0, 32.0)
+                                .contains(pointer)
+                            {
+                                self.panel = None;
+                                return (true, Some(UiCommand::Select(entry.id)));
+                            }
+                        }
+                        if Rect::new(85.0, 365.0, 130.0, 36.0).contains(pointer) {
+                            self.name.clear();
+                            self.form = Some(ProfileForm::Create);
+                        } else if Rect::new(225.0, 365.0, 130.0, 36.0).contains(pointer) {
+                            if let Some(entry) = profiles.current() {
+                                self.name = entry.name.clone();
+                                self.form = Some(ProfileForm::Rename(entry.id));
+                            }
+                        } else if Rect::new(365.0, 365.0, 130.0, 36.0).contains(pointer) {
+                            if let Some(entry) = profiles.current() {
+                                self.form = Some(ProfileForm::Delete(entry.id));
+                            }
+                        } else if Rect::new(85.0, 327.0, 85.0, 30.0).contains(pointer) {
+                            self.page = self.page.saturating_sub(1);
+                        } else if Rect::new(455.0, 327.0, 85.0, 30.0).contains(pointer)
+                            && (self.page + 1) * 6 < profiles.entries.len()
+                        {
+                            self.page += 1;
+                        }
+                    }
+                    SelectorPanel::Options => {
+                        for (index, y) in [145.0, 205.0].into_iter().enumerate() {
+                            if Rect::new(230.0, y, 270.0, 28.0).contains(pointer) {
+                                let value = ((pointer.x - 230.0) / 270.0).clamp(0.0, 1.0);
+                                return (
+                                    true,
+                                    Some(UiCommand::Setting(if index == 0 {
+                                        SettingChange::MusicVolume(value)
+                                    } else {
+                                        SettingChange::EffectsVolume(value)
+                                    })),
+                                );
+                            }
+                        }
+                        if Rect::new(230.0, 260.0, 270.0, 32.0).contains(pointer) {
+                            return (
+                                true,
+                                Some(UiCommand::Setting(SettingChange::Fullscreen(
+                                    !settings.fullscreen,
+                                ))),
+                            );
+                        }
+                        if Rect::new(230.0, 305.0, 270.0, 32.0).contains(pointer) {
+                            return (
+                                true,
+                                Some(UiCommand::Setting(SettingChange::CustomCursor(
+                                    !settings.custom_cursor,
+                                ))),
+                            );
+                        }
+                    }
+                    SelectorPanel::Scores => {
+                        if self.score_focus.is_some() {
+                            return (true, None);
+                        }
+                        for (index, tab) in [
+                            ScoreTab::Adventure,
+                            ScoreTab::TimeTrial,
+                            ScoreTab::Challenge,
+                            ScoreTab::Personal,
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        {
+                            if Rect::new(76.0 + index as f32 * 122.0, 110.0, 118.0, 30.0)
+                                .contains(pointer)
+                            {
+                                self.score_tab = tab;
+                                self.page = 0;
+                                self.score_focus = None;
+                            }
+                        }
+                        for index in 0..8 {
+                            if Rect::new(80.0, 145.0 + index as f32 * 25.0, 480.0, 23.0)
+                                .contains(pointer)
+                                && self.page * 8 + index < profiles.score_rows(self.score_tab).len()
+                            {
+                                self.score_focus = Some(self.page * 8 + index);
+                                return (true, None);
+                            }
+                        }
+                        if Rect::new(85.0, 365.0, 85.0, 30.0).contains(pointer) {
+                            self.page = self.page.saturating_sub(1);
+                        } else if Rect::new(455.0, 365.0, 85.0, 30.0).contains(pointer)
+                            && (self.page + 1) * 8 < profiles.score_rows(self.score_tab).len()
+                        {
+                            self.page += 1;
+                        }
+                    }
+                    SelectorPanel::Help => {}
+                }
+            }
+            return (true, None);
+        }
+        if click {
+            for (index, panel) in [
+                SelectorPanel::Profiles,
+                SelectorPanel::Options,
+                SelectorPanel::Scores,
+                SelectorPanel::Help,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if Rect::new(8.0 + index as f32 * 124.0, 8.0, 118.0, 32.0).contains(pointer) {
+                    self.panel = Some(panel);
+                    self.page = 0;
+                    self.score_focus = None;
+                    self.error.clear();
+                    return (true, None);
+                }
+            }
+            if Rect::new(504.0, 8.0, 118.0, 32.0).contains(pointer) {
+                return (true, Some(UiCommand::Quit));
+            }
+        }
+        (false, None)
+    }
+
+    fn draw(&self, profiles: &Profiles, settings: GameSettings, caps: SettingsCapabilities) {
+        if self.panel.is_none() {
+            for (index, title) in ["Profiles", "Options", "Scores", "Help", "Quit"]
+                .into_iter()
+                .enumerate()
+            {
+                ui_button(
+                    Rect::new(8.0 + index as f32 * 124.0, 8.0, 118.0, 32.0),
+                    title,
+                );
+            }
+            if let Some(entry) = profiles.current() {
+                draw_text(format!("Player: {}", entry.name), 20.0, 74.0, 20.0, WHITE);
+            }
+            return;
+        }
+        draw_rectangle(60.0, 63.0, 520.0, 357.0, Color::new(0.01, 0.08, 0.13, 0.97));
+        draw_rectangle_lines(60.0, 63.0, 520.0, 357.0, 2.0, YELLOW);
+        ui_button(Rect::new(510.0, 73.0, 65.0, 30.0), "Back");
+        match self.panel.expect("panel checked above") {
+            SelectorPanel::Profiles => {
+                draw_text("PROFILES", 85.0, 100.0, 29.0, YELLOW);
+                for (row, entry) in profiles
+                    .entries
+                    .iter()
+                    .skip(self.page * 6)
+                    .take(6)
+                    .enumerate()
+                {
+                    ui_button(
+                        Rect::new(95.0, 132.0 + row as f32 * 36.0, 440.0, 32.0),
+                        &format!(
+                            "{}{}",
+                            if profiles.current_id == Some(entry.id) {
+                                "> "
+                            } else {
+                                ""
+                            },
+                            entry.name
+                        ),
+                    );
+                }
+                ui_button(Rect::new(85.0, 327.0, 85.0, 30.0), "Prev");
+                ui_button(Rect::new(455.0, 327.0, 85.0, 30.0), "Next");
+                ui_button(Rect::new(85.0, 365.0, 130.0, 36.0), "Create");
+                ui_button(Rect::new(225.0, 365.0, 130.0, 36.0), "Rename");
+                ui_button(Rect::new(365.0, 365.0, 130.0, 36.0), "Delete");
+            }
+            SelectorPanel::Options => {
+                draw_text("OPTIONS", 85.0, 100.0, 29.0, YELLOW);
+                for (label, value, enabled, y) in [
+                    ("Music", settings.music_volume, caps.music_volume, 145.0),
+                    (
+                        "Effects",
+                        settings.effects_volume,
+                        caps.effects_volume,
+                        205.0,
+                    ),
+                ] {
+                    draw_text(label, 95.0, y + 20.0, 22.0, WHITE);
+                    draw_rectangle(230.0, y, 270.0, 28.0, DARKGRAY);
+                    draw_rectangle(
+                        230.0,
+                        y,
+                        270.0 * value,
+                        28.0,
+                        if enabled { YELLOW } else { GRAY },
+                    );
+                }
+                ui_button(
+                    Rect::new(230.0, 260.0, 270.0, 32.0),
+                    &format!("Fullscreen: {}", settings.fullscreen),
+                );
+                ui_button(
+                    Rect::new(230.0, 305.0, 270.0, 32.0),
+                    &format!("Custom cursor: {}", settings.custom_cursor),
+                );
+                draw_text(
+                    "Hardware acceleration: unavailable",
+                    95.0,
+                    386.0,
+                    18.0,
+                    GRAY,
+                );
+            }
+            SelectorPanel::Scores => {
+                draw_text("HIGH SCORES", 85.0, 100.0, 29.0, YELLOW);
+                if let Some(index) = self.score_focus {
+                    if let Some(row) = profiles.score_rows(self.score_tab).get(index) {
+                        draw_text(
+                            format!(
+                                "{:?} tank {}{}",
+                                row.kind,
+                                row.tank,
+                                row.level.map_or(String::new(), |n| format!("-{n}"))
+                            ),
+                            85.0,
+                            145.0,
+                            22.0,
+                            YELLOW,
+                        );
+                        draw_text(
+                            format!(
+                                "Personal: {}",
+                                row.personal.map_or("--".into(), |score| score.to_string())
+                            ),
+                            85.0,
+                            180.0,
+                            19.0,
+                            WHITE,
+                        );
+                        for (index, entry) in row.global.iter().enumerate() {
+                            draw_text(
+                                format!("{}. {}   {}", index + 1, entry.name, entry.score),
+                                100.0,
+                                220.0 + index as f32 * 31.0,
+                                20.0,
+                                WHITE,
+                            );
+                        }
+                    }
+                    return;
+                }
+                for (index, label) in ["Adventure", "Time Trial", "Challenge", "Personal"]
+                    .into_iter()
+                    .enumerate()
+                {
+                    ui_button(
+                        Rect::new(76.0 + index as f32 * 122.0, 110.0, 118.0, 30.0),
+                        label,
+                    );
+                }
+                for (index, row) in profiles
+                    .score_rows(self.score_tab)
+                    .iter()
+                    .skip(self.page * 8)
+                    .take(8)
+                    .enumerate()
+                {
+                    draw_text(
+                        format!(
+                            "{:?} {}{}   You: {}   Top: {}",
+                            row.kind,
+                            row.tank,
+                            row.level.map_or(String::new(), |n| format!("-{n}")),
+                            row.personal.map_or("--".into(), |n| n.to_string()),
+                            row.global.first().map_or("--".into(), |entry| format!(
+                                "{} {}",
+                                entry.name, entry.score
+                            ))
+                        ),
+                        83.0,
+                        163.0 + index as f32 * 24.0,
+                        17.0,
+                        WHITE,
+                    );
+                }
+                ui_button(Rect::new(85.0, 365.0, 85.0, 30.0), "Prev");
+                ui_button(Rect::new(455.0, 365.0, 85.0, 30.0), "Next");
+            }
+            SelectorPanel::Help => {
+                draw_text("HELP", 85.0, 100.0, 29.0, YELLOW);
+                for (index, line) in [
+                    "Adventure: feed fish, collect coins, buy eggs.",
+                    "Time Trial: score before the tank timer expires.",
+                    "Challenge: finish each tank against rising prices.",
+                    "Virtual Tank: keep fish, visit store, collect shells.",
+                    "Sandbox: enter selector code after seventh pet slot.",
+                    "Esc pauses tanks; S saves; Q exits while paused.",
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    draw_text(line, 90.0, 150.0 + index as f32 * 38.0, 20.0, WHITE);
+                }
+            }
+        }
+        if !self.error.is_empty() {
+            draw_text(&self.error, 85.0, 410.0, 18.0, ORANGE);
+        }
+        if let Some(form) = self.form {
+            draw_rectangle(
+                115.0,
+                160.0,
+                410.0,
+                195.0,
+                Color::new(0.02, 0.08, 0.12, 0.99),
+            );
+            draw_rectangle_lines(115.0, 160.0, 410.0, 195.0, 2.0, YELLOW);
+            draw_text(
+                match form {
+                    ProfileForm::Create => "Create profile",
+                    ProfileForm::Rename(_) => "Rename profile",
+                    ProfileForm::Delete(_) => "Delete current profile?",
+                },
+                140.0,
+                200.0,
+                25.0,
+                WHITE,
+            );
+            if !matches!(form, ProfileForm::Delete(_)) {
+                draw_text(&self.name, 145.0, 265.0, 24.0, YELLOW);
+            }
+            ui_button(Rect::new(145.0, 310.0, 145.0, 38.0), "Confirm");
+            ui_button(Rect::new(350.0, 310.0, 145.0, 38.0), "Cancel");
+        }
+    }
+}
+
 pub async fn run(
     options: Options,
     game_root: PathBuf,
     identity: InstallIdentity,
     assets: GameAssets,
-    mut session: AdventureSession,
+    mut profiles: Profiles,
+    mut settings: SettingsSave,
 ) -> Result<(), Box<dyn Error>> {
     let opened_at = wall_seconds();
-    session.resume_virtual_from_save(opened_at, opened_at / 86_400 * 86_400);
+    if let Some(current) = profiles.current_mut() {
+        current
+            .session
+            .resume_virtual_from_save(opened_at, opened_at / 86_400 * 86_400);
+    }
     let presentation = Presentation::load(&game_root, &assets, options.muted).await?;
     let (mut music, mut music_unavailable) = if options.muted {
         (None, None)
@@ -4484,13 +5085,33 @@ pub async fn run(
             Err(error) => (None, Some(format!("Music thread unavailable: {error}"))),
         }
     };
+    {
+        let mut backend = RuntimeSettingsBackend {
+            audio: music.as_ref(),
+        };
+        if let Some(owner) = music.as_ref() {
+            owner.set_music_volume(settings.settings.music_volume)?;
+            owner.set_effects_volume(settings.settings.effects_volume)?;
+        }
+        backend.set_fullscreen(settings.settings.fullscreen)?;
+        backend.set_custom_cursor(settings.settings.custom_cursor)?;
+    }
     let mut evidence = options
         .evidence_dir
         .as_ref()
-        .map(|root| Evidence::open(root, &identity, &session, options.seed, options.test_speed))
+        .zip(profiles.current())
+        .map(|(root, entry)| {
+            Evidence::open(
+                root,
+                &identity,
+                &entry.session,
+                options.seed,
+                options.test_speed,
+            )
+        })
         .transpose()?;
     let started = get_time();
-    let start_session_tick = session.ticks;
+    let mut start_session_tick = profiles.current().map_or(0, |entry| entry.session.ticks);
     let mut clock = StepClock::new(options.test_speed);
     let mut pending_actions = Vec::new();
     let mut paused = false;
@@ -4500,6 +5121,24 @@ pub async fn run(
     let mut held_feed_at = None::<InputPress>;
     let mut held_fire_at = None::<InputPress>;
     let mut healing_warning_until_tick = None::<u64>;
+    let mut selector_ui = SelectorUi::default();
+    let mut entry_code = EntryCode::default();
+    let song_catalog = match SongCatalog::load_from_install(&game_root) {
+        Ok(catalog) => Some(catalog),
+        Err(error) => {
+            eprintln!("Fish songs unavailable: {error}");
+            None
+        }
+    };
+    let mut song_player = FishSongPlayer::default();
+    let mut singing_feeds = HashMap::<u16, u8>::new();
+    let mut pending_song_ticks = None::<u8>;
+    let mut pending_song_kind = None::<NamedFish>;
+    let mut song_sequence = 0_usize;
+    let mut song_id = 0_i32;
+    let mut song_title = String::new();
+    let mut song_title_until = 0.0_f64;
+    let mut interlude = None::<InterludeController>;
     prevent_quit();
     loop {
         let elapsed = get_time() - started;
@@ -4510,7 +5149,159 @@ pub async fn run(
         );
         let (mouse_x, mouse_y) = mouse_position();
         let pointer = (vec2(mouse_x, mouse_y) - offset) / scale;
-        if is_key_pressed(KeyCode::Escape) {
+        let selector_open = profiles.current().is_none()
+            || profiles
+                .current()
+                .is_some_and(|entry| entry.session.phase == AdventurePhase::GameSelector);
+        if profiles.current().is_none() {
+            selector_ui.panel = Some(SelectorPanel::Profiles);
+        }
+        let (ui_owned_input, ui_command) =
+            selector_ui.input(&profiles, settings.settings, pointer, selector_open);
+        let ui_active = selector_ui.panel.is_some() || profiles.current().is_none();
+        if let Some(command) = ui_command {
+            let profiles_path = options.save_dir.join("profiles.json");
+            let result = match command {
+                UiCommand::Create(name) => {
+                    if profiles.current().is_some() {
+                        cli::save_profiles_checkpoint(&options, &profiles)?;
+                    }
+                    profiles
+                        .create(
+                            &profiles_path,
+                            &name,
+                            options.seed.wrapping_add(profiles.next_id),
+                        )
+                        .map(|_| true)
+                }
+                UiCommand::Select(id) => {
+                    cli::save_profiles_checkpoint(&options, &profiles)?;
+                    profiles.select(&profiles_path, id).map(|_| true)
+                }
+                UiCommand::Rename(id, name) => {
+                    profiles.rename(&profiles_path, id, &name).map(|_| false)
+                }
+                UiCommand::Delete(id) => profiles.delete(&profiles_path, id).map(|_| true),
+                UiCommand::Setting(change) => {
+                    let previous = settings.settings;
+                    let mut backend = RuntimeSettingsBackend {
+                        audio: music.as_ref(),
+                    };
+                    match settings.settings.change(&mut backend, change) {
+                        Err(error) => Err(error.into()),
+                        Ok(()) => match settings.save(&options.save_dir.join("settings.json")) {
+                            Err(error) => {
+                                settings.settings = previous;
+                                let _ = match change {
+                                    SettingChange::MusicVolume(_) => {
+                                        backend.set_music_volume(previous.music_volume)
+                                    }
+                                    SettingChange::EffectsVolume(_) => {
+                                        backend.set_effects_volume(previous.effects_volume)
+                                    }
+                                    SettingChange::Fullscreen(_) => {
+                                        backend.set_fullscreen(previous.fullscreen)
+                                    }
+                                    SettingChange::CustomCursor(_) => {
+                                        backend.set_custom_cursor(previous.custom_cursor)
+                                    }
+                                };
+                                Err(error)
+                            }
+                            Ok(()) => Ok(false),
+                        },
+                    }
+                }
+                UiCommand::Quit => {
+                    cli::save_profiles_checkpoint(&options, &profiles)?;
+                    break;
+                }
+            };
+            match result {
+                Ok(switched) => {
+                    selector_ui.error.clear();
+                    if switched {
+                        if let Some(owner) = music.as_ref() {
+                            let _ = owner.stop_song(song_id);
+                        }
+                        song_player.clear();
+                        singing_feeds.clear();
+                        pending_song_ticks = None;
+                        pending_song_kind = None;
+                        song_title.clear();
+                        interlude = None;
+                        paused = false;
+                        pending_actions.clear();
+                        clock.clear_backlog();
+                        feed_press_at = None;
+                        held_feed_at = None;
+                        held_fire_at = None;
+                        entry_code = EntryCode::default();
+                        if let Some(entry) = profiles.current() {
+                            start_session_tick = entry.session.ticks;
+                        }
+                    }
+                }
+                Err(error) => selector_ui.error = error.to_string(),
+            }
+        }
+        if profiles.current().is_none() {
+            if is_quit_requested() {
+                break;
+            }
+            clear_background(BLACK);
+            let mut camera = Camera2D::from_display_rect(Rect::new(0.0, 0.0, 640.0, 480.0));
+            camera.zoom.y = 2.0 / 480.0;
+            camera.viewport = Some((
+                offset.x as i32,
+                offset.y as i32,
+                (640.0 * scale) as i32,
+                (480.0 * scale) as i32,
+            ));
+            set_camera(&camera);
+            selector_ui.draw(
+                &profiles,
+                settings.settings,
+                RuntimeSettingsBackend {
+                    audio: music.as_ref(),
+                }
+                .capabilities(),
+            );
+            if settings.settings.custom_cursor {
+                draw_circle(pointer.x, pointer.y, 5.0, YELLOW);
+            }
+            set_default_camera();
+            next_frame().await;
+            continue;
+        }
+        let session = &mut profiles.current_mut().ok_or("No current profile")?.session;
+        if session.phase == AdventurePhase::AdventureFinaleInterlude && interlude.is_none() {
+            interlude = InterludeController::new(&session.finale_fallen_pets).ok();
+        } else if session.phase != AdventurePhase::AdventureFinaleInterlude {
+            interlude = None;
+        }
+        if session.phase == AdventurePhase::GameSelector && !ui_active {
+            for (pressed, key) in [
+                (is_key_pressed(KeyCode::Up), SelectorKey::Up),
+                (is_key_pressed(KeyCode::Down), SelectorKey::Down),
+                (is_key_pressed(KeyCode::Left), SelectorKey::Left),
+                (is_key_pressed(KeyCode::Right), SelectorKey::Right),
+                (is_key_pressed(KeyCode::B), SelectorKey::B),
+                (is_key_pressed(KeyCode::A), SelectorKey::A),
+            ] {
+                if pressed && entry_code.push(key) {
+                    pending_actions.push(Action::OpenSandbox);
+                }
+            }
+        } else {
+            entry_code.reset();
+        }
+        if session.phase == AdventurePhase::SandboxPlaying && !paused {
+            while let Some(character) = get_char_pressed() {
+                pending_actions.push(Action::SandboxKeyChar { character });
+            }
+        }
+        if !ui_owned_input && !ui_active && is_key_pressed(KeyCode::Escape) {
             if matches!(session.phase, AdventurePhase::VirtualPurchaseConfirm { .. }) {
                 let now_seconds = wall_seconds();
                 pending_actions.push(Action::VirtualConfirmPurchase {
@@ -4538,6 +5329,7 @@ pub async fn run(
                 AdventurePhase::TimeTrialPrestoDialog { .. }
                     | AdventurePhase::AdventurePrestoDialog { .. }
                     | AdventurePhase::ChallengePrestoDialog { .. }
+                    | AdventurePhase::SandboxPrestoDialog { .. }
             ) && !paused
             {
                 pending_actions.push(Action::PrestoCancel);
@@ -4582,7 +5374,7 @@ pub async fn run(
         } else {
             Rect::new(525.0, 3.0, 101.0, 29.0)
         };
-        if !paused {
+        if !paused && !ui_active {
             let current_name = match &session.phase {
                 AdventurePhase::VirtualPurchaseConfirm { name, .. }
                 | AdventurePhase::VirtualRename { name, .. } => Some(name.clone()),
@@ -4608,12 +5400,13 @@ pub async fn run(
                 }
             }
         }
-        if is_mouse_button_pressed(MouseButton::Left) {
+        if !ui_owned_input && !ui_active && is_mouse_button_pressed(MouseButton::Left) {
             if matches!(
                 session.phase,
                 AdventurePhase::TimeTrialPrestoDialog { .. }
                     | AdventurePhase::AdventurePrestoDialog { .. }
                     | AdventurePhase::ChallengePrestoDialog { .. }
+                    | AdventurePhase::SandboxPrestoDialog { .. }
             ) && !paused
             {
                 if let Some(pet) =
@@ -4627,6 +5420,7 @@ pub async fn run(
                     AdventurePhase::Playing
                         | AdventurePhase::TimeTrialPlaying
                         | AdventurePhase::ChallengePlaying
+                        | AdventurePhase::SandboxPlaying
                         | AdventurePhase::TimeTrialTankSelection
                         | AdventurePhase::TimeTrialPetSelection { .. }
                         | AdventurePhase::ChallengeTankSelection
@@ -4970,6 +5764,19 @@ pub async fn run(
                     AdventurePhase::AdventureFinaleInterlude
                         if Rect::new(186.0, 445.0, 264.0, button_height).contains(pointer) =>
                     {
+                        if let Some(controller) = interlude.as_mut() {
+                            let _ = controller.back_to_menu();
+                        }
+                        Action::OpenMenu
+                    }
+                    AdventurePhase::AdventureFinaleInterlude
+                        if interlude
+                            .as_ref()
+                            .is_some_and(InterludeController::can_skip_by_click) =>
+                    {
+                        if let Some(controller) = interlude.as_mut() {
+                            let _ = controller.click_after_scroll();
+                        }
                         Action::OpenMenu
                     }
                     AdventurePhase::PetSelection { .. } => {
@@ -5124,6 +5931,11 @@ pub async fn run(
                         if Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
                     {
                         Action::Continue
+                    }
+                    AdventurePhase::SandboxPlaying
+                        if Rect::new(436.0, 3.0, 58.0, 60.0).contains(pointer) =>
+                    {
+                        Action::BuyEgg
                     }
                     AdventurePhase::Playing
                     | AdventurePhase::TimeTrialPlaying
@@ -5298,12 +6110,13 @@ pub async fn run(
                 pending_actions.push(action);
             }
         }
-        if is_mouse_button_released(MouseButton::Left) {
+        if !ui_active && is_mouse_button_released(MouseButton::Left) {
             if matches!(
                 session.phase,
                 AdventurePhase::TimeTrialPrestoDialog { .. }
                     | AdventurePhase::AdventurePrestoDialog { .. }
                     | AdventurePhase::ChallengePrestoDialog { .. }
+                    | AdventurePhase::SandboxPrestoDialog { .. }
             ) && !paused
             {
                 pending_actions.push(Action::PrestoRelease {
@@ -5316,12 +6129,14 @@ pub async fn run(
             held_fire_at = None;
         }
         if !paused
+            && !ui_active
             && is_mouse_button_pressed(MouseButton::Right)
             && matches!(
                 session.phase,
                 AdventurePhase::TimeTrialPlaying
                     | AdventurePhase::Playing
                     | AdventurePhase::ChallengePlaying
+                    | AdventurePhase::SandboxPlaying
             )
         {
             pending_actions.push(Action::RightClick {
@@ -5361,16 +6176,21 @@ pub async fn run(
                 | AdventurePhase::PetSelection { .. }
         ) || matches!(session.phase, AdventurePhase::GameOver { updates } | AdventurePhase::TimeTrialGameOver { updates } if updates > 30)
             || matches!(session.phase, AdventurePhase::BonusResults { ref result } if result.updates >= 30);
-        if !paused && is_key_pressed(KeyCode::Enter) && enter_continues {
+        if !paused && !ui_active && is_key_pressed(KeyCode::Enter) && enter_continues {
             pending_actions.push(Action::Continue);
         }
         if !paused
+            && !ui_active
             && session.phase == AdventurePhase::AdventureFinaleInterlude
             && is_key_pressed(KeyCode::Enter)
         {
+            if let Some(controller) = interlude.as_mut() {
+                let _ = controller.back_to_menu();
+            }
             pending_actions.push(Action::OpenMenu);
         }
         if !paused
+            && !ui_active
             && matches!(
                 session.phase,
                 AdventurePhase::PetSelectionConfirmation { .. }
@@ -5383,7 +6203,7 @@ pub async fn run(
                 pending_actions.push(Action::ConfirmPetSelection { accept: false });
             }
         }
-        let save_requested = is_key_pressed(KeyCode::S);
+        let save_requested = !ui_active && is_key_pressed(KeyCode::S);
         let mut exit_requested = is_quit_requested()
             || (paused && is_key_pressed(KeyCode::Q))
             || wall_deadline_reached(elapsed, options.quit_after);
@@ -5391,7 +6211,7 @@ pub async fn run(
         let mut event_stamps = Vec::new();
         let mut phase_transitioned = false;
         if let Some(owner) = music.as_mut() {
-            owner.sync(&session, paused);
+            owner.sync(session, paused);
         }
         if save_requested || exit_requested {
             // Inputs already accepted by this window belong to the checkpoint.
@@ -5415,7 +6235,7 @@ pub async fn run(
             }
         }
         if !exit_requested {
-            clock.add_frame(get_frame_time(), paused);
+            clock.add_frame(get_frame_time(), paused || ui_active);
             while clock.step_due() {
                 if options.test_speed > 1
                     && wall_deadline_reached(get_time() - started, options.quit_after)
@@ -5435,9 +6255,21 @@ pub async fn run(
                     pending_actions.clear();
                     break;
                 }
-                if paused {
+                if paused || ui_active {
                     session.paused_step();
                 } else {
+                    let before_fish_hunger: HashMap<_, _> =
+                        if session.phase == AdventurePhase::VirtualTank {
+                            session
+                                .virtual_tank
+                                .fish
+                                .iter()
+                                .filter(|fish| fish.alive && fish.properties.singing)
+                                .map(|fish| (fish.id, fish.hunger))
+                                .collect()
+                        } else {
+                            HashMap::new()
+                        };
                     let mut step_actions = std::mem::take(&mut pending_actions);
                     let pressed_feed = feed_press_at.is_some()
                         && step_actions
@@ -5479,8 +6311,118 @@ pub async fn run(
                     }
                     let previous_phase = std::mem::discriminant(&session.phase);
                     let step_events = session.step(&step_actions);
+                    if session.phase == AdventurePhase::AdventureFinaleInterlude {
+                        if interlude.is_none() {
+                            interlude = InterludeController::new(&session.finale_fallen_pets).ok();
+                        }
+                        if let Some(controller) = interlude.as_mut() {
+                            let _ = controller.advance(true);
+                        }
+                    }
+                    if session.phase == AdventurePhase::VirtualTank {
+                        for fish in session
+                            .virtual_tank
+                            .fish
+                            .iter()
+                            .filter(|fish| fish.alive && fish.properties.singing)
+                        {
+                            if before_fish_hunger
+                                .get(&fish.id)
+                                .is_some_and(|old| fish.hunger > *old + 1)
+                            {
+                                let count = singing_feeds.entry(fish.id).or_default();
+                                *count = count.wrapping_add(1);
+                                if (*count).is_multiple_of(5) && !song_player.busy() {
+                                    pending_song_ticks = Some(5);
+                                    pending_song_kind = fish.properties.named;
+                                }
+                            }
+                        }
+                        if let Some(left) = pending_song_ticks.as_mut() {
+                            *left = left.saturating_sub(1);
+                            if *left == 0 {
+                                pending_song_ticks = None;
+                                if let Some(catalog) = song_catalog.as_ref() {
+                                    let special = pending_song_kind.take();
+                                    let eligible: Vec<_> = catalog
+                                        .songs()
+                                        .iter()
+                                        .filter(|song| {
+                                            if song.property("test").is_some() {
+                                                return false;
+                                            }
+                                            match special {
+                                                Some(NamedFish::Kilgore) => {
+                                                    song.property("kilgore").is_some()
+                                                }
+                                                Some(NamedFish::Ludwig) => {
+                                                    !song.is_long()
+                                                        && (song.property("beethoven").is_some()
+                                                            || song
+                                                                .property("beethovenrare")
+                                                                .is_some())
+                                                }
+                                                Some(NamedFish::Santa) => {
+                                                    !song.is_long()
+                                                        && (song.property("santa").is_some()
+                                                            || song.property("santarare").is_some())
+                                                }
+                                                _ => {
+                                                    !song.is_long()
+                                                        && song.property("beethovenrare").is_none()
+                                                        && song.property("santarare").is_none()
+                                                }
+                                            }
+                                        })
+                                        .collect();
+                                    if let Some(song) =
+                                        eligible.get(song_sequence % eligible.len().max(1))
+                                    {
+                                        let selected = if song_sequence % 5 == 4 {
+                                            song.property("short")
+                                                .and_then(|stem| {
+                                                    catalog.songs().iter().find(|candidate| {
+                                                        candidate.is_long()
+                                                            && candidate.property("long")
+                                                                == Some(stem)
+                                                    })
+                                                })
+                                                .unwrap_or(*song)
+                                        } else {
+                                            *song
+                                        };
+                                        song_sequence += 1;
+                                        song_id = song_id.saturating_add(1);
+                                        let applause = selected.is_long()
+                                            && !matches!(
+                                                special,
+                                                Some(NamedFish::Kilgore | NamedFish::Santa)
+                                            );
+                                        if song_player
+                                            .start(
+                                                selected,
+                                                song_id,
+                                                (get_time() * 1000.0) as u64,
+                                                applause,
+                                            )
+                                            .is_ok()
+                                        {
+                                            song_title = selected
+                                                .property("title")
+                                                .unwrap_or(&selected.file_name)
+                                                .to_owned();
+                                            if selected.is_long() {
+                                                song_title.push_str(" (extended)");
+                                            }
+                                            song_title_until = get_time() + 5.0;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if let Some(owner) = music.as_mut() {
-                        owner.sync(&session, paused);
+                        owner.sync(session, paused);
                     }
                     phase_transitioned |= previous_phase != std::mem::discriminant(&session.phase);
                     if feed_press_at
@@ -5520,7 +6462,7 @@ pub async fn run(
                     }
                     events.extend(step_events);
                 }
-                clock.consume_step(paused);
+                clock.consume_step(paused || ui_active);
                 if phase_transitioned
                     || events.iter().any(|event| {
                         matches!(
@@ -5560,7 +6502,7 @@ pub async fn run(
                 .board
                 .as_mut()
                 .is_some_and(AdventureState::observe_rendered_bilaterus_connectors);
-        if phase_transitioned
+        let save_due = phase_transitioned
             || observed_connector_change
             || save_requested
             || exit_requested
@@ -5591,6 +6533,7 @@ pub async fn run(
                         | Event::HatchStarted { .. }
                         | Event::TankFourFinaleHatchStarted { .. }
                         | Event::StageStarted { .. }
+                        | Event::StageResultRecorded { .. }
                         | Event::RescueGuppyGranted { .. }
                         | Event::BonusResultsCommitted { .. }
                         | Event::BonusPurchaseOffered { .. }
@@ -5603,10 +6546,9 @@ pub async fn run(
                             ..
                         }
                 )
-            })
-        {
+            });
+        if save_due {
             session.virtual_saved_at_seconds = wall_seconds();
-            cli::save_session(&options, &session)?;
         }
         healing_warning_until_tick = healing_warning_after_events(
             healing_warning_until_tick,
@@ -5614,8 +6556,34 @@ pub async fn run(
             matches!(session.phase, AdventurePhase::Playing),
         );
         let mut music_reports = presentation.play(&events, music.as_ref());
+        let song_now_ms = (get_time() * 1000.0) as u64;
+        if paused || ui_active || session.phase != AdventurePhase::VirtualTank {
+            song_player.pause(song_now_ms);
+        } else {
+            song_player.resume(song_now_ms);
+            for command in song_player.advance(song_now_ms) {
+                if let (Some(owner), Some(bytes)) = (
+                    music.as_ref(),
+                    presentation.sounds.get(command.sample.sound_id()),
+                ) && let Some(report) = owner.play_tone(
+                    bytes.clone(),
+                    command.song_id,
+                    command.pitch_semitones,
+                    command.gain,
+                ) {
+                    music_reports.push(report);
+                }
+            }
+        }
         if let Some(owner) = music.as_mut() {
-            owner.sync(&session, paused);
+            owner.sync(session, paused);
+            if session.phase == AdventurePhase::AdventureFinaleInterlude {
+                let cue = match interlude.as_ref().map(InterludeController::music_stage) {
+                    Some(MusicStage::Lullaby) => MusicCue::Lullaby,
+                    _ => MusicCue::Interlude,
+                };
+                owner.sync_cue(Some(cue), paused);
+            }
             music_reports.extend(owner.drain_reports());
             if let Some(reason) = owner.unavailable() {
                 music_unavailable.get_or_insert_with(|| reason.to_owned());
@@ -5636,10 +6604,12 @@ pub async fn run(
             } else {
                 elapsed
             };
-            evidence.record(&events, &event_stamps, &session, evidence_elapsed, paused)?;
-            evidence.record_music(&music_reports, evidence_elapsed, &session)?;
+            evidence.record(&events, &event_stamps, session, evidence_elapsed, paused)?;
+            evidence.record_music(&music_reports, evidence_elapsed, session)?;
         }
         if exit_requested {
+            profiles.record_events(&options.save_dir.join("profiles.json"), &events)?;
+            cli::save_profiles_checkpoint(&options, &profiles)?;
             break;
         }
         clear_background(BLACK);
@@ -5654,7 +6624,31 @@ pub async fn run(
             (480.0 * scale) as i32,
         ));
         set_camera(&camera);
-        presentation.draw(&session, paused, pointer, healing_warning_until_tick);
+        let capture_tick = session.ticks;
+        presentation.draw(
+            session,
+            paused,
+            pointer,
+            healing_warning_until_tick,
+            interlude.as_ref(),
+        );
+        if session.phase == AdventurePhase::VirtualTank && get_time() < song_title_until {
+            draw_text(&song_title, 24.0, 105.0, 20.0, YELLOW);
+        }
+        if session.phase == AdventurePhase::GameSelector {
+            selector_ui.draw(
+                &profiles,
+                settings.settings,
+                RuntimeSettingsBackend {
+                    audio: music.as_ref(),
+                }
+                .capabilities(),
+            );
+        }
+        if settings.settings.custom_cursor {
+            draw_circle(pointer.x, pointer.y, 5.0, YELLOW);
+            draw_circle_lines(pointer.x, pointer.y, 8.0, 1.5, BLACK);
+        }
         if options.test_speed > 1 {
             draw_rectangle(8.0, 449.0, 132.0, 22.0, Color::new(0.0, 0.0, 0.0, 0.8));
             draw_text(
@@ -5672,22 +6666,29 @@ pub async fn run(
         if let Some(evidence) = evidence.as_ref() {
             let request = evidence.root.join("capture.request");
             if is_key_pressed(KeyCode::F12) || request.exists() {
-                evidence.capture(session.ticks);
+                evidence.capture(capture_tick);
                 if request.exists() {
                     fs::remove_file(request)?;
                 }
             }
         }
+        profiles.record_events(&options.save_dir.join("profiles.json"), &events)?;
+        if save_due {
+            cli::save_profiles_checkpoint(&options, &profiles)?;
+        }
         next_frame().await;
     }
-    session.virtual_saved_at_seconds = wall_seconds();
-    cli::save_session(&options, &session)?;
+    if let Some(current) = profiles.current_mut() {
+        current.session.virtual_saved_at_seconds = wall_seconds();
+    }
+    cli::save_profiles_checkpoint(&options, &profiles)?;
     let after = install::identify(&game_root)?;
     if after.inventory_sha256 != identity.inventory_sha256 {
         return Err("Owned installation changed during run; inspect before continuing".into());
     }
-    if let Some(evidence) = evidence.as_mut() {
-        evidence.record(&[], &[], &session, get_time() - started, paused)?;
+    if let (Some(evidence), Some(current)) = (evidence.as_mut(), profiles.current()) {
+        let session = &current.session;
+        evidence.record(&[], &[], session, get_time() - started, paused)?;
         cli::write_json(
             &evidence.root.join("final.local.json"),
             &serde_json::json!({"session":session,"game_after":after,"elapsed_seconds":get_time()-started,"session_elapsed_seconds":session.ticks.saturating_sub(start_session_tick) as f64 * f64::from(TICK_MS) / 1000.0,"test_speed":options.test_speed,"time_mode":options.time_mode(),"game_unchanged":true}),

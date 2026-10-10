@@ -15,7 +15,7 @@ Continue automatically through these dependency-aware outcomes, preserving the a
 3. Integrate Sandbox and Relax with their actual admission, unlock, Board and exit contracts; keep the two modes distinct until source evidence joins them.
 4. Complete shared menus/options, profile management, highscores and persistence across supported modes.
 5. Complete finale/results presentation, music, audio and effects, and reconcile every remaining [compatibility](compatibility.md) item against the full requirements.
-6. Clear the agent-executable native backlog: input, visual inspection, save/reopen/pause, earned progression, modes, failure/continuation and accessible audio. Use identified isolated runs, deadlines and owned-process cleanup. Keep normal-speed acceptance separate from accelerated diagnostics and preserve E80's byte-exact earning06 save with its frozen build.
+6. Keep the agent-executable native backlog deferred during the latest implementation-first phase: input, visual inspection, save/reopen/pause, earned progression, modes, failure/continuation and accessible audio. Later acceptance uses identified isolated runs, deadlines and owned-process cleanup, with normal-speed acceptance separate from accelerated diagnostics and E80's byte-exact earning06 save/frozen build preserved.
 
 Parallelize bounded source or independent implementation work with explicit ownership; serialize Ghidra, shared integration, Cargo, Git and native experiments. The latest user clarification makes broad integrated coverage the priority: keep necessary focused compile/lint/regressions, defer exhaustive evidence, repeated validation/reviews, fidelity refinements and polishing unless they resolve a concrete implementation or correctness/data-integrity issue. No overlapping probe matrix or implementation-mirror tests. Keep a short deferred-detail list and move directly to the next system. Human feel/fidelity and inaccessible retail observations remain pending; a material access or decision blocker requires input.
 
@@ -25,9 +25,15 @@ The subsequent2026-10-10 steering defers work outside remaining-system implement
 
 [Virtual Tank/store](virtual-tank.md) owns the current33 ownership, transaction and load contract. Keep Profile as the shell authority and durable fish separate from transient positions/food/coins; preserve Adventure while visiting store/setup. Cursor5 gains a real seven-pet consumer while ordinary choices remain capped4. Use pinned secondary behavior for the completion sweep; do not invent offline catch-up or claim unverified retail RNG/coin/render parity.
 
+The [next VT combat/pet contract](virtual-tank.md#next-combat-and-pet-increment) preserves purchased fish, shares stable transient-object allocation, retains one pet pose/form authority and separates timeout removal from defeat rewards. Root serializes shared input/persistence joins after independent combat and pet production; a new database recovery pass or presentation polish is not required for these source-backed interactions.
+
 ## Sandbox integration decisions
 
 [Sandbox/Relax](sandbox.md) owns admission, keyboard/setup/save boundaries. Keep Sandbox distinct from the Relax flag, and require the actual cursor>5 gate. Its Board is disposable and cannot overwrite the retained Adventure scene. Capacity11 is the recovered floor; ordinary/VT consumers retain4/7 limits. Relax setup can be represented internally while its retail activation remains unknown; no guessed selector unlock.
+
+## Shared interface integration decisions
+
+[Shared interface and ending](shared-interface.md) owns profile/session and copied-name global-score ownership, actual settings backend application, singing-fish playback and durable fallen-pet/transient ending boundaries. Personal bests and global earned rows are distinct source systems; retain rows across profile rename/delete, record completion events once, and rank Tank5 survivors separately from ordinary elapsed time. Preserve the current-format single-save adoption boundary and disposable Sandbox projection; no legacy import/backfill. Exact retail art, narration, preset rows and audible/native comparisons follow bulk integration.
 
 ## Logical Presto in Time Trial
 

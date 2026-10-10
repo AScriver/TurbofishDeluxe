@@ -1,4 +1,4 @@
-use crate::{adventure::AdventureSession, install, sim::AdventureState};
+use crate::{adventure::AdventureSession, install, profiles::Profiles, sim::AdventureState};
 use std::{
     env,
     error::Error,
@@ -141,7 +141,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 33;
+pub const SAVE_FORMAT_VERSION: u32 = 34;
 
 #[cfg(test)]
 mod current_twenty_one_tests {
@@ -229,7 +229,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             );
         }
     }
-    if version_number.is_some_and(|version| (24..=33).contains(&version)) {
+    if version_number.is_some_and(|version| (24..=34).contains(&version)) {
         let session = value
             .get("session")
             .and_then(serde_json::Value::as_object)
@@ -254,7 +254,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Older save cannot claim Time Trial mode".into());
     }
-    if version_number.is_some_and(|version| (26..=33).contains(&version))
+    if version_number.is_some_and(|version| (26..=34).contains(&version))
         && (value
             .pointer("/session/progress/adventure_completions")
             .is_none()
@@ -269,7 +269,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Incomplete format-twenty-six replay state".into());
     }
-    if version_number.is_some_and(|version| (27..=33).contains(&version)) {
+    if version_number.is_some_and(|version| (27..=34).contains(&version)) {
         let purchase = |result: &serde_json::Value| {
             result.get("purchase").is_some_and(|receipt| {
                 ["offered_cursor", "confirming", "purchased"]
@@ -298,7 +298,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             return Err("Incomplete format-twenty-seven purchase or Brinkley state".into());
         }
     }
-    if version_number.is_some_and(|version| (28..=33).contains(&version))
+    if version_number.is_some_and(|version| (28..=34).contains(&version))
         && (value
             .pointer("/session/board/fish_pets")
             .and_then(serde_json::Value::as_array)
@@ -326,7 +326,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Incomplete format-twenty-eight Nostradamus state".into());
     }
-    if version_number.is_some_and(|version| (29..=33).contains(&version))
+    if version_number.is_some_and(|version| (29..=34).contains(&version))
         && (value
             .pointer("/session/board/fish_pets")
             .and_then(serde_json::Value::as_array)
@@ -357,7 +357,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Incomplete format-twenty-nine Stanley state".into());
     }
-    if version_number.is_some_and(|version| (30..=33).contains(&version))
+    if version_number.is_some_and(|version| (30..=34).contains(&version))
         && value
             .pointer("/session/board")
             .filter(|board| !board.is_null())
@@ -454,7 +454,20 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Virtual Tank and seven-slot capacity require format thirty-three".into());
     }
-    if version_number == Some(33) {
+    if version_number.is_some_and(|version| version < 34)
+        && (value.pointer("/session/last_non_adventure_tank").is_some()
+            || value.pointer("/session/finale_fallen_pets").is_some()
+            || value
+                .pointer("/session/progress/tank5_best_survivors")
+                .is_some()
+            || value
+                .pointer("/session/progress/pet_capacity")
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|capacity| capacity > 7))
+    {
+        return Err("Sandbox and finale state require format thirty-four".into());
+    }
+    if version_number.is_some_and(|version| version >= 33) {
         let session = value
             .pointer("/session")
             .ok_or("Format-thirty-three session missing")?;
@@ -592,6 +605,44 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             return Err("Incomplete format-thirty-three Virtual Tank state".into());
         }
     }
+    if version_number == Some(34) {
+        let tank = value
+            .pointer("/session/last_non_adventure_tank")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or("Format-thirty-four Sandbox tank missing")?;
+        if !(1..=5).contains(&tank)
+            || value.pointer("/session/sandbox_board").is_some()
+            || value
+                .pointer("/session/finale_fallen_pets")
+                .and_then(serde_json::Value::as_array)
+                .is_none()
+            || value
+                .pointer("/session/progress/tank5_best_survivors")
+                .is_none()
+        {
+            return Err("Invalid format-thirty-four Sandbox state".into());
+        }
+        if value
+            .pointer("/session/virtual_board")
+            .is_some_and(|board| !board.is_null())
+        {
+            let board = value
+                .pointer("/session/virtual_board")
+                .expect("checked above");
+            if ["pets", "prey"].iter().any(|key| {
+                board
+                    .get(*key)
+                    .and_then(serde_json::Value::as_array)
+                    .is_none()
+            }) || board
+                .get("food")
+                .and_then(serde_json::Value::as_array)
+                .is_none_or(|food| food.iter().any(|item| item.get("kind").is_none()))
+            {
+                return Err("Incomplete format-thirty-four Virtual Board state".into());
+            }
+        }
+    }
     if let Some(version @ 1..=6) = version_number {
         validate_legacy_boundary(&value, version)?;
     }
@@ -688,7 +739,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=33) => {
+        Some(version @ 5..=34) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -1032,6 +1083,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     31 => "thirty-one",
                     32 => "thirty-two",
                     33 => "thirty-three",
+                    34 => "thirty-four",
                     _ => unreachable!("bounded format range"),
                 };
                 return Err(format!(
@@ -1317,6 +1369,49 @@ pub fn load_session(options: &Options) -> Result<AdventureSession, Box<dyn Error
         save_session(options, &session)?;
     }
     Ok(session)
+}
+
+/// Profiles are the current runtime owner. A pre-profile project save is
+/// adopted only when it already has the exact current session format; no
+/// historical reconstruction or write to adventure.json occurs here.
+pub fn load_profiles(options: &Options) -> Result<Profiles, Box<dyn Error>> {
+    let profiles_path = options.save_dir.join("profiles.json");
+    if profiles_path.exists() {
+        let mut profiles = Profiles::decode(&std::fs::read(&profiles_path)?)?;
+        if options.new_game {
+            if let Some(current) = profiles.current_mut() {
+                current.session = AdventureSession::new(options.seed);
+            } else {
+                return Ok(Profiles::new("Player", options.seed)?);
+            }
+        }
+        return Ok(profiles);
+    }
+    let old_path = options.save_dir.join("adventure.json");
+    if !options.new_game && old_path.exists() {
+        let bytes = std::fs::read(old_path)?;
+        let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+        if value
+            .get("format_version")
+            .and_then(serde_json::Value::as_u64)
+            != Some(u64::from(SAVE_FORMAT_VERSION))
+        {
+            return Err("Existing adventure save is not the current project format".into());
+        }
+        return Ok(Profiles::from_session("Player", decode_save(&bytes)?)?);
+    }
+    Ok(Profiles::new("Player", options.seed)?)
+}
+
+pub fn save_profiles_checkpoint(
+    options: &Options,
+    profiles: &Profiles,
+) -> Result<(), Box<dyn Error>> {
+    let mut snapshot = profiles.clone();
+    if let Some(current) = snapshot.current_mut() {
+        current.session = current.session.checkpoint_without_sandbox();
+    }
+    snapshot.save(&options.save_dir.join("profiles.json"))
 }
 
 pub fn save_session(options: &Options, session: &AdventureSession) -> Result<(), Box<dyn Error>> {

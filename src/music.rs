@@ -83,11 +83,20 @@ impl MusicCue {
             | AdventurePhase::AdventurePrestoDialog { .. }
             | AdventurePhase::TimeTrialInvasionTutorial { .. }
             | AdventurePhase::ChallengePlaying
+            | AdventurePhase::SandboxPlaying
+            | AdventurePhase::SandboxPrestoDialog { .. }
             | AdventurePhase::ChallengePrestoDialog { .. }
             | AdventurePhase::ChallengeInvasionTutorial { .. }
             | AdventurePhase::FirstTankRescue
             | AdventurePhase::InvasionTutorial { .. } => {
-                let board = session.board.as_ref()?;
+                let board = if matches!(
+                    session.phase,
+                    AdventurePhase::SandboxPlaying | AdventurePhase::SandboxPrestoDialog { .. }
+                ) {
+                    session.sandbox_board.as_ref()?
+                } else {
+                    session.board.as_ref()?
+                };
                 if let Some(wave) = &board.invasion {
                     if wave.has_live_alien() || !board.missiles.is_empty() {
                         return Some(Self::AlienBattle);
@@ -256,10 +265,15 @@ impl MusicOwner {
     }
 
     pub fn sync(&mut self, session: &AdventureSession, paused: bool) {
+        self.sync_cue(MusicCue::for_session(session), paused);
+    }
+
+    /// Frontend-owned transient scenes can choose a cue without duplicating
+    /// decoder ownership or changing the durable gameplay session.
+    pub fn sync_cue(&mut self, cue: Option<MusicCue>, paused: bool) {
         if self.unavailable.is_some() {
             return;
         }
-        let cue = MusicCue::for_session(session);
         if cue == self.requested && paused == self.paused {
             return;
         }

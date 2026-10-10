@@ -87,6 +87,10 @@ pub enum WavePlan {
         tank: u8,
         next: EncounterKind,
     },
+    Sandbox {
+        tank: u8,
+        next: EncounterKind,
+    },
     Challenge {
         tank: u8,
         next: EncounterKind,
@@ -106,6 +110,7 @@ impl WavePlan {
             | Self::CyclingTank4Fourth { next }
             | Self::CyclingTank4Finale { next, .. }
             | Self::TimeTrial { next, .. }
+            | Self::Sandbox { next, .. }
             | Self::Challenge { next, .. } => next,
             Self::CyclingTank3Second { next } | Self::CyclingTank3Finale { next } => {
                 EncounterKind::Single(next)
@@ -429,6 +434,48 @@ impl Invasion1_2 {
             next: EncounterKind::Single(SylvesterKind::Strong),
         };
         wave
+    }
+
+    /// Sandbox has the ordinary level-five wave timer but owns an independent
+    /// physical alien list; keyboard spawns may add any supported kind.
+    pub fn new_sandbox(tank: u8) -> Self {
+        assert!((1..=5).contains(&tank));
+        if tank == 5 {
+            let mut wave = Self::new_tank5_finale(0);
+            wave.countdown = 3000;
+            wave
+        } else {
+            let mut wave = Self::new_strong();
+            wave.plan = WavePlan::Sandbox {
+                tank,
+                next: EncounterKind::Single(SylvesterKind::Strong),
+            };
+            wave
+        }
+    }
+
+    pub fn spawn_sandbox_encounter(
+        &mut self,
+        encounter: EncounterKind,
+        mut next_random: impl FnMut() -> u32,
+        mut next_id: impl FnMut() -> u64,
+    ) -> Vec<InvasionEvent> {
+        let coords = WarningCoords {
+            first_x: (next_random() % 450) as i32 + 20,
+            first_y: (next_random() % 195) as i32 + 105,
+            second_x: (next_random() % 450) as i32 + 20,
+            second_y: (next_random() % 195) as i32 + 105,
+        };
+        let events = self.spawn_encounter(encounter, coords, &mut next_random, &mut next_id);
+        if let WavePlan::Sandbox { tank, .. } = self.plan {
+            self.plan = WavePlan::Sandbox {
+                tank,
+                next: encounter,
+            };
+        }
+        self.battle_active = true;
+        self.countdown = 3000;
+        events
     }
 
     /// PB05 00541a20 initializes kind 2 and Board+45c to zero for a fresh
@@ -920,29 +967,27 @@ impl Invasion1_2 {
                 }
             }
             2 => {
-                let mut kind = if encounter == EncounterKind::WeakBalrogPair {
-                    if next_random().is_multiple_of(2) {
+                let mut next = if encounter == EncounterKind::WeakBalrogPair {
+                    EncounterKind::Single(if next_random().is_multiple_of(2) {
                         SylvesterKind::Destructor
                     } else {
                         SylvesterKind::Gus
-                    }
-                } else if let EncounterKind::Single(kind) = encounter {
-                    kind
+                    })
                 } else {
-                    unreachable!("level-five Tank 2 encounter")
+                    encounter
                 };
                 if next_random().is_multiple_of(10) {
-                    kind = if kind == SylvesterKind::Destructor {
-                        SylvesterKind::Gus
-                    } else {
-                        SylvesterKind::Destructor
-                    };
-                    EncounterKind::Single(kind)
+                    next = EncounterKind::Single(
+                        if next == EncounterKind::Single(SylvesterKind::Destructor) {
+                            SylvesterKind::Gus
+                        } else {
+                            SylvesterKind::Destructor
+                        },
+                    );
                 } else if next_random().is_multiple_of(20) {
-                    EncounterKind::WeakBalrogPair
-                } else {
-                    EncounterKind::Single(kind)
+                    next = EncounterKind::WeakBalrogPair;
                 }
+                next
             }
             3 => EncounterKind::Single(if next_random().is_multiple_of(2) {
                 SylvesterKind::Psychosquid
@@ -1290,6 +1335,11 @@ impl Invasion1_2 {
                         let next =
                             Self::select_level_five_next(tank, encounter, None, &mut next_random);
                         WavePlan::TimeTrial { tank, next }
+                    }
+                    WavePlan::Sandbox { tank, .. } => {
+                        let next =
+                            Self::select_level_five_next(tank, encounter, None, &mut next_random);
+                        WavePlan::Sandbox { tank, next }
                     }
                     WavePlan::Challenge {
                         tank, wave_count, ..
@@ -2142,6 +2192,16 @@ impl Invasion1_2 {
                             }
                         ]
                     )
+            }
+            WavePlan::Sandbox { tank, .. } => {
+                (1..=4).contains(&tank)
+                    && self.finale.is_none()
+                    && self.actors.iter().all(|actor| {
+                        !matches!(
+                            actor.kind,
+                            SylvesterKind::Cyrax | SylvesterKind::MiniSylvester
+                        )
+                    })
             }
             WavePlan::TimeTrial { tank, next } => {
                 let valid_next = match tank {

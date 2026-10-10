@@ -7,6 +7,8 @@
 use crate::{
     adventure::AdventureSession,
     cli::{self, SAVE_FORMAT_VERSION},
+    highscores::{GlobalScores, ScoreEntry, ScoreKind as GlobalScoreKind},
+    sim::Event,
 };
 use serde::{Deserialize, Serialize};
 use std::{error::Error, path::Path};
@@ -28,10 +30,11 @@ pub struct Profiles {
     pub next_id: u64,
     pub current_id: Option<u64>,
     pub entries: Vec<ProfileEntry>,
+    pub global_scores: GlobalScores,
 }
 
 fn valid_name(name: &str) -> bool {
-    !name.trim().is_empty()
+    !name.trim().is_empty() && name.len() <= 256 && !name.chars().any(char::is_control)
 }
 
 impl Profiles {
@@ -55,6 +58,7 @@ impl Profiles {
                 name: name.trim().to_owned(),
                 session,
             }],
+            global_scores: GlobalScores::default(),
         })
     }
 
@@ -82,6 +86,7 @@ impl Profiles {
         if self.format_version != PROFILE_FORMAT_VERSION || self.next_id == 0 {
             return Err("unsupported profile format".into());
         }
+        self.global_scores.validate()?;
         if self.current_id.is_some() == self.entries.is_empty()
             || self
                 .current_id
@@ -233,6 +238,52 @@ impl Profiles {
             Ok(())
         })
     }
+
+    /// Record a completed run once at the same atomic save boundary as its
+    /// authoritative session. Names are copied at achievement time.
+    pub fn record_events(&mut self, path: &Path, events: &[Event]) -> Result<bool, Box<dyn Error>> {
+        let Some(current) = self.current() else {
+            return Ok(false);
+        };
+        let name = current.name.clone();
+        let mut draft = self.clone();
+        let mut changed = false;
+        for event in events {
+            let target = match event {
+                Event::StageResultRecorded {
+                    tank,
+                    level,
+                    seconds,
+                    survivors,
+                    ..
+                } => {
+                    let score = if *tank == 5 {
+                        survivors.and_then(|count| i32::try_from(count).ok())
+                    } else {
+                        i32::try_from(*seconds).ok()
+                    };
+                    score.map(|score| (GlobalScoreKind::Adventure, *tank, Some(*level), score))
+                }
+                Event::TimeTrialExpired { tank, score, .. } => {
+                    Some((GlobalScoreKind::TimeTrial, *tank, None, *score))
+                }
+                Event::ChallengeCompleted { tank, seconds, .. } => {
+                    Some((GlobalScoreKind::Challenge, *tank, None, *seconds))
+                }
+                _ => None,
+            };
+            if let Some((kind, tank, level, score)) = target {
+                changed |= draft
+                    .global_scores
+                    .record(kind, tank, level, &name, score)?;
+            }
+        }
+        if changed {
+            draft.save(path)?;
+            *self = draft;
+        }
+        Ok(changed)
+    }
 }
 
 /// View-only high-score projection. No second mutable score ledger.
@@ -257,7 +308,7 @@ pub struct ScoreRow {
     pub tank: u8,
     pub level: Option<u8>,
     pub personal: Option<u64>,
-    pub top_five: Vec<u64>,
+    pub global: Vec<ScoreEntry>,
 }
 
 impl Profiles {
@@ -268,18 +319,11 @@ impl Profiles {
         let session = &entry.session;
         let mut rows = Vec::new();
         if matches!(tab, ScoreTab::Adventure | ScoreTab::Personal) {
-            let mut stages = std::collections::BTreeSet::new();
-            for profile in &self.entries {
-                if profile.session.progress.first_stage_best_seconds.is_some() {
-                    stages.insert((1, 1));
-                }
-                for best in &profile.session.progress.later_stage_best_seconds {
-                    stages.insert((best.tank, best.level));
-                }
-            }
-            for (tank, level) in stages {
-                let best_for = |session: &AdventureSession| {
-                    if (tank, level) == (1, 1) {
+            for tank in 1..=5 {
+                for level in 1..=if tank == 5 { 1 } else { 5 } {
+                    let personal = if tank == 5 {
+                        session.progress.tank5_best_survivors.map(u64::from)
+                    } else if (tank, level) == (1, 1) {
                         session.progress.first_stage_best_seconds
                     } else {
                         session
@@ -288,61 +332,50 @@ impl Profiles {
                             .iter()
                             .find(|best| (best.tank, best.level) == (tank, level))
                             .map(|best| best.seconds)
-                    }
-                };
-                let mut leaders: Vec<_> = self
-                    .entries
-                    .iter()
-                    .filter_map(|p| best_for(&p.session))
-                    .collect();
-                leaders.sort_unstable();
-                leaders.truncate(5);
-                rows.push(ScoreRow {
-                    kind: ScoreKind::Adventure,
-                    tank,
-                    level: Some(level),
-                    personal: best_for(session),
-                    top_five: leaders,
-                });
+                    };
+                    rows.push(ScoreRow {
+                        kind: ScoreKind::Adventure,
+                        tank,
+                        level: Some(level),
+                        personal,
+                        global: self
+                            .global_scores
+                            .rows(GlobalScoreKind::Adventure, tank, Some(level))
+                            .unwrap_or_default()
+                            .to_vec(),
+                    });
+                }
             }
         }
         if matches!(tab, ScoreTab::TimeTrial | ScoreTab::Personal) {
             for index in 0..4 {
-                let mut leaders: Vec<_> = self
-                    .entries
-                    .iter()
-                    .flat_map(|p| p.session.time_trial_scores.top_five[index].iter())
-                    .map(|score| *score as u64)
-                    .collect();
-                leaders.sort_unstable_by(|a, b| b.cmp(a));
-                leaders.truncate(5);
                 rows.push(ScoreRow {
                     kind: ScoreKind::TimeTrial,
                     tank: index as u8 + 1,
                     level: None,
                     personal: (session.time_trial_scores.personal_best[index] > 0)
                         .then_some(session.time_trial_scores.personal_best[index] as u64),
-                    top_five: leaders,
+                    global: self
+                        .global_scores
+                        .rows(GlobalScoreKind::TimeTrial, index as u8 + 1, None)
+                        .unwrap_or_default()
+                        .to_vec(),
                 });
             }
         }
         if matches!(tab, ScoreTab::Challenge | ScoreTab::Personal) {
             for index in 0..4 {
-                let mut leaders: Vec<_> = self
-                    .entries
-                    .iter()
-                    .flat_map(|p| p.session.challenge_scores.top_five[index].iter())
-                    .map(|score| *score as u64)
-                    .collect();
-                leaders.sort_unstable();
-                leaders.truncate(5);
                 rows.push(ScoreRow {
                     kind: ScoreKind::Challenge,
                     tank: index as u8 + 1,
                     level: None,
                     personal: session.challenge_scores.personal_best[index]
                         .map(|score| score as u64),
-                    top_five: leaders,
+                    global: self
+                        .global_scores
+                        .rows(GlobalScoreKind::Challenge, index as u8 + 1, None)
+                        .unwrap_or_default()
+                        .to_vec(),
                 });
             }
         }
@@ -371,6 +404,52 @@ mod tests {
         assert!(profiles.validate().is_ok());
         assert_eq!(profiles.entries[0].session.progress.shell_balance, 0);
         assert_eq!(profiles.entries[1].session.progress.shell_balance, 0);
+
+        let directory = std::env::temp_dir().join(format!(
+            "turbofish-profiles-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        let path = directory.join("profiles.json");
+        let mut saved = Profiles::new("Alice", 7).unwrap();
+        saved
+            .record_events(
+                &path,
+                &[Event::StageResultRecorded {
+                    tick: 1,
+                    tank: 1,
+                    level: 1,
+                    seconds: 42,
+                    settled_coin_ids: vec![],
+                    settled_amount: 0,
+                    final_balance: 0,
+                    personal_best_seconds: 42,
+                    survivors: None,
+                }],
+            )
+            .unwrap();
+        let bob = saved.create(&path, "Bob", 8).unwrap();
+        saved.current_mut().unwrap().session.progress.shell_balance = 77;
+        saved.save(&path).unwrap();
+        saved.select(&path, 1).unwrap();
+        saved.rename(&path, 1, "Renamed").unwrap();
+        saved.delete(&path, 1).unwrap();
+        let loaded = Profiles::decode(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(loaded.current_id, Some(bob));
+        assert_eq!(loaded.current().unwrap().session.progress.shell_balance, 77);
+        assert_eq!(
+            loaded
+                .global_scores
+                .rows(GlobalScoreKind::Adventure, 1, Some(1))
+                .unwrap()[0]
+                .name,
+            "Alice"
+        );
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&directory).unwrap();
     }
 
     #[test]

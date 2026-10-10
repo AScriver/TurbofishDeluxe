@@ -4958,6 +4958,130 @@ fn current33_seven_slot_receipt_and_virtual_tank_checkout_reopen_as_one_profile(
 }
 
 #[test]
+fn current34_sandbox_checkpoint_preserves_profile_and_discards_live_board() {
+    use turbofish_deluxe::adventure::GameMode;
+    use turbofish_deluxe::sim::{Event, FishSize};
+
+    // Explicit project profile after the seven-slot result purchase.
+    let mut session = AdventureSession::new(0x4534);
+    session.progress.tank = 2;
+    session.progress.level = 1;
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Brinkley,
+        PetKind::Nostradamus,
+        PetKind::Stanley,
+        PetKind::Walter,
+    ];
+    session.progress.selected_pets = session.progress.unlocked_pets[..4].to_vec();
+    session.progress.purchase_cursor = 6;
+    session.progress.pet_capacity = 7;
+    session.progress.shell_balance = 1_234;
+    session.board = None;
+    session.phase = AdventurePhase::GameSelector;
+    session.validate().unwrap();
+    let profile_before = session.progress.clone();
+    let mut locked = session.clone();
+    locked.progress.purchase_cursor = 5;
+    locked.progress.pet_capacity = 4;
+    assert!(
+        locked
+            .apply_actions(&[Action::OpenSandbox])
+            .iter()
+            .any(|event| matches!(
+                event,
+                Event::Rejected {
+                    reason: turbofish_deluxe::sim::Rejection::Locked,
+                    ..
+                }
+            ))
+    );
+    assert_eq!(locked.mode, GameMode::Adventure);
+    assert_eq!(locked.progress.pet_capacity, 4);
+
+    let entered = session.apply_actions(&[Action::OpenSandbox]);
+    assert!(
+        entered
+            .iter()
+            .any(|event| matches!(event, Event::SandboxStarted { tank: 1, .. }))
+    );
+    assert_eq!(session.mode, GameMode::Sandbox);
+    assert_eq!(session.progress.pet_capacity, 11);
+    session.apply_actions(&[
+        Action::SandboxKeyChar { character: '3' },
+        Action::SandboxKeyChar { character: '4' },
+        Action::SandboxKeyChar { character: 'D' },
+        Action::SandboxKeyChar { character: 'c' },
+        Action::SandboxKeyChar { character: 'x' },
+        Action::SandboxKeyChar { character: '+' },
+    ]);
+    let live = session.sandbox_board.as_ref().unwrap();
+    assert!(live.fish.iter().any(|fish| fish.size == FishSize::Star));
+    assert_eq!(live.starcatchers.len(), 1); // W1 Penta shortcut.
+    assert!(live.pets.contains(&PetKind::Walter));
+    assert_eq!(live.invasion.as_ref().unwrap().actors.len(), 1); // First Gus gates x.
+    assert_eq!(live.sandbox_background, 2);
+    session.validate().unwrap();
+
+    let snapshot = session.checkpoint_without_sandbox();
+    assert_eq!(snapshot.mode, GameMode::Adventure);
+    assert_eq!(snapshot.phase, AdventurePhase::GameSelector);
+    assert!(snapshot.board.is_none());
+    assert!(snapshot.sandbox_board.is_none());
+    assert_eq!(
+        snapshot.progress.shell_balance,
+        profile_before.shell_balance
+    );
+    assert_eq!(
+        snapshot.progress.unlocked_pets,
+        profile_before.unlocked_pets
+    );
+    assert_eq!(
+        snapshot.progress.selected_pets,
+        profile_before.selected_pets
+    );
+    let bytes = current_bytes(snapshot);
+    let reopened = cli::decode_save(&bytes).unwrap();
+    assert_eq!(reopened.progress.pet_capacity, 11);
+    assert_eq!(reopened.mode, GameMode::Adventure);
+    assert!(reopened.sandbox_board.is_none());
+    for field in ["last_non_adventure_tank", "finale_fallen_pets"] {
+        let mut missing: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        missing["session"].as_object_mut().unwrap().remove(field);
+        assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+    }
+    let mut missing_score: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    missing_score["session"]["progress"]
+        .as_object_mut()
+        .unwrap()
+        .remove("tank5_best_survivors");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing_score).unwrap()).is_err());
+    let mut relabeled: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    relabeled["format_version"] = 33.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&relabeled).unwrap()).is_err());
+
+    let exited = session.apply_actions(&[Action::BuyEgg]);
+    assert!(
+        exited
+            .iter()
+            .any(|event| matches!(event, Event::SandboxExited { .. }))
+    );
+    assert!(
+        !exited
+            .iter()
+            .any(|event| matches!(event, Event::LevelCompleted { .. }))
+    );
+    assert_eq!(session.phase, AdventurePhase::GameSelector);
+    assert_eq!(session.progress.shell_balance, profile_before.shell_balance);
+    assert_eq!(session.progress.pet_capacity, 11);
+    assert!(session.sandbox_board.is_none());
+}
+
+#[test]
 fn current_purchase_cursor_one_nostradamus_reopens_with_single_exact_debit() {
     let mut session = AdventureSession::new(0x3925);
     session.progress.tank = 2;

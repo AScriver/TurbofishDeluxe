@@ -85,7 +85,10 @@ fn prepare() -> Result<(), Box<dyn Error>> {
         }
         return Ok(());
     }
-    let session = cli::load_session(&options)?;
+    let profiles = cli::load_profiles(&options)?;
+    let settings = turbofish_deluxe::settings::SettingsSave::load_or_default(
+        &options.save_dir.join("settings.json"),
+    )?;
     macroquad::Window::from_config(
         macroquad::miniquad::conf::Conf {
             window_title: "Turbofish Deluxe".into(),
@@ -96,7 +99,9 @@ fn prepare() -> Result<(), Box<dyn Error>> {
             ..Default::default()
         },
         async move {
-            if let Err(error) = app::run(options, game_root, identity, assets, session).await {
+            if let Err(error) =
+                app::run(options, game_root, identity, assets, profiles, settings).await
+            {
                 eprintln!("Runtime failed: {error}");
                 std::process::exit(1);
             }

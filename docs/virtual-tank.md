@@ -1,6 +1,6 @@
 # Virtual Tank and store
 
-Current33 integrates the path below; focused compile/lint/regressions passed, while native acceptance remains not tested. [STATUS](../STATUS.md) owns current verification. [BR05/06](binary-recovery.md#br05--virtual-tank-setup-and-store) owns the primary recovery outline; [provenance](provenance.md) owns source and license boundaries.
+Current33 integrates store/setup and current34 adds special diets and basic pet effects; focused compile/lint/regressions passed, while native acceptance remains not tested. Combat and remaining pet interactions are the next increment. [STATUS](../STATUS.md) owns current verification. [BR05/06](binary-recovery.md#br05--virtual-tank-setup-and-store) owns the primary recovery outline; [provenance](provenance.md) owns source and license boundaries.
 
 ## Ownership and integration
 
@@ -24,6 +24,14 @@ E101 passed formatting, strict workspace lint, two model integrity cases, five a
 
 Current movement, placement and some coin presentation are project projections. General non-Guppy feeding and broader pet effects remain incomplete; Cookie food, special-fish diets, primary coin values, daily RNG/local-calendar parity and backdrop mapping need further integration or comparison. These gaps stay explicit while the other whole systems are implemented first.
 
-## Next work
+## Current34 actor checkpoint
 
-Continue Sandbox/Relax, profiles/options/highscores and singing-fish audio, then close the remaining VT actor/diet/pet coverage. Do not repeat full unaffected matrices or refine every fidelity detail before finishing system coverage. Deferred native acceptance must exercise store purchase/cancel/sale, ownership/wallet conservation, feeding/collection, setup and save/reopen/pause on an identified isolated build.
+The physical Board now lives in `src/virtual_board.rs`, with required typed food, ephemeral prey and selected pet poses. Source-informed diets/meal production cover the store fish families, including Grubber larva, Cookie food and Penta's third-feed coin rule. Zorf/Prego/Vert/Shrapnel/Nostradamus/Meryl have basic production effects; Stinky/Clyde collect by contact into the one Profile wallet. A pose alone does not establish another pet's function. The Penta regression passed within E102; broader integration passed compile/lint/build. Reopening retains the durable ledger and prunes ephemera after the existing source timeout rather than inventing offline catch-up.
+
+Current34 requires the new Board fields without migration/backfill. Its input/render path projects typed food/prey/pets. Species motion, exact growth/vitals, RNG/local-calendar parity and primary coin values remain qualified; remaining pet functions and Alien Attractor combat are open.
+
+## Next combat and pet increment
+
+Keep `VirtualBoardState` as the sole live combat, object and pet pose authority. Stable food/prey IDs share its object allocator with coins; purchased fish retain their separate durable ledger IDs and are protected from alien/pet predation. A new combat state reuses ordinary threat mechanics, owns one encounter/countdown and distinguishes no-reward timeout removal from paid defeat. Hidden attractor freezes the countdown; no offline simulation is invented. Existing pet poses gain Niko/Brinkley/Walter/Presto state and functional source interactions without embedding duplicate actor coordinates/timers. Presto keeps its selected roster identity while changing one active form.
+
+Pinned W1 `Board.cpp`, `Alien.cpp`, `Bilaterus.cpp`, `Missle.cpp`, `FishTypePet.cpp` and `OtherTypePet.cpp` supply this bulk contract. Private bounded briefs`.scratch/runtime/a47-virtual-combat/contract-01.md` and`.scratch/runtime/a48-virtual-pets/contract-01.md` retain exact line follow-ups. Source-exact RNG, overlap/input ordering and contact timing remain deferred. Run only changed-behavior/data-integrity checks after convergence. Later native acceptance must exercise store transactions, feeding/pets/combat/collection, setup and save/reopen/pause on an identified isolated build; it remains deferred now.

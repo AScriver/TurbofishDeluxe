@@ -879,6 +879,7 @@ pub enum VirtualTankError {
     FishTankFull,
     InvalidName,
     FishMissing,
+    FoodMismatch,
     FishNotSellable,
     LastBackdrop,
     BackdropNotOwned,
@@ -914,11 +915,29 @@ pub enum GuppyFood {
     Other,
 }
 
+/// Board food and temporary prey categories used by W1's virtual food
+/// requirements.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VirtualFoodKind {
+    Basic,
+    Upgraded,
+    Snot,
+    Star,
+    Larva,
+    Guppy,
+    Oscar,
+    Ultra,
+    Pizza,
+    IceCream,
+    Chicken,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FeedResult {
     Fed,
     Grew(FishSize),
     Died,
+    Coin(VirtualCoinKind),
 }
 
 /// W1 Coin::GetValue mode-5 values. PB05 `004d53a0` is still the exact
@@ -954,6 +973,7 @@ impl VirtualCoinKind {
 pub enum VirtualProduction {
     Coin(VirtualCoinKind),
     CookieFoodDue,
+    GrubberLarvaDue,
     BreederBirthDue,
 }
 
@@ -971,6 +991,44 @@ impl VirtualFish {
     pub fn tick_hunger(&mut self, should_decrement: bool) {
         if self.alive && should_decrement {
             self.hunger = self.hunger.saturating_sub(1).max(-1_000);
+        }
+    }
+
+    /// W1 Board::GetExoticFoodsRequiredInTank and each actor's
+    /// CountRequiredFood/GetFoodType. Carnivore prey here are transient Board
+    /// objects; durable fish never serve as food.
+    pub fn preferred_food(&self) -> VirtualFoodKind {
+        if let Some(diet) = self
+            .properties
+            .exotic_diet
+            .filter(|diet| *diet != ExoticDiet::None)
+        {
+            return match diet {
+                ExoticDiet::Cookie => VirtualFoodKind::Basic,
+                ExoticDiet::Pizza => VirtualFoodKind::Pizza,
+                ExoticDiet::IceCream => VirtualFoodKind::IceCream,
+                ExoticDiet::Chicken => VirtualFoodKind::Chicken,
+                ExoticDiet::Guppy => VirtualFoodKind::Guppy,
+                ExoticDiet::Oscar => VirtualFoodKind::Oscar,
+                ExoticDiet::Ultra => VirtualFoodKind::Ultra,
+                ExoticDiet::None => unreachable!(),
+            };
+        }
+        match self.kind {
+            VirtualFishKind::Guppy | VirtualFishKind::Breeder => VirtualFoodKind::Basic,
+            VirtualFishKind::Oscar | VirtualFishKind::Grubber | VirtualFishKind::Bi => {
+                VirtualFoodKind::Guppy
+            }
+            VirtualFishKind::Ultra => VirtualFoodKind::Oscar,
+            VirtualFishKind::Gekko => VirtualFoodKind::Larva,
+            VirtualFishKind::Penta => VirtualFoodKind::Star,
+            VirtualFishKind::Sylvester if self.size == FishSize::Medium => VirtualFoodKind::Oscar,
+            VirtualFishKind::Sylvester => VirtualFoodKind::Ultra,
+            VirtualFishKind::Ball => match self.size {
+                FishSize::Small => VirtualFoodKind::IceCream,
+                FishSize::Medium => VirtualFoodKind::Chicken,
+                _ => VirtualFoodKind::Pizza,
+            },
         }
     }
 
@@ -1031,6 +1089,10 @@ impl VirtualFish {
         if !self.alive {
             return None;
         }
+        if self.kind == VirtualFishKind::Penta {
+            // Penta::DropCoin is called by OnFoodAte, not its idle update.
+            return None;
+        }
         if self.kind == VirtualFishKind::Breeder && self.size == FishSize::Small {
             return None;
         }
@@ -1042,14 +1104,6 @@ impl VirtualFish {
             self.coin_ticks = 0;
             self.coin_threshold = 2_160;
             return (self.size == FishSize::Large).then_some(VirtualProduction::BreederBirthDue);
-        }
-        if self.kind == VirtualFishKind::Penta {
-            if self.coin_ticks <= 2 {
-                return None;
-            }
-            self.coin_ticks = 0;
-            return (drop_shells && (!screensaver || board_shells <= screensaver_limit))
-                .then_some(VirtualProduction::Coin(VirtualCoinKind::Diamond));
         }
         if self.properties.named == Some(NamedFish::Cookie) && self.kind == VirtualFishKind::Gekko {
             if self.coin_ticks > 540 {
@@ -1077,6 +1131,9 @@ impl VirtualFish {
             return None;
         }
         self.coin_ticks = 0;
+        if self.kind == VirtualFishKind::Grubber {
+            return Some(VirtualProduction::GrubberLarvaDue);
+        }
         self.standard_coin().map(VirtualProduction::Coin)
     }
 }
@@ -1438,6 +1495,101 @@ impl VirtualTankState {
         Ok(child_id)
     }
 
+    /// Apply a confirmed Board collision to the durable fish. W1 actor
+    /// OnFoodAte branches set hunger and growth differently by species.
+    pub fn feed_fish(
+        &mut self,
+        id: u16,
+        food: VirtualFoodKind,
+        now_seconds: u64,
+        day_start_seconds: u64,
+    ) -> Result<FeedResult, VirtualTankError> {
+        let index = self
+            .fish
+            .iter()
+            .position(|fish| fish.alive && fish.id == id)
+            .ok_or(VirtualTankError::FishMissing)?;
+        let preferred = self.fish[index].preferred_food();
+        let ordinary_upgrade =
+            preferred == VirtualFoodKind::Basic && food == VirtualFoodKind::Upgraded;
+        let guppy_special = self.fish[index].kind == VirtualFishKind::Guppy
+            && matches!(food, VirtualFoodKind::Snot | VirtualFoodKind::Star);
+        if food != preferred && !ordinary_upgrade && !guppy_special {
+            return Err(VirtualTankError::FoodMismatch);
+        }
+        if self.fish[index].kind == VirtualFishKind::Guppy {
+            let guppy_food = match food {
+                VirtualFoodKind::Basic => GuppyFood::Basic,
+                VirtualFoodKind::Upgraded => GuppyFood::Upgraded,
+                VirtualFoodKind::Snot => GuppyFood::Snot,
+                VirtualFoodKind::Star => GuppyFood::Star,
+                _ => GuppyFood::Other,
+            };
+            return self.feed_guppy(id, guppy_food, now_seconds, day_start_seconds);
+        }
+        let fish = &mut self.fish[index];
+        let counts = fish.record_qualifying_feed(now_seconds, day_start_seconds);
+        let (gain, ceiling) = match fish.kind {
+            VirtualFishKind::Oscar | VirtualFishKind::Ultra | VirtualFishKind::Penta => {
+                (900, 1_300)
+            }
+            VirtualFishKind::Gekko
+            | VirtualFishKind::Sylvester
+            | VirtualFishKind::Ball
+            | VirtualFishKind::Bi => (700, 1_000),
+            VirtualFishKind::Grubber => (1_000, 1_400),
+            VirtualFishKind::Breeder if food == VirtualFoodKind::Upgraded => (700, 1_000),
+            VirtualFishKind::Breeder => (500, 800),
+            VirtualFishKind::Guppy => unreachable!(),
+        };
+        fish.hunger = fish.hunger.saturating_add(gain).min(ceiling);
+        if fish.kind == VirtualFishKind::Penta {
+            fish.coin_ticks = fish.coin_ticks.saturating_add(1);
+            if fish.coin_ticks >= 3 {
+                fish.coin_ticks = 0;
+                return Ok(FeedResult::Coin(VirtualCoinKind::Diamond));
+            }
+        }
+        if counts
+            && matches!(
+                fish.kind,
+                VirtualFishKind::Breeder | VirtualFishKind::Ball | VirtualFishKind::Sylvester
+            )
+        {
+            let food_count = if fish.kind == VirtualFishKind::Breeder
+                && !matches!(food, VirtualFoodKind::Basic | VirtualFoodKind::Upgraded)
+            {
+                2
+            } else {
+                1
+            };
+            fish.food_ate = fish.food_ate.saturating_add(food_count);
+            if fish.food_ate >= fish.food_needed_to_grow {
+                let next = match (fish.kind, fish.size) {
+                    (VirtualFishKind::Breeder | VirtualFishKind::Ball, FishSize::Small) => {
+                        Some(FishSize::Medium)
+                    }
+                    (VirtualFishKind::Breeder | VirtualFishKind::Ball, FishSize::Medium)
+                    | (VirtualFishKind::Sylvester, FishSize::Medium) => Some(FishSize::Large),
+                    _ => None,
+                };
+                if let Some(size) = next {
+                    fish.size = size;
+                    fish.food_ate = 0;
+                    fish.growth_ticks = 10;
+                    if fish.kind == VirtualFishKind::Breeder {
+                        fish.coin_ticks = if size == FishSize::Medium { 900 } else { 0 };
+                        if size == FishSize::Large {
+                            fish.coin_threshold = 500;
+                        }
+                    }
+                    return Ok(FeedResult::Grew(size));
+                }
+            }
+        }
+        Ok(FeedResult::Fed)
+    }
+
     /// Apply the PB05/W1 Fish::OnFoodAte mode-5 branch after Board has
     /// established contact and diet eligibility. Other kinds have distinct
     /// actor handlers and use record_qualifying_feed plus their own state.
@@ -1714,5 +1866,53 @@ mod tests {
         assert_eq!(shells, 50);
         assert!(tank.fish.is_empty());
         assert!(!tank.stock.as_ref().unwrap().bought[0]);
+    }
+
+    #[test]
+    fn penta_coin_is_due_on_third_feed_not_idle_ticks() {
+        let mut tank = VirtualTankState::default();
+        let mut offers: [Option<StoreProduct>; STORE_SLOTS] = std::array::from_fn(|_| None);
+        offers[5] = Some(StoreProduct::Fish(FishOffer {
+            kind: VirtualFishKind::Penta,
+            properties: FishProperties::default(),
+            initial_hunger: 900,
+            initial_size: FishSize::Small,
+            food_needed_to_grow: 0,
+            coin_threshold: 3,
+        }));
+        tank.install_stock(1, offers).unwrap();
+        let mut shells = 3_000;
+        tank.confirm_purchase(
+            &mut shells,
+            PurchaseConfirmation {
+                cycle: 1,
+                slot: 5,
+                expected_price: 2_500,
+                accepted: true,
+                fish_name: Some("Penta".into()),
+                fish_biography: Some(FishBiography {
+                    hometown: 1,
+                    likes: [0, 1, 2],
+                }),
+            },
+            100,
+            0,
+        )
+        .unwrap();
+        for _ in 0..100 {
+            assert_eq!(tank.fish[0].tick_production(true, false, 0, 0, false), None);
+        }
+        assert_eq!(
+            tank.feed_fish(0, VirtualFoodKind::Star, 101, 0),
+            Ok(FeedResult::Fed)
+        );
+        assert_eq!(
+            tank.feed_fish(0, VirtualFoodKind::Star, 102, 0),
+            Ok(FeedResult::Fed)
+        );
+        assert_eq!(
+            tank.feed_fish(0, VirtualFoodKind::Star, 103, 0),
+            Ok(FeedResult::Coin(VirtualCoinKind::Diamond))
+        );
     }
 }
