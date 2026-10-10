@@ -1,8 +1,8 @@
-//! Windows screensaver switch and preview-window host primitives.
+//! Windows screensaver switch, preview and configuration-window host primitives.
 //!
 //! This crate does not register a screensaver, create a game window, or touch
 //! game saves. The caller owns window creation, rendering, input dismissal,
-//! and quitting when a preview parent closes.
+//! and quitting when a preview parent or configuration owner closes.
 
 use std::{fmt, num::NonZeroUsize};
 
@@ -22,7 +22,7 @@ impl ParentWindow {
     }
 
     /// Check existence before opening a preview or a parented preferences UI.
-    /// The preview attachment checks again because the host can close meanwhile.
+    /// Attachments check again because the host can close meanwhile.
     pub fn validate(self) -> Result<(), HostError> {
         platform::validate_parent(self).map(|_| ())
     }
@@ -32,6 +32,14 @@ impl ParentWindow {
 pub enum PreviewStatus {
     Alive,
     ParentClosed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfigurationStatus {
+    Alive,
+    ParentClosed,
+    WindowClosed,
+    Released,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,6 +54,9 @@ pub enum HostError {
     ChildClosed,
     WindowDetached,
     EmptyParentClient,
+    InvalidOwner,
+    OwnerChanged,
+    PreviousOwnerClosed,
     WindowsApi(&'static str, u32),
 }
 
@@ -65,6 +76,15 @@ impl fmt::Display for HostError {
             Self::ChildClosed => write!(f, "project preview window is closed"),
             Self::WindowDetached => write!(f, "project preview window left its parent"),
             Self::EmptyParentClient => write!(f, "screensaver preview parent has no client area"),
+            Self::InvalidOwner => write!(
+                f,
+                "configuration owner must be a distinct top-level window without an ownership cycle"
+            ),
+            Self::OwnerChanged => write!(f, "project configuration window ownership changed"),
+            Self::PreviousOwnerClosed => write!(
+                f,
+                "original configuration owner is no longer safe to restore"
+            ),
             Self::WindowsApi(name, code) => write!(f, "{name} failed with Win32 error {code}"),
         }
     }
@@ -117,12 +137,12 @@ fn parse_handle(raw: &str) -> Result<ParentWindow, HostError> {
         .ok_or(HostError::InvalidHandle)
 }
 
-pub use platform::{MonitorPowerGuard, OwnWindow, PreviewAttachment};
+pub use platform::{ConfigurationOwner, MonitorPowerGuard, OwnWindow, PreviewAttachment};
 
 #[cfg(windows)]
 mod platform {
-    use super::{HostError, ParentWindow, PreviewStatus};
-    use std::{marker::PhantomData, num::NonZeroUsize, rc::Rc};
+    use super::{ConfigurationStatus, HostError, ParentWindow, PreviewStatus};
+    use std::{io::Write, marker::PhantomData, num::NonZeroUsize, rc::Rc};
     use windows_sys::Win32::{
         Foundation::{GetLastError, HWND, RECT, SetLastError},
         System::{
@@ -132,15 +152,16 @@ mod platform {
         UI::{
             Input::KeyboardAndMouse::GetActiveWindow,
             WindowsAndMessaging::{
-                GA_ROOT, GWL_STYLE, GetAncestor, GetClientRect, GetForegroundWindow, GetParent,
-                GetWindowLongPtrW, GetWindowThreadProcessId, IsWindow, SWP_FRAMECHANGED,
-                SWP_NOACTIVATE, SWP_NOZORDER, SetParent, SetWindowLongPtrW, SetWindowPos,
-                WS_BORDER, WS_CAPTION, WS_CHILD, WS_DLGFRAME, WS_POPUP, WS_THICKFRAME,
+                GA_ROOT, GWL_STYLE, GWLP_HWNDPARENT, GetAncestor, GetClientRect,
+                GetForegroundWindow, GetParent, GetWindowLongPtrW, GetWindowThreadProcessId,
+                IsWindow, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, SetParent,
+                SetWindowLongPtrW, SetWindowPos, WS_BORDER, WS_CAPTION, WS_CHILD, WS_DLGFRAME,
+                WS_POPUP, WS_THICKFRAME,
             },
         },
     };
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     struct Identity {
         thread: u32,
         process: u32,
@@ -206,6 +227,57 @@ mod platform {
         } else {
             Ok(())
         }
+    }
+
+    fn owner(window: HWND) -> Result<HWND, HostError> {
+        unsafe { SetLastError(0) };
+        let value = unsafe { GetWindowLongPtrW(window, GWLP_HWNDPARENT) };
+        if value == 0 && unsafe { GetLastError() } != 0 {
+            Err(last_error("GetWindowLongPtrW(GWLP_HWNDPARENT)"))
+        } else {
+            Ok(value as HWND)
+        }
+    }
+
+    fn set_owner(window: HWND, value: HWND) -> Result<HWND, HostError> {
+        // An unowned window returns zero on success. Clear the thread's last
+        // error before the call, then distinguish that from a native failure.
+        unsafe { SetLastError(0) };
+        let previous = unsafe { SetWindowLongPtrW(window, GWLP_HWNDPARENT, value as isize) };
+        if previous == 0 && unsafe { GetLastError() } != 0 {
+            Err(last_error("SetWindowLongPtrW(GWLP_HWNDPARENT)"))
+        } else {
+            Ok(previous as HWND)
+        }
+    }
+
+    fn top_level(window: HWND) -> Result<bool, HostError> {
+        Ok(unsafe { GetAncestor(window, GA_ROOT) } == window
+            && style(window)? as u32 & WS_CHILD == 0)
+    }
+
+    fn valid_owner_chain(candidate: HWND, window: HWND) -> Result<bool, HostError> {
+        // Reject a self-owner or an owner chain through this project window.
+        // Read foreign window attributes only; never change them.
+        let mut visited = Vec::new();
+        let mut ancestor = candidate;
+        while !ancestor.is_null() {
+            if ancestor == window || visited.contains(&ancestor) {
+                return Ok(false);
+            }
+            visited.push(ancestor);
+            ancestor = owner(ancestor)?;
+        }
+        Ok(true)
+    }
+
+    fn configuration_parent(parent: ParentWindow, window: HWND) -> Result<Identity, HostError> {
+        let (id, _, _) = parent_info(parent)?;
+        let parent_hwnd = hwnd(parent.0);
+        if !top_level(parent_hwnd)? || !valid_owner_chain(parent_hwnd, window)? {
+            return Err(HostError::InvalidOwner);
+        }
+        Ok(id)
     }
 
     fn set_parent(child: HWND, parent: HWND) -> Result<HWND, HostError> {
@@ -310,6 +382,66 @@ mod platform {
             own_window(window) && unsafe { GetForegroundWindow() } == window
         }
 
+        /// Set a supplied top-level window as this configuration window's
+        /// temporary owner. Keep the guard on this UI thread until before
+        /// destroying or recreating the project window; nest ownership guards
+        /// LIFO. A missing parent needs no guard. This does not embed, resize,
+        /// restyle, activate or change the supplied owner's window.
+        pub fn attach_configuration(
+            &self,
+            parent: ParentWindow,
+        ) -> Result<ConfigurationOwner, HostError> {
+            let window = hwnd(self.raw);
+            if !own_window(window) || !top_level(window)? {
+                return Err(HostError::WindowNotOwned);
+            }
+            let window_id = identity(window).ok_or(HostError::WindowNotOwned)?;
+            let parent_id = configuration_parent(parent, window)?;
+            let previous_owner = owner(window)?;
+            let previous_owner_id = if previous_owner.is_null() {
+                None
+            } else {
+                Some(identity(previous_owner).ok_or(HostError::PreviousOwnerClosed)?)
+            };
+            // Recheck both identities immediately before changing only our
+            // window. External-process lifetime checks cannot be atomic.
+            if !own_window(window) || identity(window) != Some(window_id) || !top_level(window)? {
+                return Err(HostError::WindowNotOwned);
+            }
+            if identity(hwnd(parent.0)) != Some(parent_id) {
+                return Err(HostError::ParentClosed);
+            }
+            if !top_level(hwnd(parent.0))? || !valid_owner_chain(hwnd(parent.0), window)? {
+                return Err(HostError::InvalidOwner);
+            }
+            let replaced_owner = set_owner(window, hwnd(parent.0))?;
+            let guard = ConfigurationOwner {
+                window: self.raw,
+                window_id,
+                parent,
+                parent_id,
+                previous_owner: replaced_owner,
+                previous_owner_id: (replaced_owner == previous_owner)
+                    .then_some(previous_owner_id)
+                    .flatten(),
+                attached: true,
+                cleanup_error: None,
+                _same_thread: PhantomData,
+            };
+            if replaced_owner != previous_owner {
+                // A concurrent ownership change invalidated the old snapshot.
+                // Drop detaches safely rather than restoring an unchecked HWND.
+                return Err(HostError::OwnerChanged);
+            }
+            match guard.poll()? {
+                ConfigurationStatus::Alive => Ok(guard),
+                ConfigurationStatus::ParentClosed => Err(HostError::ParentClosed),
+                ConfigurationStatus::WindowClosed | ConfigurationStatus::Released => {
+                    Err(HostError::WindowNotOwned)
+                }
+            }
+        }
+
         /// Attach this project-owned top-level window to an external preview
         /// parent. Call on its UI thread after window creation.
         pub fn attach_preview(&self, parent: ParentWindow) -> Result<PreviewAttachment, HostError> {
@@ -348,6 +480,118 @@ mod platform {
                 size: (width, height),
                 _same_thread: PhantomData,
             })
+        }
+    }
+
+    /// Owns only the temporary owner attribute of the captured project window.
+    /// Windows can destroy it when its external owner closes. Poll from its UI
+    /// thread and let the caller close; no foreign process/window is controlled.
+    /// HWND plus thread/process identity cannot distinguish handle reuse within
+    /// the same thread/process. The caller must preserve its project window's
+    /// lifetime; external-window checks and mutation cannot be atomic.
+    #[must_use = "retain the guard until configuration closes"]
+    pub struct ConfigurationOwner {
+        window: NonZeroUsize,
+        window_id: Identity,
+        parent: ParentWindow,
+        parent_id: Identity,
+        previous_owner: HWND,
+        previous_owner_id: Option<Identity>,
+        attached: bool,
+        cleanup_error: Option<HostError>,
+        _same_thread: PhantomData<Rc<()>>,
+    }
+
+    impl ConfigurationOwner {
+        pub fn poll(&self) -> Result<ConfigurationStatus, HostError> {
+            if !self.attached {
+                return Ok(ConfigurationStatus::Released);
+            }
+            let window = hwnd(self.window);
+            if !own_window(window) || identity(window) != Some(self.window_id) {
+                return Ok(ConfigurationStatus::WindowClosed);
+            }
+            if identity(hwnd(self.parent.0)) != Some(self.parent_id) {
+                return Ok(ConfigurationStatus::ParentClosed);
+            }
+            if !top_level(hwnd(self.parent.0))? {
+                return Ok(ConfigurationStatus::ParentClosed);
+            }
+            if !top_level(window)? || owner(window)? != hwnd(self.parent.0) {
+                return Err(HostError::OwnerChanged);
+            }
+            Ok(ConfigurationStatus::Alive)
+        }
+
+        /// Restore before destroying the UI window so the caller can retain
+        /// the outcome. A vanished project window needs no native mutation.
+        /// A dead/replaced original owner is never reused: detach to no owner
+        /// and return `PreviousOwnerClosed`. Changed ownership is left alone.
+        /// Native failures leave cleanup armed for a later attempt or Drop.
+        /// Successful restoration reports `ParentClosed` if the supplied owner
+        /// disappeared meanwhile, otherwise `Released`.
+        pub fn restore(&mut self) -> Result<ConfigurationStatus, HostError> {
+            let result = self.restore_inner();
+            if let Err(error) = result {
+                self.cleanup_error = Some(error);
+            }
+            result
+        }
+
+        /// Latest cleanup failure remains available even after a successful
+        /// retry. Drop also reports retained failures to standard error.
+        pub fn cleanup_error(&self) -> Option<HostError> {
+            self.cleanup_error
+        }
+
+        fn restore_inner(&mut self) -> Result<ConfigurationStatus, HostError> {
+            if !self.attached {
+                return Ok(ConfigurationStatus::Released);
+            }
+            let window = hwnd(self.window);
+            if !own_window(window) || identity(window) != Some(self.window_id) {
+                self.attached = false;
+                return Ok(ConfigurationStatus::WindowClosed);
+            }
+            if !top_level(window)? || owner(window)? != hwnd(self.parent.0) {
+                self.attached = false;
+                return Err(HostError::OwnerChanged);
+            }
+            let parent_closed = identity(hwnd(self.parent.0)) != Some(self.parent_id)
+                || !top_level(hwnd(self.parent.0))?;
+            let previous_valid = self.previous_owner.is_null()
+                || (self.previous_owner_id.is_some()
+                    && identity(self.previous_owner) == self.previous_owner_id
+                    && top_level(self.previous_owner)?
+                    && valid_owner_chain(self.previous_owner, window)?);
+            let previous_owner = if previous_valid {
+                self.previous_owner
+            } else {
+                std::ptr::null_mut()
+            };
+            set_owner(window, previous_owner)?;
+            self.attached = false;
+            if previous_valid {
+                Ok(if parent_closed {
+                    ConfigurationStatus::ParentClosed
+                } else {
+                    ConfigurationStatus::Released
+                })
+            } else {
+                Err(HostError::PreviousOwnerClosed)
+            }
+        }
+    }
+
+    impl Drop for ConfigurationOwner {
+        fn drop(&mut self) {
+            let _ = self.restore();
+            if let Some(error) = self.cleanup_error {
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "screensaver configuration ownership cleanup: {error}"
+                );
+            }
         }
     }
 
@@ -417,7 +661,7 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    use super::{HostError, ParentWindow, PreviewStatus};
+    use super::{ConfigurationStatus, HostError, ParentWindow, PreviewStatus};
 
     pub(super) fn validate_parent(_parent: ParentWindow) -> Result<(), HostError> {
         Err(HostError::UnsupportedPlatform)
@@ -431,11 +675,30 @@ mod platform {
         pub fn has_focus(&self) -> bool {
             false
         }
+        pub fn attach_configuration(
+            &self,
+            _parent: ParentWindow,
+        ) -> Result<ConfigurationOwner, HostError> {
+            Err(HostError::UnsupportedPlatform)
+        }
         pub fn attach_preview(
             &self,
             _parent: ParentWindow,
         ) -> Result<PreviewAttachment, HostError> {
             Err(HostError::UnsupportedPlatform)
+        }
+    }
+    #[must_use = "retain the guard until configuration closes"]
+    pub struct ConfigurationOwner;
+    impl ConfigurationOwner {
+        pub fn poll(&self) -> Result<ConfigurationStatus, HostError> {
+            Err(HostError::UnsupportedPlatform)
+        }
+        pub fn restore(&mut self) -> Result<ConfigurationStatus, HostError> {
+            Err(HostError::UnsupportedPlatform)
+        }
+        pub fn cleanup_error(&self) -> Option<HostError> {
+            None
         }
     }
     pub struct PreviewAttachment;
