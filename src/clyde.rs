@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::fish_pet::PrestoForm;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClydeCoinView {
     pub id: u64,
@@ -30,6 +32,8 @@ pub struct ClydeState {
     pub vy: f64,
     pub target_vx: f64,
     pub frame: u8,
+    #[serde(default)]
+    pub presto_form: Option<PrestoForm>,
     movement_state: u8,
     movement_timer: u8,
     chase_timer: u32,
@@ -42,6 +46,36 @@ impl ClydeState {
     pub fn spawn_tank2(id: u64, rand_range: &mut impl FnMut(u64) -> u64) -> Self {
         let widget_x = rand_range(265) as i32 + 105;
         let widget_y = rand_range(520) as i32 + 20;
+        Self::spawn_at(id, widget_x, widget_y, None, rand_range)
+    }
+
+    /// PB05 004eb5c0 keeps supplied coordinates for a flagged replacement.
+    /// This path consumes only the two common OtherPet constructor draws.
+    pub fn spawn_presto_form_at(
+        id: u64,
+        widget_x: i32,
+        widget_y: i32,
+        virtual_tank: bool,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
+        Self::spawn_at(
+            id,
+            widget_x,
+            widget_y,
+            Some(PrestoForm {
+                remaining_ticks: if virtual_tank { 0 } else { 360 },
+            }),
+            rand_range,
+        )
+    }
+
+    fn spawn_at(
+        id: u64,
+        widget_x: i32,
+        widget_y: i32,
+        presto_form: Option<PrestoForm>,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
         let movement_state = rand_range(10) as u8;
         let _unused_specialty_seed = rand_range(250) + 250;
         Self {
@@ -54,6 +88,7 @@ impl ClydeState {
             vy: 0.0,
             target_vx: 0.0,
             frame: 0,
+            presto_form,
             movement_state,
             movement_timer: 0,
             chase_timer: 40,
@@ -180,6 +215,9 @@ impl ClydeState {
         if self.x < 15.0 && self.vx < -0.1 {
             self.movement_state = 2;
         }
+        if let Some(form) = &mut self.presto_form {
+            form.remaining_ticks = form.remaining_ticks.saturating_sub(1);
+        }
         self.animation_timer = (self.animation_timer + 1) % 40;
         self.frame = match self.animation_timer {
             0..=6 => self.animation_timer / 2,
@@ -211,6 +249,9 @@ impl ClydeState {
             || self.movement_timer > 20
             || self.animation_timer >= 40
             || self.frame > 9
+            || self
+                .presto_form
+                .is_some_and(|form| form.remaining_ticks > 360)
         {
             return Err("invalid Clyde save state".into());
         }
@@ -221,6 +262,44 @@ impl ClydeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn presto_clyde_skips_board_draws_and_excludes_the_otherpet_vertical_nudge() {
+        let mut draws = Vec::new();
+        let mut pet = ClydeState::spawn_presto_form_at(4, 220, 240, false, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(draws, [10, 250]);
+        assert_eq!((pet.widget_x, pet.widget_y), (220, 240));
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 360);
+        pet.tick(&[], false, &mut |_| 1);
+        assert!((pet.vy - 0.03).abs() < 1e-12);
+        assert!((pet.y - 240.02).abs() < 1e-12);
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 359);
+        assert!(pet.validate().is_ok());
+        let vt = ClydeState::spawn_presto_form_at(5, 220, 240, true, &mut |_| 0);
+        assert_eq!(vt.presto_form.unwrap().remaining_ticks, 0);
+    }
+
+    #[test]
+    fn presto_clyde_recharge_and_serialized_motion_continue_without_underflow() {
+        let mut pet = ClydeState::spawn_presto_form_at(4, 220, 240, false, &mut |_| 0);
+        for _ in 0..180 {
+            pet.tick(&[], false, &mut |_| 1);
+        }
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 180);
+        let mut resumed: ClydeState =
+            serde_json::from_slice(&serde_json::to_vec(&pet).unwrap()).unwrap();
+        for _ in 0..181 {
+            pet.tick(&[], false, &mut |_| 1);
+            resumed.tick(&[], false, &mut |_| 1);
+        }
+        assert_eq!(pet, resumed);
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 0);
+        pet.presto_form.as_mut().unwrap().remaining_ticks = 361;
+        assert!(pet.validate().is_err());
+    }
 
     #[test]
     fn tank5_clyde_retains_draws_and_wanders_without_coins() {

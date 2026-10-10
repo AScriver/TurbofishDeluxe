@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::sim::PetKind;
 use crate::sim::{Action, AdventureState, EGG_PRICE, Event, Rejection, TICK_MS};
+use crate::time_trial::{self, TimeTrialResult, TimeTrialRun, TimeTrialScores};
 
 const HATCH_OPEN_CHECK: u32 = 141;
 const HATCH_READY_CHECK: u32 = 170;
@@ -106,6 +107,13 @@ impl AdventureProgress {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum AdventurePhase {
     Playing,
+    TimeTrialTankSelection,
+    TimeTrialPetSelection { tank: u8, selected: Vec<PetKind> },
+    TimeTrialPlaying,
+    TimeTrialInvasionTutorial { tip: InvasionTip },
+    TimeTrialTimesUp,
+    TimeTrialResults,
+    TimeTrialGameOver { updates: u32 },
     FirstTankRescue,
     InvasionTutorial { tip: InvasionTip },
     GameOver { updates: u32 },
@@ -118,6 +126,13 @@ pub enum AdventurePhase {
     PetSelectionConfirmation { selected: Vec<PetKind> },
     Bonus { state: BonusState },
     BonusResults { result: BonusResult },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GameMode {
+    #[default]
+    Adventure,
+    TimeTrial,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,6 +150,12 @@ pub struct AdventureSession {
     pub board: Option<AdventureState>,
     pub phase: AdventurePhase,
     pub ticks: u64,
+    #[serde(default)]
+    pub mode: GameMode,
+    #[serde(default)]
+    pub time_trial_scores: TimeTrialScores,
+    #[serde(default)]
+    pub time_trial: Option<TimeTrialRun>,
     next_seed: u64,
     #[serde(skip)]
     hatch_held: bool,
@@ -160,6 +181,9 @@ impl AdventureSession {
             board: Some(board),
             phase: AdventurePhase::Playing,
             ticks: 0,
+            mode: GameMode::Adventure,
+            time_trial_scores: TimeTrialScores::default(),
+            time_trial: None,
             next_seed,
             hatch_held: false,
         }
@@ -204,6 +228,9 @@ impl AdventureSession {
                     updates: 0,
                 },
                 ticks,
+                mode: GameMode::Adventure,
+                time_trial_scores: TimeTrialScores::default(),
+                time_trial: None,
                 next_seed,
                 hatch_held: false,
             };
@@ -228,6 +255,9 @@ impl AdventureSession {
             board: Some(board),
             phase: AdventurePhase::Playing,
             ticks,
+            mode: GameMode::Adventure,
+            time_trial_scores: TimeTrialScores::default(),
+            time_trial: None,
             next_seed,
             hatch_held: false,
         };
@@ -239,6 +269,7 @@ impl AdventureSession {
 
     /// Reject a decoded session whose board, profile, and screen disagree.
     pub fn validate(&self) -> Result<(), String> {
+        self.time_trial_scores.validate()?;
         if !matches!(
             (self.progress.tank, self.progress.level),
             (1, 1..=6) | (2, 1..=6) | (3, 1..=6) | (4, 1..=5) | (5, 1..=2)
@@ -506,6 +537,12 @@ impl AdventureSession {
         {
             return Err("invalid Adventure selected pet roster or capacity".into());
         }
+        if self.mode == GameMode::TimeTrial {
+            return self.validate_time_trial();
+        }
+        if self.time_trial.is_some() || self.board.as_ref().is_some_and(|board| board.time_trial) {
+            return Err("Adventure phase retains Time Trial state".into());
+        }
         if let Some(board) = &self.board
             && self.progress.unlocked_pets.len() >= 4
             && (self.progress.tank, self.progress.level) != (5, 1)
@@ -693,6 +730,129 @@ impl AdventureSession {
         }
     }
 
+    fn validate_time_trial(&self) -> Result<(), String> {
+        match (&self.phase, &self.board, &self.time_trial) {
+            (AdventurePhase::TimeTrialTankSelection, None, None) => Ok(()),
+            (AdventurePhase::TimeTrialPetSelection { tank, selected }, None, None)
+                if time_trial::limit_seconds(*tank).is_some()
+                    && self.progress.unlocked_pets.len() >= 4
+                    && selected.len() <= 3
+                    && selected.iter().all(|pet| {
+                        time_trial::SUPPORTED_PETS.contains(pet) && self.progress.has_pet(*pet)
+                    })
+                    && self
+                        .progress
+                        .unlocked_pets
+                        .iter()
+                        .copied()
+                        .filter(|pet| selected.contains(pet))
+                        .collect::<Vec<_>>()
+                        == *selected
+                    && selected
+                        .iter()
+                        .enumerate()
+                        .all(|(i, pet)| !selected[..i].contains(pet)) =>
+            {
+                Ok(())
+            }
+            (
+                AdventurePhase::TimeTrialPlaying
+                | AdventurePhase::TimeTrialInvasionTutorial { .. }
+                | AdventurePhase::TimeTrialTimesUp
+                | AdventurePhase::TimeTrialResults
+                | AdventurePhase::TimeTrialGameOver { .. },
+                Some(board),
+                Some(run),
+            ) => {
+                if !board.time_trial
+                    || board.tank != run.tank
+                    || board.tick > self.ticks
+                    || time_trial::limit_seconds(run.tank).is_none()
+                    || board.egg_price != time_trial::price_after_purchases(run.egg_purchases)
+                    || board.pets.len() != run.initial_pets.len() + run.acquired_pets.len()
+                    || board.pets.get(..run.initial_pets.len()) != Some(run.initial_pets.as_slice())
+                    || board.pets.get(run.initial_pets.len()..)
+                        != Some(run.acquired_pets.as_slice())
+                    || run.egg_purchases as usize != run.acquired_pets.len()
+                    || run.initial_pets.len() > 3
+                    || (self.progress.unlocked_pets.len() >= 4
+                        && self
+                            .progress
+                            .unlocked_pets
+                            .iter()
+                            .copied()
+                            .filter(|pet| run.initial_pets.contains(pet))
+                            .collect::<Vec<_>>()
+                            != run.initial_pets)
+                    || (self.progress.unlocked_pets.len() < 4
+                        && run.initial_pets != self.progress.unlocked_pets)
+                    || run
+                        .initial_pets
+                        .iter()
+                        .chain(&run.acquired_pets)
+                        .any(|pet| {
+                            !time_trial::SUPPORTED_PETS.contains(pet)
+                                || !self.progress.has_pet(*pet)
+                        })
+                    || run
+                        .initial_pets
+                        .iter()
+                        .enumerate()
+                        .any(|(i, pet)| run.initial_pets[..i].contains(pet))
+                    || (matches!(self.phase, AdventurePhase::TimeTrialPlaying)
+                        && (run.result.is_some()
+                            || elapsed_seconds(board)
+                                > time_trial::limit_seconds(run.tank).unwrap()))
+                    || (matches!(self.phase, AdventurePhase::TimeTrialPlaying)
+                        && board
+                            .invasion
+                            .as_ref()
+                            .is_some_and(|wave| wave.pending_modal.is_some()))
+                    || (matches!(self.phase, AdventurePhase::TimeTrialInvasionTutorial { .. })
+                        && board.invasion.as_ref().and_then(|wave| wave.pending_modal)
+                            != match &self.phase {
+                                AdventurePhase::TimeTrialInvasionTutorial { tip } => Some(*tip),
+                                _ => None,
+                            })
+                    || (matches!(
+                        self.phase,
+                        AdventurePhase::TimeTrialTimesUp | AdventurePhase::TimeTrialResults
+                    ) != run.result.is_some())
+                    || (matches!(self.phase, AdventurePhase::TimeTrialGameOver { .. })
+                        && board.has_live_fish())
+                    || run.last_purchase_candidates.is_none() != (run.egg_purchases == 0)
+                    || run.last_purchase_candidates.is_some_and(|count| {
+                        count == 0 || count > 19 || run.egg_maxed != (count <= 1)
+                    })
+                {
+                    return Err("Time Trial phase, roster, or egg state disagree".into());
+                }
+                if let Some(result) = &run.result
+                    && (result.tank != run.tank
+                        || result.score != board.balance
+                        || result.personal_best
+                            != self.time_trial_scores.personal_best[usize::from(run.tank - 1)]
+                        || result.credited
+                            != matches!(self.phase, AdventurePhase::TimeTrialResults)
+                        || result.credited_shells != (result.score.max(0) as u32 / 20)
+                        || self.progress.shell_balance
+                            != if result.credited {
+                                result
+                                    .shell_balance_before
+                                    .saturating_add(result.credited_shells)
+                                    .min(MAX_SHELL_BALANCE)
+                            } else {
+                                result.shell_balance_before
+                            })
+                {
+                    return Err("Time Trial result disagrees".into());
+                }
+                board.validate()
+            }
+            _ => Err("Time Trial phase and board disagree".into()),
+        }
+    }
+
     /// Apply ordered inputs without advancing either clock. This is also the
     /// save boundary: already accepted actions can be persisted immediately.
     pub fn apply_actions(&mut self, actions: &[Action]) -> Vec<Event> {
@@ -705,6 +865,218 @@ impl AdventureSession {
         let mut entered_hatch = false;
         for action in actions {
             match self.phase.clone() {
+                AdventurePhase::TimeTrialTankSelection => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    match action {
+                        Action::SelectTimeTrialTank { tank }
+                            if time_trial::limit_seconds(*tank).is_some() =>
+                        {
+                            if self.progress.unlocked_pets.len() >= 4 {
+                                self.phase = AdventurePhase::TimeTrialPetSelection {
+                                    tank: *tank,
+                                    selected: Vec::new(),
+                                };
+                                events.push(Event::PetSelectionOpened {
+                                    tick: self.ticks,
+                                    capacity: 3,
+                                });
+                            } else {
+                                let initial = self.progress.unlocked_pets.clone();
+                                entered_playing =
+                                    self.start_time_trial(*tank, initial, &mut events);
+                            }
+                        }
+                        Action::OpenMenu => {
+                            self.mode = GameMode::Adventure;
+                            self.phase = AdventurePhase::GameSelector;
+                            events.push(Event::GameSelectorOpened { tick: self.ticks });
+                        }
+                        _ => events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        }),
+                    }
+                }
+                AdventurePhase::TimeTrialPetSelection { tank, mut selected } => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    match action {
+                        Action::TogglePet { pet }
+                            if self.progress.has_pet(*pet)
+                                && time_trial::SUPPORTED_PETS.contains(pet) =>
+                        {
+                            if let Some(i) = selected.iter().position(|old| old == pet) {
+                                selected.remove(i);
+                            } else if selected.len() < 3 {
+                                selected.push(*pet);
+                            } else {
+                                events.push(Event::Rejected {
+                                    tick: self.ticks,
+                                    reason: Rejection::Locked,
+                                });
+                                continue;
+                            }
+                            selected = self
+                                .progress
+                                .unlocked_pets
+                                .iter()
+                                .copied()
+                                .filter(|kind| selected.contains(kind))
+                                .collect();
+                            events.push(Event::PetSelectionChanged {
+                                tick: self.ticks,
+                                selected: selected.clone(),
+                            });
+                            self.phase = AdventurePhase::TimeTrialPetSelection { tank, selected };
+                        }
+                        Action::Continue => {
+                            entered_playing = self.start_time_trial(tank, selected, &mut events)
+                        }
+                        Action::OpenMenu => {
+                            self.phase = AdventurePhase::TimeTrialTankSelection;
+                        }
+                        _ => events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        }),
+                    }
+                }
+                AdventurePhase::TimeTrialPlaying => {
+                    let Some(board) = self.board.as_mut() else {
+                        continue;
+                    };
+                    if *action == Action::BuyEgg {
+                        events.push(Event::Action {
+                            tick: board.tick,
+                            action: action.clone(),
+                        });
+                        let run = self
+                            .time_trial
+                            .as_mut()
+                            .expect("Time Trial run retains board");
+                        let candidates = board.time_trial_candidates(&self.progress.unlocked_pets);
+                        if run.egg_maxed || candidates.is_empty() {
+                            events.push(Event::Rejected {
+                                tick: board.tick,
+                                reason: Rejection::Locked,
+                            });
+                        } else if board.available_funds() < board.egg_price {
+                            events.push(Event::Rejected {
+                                tick: board.tick,
+                                reason: Rejection::InsufficientFunds,
+                            });
+                        } else {
+                            let price = board.egg_price;
+                            board.balance -= price;
+                            let pet = board
+                                .choose_time_trial_pet(&candidates)
+                                .expect("nonempty candidates");
+                            board
+                                .spawn_time_trial_pet(pet)
+                                .expect("eligible pet constructor");
+                            run.acquired_pets.push(pet);
+                            run.egg_purchases += 1;
+                            run.egg_maxed = candidates.len() <= 1;
+                            run.last_purchase_candidates = Some(candidates.len() as u8);
+                            board.egg_price = time_trial::price_after_purchases(run.egg_purchases);
+                            events.push(Event::TimeTrialPetAcquired {
+                                tick: board.tick,
+                                pet,
+                                price,
+                            });
+                        }
+                    } else {
+                        events.extend(board.apply(action.clone()));
+                    }
+                }
+                AdventurePhase::TimeTrialInvasionTutorial { .. } => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    if *action == Action::Continue {
+                        self.board
+                            .as_mut()
+                            .expect("Time Trial tutorial board")
+                            .invasion
+                            .as_mut()
+                            .expect("Time Trial invasion")
+                            .acknowledge_modal();
+                        self.phase = AdventurePhase::TimeTrialPlaying;
+                    } else {
+                        events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        });
+                    }
+                }
+                AdventurePhase::TimeTrialTimesUp => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    if *action == Action::Continue {
+                        let result = self
+                            .time_trial
+                            .as_mut()
+                            .expect("Time Trial result")
+                            .result
+                            .as_mut()
+                            .expect("Time Trial result");
+                        if !result.credited {
+                            self.progress.shell_balance = self
+                                .progress
+                                .shell_balance
+                                .saturating_add(result.credited_shells)
+                                .min(MAX_SHELL_BALANCE);
+                            result.credited = true;
+                            events.push(Event::TimeTrialShellsCredited {
+                                tick: self.ticks,
+                                amount: result.credited_shells,
+                                shell_balance: self.progress.shell_balance,
+                            });
+                        }
+                        self.phase = AdventurePhase::TimeTrialResults;
+                    } else {
+                        events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        });
+                    }
+                }
+                AdventurePhase::TimeTrialResults => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    if *action == Action::Continue || *action == Action::OpenMenu {
+                        self.leave_time_trial(&mut events);
+                    } else {
+                        events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        });
+                    }
+                }
+                AdventurePhase::TimeTrialGameOver { updates } => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    if *action == Action::Continue && updates > 30 {
+                        self.leave_time_trial(&mut events);
+                    } else {
+                        events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        });
+                    }
+                }
                 AdventurePhase::Playing => {
                     let Some(board) = self.board.as_mut() else {
                         continue;
@@ -781,7 +1153,13 @@ impl AdventureSession {
                         tick: self.ticks,
                         action: action.clone(),
                     });
-                    if *action == Action::PlayAdventure && !self.progress.adventure_completed {
+                    if *action == Action::PlayTimeTrial
+                        && (self.progress.tank >= 2 || self.progress.adventure_completed)
+                    {
+                        self.mode = GameMode::TimeTrial;
+                        self.phase = AdventurePhase::TimeTrialTankSelection;
+                    } else if *action == Action::PlayAdventure && !self.progress.adventure_completed
+                    {
                         self.phase = AdventurePhase::HelpScreen;
                     } else {
                         events.push(Event::Rejected {
@@ -976,6 +1354,39 @@ impl AdventureSession {
         self.ticks += 1;
         let (mut events, entered_playing, entered_hatch) = self.apply_actions_inner(actions);
         match &mut self.phase {
+            AdventurePhase::TimeTrialPlaying if !entered_playing => {
+                if let Some(board) = &mut self.board {
+                    let next_second = board
+                        .tick
+                        .saturating_add(1)
+                        .saturating_mul(u64::from(TICK_MS))
+                        / 1000;
+                    if next_second > time_trial::limit_seconds(board.tank).expect("Time Trial tank")
+                    {
+                        board.advance_board_clock();
+                        self.finish_time_trial(&mut events);
+                    } else {
+                        events.extend(board.begin_tick());
+                        if !board.has_live_fish() {
+                            settle_collecting_coins(board);
+                            self.phase = AdventurePhase::TimeTrialGameOver { updates: 0 };
+                            events.push(Event::GameOverStarted { tick: self.ticks });
+                        } else if let Some(tip) =
+                            board.invasion.as_ref().and_then(|wave| wave.pending_modal)
+                        {
+                            self.phase = AdventurePhase::TimeTrialInvasionTutorial { tip };
+                        } else {
+                            events.extend(board.update_objects());
+                        }
+                    }
+                }
+            }
+            AdventurePhase::TimeTrialGameOver { updates } => {
+                if let Some(board) = &mut self.board {
+                    board.paused_board_update();
+                }
+                *updates = updates.saturating_add(1);
+            }
             AdventurePhase::Playing if !entered_playing => {
                 if let Some(board) = &mut self.board {
                     events.extend(board.begin_tick());
@@ -1087,6 +1498,12 @@ impl AdventureSession {
                 *updates += 1;
             }
             AdventurePhase::Playing
+            | AdventurePhase::TimeTrialPlaying
+            | AdventurePhase::TimeTrialInvasionTutorial { .. }
+            | AdventurePhase::TimeTrialTankSelection
+            | AdventurePhase::TimeTrialPetSelection { .. }
+            | AdventurePhase::TimeTrialTimesUp
+            | AdventurePhase::TimeTrialResults
             | AdventurePhase::FirstTankRescue
             | AdventurePhase::InvasionTutorial { .. }
             | AdventurePhase::GameSelector
@@ -1100,7 +1517,9 @@ impl AdventureSession {
         }
         if matches!(
             self.phase,
-            AdventurePhase::FirstTankRescue | AdventurePhase::InvasionTutorial { .. }
+            AdventurePhase::FirstTankRescue
+                | AdventurePhase::InvasionTutorial { .. }
+                | AdventurePhase::TimeTrialInvasionTutorial { .. }
         ) && let Some(board) = &mut self.board
         {
             // A newly opened modal already received this update's pre-pause
@@ -1126,6 +1545,76 @@ impl AdventureSession {
         if let Some(board) = &mut self.board {
             board.paused_board_update();
         }
+    }
+
+    fn start_time_trial(
+        &mut self,
+        tank: u8,
+        initial_pets: Vec<PetKind>,
+        events: &mut Vec<Event>,
+    ) -> bool {
+        let Ok(board) = AdventureState::new_time_trial(self.next_seed, tank, &initial_pets) else {
+            events.push(Event::Rejected {
+                tick: self.ticks,
+                reason: Rejection::UnsupportedStage,
+            });
+            return false;
+        };
+        self.board = Some(board);
+        self.time_trial = Some(TimeTrialRun {
+            tank,
+            initial_pets,
+            acquired_pets: Vec::new(),
+            egg_purchases: 0,
+            egg_maxed: false,
+            last_purchase_candidates: None,
+            result: None,
+        });
+        self.phase = AdventurePhase::TimeTrialPlaying;
+        events.push(Event::TimeTrialStarted {
+            tick: self.ticks,
+            tank,
+        });
+        true
+    }
+
+    fn leave_time_trial(&mut self, events: &mut Vec<Event>) {
+        if let Some(board) = self.board.take() {
+            self.next_seed = board.transition_seed();
+        }
+        self.time_trial = None;
+        self.mode = GameMode::Adventure;
+        self.phase = AdventurePhase::GameSelector;
+        events.push(Event::GameSelectorOpened { tick: self.ticks });
+    }
+
+    fn finish_time_trial(&mut self, events: &mut Vec<Event>) {
+        let board = self.board.as_mut().expect("Time Trial board");
+        let (settled_ids, settled_amount) = settle_collecting_coins(board);
+        let tank = board.tank;
+        let score = board.balance;
+        let improved = self
+            .time_trial_scores
+            .record(tank, score)
+            .expect("supported tank");
+        let best = self.time_trial_scores.personal_best[usize::from(tank - 1)];
+        self.time_trial.as_mut().expect("Time Trial run").result = Some(TimeTrialResult {
+            tank,
+            score,
+            settled_amount,
+            settled_ids,
+            personal_best: best,
+            shell_balance_before: self.progress.shell_balance,
+            credited_shells: score.max(0) as u32 / 20,
+            credited: false,
+        });
+        self.phase = AdventurePhase::TimeTrialTimesUp;
+        let _ = improved;
+        events.push(Event::TimeTrialExpired {
+            tick: self.ticks,
+            tank,
+            score,
+        });
     }
 
     fn start_current_stage(&mut self, events: &mut Vec<Event>) -> bool {
@@ -1406,6 +1895,366 @@ fn settle_collecting_coins(board: &mut AdventureState) -> (Vec<u64>, i32) {
 mod tests {
     use super::*;
     use crate::sim::{Coin, CoinKind, SECOND_STAGE_EGG_PRICE};
+
+    fn time_trial_session() -> AdventureSession {
+        let mut session = bonus_session();
+        session.progress.tank = 2;
+        session.progress.level = 1;
+        session.phase = AdventurePhase::GameSelector;
+        session.apply_actions(&[Action::PlayTimeTrial]);
+        assert_eq!(session.phase, AdventurePhase::TimeTrialTankSelection);
+        session.apply_actions(&[Action::SelectTimeTrialTank { tank: 1 }]);
+        session.apply_actions(&[
+            Action::TogglePet {
+                pet: PetKind::Stinky,
+            },
+            Action::Continue,
+        ]);
+        assert_eq!(session.phase, AdventurePhase::TimeTrialPlaying);
+        session
+    }
+
+    fn time_trial_survivor_fixture(tank: u8, initial_pets: Vec<PetKind>) -> AdventureSession {
+        let mut session = tank_five_session(0);
+        session.board = None;
+        session.mode = GameMode::TimeTrial;
+        let mut events = Vec::new();
+        assert!(session.start_time_trial(tank, initial_pets, &mut events));
+        session.validate().unwrap();
+        session
+    }
+
+    #[test]
+    fn time_trial_purchase_uses_claimed_funds_and_caps_price_without_adventure_eggs() {
+        let mut session = time_trial_session();
+        let board = session.board.as_mut().unwrap();
+        board.balance = 90;
+        let id = board.fish.iter().map(|fish| fish.id).max().unwrap() + 10;
+        board.coins.push(Coin {
+            id,
+            kind: CoinKind::Gold,
+            collecting: true,
+            animation_ticks: 0,
+            hazard_age_ticks: 0,
+            x: 200.0,
+            y: 200.0,
+            frame: 0,
+            bottom_ticks: 0,
+            fade_ticks: 0,
+            penta_rising: false,
+        });
+        let progress_before = session.progress.clone();
+        let events = session.apply_actions(&[Action::BuyEgg]);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::TimeTrialPetAcquired { price: 100, .. }))
+        );
+        assert_eq!(session.board.as_ref().unwrap().balance, -10);
+        assert_eq!(session.board.as_ref().unwrap().egg_price, 200);
+        assert_eq!(session.board.as_ref().unwrap().eggs, 0);
+        assert_eq!(session.progress, progress_before);
+        assert_eq!(time_trial::price_after_purchases(11), 99_999);
+    }
+
+    #[test]
+    fn time_trial_expiry_precedes_death_and_credit_survives_reopen_once() {
+        let mut session = time_trial_session();
+        session.board.as_mut().unwrap().tick = 10_714;
+        session.ticks = 10_714;
+        session.step(&[]);
+        assert_eq!(session.phase, AdventurePhase::TimeTrialPlaying);
+        let board = session.board.as_mut().unwrap();
+        board.tick = 10_749;
+        session.ticks = board.tick;
+        let wave = board.invasion.as_mut().unwrap();
+        wave.countdown = 2;
+        wave.warning = Some(crate::invasion::WarningCoords {
+            first_x: 105,
+            first_y: 160,
+            second_x: 410,
+            second_y: 290,
+        });
+        for fish in &mut board.fish {
+            fish.alive = false;
+        }
+        let before = session.progress.clone();
+        session.step(&[]);
+        assert_eq!(session.phase, AdventurePhase::TimeTrialTimesUp);
+        assert_eq!(
+            session
+                .board
+                .as_ref()
+                .unwrap()
+                .invasion
+                .as_ref()
+                .unwrap()
+                .countdown,
+            2
+        );
+        assert!(session.time_trial.as_ref().unwrap().result.is_some());
+        let bytes = serde_json::to_vec(&session).unwrap();
+        let mut reopened: AdventureSession = serde_json::from_slice(&bytes).unwrap();
+        reopened.validate().unwrap();
+        reopened.apply_actions(&[Action::Continue]);
+        assert_eq!(reopened.phase, AdventurePhase::TimeTrialResults);
+        let credit = reopened.progress.shell_balance;
+        reopened.apply_actions(&[Action::Continue]);
+        assert_eq!(reopened.phase, AdventurePhase::GameSelector);
+        assert_eq!(reopened.progress.shell_balance, credit);
+        assert_eq!(reopened.progress.tank, before.tank);
+        assert_eq!(reopened.progress.level, before.level);
+        assert_eq!(reopened.progress.unlocked_pets, before.unlocked_pets);
+    }
+
+    #[test]
+    fn time_trial_final_candidate_maxes_egg_without_adventure_victory() {
+        let mut session = selection_session();
+        session.mode = GameMode::TimeTrial;
+        let mut events = Vec::new();
+        assert!(session.start_time_trial(
+            1,
+            vec![PetKind::Stinky, PetKind::Niko, PetKind::Itchy],
+            &mut events
+        ));
+        assert_eq!(
+            session
+                .board
+                .as_ref()
+                .unwrap()
+                .time_trial_candidates(&session.progress.unlocked_pets),
+            [PetKind::Prego]
+        );
+        session.apply_actions(&[Action::BuyEgg]);
+        let run = session.time_trial.as_ref().unwrap();
+        assert_eq!(run.acquired_pets, [PetKind::Prego]);
+        assert_eq!(run.last_purchase_candidates, Some(1));
+        assert!(run.egg_maxed);
+        assert_eq!(session.board.as_ref().unwrap().egg_price, 200);
+        assert_eq!(session.board.as_ref().unwrap().eggs, 0);
+        assert!(!session.board.as_ref().unwrap().victory);
+        assert!(
+            session
+                .apply_actions(&[Action::BuyEgg])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::Locked,
+                        ..
+                    }
+                ))
+        );
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn time_trial_supported_pet_admission_keeps_one_live_actor_and_roundtrips_after_update() {
+        for tank in 1..=4 {
+            for pet in time_trial::SUPPORTED_PETS {
+                let mut board =
+                    AdventureState::new_time_trial(234 + u64::from(tank), tank, &[]).unwrap();
+                board.spawn_time_trial_pet(pet).unwrap();
+                assert!(
+                    board.spawn_time_trial_pet(pet).is_err(),
+                    "duplicate {pet:?}"
+                );
+                board.begin_tick();
+                board.update_objects();
+                board
+                    .validate()
+                    .unwrap_or_else(|error| panic!("tank {tank} {pet:?}: {error}"));
+                let decoded: AdventureState =
+                    serde_json::from_slice(&serde_json::to_vec(&board).unwrap()).unwrap();
+                decoded.validate().unwrap();
+                assert_eq!(
+                    serde_json::to_value(&board).unwrap(),
+                    serde_json::to_value(&decoded).unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn time_trial_completed_profile_excludes_presto_and_price_reaches_cap() {
+        let mut session = tank_five_session(0);
+        session.progress.tank = 5;
+        session.progress.level = 2;
+        session.progress.adventure_completed = true;
+        session.progress.unlocked_pets.push(PetKind::Presto);
+        session.board = None;
+        session.mode = GameMode::TimeTrial;
+        let mut events = Vec::new();
+        assert!(session.start_time_trial(2, Vec::new(), &mut events));
+        assert_eq!(
+            session
+                .board
+                .as_ref()
+                .unwrap()
+                .time_trial_candidates(&session.progress.unlocked_pets)
+                .len(),
+            19
+        );
+        assert!(
+            !session
+                .board
+                .as_ref()
+                .unwrap()
+                .time_trial_candidates(&session.progress.unlocked_pets)
+                .contains(&PetKind::Presto)
+        );
+        session.board.as_mut().unwrap().balance = 9_999_999;
+        for _ in 0..10 {
+            assert!(
+                session
+                    .apply_actions(&[Action::BuyEgg])
+                    .iter()
+                    .any(|event| matches!(event, Event::TimeTrialPetAcquired { .. }))
+            );
+        }
+        assert_eq!(session.board.as_ref().unwrap().egg_price, 99_999);
+        assert_eq!(session.time_trial.as_ref().unwrap().egg_purchases, 10);
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn time_trial_pause_and_reopen_preserve_active_deadline() {
+        let mut session = time_trial_session();
+        for _ in 0..17 {
+            session.step(&[]);
+        }
+        let board_tick = session.board.as_ref().unwrap().tick;
+        for _ in 0..100 {
+            session.paused_step();
+        }
+        assert_eq!(session.board.as_ref().unwrap().tick, board_tick);
+        let mut reopened: AdventureSession =
+            serde_json::from_slice(&serde_json::to_vec(&session).unwrap()).unwrap();
+        reopened.validate().unwrap();
+        for _ in 0..10 {
+            assert_eq!(
+                serde_json::to_value(session.step(&[])).unwrap(),
+                serde_json::to_value(reopened.step(&[])).unwrap()
+            );
+            assert_eq!(
+                session.board.as_ref().unwrap().tick,
+                reopened.board.as_ref().unwrap().tick
+            );
+        }
+    }
+
+    #[test]
+    fn time_trial_death_returns_to_selector_without_score_or_rescue() {
+        let mut session = time_trial_session();
+        let progress_before = session.progress.clone();
+        for fish in &mut session.board.as_mut().unwrap().fish {
+            fish.alive = false;
+        }
+        session.step(&[]);
+        assert!(matches!(
+            session.phase,
+            AdventurePhase::TimeTrialGameOver { .. }
+        ));
+        assert!(session.time_trial.as_ref().unwrap().result.is_none());
+        assert_eq!(session.time_trial_scores, TimeTrialScores::default());
+        for _ in 0..31 {
+            session.step(&[]);
+        }
+        session.apply_actions(&[Action::Continue]);
+        assert_eq!(session.phase, AdventurePhase::GameSelector);
+        assert_eq!(session.progress, progress_before);
+        assert!(session.time_trial.is_none());
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn time_trial_each_source_counted_fish_class_alone_prevents_game_over() {
+        // PB05 Board::HasFish checks seven live-list categories. Exercise the
+        // Time Trial death gate using each class in a tank that can produce it.
+        for (name, tank, purchase) in [
+            ("fish", 1, None),
+            ("oscar", 1, Some(Action::BuyOscar)),
+            ("starcatcher", 2, Some(Action::BuyStarcatcher)),
+            ("grubber", 3, Some(Action::BuyGrubber)),
+            ("gekko", 3, Some(Action::BuyGekko)),
+            ("breeder", 4, None),
+            ("ultra", 4, Some(Action::BuyUltra)),
+        ] {
+            let mut session = time_trial_survivor_fixture(tank, Vec::new());
+            let board = session.board.as_mut().unwrap();
+            if let Some(action) = purchase {
+                board.balance = 100_000;
+                match &action {
+                    Action::BuyOscar => board.oscar_unlocked = true,
+                    Action::BuyStarcatcher => board.starcatcher_unlocked = true,
+                    Action::BuyGrubber => board.grubber_unlocked = true,
+                    Action::BuyGekko => board.gekko_unlocked = true,
+                    Action::BuyUltra => board.ultra_unlocked = true,
+                    _ => unreachable!(),
+                }
+                assert!(
+                    !board
+                        .apply(action)
+                        .iter()
+                        .any(|event| matches!(event, Event::Rejected { .. })),
+                    "{name} purchase"
+                );
+            }
+            if name != "fish" {
+                board.fish.clear();
+            } else {
+                board.fish.truncate(1);
+            }
+            if name != "breeder" {
+                board.breeders.clear();
+            }
+            session
+                .validate()
+                .unwrap_or_else(|error| panic!("{name} fixture: {error}"));
+            session.step(&[]);
+            assert_eq!(session.phase, AdventurePhase::TimeTrialPlaying, "{name}");
+            session
+                .validate()
+                .unwrap_or_else(|error| panic!("{name} after step: {error}"));
+        }
+    }
+
+    #[test]
+    fn time_trial_prego_pet_without_fish_does_not_block_game_over() {
+        let mut session = time_trial_survivor_fixture(1, vec![PetKind::Prego]);
+        let board = session.board.as_mut().unwrap();
+        board.fish.clear();
+        assert_eq!(board.fish_pets.len(), 1);
+        session.validate().unwrap();
+        session.step(&[]);
+        assert!(matches!(
+            session.phase,
+            AdventurePhase::TimeTrialGameOver { .. }
+        ));
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn time_trial_guppy_corpse_does_not_block_game_over() {
+        let mut session = time_trial_survivor_fixture(1, Vec::new());
+        let fish = &mut session.board.as_mut().unwrap().fish[0];
+        fish.beginner = false;
+        fish.hunger = 0;
+        session.step(&[]);
+        assert_eq!(session.phase, AdventurePhase::TimeTrialPlaying);
+        let board = session.board.as_mut().unwrap();
+        assert_eq!(board.dead_fish.len(), 1);
+        board.fish.retain(|fish| !fish.alive);
+        assert_eq!(board.fish.len(), 1);
+        session.validate().unwrap();
+        session.step(&[]);
+        assert!(matches!(
+            session.phase,
+            AdventurePhase::TimeTrialGameOver { .. }
+        ));
+        assert_eq!(session.board.as_ref().unwrap().dead_fish.len(), 1);
+        session.validate().unwrap();
+    }
 
     fn selection_session() -> AdventureSession {
         let mut session = AdventureSession::new(42);

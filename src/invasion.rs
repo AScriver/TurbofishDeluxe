@@ -83,6 +83,10 @@ pub enum WavePlan {
         next: EncounterKind,
         wave_count: u32,
     },
+    TimeTrial {
+        tank: u8,
+        next: EncounterKind,
+    },
 }
 
 impl WavePlan {
@@ -95,7 +99,8 @@ impl WavePlan {
             | Self::CyclingTank2Finale { next }
             | Self::CyclingTank4Third { next }
             | Self::CyclingTank4Fourth { next }
-            | Self::CyclingTank4Finale { next, .. } => next,
+            | Self::CyclingTank4Finale { next, .. }
+            | Self::TimeTrial { next, .. } => next,
             Self::CyclingTank3Second { next } | Self::CyclingTank3Finale { next } => {
                 EncounterKind::Single(next)
             }
@@ -394,6 +399,19 @@ impl Invasion1_2 {
         wave.plan = WavePlan::CyclingTank4Finale {
             next: EncounterKind::Bilaterus,
             wave_count: 0,
+        };
+        wave
+    }
+
+    /// Time Trial uses the ordinary initial Strong expectation, then its
+    /// mode-one level-five tank branch chooses later encounters after spawn.
+    /// Initial Strong is supported by pinned W1; its PB05 initializer is open.
+    pub fn new_time_trial(tank: u8) -> Self {
+        assert!((1..=4).contains(&tank));
+        let mut wave = Self::new_strong();
+        wave.plan = WavePlan::TimeTrial {
+            tank,
+            next: EncounterKind::Single(SylvesterKind::Strong),
         };
         wave
     }
@@ -1027,6 +1045,55 @@ impl Invasion1_2 {
                             next,
                             wave_count: wave_count.saturating_add(1),
                         }
+                    }
+                    WavePlan::TimeTrial { tank, .. } => {
+                        let next = match tank {
+                            1 => {
+                                if next_random().is_multiple_of(2) {
+                                    EncounterKind::WeakBalrogPair
+                                } else {
+                                    EncounterKind::Single(SylvesterKind::Balrog)
+                                }
+                            }
+                            2 => {
+                                let mut kind = if encounter == EncounterKind::WeakBalrogPair {
+                                    if next_random().is_multiple_of(2) {
+                                        SylvesterKind::Destructor
+                                    } else {
+                                        SylvesterKind::Gus
+                                    }
+                                } else if let EncounterKind::Single(kind) = encounter {
+                                    kind
+                                } else {
+                                    unreachable!("Time Trial Tank 2 encounter")
+                                };
+                                if next_random().is_multiple_of(10) {
+                                    kind = if kind == SylvesterKind::Destructor {
+                                        SylvesterKind::Gus
+                                    } else {
+                                        SylvesterKind::Destructor
+                                    };
+                                    EncounterKind::Single(kind)
+                                } else if next_random().is_multiple_of(20) {
+                                    EncounterKind::WeakBalrogPair
+                                } else {
+                                    EncounterKind::Single(kind)
+                                }
+                            }
+                            3 => EncounterKind::Single(if next_random().is_multiple_of(2) {
+                                SylvesterKind::Psychosquid
+                            } else {
+                                SylvesterKind::Ulysses
+                            }),
+                            4 => match next_random() % 5 {
+                                0 | 1 => EncounterKind::PsychosquidBalrogPair,
+                                2 | 3 => EncounterKind::DestructorUlyssesPair,
+                                4 => EncounterKind::Bilaterus,
+                                _ => unreachable!(),
+                            },
+                            _ => unreachable!("Time Trial tank"),
+                        };
+                        WavePlan::TimeTrial { tank, next }
                     }
                 };
                 self.post_spawn_flash_ticks = 35;
@@ -1824,6 +1891,70 @@ impl Invasion1_2 {
                         ]
                     )
             }
+            WavePlan::TimeTrial { tank, next } => {
+                let valid_next = match tank {
+                    1 => matches!(
+                        next,
+                        EncounterKind::Single(SylvesterKind::Strong | SylvesterKind::Balrog)
+                            | EncounterKind::WeakBalrogPair
+                    ),
+                    2 => matches!(
+                        next,
+                        EncounterKind::Single(
+                            SylvesterKind::Strong | SylvesterKind::Gus | SylvesterKind::Destructor
+                        ) | EncounterKind::WeakBalrogPair
+                    ),
+                    3 => matches!(
+                        next,
+                        EncounterKind::Single(
+                            SylvesterKind::Strong
+                                | SylvesterKind::Ulysses
+                                | SylvesterKind::Psychosquid
+                        )
+                    ),
+                    4 => matches!(
+                        next,
+                        EncounterKind::Single(SylvesterKind::Strong)
+                            | EncounterKind::PsychosquidBalrogPair
+                            | EncounterKind::DestructorUlyssesPair
+                            | EncounterKind::Bilaterus
+                    ),
+                    _ => false,
+                };
+                let valid_actor = |kind| match tank {
+                    1 => matches!(
+                        kind,
+                        SylvesterKind::Strong | SylvesterKind::Weak | SylvesterKind::Balrog
+                    ),
+                    2 => matches!(
+                        kind,
+                        SylvesterKind::Strong
+                            | SylvesterKind::Gus
+                            | SylvesterKind::Destructor
+                            | SylvesterKind::Weak
+                            | SylvesterKind::Balrog
+                    ),
+                    3 => matches!(
+                        kind,
+                        SylvesterKind::Strong | SylvesterKind::Ulysses | SylvesterKind::Psychosquid
+                    ),
+                    4 => matches!(
+                        kind,
+                        SylvesterKind::Strong
+                            | SylvesterKind::Psychosquid
+                            | SylvesterKind::Balrog
+                            | SylvesterKind::Destructor
+                            | SylvesterKind::Ulysses
+                    ),
+                    _ => false,
+                };
+                valid_next
+                    && self.actors.len() <= 2
+                    && self.actors.iter().all(|actor| valid_actor(actor.kind))
+                    && self.bilaterus.len() <= usize::from(tank == 4)
+                    && self.fragments.len() <= if tank == 4 { 8 } else { 0 }
+                    && (tank == 4 || self.bilaterus.is_empty())
+            }
         };
         if !(0..=3000).contains(&self.countdown)
             || self.plan != WavePlan::Tank5Finale && self.finale.is_some()
@@ -1935,6 +2066,60 @@ impl Default for Invasion1_2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn time_trial_strong_spawn_selects_next_without_challenge_escalation() {
+        let mut tank_two = Invasion1_2::new_time_trial(2);
+        assert_eq!(
+            tank_two.plan.expected(),
+            EncounterKind::Single(SylvesterKind::Strong)
+        );
+        tank_two.warning = Some(WarningCoords {
+            first_x: 105,
+            first_y: 160,
+            second_x: 410,
+            second_y: 290,
+        });
+        tank_two.countdown = 1;
+        let mut draws = 0;
+        tank_two.board_update(
+            || {
+                draws += 1;
+                if draws == 3 { 0 } else { 1 }
+            },
+            || 91,
+        );
+        assert_eq!(draws, 3); // Two Strong constructor draws, then the %10 branch.
+        assert_eq!(
+            tank_two.plan.expected(),
+            EncounterKind::Single(SylvesterKind::Destructor)
+        );
+        tank_two.validate().unwrap();
+
+        let mut tank_four = Invasion1_2::new_time_trial(4);
+        tank_four.plan = WavePlan::TimeTrial {
+            tank: 4,
+            next: EncounterKind::Bilaterus,
+        };
+        tank_four.warning = Some(WarningCoords {
+            first_x: 105,
+            first_y: 160,
+            second_x: 410,
+            second_y: 290,
+        });
+        tank_four.countdown = 1;
+        let mut draws = 0;
+        tank_four.board_update(
+            || {
+                draws += 1;
+                if draws == 12 { 4 } else { 1 }
+            },
+            || 92,
+        );
+        assert_eq!(draws, 12);
+        assert_eq!(tank_four.plan.expected(), EncounterKind::Bilaterus);
+        tank_four.validate().unwrap();
+    }
 
     #[test]
     fn bilaterus_wave_consumes_all_constructor_draws_and_fragments_do_not_hold_battle() {

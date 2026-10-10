@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::fish_pet::PrestoForm;
+
 pub const NIKO_X: i32 = 95;
 pub const NIKO_Y: i32 = 253;
 pub const NIKO_TANK2_X: i32 = 175;
@@ -35,14 +37,20 @@ pub enum NikoEvent {
 }
 
 /// Stable owner identity, cycle, and the counters needed to resume the source
-/// RNG-call schedule after a project save. The selected tank fixes the anchor.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// RNG-call schedule after a project save. Plain Niko uses a backdrop anchor;
+/// a flagged form keeps the old widget position and common vertical motion.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NikoState {
     pub owner_id: u64,
     #[serde(default = "tank1_x")]
     pub anchor_x: i32,
     #[serde(default = "tank1_y")]
     pub anchor_y: i32,
+    pub x: f64,
+    pub y: f64,
+    pub vy: f64,
+    #[serde(default)]
+    pub presto_form: Option<PrestoForm>,
     pub cycle: u16,
     pub pearl_taken: bool,
     pub movement_animation_timer: u8,
@@ -73,6 +81,26 @@ impl NikoState {
         Self::spawn_at(owner_id, NIKO_TANK5_X, NIKO_TANK5_Y, rand_range)
     }
 
+    /// PB05 004d89f0 anchors only unflagged Niko. The transform route keeps
+    /// the prior integer widget coordinates and consumes two common draws.
+    pub fn spawn_presto_form_at(
+        owner_id: u64,
+        widget_x: i32,
+        widget_y: i32,
+        virtual_tank: bool,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
+        Self::construct_at(
+            owner_id,
+            widget_x,
+            widget_y,
+            Some(PrestoForm {
+                remaining_ticks: if virtual_tank { 0 } else { 360 },
+            }),
+            rand_range,
+        )
+    }
+
     fn spawn_at(
         owner_id: u64,
         anchor_x: i32,
@@ -81,12 +109,26 @@ impl NikoState {
     ) -> Self {
         let _spawn_x = rand_range(265);
         let _spawn_y = rand_range(520);
+        Self::construct_at(owner_id, anchor_x, anchor_y, None, rand_range)
+    }
+
+    fn construct_at(
+        owner_id: u64,
+        anchor_x: i32,
+        anchor_y: i32,
+        presto_form: Option<PrestoForm>,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
         let _movement_state = rand_range(10);
         let _random_timer = rand_range(250);
         Self {
             owner_id,
             anchor_x,
             anchor_y,
+            x: f64::from(anchor_x),
+            y: f64::from(anchor_y),
+            vy: 0.0,
+            presto_form,
             cycle: 0,
             pearl_taken: false,
             movement_animation_timer: 0,
@@ -104,20 +146,36 @@ impl NikoState {
 
     fn validate_for_tank(&self, tank5: bool) -> Result<(), String> {
         if self.owner_id == 0
+            || ![self.x, self.y, self.vy].into_iter().all(f64::is_finite)
+            || self.anchor_x != self.x as i32
+            || self.anchor_y != self.y as i32
+            || self
+                .presto_form
+                .is_some_and(|form| form.remaining_ticks > 360)
             || self.cycle >= 1450
             || self.movement_animation_timer >= 19
             || self.movement_change_timer > 20
             || (tank5 && (self.cycle != 0 || self.pearl_taken))
-            || !(if tank5 {
-                (self.anchor_x, self.anchor_y) == (NIKO_TANK5_X, NIKO_TANK5_Y)
+            || !(if self.presto_form.is_some() {
+                (0.0..=570.0).contains(&self.x)
+                    && (0.0..=550.0).contains(&self.y)
+                    && (0.0..=100.0).contains(&self.vy)
+            } else if tank5 {
+                self.vy == 0.0
+                    && self.x == f64::from(self.anchor_x)
+                    && self.y == f64::from(self.anchor_y)
+                    && (self.anchor_x, self.anchor_y) == (NIKO_TANK5_X, NIKO_TANK5_Y)
             } else {
-                matches!(
-                    (self.anchor_x, self.anchor_y),
-                    (NIKO_X, NIKO_Y)
-                        | (NIKO_TANK2_X, NIKO_TANK2_Y)
-                        | (NIKO_TANK3_X, NIKO_TANK3_Y)
-                        | (NIKO_TANK4_X, NIKO_TANK4_Y)
-                )
+                self.vy == 0.0
+                    && self.x == f64::from(self.anchor_x)
+                    && self.y == f64::from(self.anchor_y)
+                    && matches!(
+                        (self.anchor_x, self.anchor_y),
+                        (NIKO_X, NIKO_Y)
+                            | (NIKO_TANK2_X, NIKO_TANK2_Y)
+                            | (NIKO_TANK3_X, NIKO_TANK3_Y)
+                            | (NIKO_TANK4_X, NIKO_TANK4_Y)
+                    )
             })
         {
             return Err("invalid ordinary Niko save state".into());
@@ -128,6 +186,7 @@ impl NikoState {
     /// One unpaused object update. The caller owns board RNG and processes the
     /// returned one-shot events in its object-update order.
     pub fn tick(&mut self, rand_range: &mut impl FnMut(u64) -> u64) -> Vec<NikoEvent> {
+        self.begin_active_tick();
         self.tick_movement(rand_range);
 
         self.cycle += 1;
@@ -159,15 +218,41 @@ impl NikoState {
             _ => Vec::new(),
         };
         self.movement_animation_timer = (self.movement_animation_timer + 1) % 19;
+        self.finish_active_tick();
         events
     }
 
     /// W1 OtherTypePet.cpp:618-634 suppresses Niko's pearl specialty in
     /// Tank 5; its common counters and idle animation still advance.
     pub fn tick_tank5(&mut self, rand_range: &mut impl FnMut(u64) -> u64) -> Vec<NikoEvent> {
+        self.begin_active_tick();
         self.tick_movement(rand_range);
         self.movement_animation_timer = (self.movement_animation_timer + 1) % 19;
+        self.finish_active_tick();
         Vec::new()
+    }
+
+    fn begin_active_tick(&mut self) {
+        // PB05 004f2e80: raw1 has no horizontal movement-state branch.
+        if self.presto_form.is_some() && self.y < 380.0 {
+            self.vy += 0.1;
+        }
+    }
+
+    fn finish_active_tick(&mut self) {
+        self.x = self.x.clamp(10.0, 540.0);
+        // The raw1 cap applies even when the constructor skipped anchoring.
+        if self.y > 350.0 {
+            self.y = 350.0;
+            self.vy = 0.0;
+        }
+        self.y = self.y.max(95.0);
+        if let Some(form) = &mut self.presto_form {
+            form.remaining_ticks = form.remaining_ticks.saturating_sub(1);
+        }
+        self.y += self.vy / 2.0;
+        self.anchor_x = self.x as i32;
+        self.anchor_y = self.y as i32;
     }
 
     fn tick_movement(&mut self, rand_range: &mut impl FnMut(u64) -> u64) {
@@ -344,6 +429,63 @@ impl NikoPearl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn presto_niko_preserves_widget_position_and_consumes_only_common_draws() {
+        let mut draws = Vec::new();
+        let mut pet = NikoState::spawn_presto_form_at(4, 220, 300, false, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(draws, [10, 250]);
+        assert_eq!((pet.anchor_x, pet.anchor_y), (220, 300));
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 360);
+        assert!(pet.validate().is_ok());
+        assert!(pet.tick(&mut |_| 1).is_empty());
+        assert!((pet.y - 300.05).abs() < 1e-12);
+        assert!((pet.vy - 0.1).abs() < 1e-12);
+        assert_eq!((pet.anchor_x, pet.anchor_y), (220, 300));
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 359);
+    }
+
+    #[test]
+    fn presto_niko_clamps_before_integration_even_at_the_exact_cap() {
+        let mut pet = NikoState::spawn_presto_form_at(4, 220, 350, false, &mut |_| 0);
+        pet.tick(&mut |_| 1);
+        assert!((pet.y - 350.05).abs() < 1e-12);
+        assert_eq!(pet.anchor_y, 350);
+        pet.tick(&mut |_| 1);
+        assert_eq!(pet.y, 350.0);
+        assert_eq!(pet.vy, 0.0);
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 358);
+        let mut above = NikoState::spawn_presto_form_at(5, 565, 539, false, &mut |_| 0);
+        assert!(above.validate_tank5().is_ok());
+        assert!(above.tick_tank5(&mut |_| 1).is_empty());
+        assert_eq!((above.anchor_x, above.anchor_y), (540, 350));
+        assert_eq!(above.vy, 0.0);
+        assert_eq!(above.cycle, 0);
+    }
+
+    #[test]
+    fn presto_niko_recharge_and_fractional_pose_resume_without_reanchoring() {
+        let mut pet = NikoState::spawn_presto_form_at(4, 220, 300, false, &mut |_| 0);
+        for _ in 0..180 {
+            pet.tick(&mut |_| 1);
+        }
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 180);
+        let mut resumed: NikoState =
+            serde_json::from_slice(&serde_json::to_vec(&pet).unwrap()).unwrap();
+        for _ in 0..181 {
+            assert_eq!(pet.tick(&mut |_| 1), resumed.tick(&mut |_| 1));
+        }
+        assert_eq!(pet, resumed);
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 0);
+        let mut vt = NikoState::spawn_presto_form_at(5, 220, 300, true, &mut |_| 0);
+        vt.tick(&mut |_| 1);
+        assert_eq!(vt.presto_form.unwrap().remaining_ticks, 0);
+        vt.presto_form.as_mut().unwrap().remaining_ticks = 361;
+        assert!(vt.validate().is_err());
+    }
 
     #[test]
     fn tank5_anchor_draws_and_pearl_suppression() {

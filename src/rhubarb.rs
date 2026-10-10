@@ -3,6 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::fish_pet::PrestoForm;
+
 #[derive(Clone, Copy, Debug)]
 pub struct RhubarbPrey {
     pub id: u64,
@@ -36,6 +38,8 @@ pub struct RhubarbState {
     pub turn_ticks: i8,
     pub specialty_ticks: u8,
     pub frame: u8,
+    #[serde(default)]
+    pub presto_form: Option<PrestoForm>,
 }
 
 impl RhubarbState {
@@ -48,14 +52,44 @@ impl RhubarbState {
         _discarded_y: i32,
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> Self {
+        Self::spawn_at(id, x, 355, None, rand_range)
+    }
+
+    /// PB05 004eb5c0 suppresses the ordinary raw14 anchor when flagged.
+    /// The two Board coordinate draws are absent on the transform route.
+    pub fn spawn_presto_form_at(
+        id: u64,
+        widget_x: i32,
+        widget_y: i32,
+        virtual_tank: bool,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
+        Self::spawn_at(
+            id,
+            widget_x,
+            widget_y,
+            Some(PrestoForm {
+                remaining_ticks: if virtual_tank { 0 } else { 360 },
+            }),
+            rand_range,
+        )
+    }
+
+    fn spawn_at(
+        id: u64,
+        x: i32,
+        y: i32,
+        presto_form: Option<PrestoForm>,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
         let movement_state = rand_range(10) as u8;
         let _unused_specialty_seed = rand_range(250) + 250;
         Self {
             id,
             x: f64::from(x),
-            y: 355.0,
+            y: f64::from(y),
             widget_x: x,
-            widget_y: 355,
+            widget_y: y,
             vx: 0.0,
             vy: 0.0,
             target_vx: 0.0,
@@ -67,6 +101,7 @@ impl RhubarbState {
             turn_ticks: 0,
             specialty_ticks: 0,
             frame: 0,
+            presto_form,
         }
     }
 
@@ -105,7 +140,11 @@ impl RhubarbState {
             .into_iter()
             .all(f64::is_finite)
             || !(0.0..=570.0).contains(&self.x)
-            || !(90.0..=380.0).contains(&self.y)
+            || !(if self.presto_form.is_some() {
+                (0.0..=550.0).contains(&self.y)
+            } else {
+                (90.0..=380.0).contains(&self.y)
+            })
             || self.widget_x != self.x as i32
             || self.widget_y != self.y as i32
             || self.movement_state > 9
@@ -114,6 +153,9 @@ impl RhubarbState {
             || !(-20..=20).contains(&self.turn_ticks)
             || self.specialty_ticks > 19
             || self.frame >= 10
+            || self
+                .presto_form
+                .is_some_and(|form| form.remaining_ticks > 360)
         {
             return Err("invalid ordinary Rhubarb state".into());
         }
@@ -183,6 +225,11 @@ impl RhubarbState {
     }
 
     fn finish_tick_inner(&mut self, tank5: bool, rand_range: &mut impl FnMut(u64) -> u64) {
+        // Nudge changes velocity before integration; contact uses the prior
+        // widget position. The raw14 y cap remains active for flagged forms.
+        if self.presto_form.is_some() && self.y < 380.0 {
+            self.vy += 0.1;
+        }
         if !tank5 {
             self.target_vx = match self.movement_state {
                 0 => 0.0,
@@ -241,6 +288,9 @@ impl RhubarbState {
         if self.x < 15.0 && self.vx < -0.1 {
             self.movement_state = 2;
         }
+        if let Some(form) = &mut self.presto_form {
+            form.remaining_ticks = form.remaining_ticks.saturating_sub(1);
+        }
         self.x += self.vx / 2.0;
         self.y += self.vy / 2.0;
         self.widget_x = self.x as i32;
@@ -252,6 +302,45 @@ impl RhubarbState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn presto_rhubarb_bypasses_constructor_anchor_but_retains_nudge_and_update_cap() {
+        let mut draws = Vec::new();
+        let mut pet = RhubarbState::spawn_presto_form_at(4, 220, 340, false, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(draws, [10, 250]);
+        assert_eq!((pet.widget_x, pet.widget_y), (220, 340));
+        pet.begin_tick(&[], false);
+        pet.finish_tick(&mut |_| 1);
+        assert!((pet.y - 340.05).abs() < 1e-12);
+        assert!((pet.vy - 0.1).abs() < 1e-12);
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 359);
+        assert!(pet.validate().is_ok());
+
+        let mut above = RhubarbState::spawn_presto_form_at(5, 220, 539, false, &mut |_| 0);
+        assert!(above.validate().is_ok());
+        above.begin_tick_tank5();
+        above.finish_tick_tank5(&mut |_| 1);
+        assert_eq!(above.widget_y, 355);
+        assert_eq!(above.vy, 0.0);
+        assert_eq!(above.presto_form.unwrap().remaining_ticks, 359);
+    }
+
+    #[test]
+    fn presto_rhubarb_recharge_decrements_once_after_split_update() {
+        let mut pet = RhubarbState::spawn_presto_form_at(4, 220, 340, false, &mut |_| 0);
+        pet.begin_tick(&[], false);
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 360);
+        pet.finish_tick(&mut |_| 1);
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 359);
+        let mut vt = RhubarbState::spawn_presto_form_at(5, 220, 340, true, &mut |_| 0);
+        vt.finish_tick_tank5(&mut |_| 1);
+        assert_eq!(vt.presto_form.unwrap().remaining_ticks, 0);
+        vt.presto_form.as_mut().unwrap().remaining_ticks = 361;
+        assert!(vt.validate().is_err());
+    }
 
     #[test]
     fn tank5_rhubarb_keeps_common_counters_without_chase_or_push() {

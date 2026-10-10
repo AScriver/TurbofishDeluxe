@@ -8,7 +8,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 
 ## Start here
 
-- [Presto actor/storage foundation](docs/presto.md), current23, passed523 checks and has a frozen code checkpoint. [Tank5-1/Cyrax](docs/adventure-5-1.md) remains code-integrated. Next: Presto form replacement, completed replay/results and [Time Trial](docs/time-trial.md). The [broad recovery](docs/binary-recovery.md) covers all remaining systems; native/manual acceptance stays deferred.
+- [Time Trial](docs/time-trial.md) and [Presto actor/storage foundation](docs/presto.md), current24, passed547 checks and have a frozen code checkpoint. [Tank5-1/Cyrax](docs/adventure-5-1.md) remains code-integrated. Next: logical Presto selection/form replacement, then completed replay/results and the remaining modes. The [broad recovery](docs/binary-recovery.md) covers all remaining systems; native/manual acceptance stays deferred.
 - Agents: read [AGENTS.md](AGENTS.md), then follow its startup order.
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).

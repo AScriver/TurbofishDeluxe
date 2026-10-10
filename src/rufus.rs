@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::fish_pet::PrestoForm;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RufusAlienView {
     pub id: u64,
@@ -38,6 +40,8 @@ pub struct RufusState {
     pub animation_ticks: u8,
     pub frame: u8,
     pub ancillary_ticks: u16,
+    #[serde(default)]
+    pub presto_form: Option<PrestoForm>,
 }
 
 impl RufusState {
@@ -46,14 +50,44 @@ impl RufusState {
     pub fn spawn_tank2(id: u64, rand_range: &mut impl FnMut(u64) -> u64) -> Self {
         let x = (rand_range(265) + 105) as i32;
         let _y = rand_range(520) + 20;
+        Self::spawn_at(id, x, 365, None, rand_range)
+    }
+
+    /// Flagged construction bypasses the ordinary 365 anchor, not the later
+    /// raw-kind update clamp. App Virtual Tank mode starts recharge at zero.
+    pub fn spawn_presto_form_at(
+        id: u64,
+        widget_x: i32,
+        widget_y: i32,
+        virtual_tank: bool,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
+        Self::spawn_at(
+            id,
+            widget_x,
+            widget_y,
+            Some(PrestoForm {
+                remaining_ticks: if virtual_tank { 0 } else { 360 },
+            }),
+            rand_range,
+        )
+    }
+
+    fn spawn_at(
+        id: u64,
+        x: i32,
+        y: i32,
+        presto_form: Option<PrestoForm>,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
         let movement_state = rand_range(10) as u8;
         let ancillary_ticks = (rand_range(250) + 250) as u16;
         Self {
             id,
             x: f64::from(x),
-            y: 365.0,
+            y: f64::from(y),
             widget_x: x,
-            widget_y: 365,
+            widget_y: y,
             vx: 0.0,
             vy: 0.0,
             target_vx: 0.0,
@@ -64,6 +98,7 @@ impl RufusState {
             animation_ticks: 0,
             frame: 0,
             ancillary_ticks,
+            presto_form,
         }
     }
 
@@ -97,6 +132,10 @@ impl RufusState {
         aliens: &[RufusAlienView],
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> RufusUpdate {
+        // PB05 004f2e80: flagged raw7 gets this nudge before chase/clamps.
+        if self.presto_form.is_some() && self.y < 380.0 {
+            self.vy += 0.1;
+        }
         let mut update = RufusUpdate::default();
         let target = self.nearest(aliens);
         if let Some(target) = target {
@@ -160,12 +199,19 @@ impl RufusState {
             }
         }
         self.x = self.x.clamp(10.0, 560.0);
-        self.y = self.y.clamp(95.0, 365.0);
+        if self.y > 365.0 {
+            self.y = 365.0;
+            self.vy = 0.0;
+        }
+        self.y = self.y.max(95.0);
         if self.x > 535.0 && self.vx > 0.1 {
             self.movement_state = 1;
         }
         if self.x < 15.0 && self.vx < -0.1 {
             self.movement_state = 2;
+        }
+        if let Some(form) = &mut self.presto_form {
+            form.remaining_ticks = form.remaining_ticks.saturating_sub(1);
         }
         self.animate(!aliens.is_empty(), target.is_some());
         self.x += self.vx / 2.0;
@@ -226,17 +272,28 @@ impl RufusState {
             .into_iter()
             .all(f64::is_finite)
             || !(0.0..=565.0).contains(&self.x)
-            || !(90.0..=370.0).contains(&self.y)
+            || !(if self.presto_form.is_some() {
+                (0.0..=550.0).contains(&self.y)
+            } else {
+                (90.0..=370.0).contains(&self.y)
+            })
             || self.widget_x != self.x as i32
             || self.widget_y != self.y as i32
             || self.vx.abs() > 7.0
-            || self.vy != 0.0
+            || !(if self.presto_form.is_some() {
+                (0.0..=100.0).contains(&self.vy)
+            } else {
+                self.vy == 0.0
+            })
             || self.target_vx.abs() > 2.5
             || self.movement_ticks > 20
             || self.movement_state > 9
             || self.animation_ticks >= 60
             || self.frame > 9
             || !(250..=499).contains(&self.ancillary_ticks)
+            || self
+                .presto_form
+                .is_some_and(|form| form.remaining_ticks > 360)
         {
             return Err("invalid Rufus state".into());
         }
@@ -247,6 +304,40 @@ impl RufusState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn presto_rufus_keeps_supplied_position_then_nudges_and_clamps_by_raw_kind() {
+        let mut draws = Vec::new();
+        let mut pet = RufusState::spawn_presto_form_at(4, 220, 330, false, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(draws, [10, 250]);
+        assert_eq!((pet.widget_x, pet.widget_y), (220, 330));
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 360);
+        pet.tick(&[], &mut |_| 1);
+        assert!((pet.vy - 0.1).abs() < 1e-12);
+        assert!((pet.y - 330.05).abs() < 1e-12);
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 359);
+        assert!(pet.validate().is_ok());
+
+        let mut above = RufusState::spawn_presto_form_at(5, 565, 539, false, &mut |_| 0);
+        assert!(above.validate().is_ok());
+        above.tick_tank5(&mut |_| 1);
+        assert_eq!((above.widget_x, above.widget_y), (560, 365));
+        assert_eq!(above.vy, 0.0);
+        assert_eq!(above.presto_form.unwrap().remaining_ticks, 359);
+    }
+
+    #[test]
+    fn presto_rufus_virtual_tank_zero_clock_and_strict_clock_validation() {
+        let mut pet = RufusState::spawn_presto_form_at(4, 220, 330, true, &mut |_| 0);
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 0);
+        pet.tick(&[], &mut |_| 1);
+        assert_eq!(pet.presto_form.unwrap().remaining_ticks, 0);
+        pet.presto_form.as_mut().unwrap().remaining_ticks = 361;
+        assert!(pet.validate().is_err());
+    }
 
     #[test]
     fn tank5_rufus_uses_wander_without_combat_request() {

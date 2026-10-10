@@ -27,7 +27,8 @@ pub enum FishPetKind {
     Presto,
 }
 
-/// Constructor-owned flag and +238 clock for a Presto-origin FishTypePet.
+/// Constructor-owned flag and recharge clock for a Presto-origin pet:
+/// FishTypePet +238, OtherTypePet +1ac in PB05.
 /// Plain pets have no form state; a transformed pet retains it at every form.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrestoForm {

@@ -68,8 +68,14 @@ impl MusicCue {
             | AdventurePhase::Hatch { .. }
             | AdventurePhase::TankFourFinaleHatch { .. } => Some(Self::Hatch),
             AdventurePhase::PetSelection { .. }
-            | AdventurePhase::PetSelectionConfirmation { .. } => Some(Self::PetSelection),
+            | AdventurePhase::PetSelectionConfirmation { .. }
+            | AdventurePhase::TimeTrialPetSelection { .. }
+            | AdventurePhase::TimeTrialTankSelection
+            | AdventurePhase::TimeTrialTimesUp
+            | AdventurePhase::TimeTrialResults => Some(Self::PetSelection),
             AdventurePhase::Playing
+            | AdventurePhase::TimeTrialPlaying
+            | AdventurePhase::TimeTrialInvasionTutorial { .. }
             | AdventurePhase::FirstTankRescue
             | AdventurePhase::InvasionTutorial { .. } => {
                 let board = session.board.as_ref()?;
@@ -94,7 +100,7 @@ impl MusicCue {
             }
             AdventurePhase::GameSelector | AdventurePhase::HelpScreen => Some(Self::PetSelection),
             AdventurePhase::AdventureFinaleInterlude => Some(Self::Interlude),
-            AdventurePhase::GameOver { .. } => None,
+            AdventurePhase::GameOver { .. } | AdventurePhase::TimeTrialGameOver { .. } => None,
         }
     }
 }

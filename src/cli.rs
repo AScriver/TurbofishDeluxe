@@ -141,14 +141,14 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 23;
+pub const SAVE_FORMAT_VERSION: u32 = 24;
 
 #[cfg(test)]
 mod current_twenty_one_tests {
     use super::*;
 
     #[test]
-    fn current_save_requires_profile_fields_without_rewriting_older_format() {
+    fn current_save_requires_profile_fields_and_rejects_old_version_label_on_new_shape() {
         let session = AdventureSession::new(42);
         let mut value = serde_json::to_value(ProjectSave {
             format_version: SAVE_FORMAT_VERSION,
@@ -172,7 +172,7 @@ mod current_twenty_one_tests {
             .as_object_mut()
             .unwrap()
             .remove("adventure_completed");
-        assert!(decode_save(&serde_json::to_vec(&value).unwrap()).is_ok());
+        assert!(decode_save(&serde_json::to_vec(&value).unwrap()).is_err());
     }
 
     #[test]
@@ -212,7 +212,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
         .and_then(serde_json::Value::as_object)
     {
         let other_fields = ["stinky", "niko", "clyde", "rufus", "rhubarb"];
-        if version_number == Some(23)
+        if version_number.is_some_and(|version| version >= 23)
             && other_fields
                 .iter()
                 .any(|field| board.get(*field).is_none_or(|pet| !pet.is_array()))
@@ -228,6 +228,31 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                 "Option-shaped OtherPet saves are unsupported by format twenty-three".into(),
             );
         }
+    }
+    if version_number == Some(24) {
+        let session = value
+            .get("session")
+            .and_then(serde_json::Value::as_object)
+            .ok_or("Format-twenty-four session missing")?;
+        if ["mode", "time_trial_scores", "time_trial"]
+            .iter()
+            .any(|field| !session.contains_key(*field))
+            || value
+                .pointer("/session/board")
+                .filter(|board| !board.is_null())
+                .is_some_and(|board| {
+                    board
+                        .get("time_trial")
+                        .and_then(serde_json::Value::as_bool)
+                        .is_none()
+                })
+        {
+            return Err("Incomplete format-twenty-four mode or Time Trial state".into());
+        }
+    } else if version_number.is_some_and(|version| version < 24)
+        && value.pointer("/session/mode").is_some()
+    {
+        return Err("Older save cannot claim Time Trial mode".into());
     }
     if let Some(version @ 1..=6) = version_number {
         validate_legacy_boundary(&value, version)?;
@@ -325,7 +350,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=23) => {
+        Some(version @ 5..=24) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -422,6 +447,21 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                 .is_some_and(|pets| {
                                     pets.iter().any(|pet| pet.get("combat_id").is_none())
                                 }))
+                        || (version >= 24
+                            && ["clyde", "niko", "rufus", "rhubarb"].iter().any(|field| {
+                                board
+                                    .get(*field)
+                                    .and_then(serde_json::Value::as_array)
+                                    .is_none_or(|pets| {
+                                        pets.iter().any(|pet| {
+                                            pet.get("presto_form").is_none()
+                                                || (*field == "niko"
+                                                    && ["x", "y", "vy"]
+                                                        .iter()
+                                                        .any(|part| pet.get(*part).is_none()))
+                                        })
+                                    })
+                            }))
                         || (version >= 21
                             && board
                                 .get("invasion")
@@ -641,6 +681,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     21 => "twenty-one",
                     22 => "twenty-two",
                     23 => "twenty-three",
+                    24 => "twenty-four",
                     _ => unreachable!("bounded format range"),
                 };
                 return Err(format!(

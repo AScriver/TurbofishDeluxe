@@ -666,6 +666,9 @@ impl Presentation {
                 } => "SOUND_BONUSCOLLECT",
                 Event::BonusResultsCommitted { .. } => "SOUND_BONUSCOUNT",
                 Event::StageStarted { .. }
+                | Event::TimeTrialStarted { .. }
+                | Event::TimeTrialPetAcquired { .. }
+                | Event::TimeTrialShellsCredited { .. }
                 | Event::RescueGuppyGranted { .. }
                 | Event::PetSelectionChanged { .. }
                 | Event::PetSelectionConfirmation { .. } => "SOUND_BUTTONCLICK",
@@ -3069,7 +3072,11 @@ impl Presentation {
             );
             self.centered_text(
                 "JungleFever10outline",
-                "to take to the next level",
+                if matches!(session.phase, AdventurePhase::TimeTrialPetSelection { .. }) {
+                    "for the timed tank"
+                } else {
+                    "to take to the next level"
+                },
                 90.0,
                 WHITE,
             );
@@ -3181,18 +3188,46 @@ impl Presentation {
             AdventurePhase::Bonus { ref state } => self.draw_bonus(state),
             AdventurePhase::BonusResults { ref result } => self.draw_bonus_results(result),
             AdventurePhase::PetSelection { ref selected }
-            | AdventurePhase::PetSelectionConfirmation { ref selected } => {
+            | AdventurePhase::PetSelectionConfirmation { ref selected }
+            | AdventurePhase::TimeTrialPetSelection { ref selected, .. } => {
                 self.draw_pet_selection(session, selected, pointer);
             }
             AdventurePhase::Playing
+            | AdventurePhase::TimeTrialPlaying
+            | AdventurePhase::TimeTrialInvasionTutorial { .. }
+            | AdventurePhase::TimeTrialTimesUp
+            | AdventurePhase::TimeTrialResults
+            | AdventurePhase::TimeTrialGameOver { .. }
             | AdventurePhase::FirstTankRescue
             | AdventurePhase::InvasionTutorial { .. }
             | AdventurePhase::GameOver { .. } => {
                 if let Some(board) = &session.board {
                     self.draw_board(board);
+                    if board.time_trial {
+                        let limit = crate::time_trial::limit_seconds(board.tank).unwrap_or(0);
+                        let left = limit.saturating_sub(board.tick.saturating_mul(28) / 1000);
+                        self.centered_text(
+                            "JungleFever10outline",
+                            &format!(
+                                "TIME {:02}:{:02}   PET EGG ${}{}",
+                                left / 60,
+                                left % 60,
+                                board.egg_price,
+                                if session.time_trial.as_ref().is_some_and(|run| run.egg_maxed) {
+                                    " MAX"
+                                } else {
+                                    ""
+                                }
+                            ),
+                            422.0,
+                            YELLOW,
+                        );
+                    }
                 }
             }
-            AdventurePhase::GameSelector | AdventurePhase::HelpScreen => {
+            AdventurePhase::GameSelector
+            | AdventurePhase::HelpScreen
+            | AdventurePhase::TimeTrialTankSelection => {
                 self.sprite("IMAGE_HATCHSCREEN", 0.0, 0.0, None, false, 1.0, 1.0);
             }
         }
@@ -3343,6 +3378,102 @@ impl Presentation {
                 ),
                 "Adventure",
             );
+            if session.progress.tank >= 2 || session.progress.adventure_completed {
+                self.main_button(
+                    Rect::new(
+                        186.0,
+                        310.0,
+                        264.0,
+                        self.images["IMAGE_MAINBUTTON"].height(),
+                    ),
+                    "Time Trial",
+                );
+            }
+        }
+        if session.phase == AdventurePhase::TimeTrialTankSelection {
+            self.centered_text("JungleFever17outline", "TIME TRIAL", 105.0, YELLOW);
+            for tank in 1..=4 {
+                let y = 150.0 + (tank - 1) as f32 * 66.0;
+                self.main_button(
+                    Rect::new(186.0, y, 264.0, self.images["IMAGE_MAINBUTTON"].height()),
+                    &format!("Tank {tank}"),
+                );
+            }
+            self.main_button(
+                Rect::new(525.0, 4.0, 80.0, self.images["IMAGE_MAINBUTTON"].height()),
+                "Menu",
+            );
+        }
+        if session.phase == AdventurePhase::TimeTrialTimesUp {
+            draw_rectangle(72.0, 123.0, 496.0, 252.0, Color::new(0.02, 0.1, 0.15, 0.96));
+            self.centered_text("JungleFever17outline", "TIME'S UP!", 180.0, YELLOW);
+            if let Some(result) = session
+                .time_trial
+                .as_ref()
+                .and_then(|run| run.result.as_ref())
+            {
+                self.centered_text(
+                    "JungleFever10outline",
+                    &format!(
+                        "Score ${}   Shells +{}",
+                        result.score, result.credited_shells
+                    ),
+                    235.0,
+                    WHITE,
+                );
+            }
+            self.main_button(
+                Rect::new(
+                    186.0,
+                    310.0,
+                    264.0,
+                    self.images["IMAGE_MAINBUTTON"].height(),
+                ),
+                "See Results",
+            );
+        }
+        if session.phase == AdventurePhase::TimeTrialResults {
+            draw_rectangle(72.0, 123.0, 496.0, 252.0, Color::new(0.02, 0.1, 0.15, 0.96));
+            self.centered_text("JungleFever17outline", "TIME TRIAL RESULTS", 180.0, YELLOW);
+            if let Some(result) = session
+                .time_trial
+                .as_ref()
+                .and_then(|run| run.result.as_ref())
+            {
+                self.centered_text(
+                    "JungleFever10outline",
+                    &format!(
+                        "Tank {}  Score ${}  Best ${}",
+                        result.tank, result.score, result.personal_best
+                    ),
+                    235.0,
+                    WHITE,
+                );
+            }
+            self.main_button(
+                Rect::new(
+                    186.0,
+                    310.0,
+                    264.0,
+                    self.images["IMAGE_MAINBUTTON"].height(),
+                ),
+                "Continue",
+            );
+        }
+        if let AdventurePhase::TimeTrialGameOver { updates } = session.phase {
+            draw_rectangle(72.0, 123.0, 496.0, 252.0, Color::new(0.02, 0.1, 0.15, 0.96));
+            self.centered_text("JungleFever17outline", "GAME OVER", 182.0, YELLOW);
+            if updates > 30 {
+                self.main_button(
+                    Rect::new(
+                        186.0,
+                        310.0,
+                        264.0,
+                        self.images["IMAGE_MAINBUTTON"].height(),
+                    ),
+                    "Continue",
+                );
+            }
         }
         if session.phase == AdventurePhase::HelpScreen {
             self.centered_text("JungleFever17outline", "ADVENTURE", 112.0, YELLOW);
@@ -3722,6 +3853,8 @@ pub async fn run(
             AdventurePhase::Hatch { .. }
                 | AdventurePhase::TankFourFinaleHatch { .. }
                 | AdventurePhase::PetSelection { .. }
+                | AdventurePhase::TimeTrialPetSelection { .. }
+                | AdventurePhase::TimeTrialTankSelection
         ) {
             Rect::new(525.0, 4.0, 80.0, button_height)
         } else {
@@ -3732,6 +3865,9 @@ pub async fn run(
                 && matches!(
                     session.phase,
                     AdventurePhase::Playing
+                        | AdventurePhase::TimeTrialPlaying
+                        | AdventurePhase::TimeTrialTankSelection
+                        | AdventurePhase::TimeTrialPetSelection { .. }
                         | AdventurePhase::Hatch { .. }
                         | AdventurePhase::TankFourFinaleHatch { .. }
                         | AdventurePhase::PetSelection { .. }
@@ -3742,6 +3878,8 @@ pub async fn run(
                     AdventurePhase::Hatch { .. }
                         | AdventurePhase::TankFourFinaleHatch { .. }
                         | AdventurePhase::PetSelection { .. }
+                        | AdventurePhase::TimeTrialTankSelection
+                        | AdventurePhase::TimeTrialPetSelection { .. }
                 ) {
                     pending_actions.push(Action::OpenMenu);
                 } else {
@@ -3776,6 +3914,53 @@ pub async fn run(
                                 y: pointer.y,
                             }
                         }
+                    }
+                    AdventurePhase::TimeTrialPetSelection { .. } => {
+                        if let Some(pet) = pet_at_pointer(&session.progress.unlocked_pets, pointer)
+                        {
+                            Action::TogglePet { pet }
+                        } else if Rect::new(225.0, 250.0, 186.0, button_height).contains(pointer) {
+                            Action::Continue
+                        } else {
+                            Action::Click {
+                                x: pointer.x,
+                                y: pointer.y,
+                            }
+                        }
+                    }
+                    AdventurePhase::TimeTrialTankSelection => {
+                        let chosen = (1..=4).find(|tank| {
+                            Rect::new(
+                                186.0,
+                                150.0 + (*tank - 1) as f32 * 66.0,
+                                264.0,
+                                button_height,
+                            )
+                            .contains(pointer)
+                        });
+                        chosen.map_or(
+                            Action::Click {
+                                x: pointer.x,
+                                y: pointer.y,
+                            },
+                            |tank| Action::SelectTimeTrialTank { tank },
+                        )
+                    }
+                    AdventurePhase::TimeTrialTimesUp | AdventurePhase::TimeTrialResults
+                        if Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
+                    {
+                        Action::Continue
+                    }
+                    AdventurePhase::TimeTrialGameOver { updates }
+                        if updates > 30
+                            && Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
+                    {
+                        Action::Continue
+                    }
+                    AdventurePhase::TimeTrialInvasionTutorial { .. }
+                        if Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
+                    {
+                        Action::Continue
                     }
                     AdventurePhase::PetSelectionConfirmation { .. }
                         if Rect::new(155.0, 300.0, 145.0, button_height).contains(pointer) =>
@@ -3822,12 +4007,17 @@ pub async fn run(
                     {
                         Action::PlayAdventure
                     }
+                    AdventurePhase::GameSelector
+                        if Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
+                    {
+                        Action::PlayTimeTrial
+                    }
                     AdventurePhase::HelpScreen
                         if Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
                     {
                         Action::Continue
                     }
-                    AdventurePhase::Playing
+                    AdventurePhase::Playing | AdventurePhase::TimeTrialPlaying
                         if session
                             .board
                             .as_ref()
@@ -3836,7 +4026,7 @@ pub async fn run(
                     {
                         Action::BuyBreeder
                     }
-                    AdventurePhase::Playing
+                    AdventurePhase::Playing | AdventurePhase::TimeTrialPlaying
                         if session
                             .board
                             .as_ref()
@@ -3845,7 +4035,7 @@ pub async fn run(
                     {
                         Action::BuyGuppy
                     }
-                    AdventurePhase::Playing
+                    AdventurePhase::Playing | AdventurePhase::TimeTrialPlaying
                         if session
                             .board
                             .as_ref()
@@ -3854,7 +4044,7 @@ pub async fn run(
                     {
                         Action::BuyPotion
                     }
-                    AdventurePhase::Playing
+                    AdventurePhase::Playing | AdventurePhase::TimeTrialPlaying
                         if session
                             .board
                             .as_ref()
@@ -3863,7 +4053,7 @@ pub async fn run(
                     {
                         Action::BuyFoodQuality
                     }
-                    AdventurePhase::Playing
+                    AdventurePhase::Playing | AdventurePhase::TimeTrialPlaying
                         if session
                             .board
                             .as_ref()
@@ -3872,7 +4062,7 @@ pub async fn run(
                     {
                         Action::BuyFoodQuantity
                     }
-                    AdventurePhase::Playing
+                    AdventurePhase::Playing | AdventurePhase::TimeTrialPlaying
                         if session
                             .board
                             .as_ref()
@@ -3881,7 +4071,7 @@ pub async fn run(
                     {
                         Action::BuyOscar
                     }
-                    AdventurePhase::Playing
+                    AdventurePhase::Playing | AdventurePhase::TimeTrialPlaying
                         if session
                             .board
                             .as_ref()
@@ -3890,7 +4080,7 @@ pub async fn run(
                     {
                         Action::BuyGrubber
                     }
-                    AdventurePhase::Playing
+                    AdventurePhase::Playing | AdventurePhase::TimeTrialPlaying
                         if session
                             .board
                             .as_ref()
@@ -3899,7 +4089,7 @@ pub async fn run(
                     {
                         Action::BuyStarcatcher
                     }
-                    AdventurePhase::Playing
+                    AdventurePhase::Playing | AdventurePhase::TimeTrialPlaying
                         if session
                             .board
                             .as_ref()
@@ -3908,7 +4098,7 @@ pub async fn run(
                     {
                         Action::BuyGekko
                     }
-                    AdventurePhase::Playing
+                    AdventurePhase::Playing | AdventurePhase::TimeTrialPlaying
                         if session
                             .board
                             .as_ref()
@@ -3917,7 +4107,7 @@ pub async fn run(
                     {
                         Action::BuyUltra
                     }
-                    AdventurePhase::Playing
+                    AdventurePhase::Playing | AdventurePhase::TimeTrialPlaying
                         if session
                             .board
                             .as_ref()
@@ -3926,7 +4116,7 @@ pub async fn run(
                     {
                         Action::BuyWeapon
                     }
-                    AdventurePhase::Playing
+                    AdventurePhase::Playing | AdventurePhase::TimeTrialPlaying
                         if session
                             .board
                             .as_ref()
@@ -3995,12 +4185,16 @@ pub async fn run(
         let enter_continues = matches!(
             session.phase,
             AdventurePhase::FirstTankRescue
+                | AdventurePhase::TimeTrialPetSelection { .. }
+                | AdventurePhase::TimeTrialTimesUp
+                | AdventurePhase::TimeTrialResults
+                | AdventurePhase::TimeTrialInvasionTutorial { .. }
                 | AdventurePhase::InvasionTutorial { .. }
                 | AdventurePhase::HelpScreen
                 | AdventurePhase::Hatch { .. }
                 | AdventurePhase::TankFourFinaleHatch { .. }
                 | AdventurePhase::PetSelection { .. }
-        ) || matches!(session.phase, AdventurePhase::GameOver { updates } if updates > 30)
+        ) || matches!(session.phase, AdventurePhase::GameOver { updates } | AdventurePhase::TimeTrialGameOver { updates } if updates > 30)
             || matches!(session.phase, AdventurePhase::BonusResults { ref result } if result.updates >= 30);
         if !paused && is_key_pressed(KeyCode::Enter) && enter_continues {
             pending_actions.push(Action::Continue);
@@ -4173,6 +4367,11 @@ pub async fn run(
             && matches!(
                 session.phase,
                 AdventurePhase::Playing
+                    | AdventurePhase::TimeTrialPlaying
+                    | AdventurePhase::TimeTrialInvasionTutorial { .. }
+                    | AdventurePhase::TimeTrialTimesUp
+                    | AdventurePhase::TimeTrialResults
+                    | AdventurePhase::TimeTrialGameOver { .. }
                     | AdventurePhase::FirstTankRescue
                     | AdventurePhase::InvasionTutorial { .. }
                     | AdventurePhase::GameOver { .. }
@@ -4191,6 +4390,10 @@ pub async fn run(
                     Event::FirstTankRescueStarted { .. }
                         | Event::GameOverStarted { .. }
                         | Event::GameSelectorOpened { .. }
+                        | Event::TimeTrialStarted { .. }
+                        | Event::TimeTrialPetAcquired { .. }
+                        | Event::TimeTrialExpired { .. }
+                        | Event::TimeTrialShellsCredited { .. }
                         | Event::Invasion {
                             event: InvasionEvent::ModalOpened(_),
                             ..
