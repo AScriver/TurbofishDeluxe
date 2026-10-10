@@ -532,7 +532,13 @@ impl ShellGiftRuntime {
 
     fn hit(&self, view: &ShellGiftView, pointer: Vec2) -> Option<Control> {
         if RECIPIENTS.contains(pointer) {
-            let index = self.first_row + ((pointer.y - RECIPIENTS.y) / ROW_HEIGHT) as usize;
+            // Rect::contains includes the bottom border; it must not admit the
+            // first off-screen recipient below the four painted rows.
+            let visible_row = ((pointer.y - RECIPIENTS.y) / ROW_HEIGHT) as usize;
+            if visible_row >= VISIBLE_ROWS {
+                return None;
+            }
+            let index = self.first_row + visible_row;
             return view
                 .recipients
                 .get(index)
