@@ -10,7 +10,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 
 ## Start here
 
-- Current36/profile2 integrates [paged Help/earned Stories](docs/shared-interface.md#help-and-earned-stories) and [screensaver preview/Windows host/credit transactions](docs/screensaver.md). Focused checks/build/package passed. [Virtual Tank](docs/virtual-tank.md), [Sandbox](docs/sandbox.md), [shared interface/ending](docs/shared-interface.md), [Challenge](docs/challenge.md) and [Adventure replay](docs/adventure-replay.md) remain integrated. Next: saver fish continuation and remaining functional omissions. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
+- Current36/profile3 adds [saver fish continuation](docs/screensaver.md#scene-continuation) and [transient Board bubbles](docs/bubbles.md#runtime-integration). One handoff case/build/package passed; strict lint passed before fixture-only corrections. [Virtual Tank](docs/virtual-tank.md), [Sandbox](docs/sandbox.md), [shared interface/ending](docs/shared-interface.md), [Challenge](docs/challenge.md) and [Adventure replay](docs/adventure-replay.md) remain integrated. Next: incoming title/finale/Help/score/Story/VT/menu controllers. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
 - Agents: read [AGENTS.md](AGENTS.md), then follow its startup order.
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).

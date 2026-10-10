@@ -441,7 +441,81 @@ pub struct AdventureSession {
     sandbox_origin: Option<(GameMode, AdventurePhase, u64)>,
 }
 
+/// The saver may transfer this VT projection, never an entire profile/session.
+/// Wall time is saved for normal reopen cleanup but excluded from conflicts.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VirtualContinuation {
+    pub tank: VirtualTankState,
+    #[serde(deserialize_with = "Option::<VirtualBoardState>::deserialize")]
+    pub board: Option<VirtualBoardState>,
+    pub virtual_seed: u64,
+    pub saved_at_seconds: u64,
+}
+
+impl VirtualContinuation {
+    pub fn validate(&self) -> Result<(), String> {
+        self.tank
+            .validate()
+            .map_err(|error| format!("invalid saver tank: {error:?}"))?;
+        if let Some(board) = &self.board {
+            board.validate(&self.tank)?;
+        }
+        Ok(())
+    }
+
+    /// Struct/sequence serialization is stable; no unordered map is included.
+    pub fn baseline_digest(&self) -> Result<String, String> {
+        use sha2::{Digest, Sha256};
+        let bytes = serde_json::to_vec(&(&self.tank, &self.board, self.virtual_seed))
+            .map_err(|error| error.to_string())?;
+        Ok(Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect())
+    }
+}
+
 impl AdventureSession {
+    pub fn virtual_continuation(&self) -> VirtualContinuation {
+        VirtualContinuation {
+            tank: self.virtual_tank.clone(),
+            board: self.virtual_board.clone(),
+            virtual_seed: self.virtual_seed,
+            saved_at_seconds: self.virtual_saved_at_seconds,
+        }
+    }
+
+    pub fn virtual_baseline_digest(&self) -> Result<String, String> {
+        self.virtual_continuation().baseline_digest()
+    }
+
+    /// Caller checks the source baseline and holds the scene lease. Transfer
+    /// progressed Board ticks without resetting any unrelated session clock.
+    pub fn apply_virtual_continuation(
+        &mut self,
+        continuation: &VirtualContinuation,
+    ) -> Result<(), String> {
+        continuation.validate()?;
+        let before = self.virtual_board.as_ref().map_or(0, |board| board.tick);
+        let after = continuation.board.as_ref().map_or(0, |board| board.tick);
+        let advanced = after
+            .checked_sub(before)
+            .ok_or("saver Board clock regressed")?;
+        let mut draft = self.clone();
+        draft.ticks = draft
+            .ticks
+            .checked_add(advanced)
+            .ok_or("session clock overflow")?;
+        draft.virtual_tank = continuation.tank.clone();
+        draft.virtual_board = continuation.board.clone();
+        draft.virtual_seed = continuation.virtual_seed;
+        draft.virtual_saved_at_seconds = continuation.saved_at_seconds;
+        draft.validate()?;
+        *self = draft;
+        Ok(())
+    }
+
     /// Project a saveable session while a mode-three Board is on screen.
     /// The retained mode, phase, Board and seed belong to the pre-entry scene.
     pub fn checkpoint_without_sandbox(&self) -> Self {
