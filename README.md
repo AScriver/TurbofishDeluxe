@@ -10,7 +10,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 
 ## Start here
 
-- E115 joins [retained mode scenes and startup Menu](docs/mode-continuation.md), with current37 save admission and one focused conservation/decoder regression. E114 [VT Store/Fish/Tank Setup](docs/virtual-ui.md#runtime-integration), pet choice, saver settings and [shell gifting](docs/shared-interface.md#shell-gift-runtime-integration), plus E113 menu/chooser/Story/Hall remain preserved. Next: configuration-window host join and remaining completion-sweep gaps. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
+- E116 joins [owned biography text](docs/virtual-ui.md#owned-biography-pointer-table-recovery) and [configuration ownership](docs/screensaver.md#configuration-ownership), with static pointer mapping and format/lint/build; zero tests. E115 [retained modes/startup Menu](docs/mode-continuation.md), E114 VT/gift and earlier menu/chooser/Story/Hall remain preserved. Next: actual saver-production-cap gap and remaining completion-sweep work. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
 - Agents: read [AGENTS.md](AGENTS.md), then follow its startup order.
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).

@@ -160,6 +160,25 @@ Tool identities, invocation constraints, and the distinction between fresh check
 
 ## New work and adaptations
 
+E116 reuses PB05 identity and registered W1 `SimFishScreen.cpp` tables/consumers
+to recover three actual pointer tables and selected indexed-load instructions.
+[Owned biography recovery](virtual-ui.md#owned-biography-pointer-table-recovery)
+records exact addresses, complete ID comparisons, corrected wrapper offset and
+private receipts. Original `src/virtual_biography.rs` reads text from the user's
+recognized installed image at runtime; `app.rs` and its VT renderer consume
+references. No source prose, pixels, executable or pseudocode is incorporated.
+Static data recovery is distinct from unperformed native catalog rendering.
+
+The independent host lane studied Microsoft's
+[SetWindowLongPtrW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowlongptrw)
+and [window features](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features)
+contracts, adapting owner/identity/cleanup behavior into original Rust in
+`crates/turbofish-screenhost/src/lib.rs` (`c249298`, merged`53cb042`). E116's app
+joins that public RAII API; [configuration ownership](screensaver.md#configuration-ownership)
+owns deliberate boundaries and untested native behavior. No API documentation
+or upstream implementation was copied; existing crate BSD-3-Clause notice stays
+with the code. Platform references do not establish retail game fidelity.
+
 E115 studies the existing W1 revision's `source/WinFish/GameSelector.cpp:86,378–440`
 and `source/WinFish/WinFishApp.cpp:1869–1903,1945–1956,2111–2123` for mode-specific
 save/reload and selector music. [Retained mode scenes](mode-continuation.md)

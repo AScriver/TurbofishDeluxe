@@ -22,7 +22,34 @@ E110's scene guard is below. Production limits, exact cadence and native behavio
 
 ## Windows boundary
 
-`/s` opens a full-screen readonly clone of the selected profile's owned VT; keyboard/mouse movement dismisses it after a startup grace period. `/p <HWND>` (also `/p:<HWND>`) attaches only the project-owned window to the supplied nonzero decimal parent, checks parent identity/lifetime, resizes to its client area and mutes preview sound. `/c` opens preferences; optional parent identity/lifetime is validated but native dialog-owner parenting is not implemented. Malformed switches/handles and unsupported gameplay options fail rather than falling through to normal gameplay. Native modes are Windows-only. They do not save the cloned session; configuration Save writes only auxiliary preferences.
+`/s` opens a full-screen readonly clone of the selected profile's owned VT; keyboard/mouse movement dismisses it after a startup grace period. `/p <HWND>` (also `/p:<HWND>`) attaches only the project-owned window to the supplied nonzero decimal parent, checks parent identity/lifetime, resizes to its client area and mutes preview sound. `/c` opens preferences; E116 joins optional parent ownership/lifetime through the guard below. Malformed switches/handles and unsupported gameplay options fail rather than falling through to normal gameplay. Native modes are Windows-only. They do not save the cloned session; configuration Save writes only auxiliary preferences.
+
+### Configuration ownership
+
+Independent host feature`c249298`, reconciled/pushed in`53cb042`, adds
+`OwnWindow::attach_configuration(ParentWindow)` and a same-thread RAII
+`ConfigurationOwner`. The E116 app captures its current-process configuration
+window for `/c <HWND>`, attaches/retains the guard, polls in the graphics loop,
+closes its own configuration path on captured parent/window disappearance and
+explicitly restores/logs the result before dropping the guard. Error exits retain
+RAII cleanup. `/c` without a parent remains standalone. Neither route modifies
+the supplied parent, embeds/restyles/resizes it or changes registry/OS activation.
+
+The guard rejects child/self/cyclic owners, rechecks captured identities, changes
+only the project window's owner and exposes native errors. Changed ownership is
+left alone; a dead prior owner is detached rather than reused. Platform design
+uses the specific [SetWindowLongPtrW contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowlongptrw)
+and [top-level window ownership](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features),
+not game-behavior evidence. Actual owner assignment/readback/destruction,
+restoration/focus/DPI and native acceptance remain not tested.
+
+Host-only format/strict lint/locked offline Windows build passed with zero tests;
+host source SHA`B76C0DE3C2FA325DF37DAA647C2CDBB1969464C8909521C8847A022724BC50FB`.
+The parent app join passed A62CatalogConfig01 format/strict workspace lint/locked
+build, also with zero tests. [MODLOG](../MODLOG.md#2026-10-10--join-owned-biographies-and-configuration-ownership)
+and [STATUS](../STATUS.md#current-build-verification) own receipts. Existing E110
+profile3/bank2 scene evidence remains historical; normal Session envelopes are
+now current37 per [retained modes](mode-continuation.md), without legacy conversion.
 
 The `turbofish-screenhost` crate owns unsafe Win32 FFI, process/thread ownership checks, preview attach/restore and monitor-request lifetime. Simulation remains safe Rust. Active-window discovery is limited to the calling UI thread and verifies process/thread/root ownership; no title search or foreign-window mutation is used. Parent/child invalidation is a visible host failure or close, not permission to choose a different window. `/s` and `/p` accept existing normal-speed evidence/capture/deadline options; `/c` rejects scene evidence. Actual focus, parenting/DPI/render-loop interaction, dismissal, monitor state and sound remain untested.
 

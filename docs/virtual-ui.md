@@ -34,8 +34,8 @@ stale-target rejection, empty-selection disabling, and omission of unowned
 device controls are deliberate project safety policies.
 
 Only short labels and project-authored guidance are maintained. Hometown/likes
-stay numeric references for a caller-supplied runtime catalog; no retail prose
-table is copied. Preview frames reuse current production species sheets;
+use numeric production IDs resolved by the E116 owned runtime catalog below;
+no retail prose table is copied. Preview frames reuse current production species sheets;
 special-color compositing and exact per-species retail preview offsets remain
 qualified presentation details.
 
@@ -65,8 +65,8 @@ routing/assets/save joins. A60VTGift01 passed format/lint/build; review then
 closed a closing-frame cancellation hazard and02 passed the changed-code gate.
 **No tests or native runs were performed.** [STATUS](../STATUS.md#current-build-verification)
 and [MODLOG](../MODLOG.md#2026-10-10--join-virtual-tank-and-shell-gift-frontends)
-own receipts. Biography text still uses explicit numeric/unavailable labels;
-the owned catalog is a follow-up. Species preview palette/offsets, date wording,
+own receipts. E116 joins the owned biography catalog below; unsupported images
+retain explicit numeric/unavailable labels. Species preview palette/offsets, date wording,
 native visuals/input/audio, retail comparison and human judgment remain pending.
 
 ### Owned biography catalog follow-up
@@ -79,22 +79,62 @@ contains table anchors in `.rdata` at file offsets`0x19ab08`, `0x19aaf8`
 and`0x19bd50`. These are string locations, not table addresses or proof of count,
 ID ordering or complete mapping. No prose/table was copied, and no DB/export or
 runtime ran. The existing identity-gated owned `StoryCatalog` loader is the
-implementation precedent; first recover the ID-to-pointer initialization/table
-references, then resolve the same numeric fields at runtime. Until then, the
-explicit unavailable catalog remains truthful and does not block other joins.
+implementation precedent. The initial lookup did not establish the complete
+table/ID map; the later pointer-table recovery below supersedes that gap.
 
 Two literal-scan approaches failed. Forward scanning from first rows yielded
 349 hometown/15 like strings before invalid UTF-8 at PB05 file offset`0x19bdcc`.
 Scanning from W1's last row and reversing recovered full counts but **incorrect
 ID order**: hometown range`0x1991f0..0x19ab6c` mismatched IDs0–360, while361–374
-matched; likes`0x19ab80..0x19bd88` mismatched0–312, while313–330 matched. Both
-owned wrapper copies agreed after offset`+0x1877a2`. Six special hometowns had
+matched; likes`0x19ab80..0x19bd88` mismatched0–312, while313–330 matched. The
+early wrapper offset assumption`+0x1877a2` was incomplete and is corrected below.
+Six special hometowns had
 two matching anchors (`0x199450`, `0x19ab18`), with only the latter yielding
 matching IDs. Four-byte alignment/zero padding did not resolve these mismatches.
 These are selective byte/source comparisons, not a recovered primary table.
-Do not retry the same scan or adopt a count-only decoder; next required evidence
-is exact pointer-table/initializer cross-references and ID mapping. No prose,
-catalog, decoder or tests were added; other integration continues unblocked.
+These failed methods were not adopted. No prose, catalog, decoder or tests were
+added in that initial inspection.
+
+### Owned biography pointer-table recovery
+
+E116 resolves the gap through **binary-derived** PB05 data and indexed loads:
+
+| Table | PB05 VA / file offset | Rows | Indexed load instructions |
+|---|---|---|---|
+| Hometowns | `005e0430` / `0x1e0430` |375| `0052950a`, `00529591` |
+| Special hometowns | `005e0414` / `0x1e0414` |6| `00529551`, with `<6` gate |
+| Likes | `005dfee8` / `0x1dfee8` |331| `00506bfc`, `00506c09`, `00506c17`, `0052983d` |
+
+Every decoded ID matches W1's corresponding row. Exact instruction bytes are
+retained privately; a coincidental call-displacement byte match at`00417aed`
+was excluded as a table consumer. No function was newly decompiled or fully
+reviewed and no Ghidra database opened; this is bounded data/instruction evidence,
+not a new subsystem recovery claim.
+
+The recognized installed wrapper SHA`F54C2C6EE54B00AE6DA7F4BDE15FEB90D0A867ABA6B4151B0277C1F81DA3FF66`
+stores both these pointer tables and all712 indexed strings at PB05 file offsets
+plus`0x1881a2`. Complete table bytes and decoded-text digests match PB05 in both
+owned wrapper filenames. Assuming`0x1877a2` first failed the table-byte check,
+then decoded invalid data after only the tables were corrected. Reassessed by
+locating every primary pointed string; the complete mapping above resolves both
+failures. Duplicate like text elsewhere does not change pointer identity.
+
+Original Rust `src/virtual_biography.rs` reads only this identified image, bounds
+the pointer/string ranges and loads the three ID maps without executing game
+code. The app loads once and supplies references to the existing renderer;
+named fish use the corresponding special hometown. Unknown/missing images log
+the failure and preserve numeric fallback. No strings, executable, reference
+source or private dump is bundled or written to project saves. Current37 and
+profile3/bank2 are unchanged by this read-only catalog.
+
+Private recovery receipt`.scratch/evidence/a62-biography-tables.local.json`
+SHA`FFB1FF7C4627598C8569FD79F6A743FF377FE646DFF03602EF11B090410A957D`
+and wrapper readback`.scratch/evidence/a62-biography-wrapper.local.json`
+SHA`F003F282F162A8B725B954C2F008EC895DEE89C2DA576D50D549D35A8290450A`
+retain IDs/counts/digests/addresses, not source prose. A62CatalogConfig01 passed
+formatting, strict lint and locked build with zero tests. Actual Rust catalog
+loading/rendering, named-fish UI, native/retail/audio/human comparison remain
+not tested; Python static decoding/readback is separate from native evidence.
 
 ## Direct integration
 

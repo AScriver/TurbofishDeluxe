@@ -42,7 +42,9 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use turbofish_screenhost::{MonitorPowerGuard, OwnWindow, PreviewStatus, ScreenCommand};
+use turbofish_screenhost::{
+    ConfigurationStatus, MonitorPowerGuard, OwnWindow, PreviewStatus, ScreenCommand,
+};
 
 #[path = "app/bubble_runtime.rs"]
 mod bubble_runtime;
@@ -6071,6 +6073,23 @@ pub async fn run(
             None
         }
     };
+    let biography_catalog = match crate::virtual_biography::OwnedBiographyCatalog::load(
+        &game_root.join(&identity.executable),
+    ) {
+        Ok(catalog) => Some(catalog),
+        Err(error) => {
+            eprintln!("Virtual Tank biography catalog unavailable: {error}");
+            None
+        }
+    };
+    let biography_view = biography_catalog.as_ref().map_or_else(
+        virtual_runtime::BiographyCatalog::default,
+        |catalog| virtual_runtime::BiographyCatalog {
+            hometowns: Some(&catalog.hometowns),
+            special_hometowns: Some(&catalog.special_hometowns),
+            likes: Some(&catalog.likes),
+        },
+    );
     let mut story_browser_open = false;
     let mut records = RecordsRuntime::new(options.seed ^ 0x5245_434f_5244_5346);
     let mut menu = None::<MenuRuntime>;
@@ -8382,11 +8401,7 @@ pub async fn run(
             && virtual_ui.page().is_some()
             && let Some(view) = virtual_ui.view()
         {
-            let issues = virtual_runtime::draw(
-                &presentation,
-                &view,
-                &virtual_runtime::BiographyCatalog::default(),
-            );
+            let issues = virtual_runtime::draw(&presentation, &view, &biography_view);
             if !issues.is_empty() {
                 ui_resource_error
                     .get_or_insert_with(|| format!("VT resources unavailable: {issues:?}"));
@@ -8702,7 +8717,10 @@ pub async fn run_screensaver(
     } else {
         None
     };
-    let own_window = if matches!(command, ScreenCommand::Preview(_)) {
+    let own_window = if matches!(
+        command,
+        ScreenCommand::Preview(_) | ScreenCommand::Configure(Some(_))
+    ) {
         Some(OwnWindow::capture_active()?)
     } else {
         None
@@ -8710,6 +8728,12 @@ pub async fn run_screensaver(
     let mut attachment = match (own_window.as_ref(), command) {
         (Some(own_window), ScreenCommand::Preview(parent)) => {
             Some(own_window.attach_preview(parent)?)
+        }
+        _ => None,
+    };
+    let mut configuration_owner = match (own_window.as_ref(), command) {
+        (Some(own_window), ScreenCommand::Configure(Some(parent))) => {
+            Some(own_window.attach_configuration(parent)?)
         }
         _ => None,
     };
@@ -8738,11 +8762,14 @@ pub async fn run_screensaver(
                 PreviewStatus::Alive => {}
                 PreviewStatus::ParentClosed => break,
             }
-        } else if configuring && let Some(parent) = parent {
-            match parent.validate() {
-                Ok(()) => {}
-                Err(turbofish_screenhost::HostError::ParentClosed) => break,
-                Err(error) => return Err(error.into()),
+        }
+        if let Some(owner) = configuration_owner.as_ref() {
+            match owner.poll()? {
+                ConfigurationStatus::Alive => {}
+                ConfigurationStatus::ParentClosed | ConfigurationStatus::WindowClosed => break,
+                ConfigurationStatus::Released => {
+                    return Err("configuration window owner was released before UI exit".into());
+                }
             }
         }
         let scale = (screen_width() / 640.0).min(screen_height() / 480.0);
@@ -8907,6 +8934,15 @@ pub async fn run_screensaver(
         }
         next_frame().await;
     }
+    if let Some(owner) = configuration_owner.as_mut() {
+        let restored = owner.restore();
+        if let Some(error) = owner.cleanup_error() {
+            eprintln!("Configuration owner cleanup: {error}");
+        }
+        eprintln!("Configuration owner restore: {restored:?}");
+        restored?;
+    }
+    drop(configuration_owner);
     drop(attachment);
     drop(power_guard);
     show_mouse(true);
