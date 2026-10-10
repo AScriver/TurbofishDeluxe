@@ -5,6 +5,7 @@ use turbofish_deluxe::{
     cli::{self, Options},
     install,
 };
+use turbofish_screenhost::ScreenCommand;
 
 fn prepare() -> Result<(), Box<dyn Error>> {
     let Some(mut options) = Options::parse()? else {
@@ -89,24 +90,58 @@ fn prepare() -> Result<(), Box<dyn Error>> {
     let settings = turbofish_deluxe::settings::SettingsSave::load_or_default(
         &options.save_dir.join("settings.json"),
     )?;
-    macroquad::Window::from_config(
-        macroquad::miniquad::conf::Conf {
-            window_title: "Turbofish Deluxe".into(),
-            window_width: 960,
-            window_height: 720,
-            window_resizable: true,
-            high_dpi: true,
-            ..Default::default()
-        },
-        async move {
-            if let Err(error) =
-                app::run(options, game_root, identity, assets, profiles, settings).await
-            {
-                eprintln!("Runtime failed: {error}");
-                std::process::exit(1);
+    let screensaver = options.screensaver;
+    #[cfg(not(windows))]
+    if screensaver.is_some() {
+        return Err(turbofish_screenhost::HostError::UnsupportedPlatform.into());
+    }
+    if let Some(command) = screensaver {
+        match command {
+            ScreenCommand::Preview(parent) | ScreenCommand::Configure(Some(parent)) => {
+                parent.validate()?;
             }
-        },
-    );
+            ScreenCommand::Fullscreen | ScreenCommand::Configure(None) => {}
+        }
+    }
+    let mut window = macroquad::miniquad::conf::Conf {
+        window_title: "Turbofish Deluxe".into(),
+        window_width: 960,
+        window_height: 720,
+        window_resizable: true,
+        high_dpi: true,
+        ..Default::default()
+    };
+    if let Some(command) = screensaver {
+        window.window_resizable = false;
+        match command {
+            ScreenCommand::Fullscreen => {
+                window.window_title = "Turbofish Deluxe Screensaver".into();
+                window.fullscreen = true;
+            }
+            ScreenCommand::Preview(_) => {
+                window.window_title = "Turbofish Deluxe Preview".into();
+                window.window_width = 320;
+                window.window_height = 240;
+            }
+            ScreenCommand::Configure(_) => {
+                window.window_title = "Turbofish Deluxe Screensaver Settings".into();
+            }
+        }
+    }
+    macroquad::Window::from_config(window, async move {
+        let result = if let Some(command) = screensaver {
+            app::run_screensaver(
+                options, game_root, identity, assets, profiles, settings, command,
+            )
+            .await
+        } else {
+            app::run(options, game_root, identity, assets, profiles, settings).await
+        };
+        if let Err(error) = result {
+            eprintln!("Runtime failed: {error}");
+            std::process::exit(1);
+        }
+    });
     Ok(())
 }
 

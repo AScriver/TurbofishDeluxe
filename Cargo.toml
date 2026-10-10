@@ -6,7 +6,7 @@ rust-version = "1.95"
 publish = false
 
 [workspace]
-members = ["crates/turbofish-openmpt"]
+members = ["crates/turbofish-openmpt", "crates/turbofish-screenhost"]
 resolver = "3"
 
 [dependencies]
@@ -16,6 +16,7 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151", features = ["float_roundtrip"] }
 sha2 = "=0.11.0"
 turbofish-openmpt = { path = "crates/turbofish-openmpt" }
+turbofish-screenhost = { path = "crates/turbofish-screenhost" }
 
 rodio = { version = "=0.22.2", default-features = false, features = ["playback", "vorbis", "wav"] }
 

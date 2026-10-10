@@ -27,7 +27,9 @@ $requiredPaths = @(
     'scripts/Playtest-Helpers.ps1', 'scripts/Test-Playtest.ps1', 'scripts/Test-PlaytestHelpers.ps1',
     'docs/playtest-helpers.md', 'docs/delegation-template.md',
     'crates/turbofish-openmpt/Cargo.toml', 'crates/turbofish-openmpt/build.rs',
-    'crates/turbofish-openmpt/LICENSE', 'crates/turbofish-openmpt/src/lib.rs'
+    'crates/turbofish-openmpt/LICENSE', 'crates/turbofish-openmpt/src/lib.rs',
+    'crates/turbofish-screenhost/Cargo.toml', 'crates/turbofish-screenhost/LICENSE',
+    'crates/turbofish-screenhost/src/lib.rs'
 )
 foreach ($requiredPath in $requiredPaths) {
     if (-not (Test-Path -LiteralPath (Join-Path $repositoryRoot $requiredPath) -PathType Leaf)) {
@@ -49,6 +51,7 @@ $excludedPaths = @(
     'sounds/eat.au', 'music/theme.mo3', 'music/theme.ogg', 'data/raw.txt', 'data/raw.xml',
     'assets/raw.luc', 'capture.raw', 'process.dmp', 'analysis.gpr', 'unknown-file.txt',
     'crates/turbofish-openmpt/native/libopenmpt.dll', 'crates/turbofish-openmpt/src/secret.bin',
+    'crates/turbofish-screenhost/native/saver.scr', 'crates/turbofish-screenhost/src/window.dump',
     '.scratch/evidence/build.local.json', '.scratch/evidence/run.local.json',
     'docs/evidence/receipt.json', 'docs/playtests/frame.png', 'scripts/receipt.local.ps1',
     '.scratch/playtests/helper-shaped/Test-Playtest.ps1'

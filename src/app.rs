@@ -40,6 +40,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use turbofish_screenhost::{MonitorPowerGuard, OwnWindow, PreviewStatus, ScreenCommand};
 
 const IMAGE_IDS: &[&str] = &[
     "IMAGE_AQUARIUM1",
@@ -4861,7 +4862,7 @@ impl Evidence {
         {
             let publication = cli::write_json(
                 &self.root.join("state.local.json"),
-                &serde_json::json!({"elapsed_seconds":elapsed, "session_elapsed_seconds":session_elapsed_seconds, "test_speed":test_speed, "time_mode":time_mode, "paused":paused, "session_tick":session.ticks, "phase":session.phase, "progress":session.progress, "state":session.board}),
+                &serde_json::json!({"elapsed_seconds":elapsed, "session_elapsed_seconds":session_elapsed_seconds, "test_speed":test_speed, "time_mode":time_mode, "paused":paused, "session_tick":session.ticks, "phase":session.phase, "progress":session.progress, "state":session.board, "virtual_board":session.virtual_board}),
             );
             match publication {
                 Ok(()) => {
@@ -5568,7 +5569,10 @@ impl SelectorUi {
                         }
                     }
                     SelectorPanel::Screensaver => {
-                        for index in 0..4 {
+                        for index in 0..5 {
+                            if index == 4 && !cfg!(windows) {
+                                continue;
+                            }
                             if Rect::new(95.0, 130.0 + index as f32 * 45.0, 445.0, 36.0)
                                 .contains(pointer)
                             {
@@ -5808,13 +5812,24 @@ impl SelectorUi {
                         &format!("{name}: {}", if enabled { "On" } else { "Off" }),
                     );
                 }
-                draw_text(
-                    "Power save: unavailable (renderer cadence pending)",
-                    95.0,
-                    339.0,
-                    17.0,
-                    GRAY,
-                );
+                if cfg!(windows) {
+                    ui_button(
+                        Rect::new(95.0, 310.0, 445.0, 36.0),
+                        if screensaver.power_save {
+                            "Allow monitor sleep: On"
+                        } else {
+                            "Allow monitor sleep: Off"
+                        },
+                    );
+                } else {
+                    draw_text(
+                        "Allow monitor sleep: unavailable on this host",
+                        95.0,
+                        339.0,
+                        17.0,
+                        GRAY,
+                    );
+                }
                 if let Some(error) = screensaver_load_error {
                     draw_text(format!("Load failed: {error}"), 95.0, 359.0, 16.0, ORANGE);
                 }
@@ -5878,6 +5893,84 @@ fn presentation_music_cue(
     }
 }
 
+fn prepare_screensaver_preview(
+    profiles: &Profiles,
+    settings: ScreensaverSettings,
+    now_seconds: u64,
+) -> Result<ScreensaverPreview, Box<dyn Error>> {
+    let mut source = profiles
+        .current()
+        .ok_or("Screensaver needs a selected profile")?
+        .session
+        .clone();
+    source.resume_virtual_from_save(now_seconds, now_seconds / 86_400 * 86_400);
+    if !matches!(
+        source.phase,
+        AdventurePhase::GameSelector | AdventurePhase::VirtualTank | AdventurePhase::VirtualSetup
+    ) {
+        source.apply_actions(&[Action::OpenMenu]);
+    }
+    ScreensaverPreview::start(&source, settings, now_seconds)
+        .map_err(|error| format!("Screensaver Virtual Tank unavailable: {error:?}").into())
+}
+
+fn advance_screensaver_scene(
+    preview: &mut ScreensaverPreview,
+    clock: &mut StepClock,
+    presentation: &Presentation,
+    music: &mut Option<MusicOwner>,
+) -> (Vec<Event>, Vec<MusicReport>) {
+    clock.add_frame(get_frame_time(), false);
+    let mut events = Vec::new();
+    while clock.step_due() {
+        clock.consume_step(false);
+        events.extend(preview.advance(wall_seconds()));
+    }
+    let sound = preview.overlay().sound_enabled;
+    if let Some(owner) = music.as_mut() {
+        owner.sync_cue(
+            if sound {
+                MusicCue::for_session(preview.scene())
+            } else {
+                None
+            },
+            false,
+        );
+    }
+    let mut reports = if sound {
+        presentation.play(&events, music.as_ref())
+    } else {
+        Vec::new()
+    };
+    if let Some(owner) = music.as_mut() {
+        reports.extend(owner.drain_reports());
+    }
+    (events, reports)
+}
+
+fn draw_screensaver_scene(presentation: &Presentation, preview: &ScreensaverPreview) {
+    presentation.draw_virtual_tank(preview.scene(), true);
+    let overlay = preview.overlay();
+    if overlay.dim_alpha > 0 {
+        draw_rectangle(
+            0.0,
+            0.0,
+            640.0,
+            480.0,
+            Color::from_rgba(0, 0, 0, overlay.dim_alpha),
+        );
+    }
+    if let Some(shells) = overlay.shells_collected {
+        draw_text(
+            format!("Collected shells: {shells}"),
+            16.0,
+            458.0,
+            20.0,
+            WHITE,
+        );
+    }
+}
+
 pub async fn run(
     options: Options,
     game_root: PathBuf,
@@ -5938,6 +6031,8 @@ pub async fn run(
         };
     let mut screensaver_dirty = false;
     let mut screensaver_preview = None::<ScreensaverPreview>;
+    // Keep the thread power policy alive until preview closes; Drop restores it.
+    let mut _screensaver_power_guard = None::<MonitorPowerGuard>;
     let mut pending_actions = Vec::new();
     let mut paused = false;
     let mut hatch_pointer_owned = false;
@@ -6128,34 +6223,39 @@ pub async fn run(
                         1 => settings.rotate_backdrops = !settings.rotate_backdrops,
                         2 => settings.periodic_dim = !settings.periodic_dim,
                         3 => settings.show_money = !settings.show_money,
-                        _ => unreachable!("only four supported screensaver switches"),
+                        4 if cfg!(windows) => settings.power_save = !settings.power_save,
+                        _ => unreachable!("only supported screensaver switches"),
                     }
                     screensaver_dirty = true;
                     Ok(false)
                 }
-                UiCommand::ScreensaverSave => {
-                    screensaver_file.settings.power_save = false;
-                    match screensaver_file.save(&screensaver_path) {
-                        Ok(()) => {
-                            screensaver_dirty = false;
-                            screensaver_load_error = None;
-                            Ok(false)
-                        }
-                        Err(error) => Err(error),
+                UiCommand::ScreensaverSave => match screensaver_file.save(&screensaver_path) {
+                    Ok(()) => {
+                        screensaver_dirty = false;
+                        screensaver_load_error = None;
+                        Ok(false)
                     }
-                }
+                    Err(error) => Err(error),
+                },
                 UiCommand::ScreensaverPreview => {
-                    let source = &profiles.current().ok_or("No current profile")?.session;
-                    let mut preview_settings = screensaver_file.settings;
-                    preview_settings.power_save = false;
-                    match ScreensaverPreview::start(source, preview_settings, wall_seconds()) {
+                    match prepare_screensaver_preview(
+                        &profiles,
+                        screensaver_file.settings,
+                        wall_seconds(),
+                    ) {
                         Ok(preview) => {
-                            screensaver_preview = Some(preview);
-                            preview_clock.clear_backlog();
-                            clock.clear_backlog();
-                            song_player.pause((get_time() * 1000.0) as u64);
-                            ui_active = true;
-                            Ok(false)
+                            match MonitorPowerGuard::new(screensaver_file.settings.power_save) {
+                                Ok(guard) => {
+                                    _screensaver_power_guard = Some(guard);
+                                    screensaver_preview = Some(preview);
+                                    preview_clock.clear_backlog();
+                                    clock.clear_backlog();
+                                    song_player.pause((get_time() * 1000.0) as u64);
+                                    ui_active = true;
+                                    Ok(false)
+                                }
+                                Err(error) => Err(error.into()),
+                            }
                         }
                         Err(error) => Err(format!("Preview unavailable: {error:?}").into()),
                     }
@@ -6198,6 +6298,7 @@ pub async fn run(
                         help_restore_paused = None;
                         story_browser_open = false;
                         screensaver_preview = None;
+                        _screensaver_power_guard = None;
                         story_browser = None;
                         story_scroll = 0;
                         last_challenge_story = None;
@@ -6225,6 +6326,7 @@ pub async fn run(
                     && Rect::new(485.0, 8.0, 140.0, 34.0).contains(pointer))
             {
                 screensaver_preview = None;
+                _screensaver_power_guard = None;
                 preview_clock.clear_backlog();
                 clock.clear_backlog();
                 if let (Some(owner), Some(entry)) = (music.as_mut(), profiles.current()) {
@@ -6241,31 +6343,8 @@ pub async fn run(
                 continue;
             }
             let preview = screensaver_preview.as_mut().expect("preview checked above");
-            preview_clock.add_frame(get_frame_time(), false);
-            let mut preview_events = Vec::new();
-            while preview_clock.step_due() {
-                preview_clock.consume_step(false);
-                preview_events.extend(preview.advance(wall_seconds()));
-            }
-            let overlay = preview.overlay();
-            if let Some(owner) = music.as_mut() {
-                owner.sync_cue(
-                    if overlay.sound_enabled {
-                        MusicCue::for_session(preview.scene())
-                    } else {
-                        None
-                    },
-                    false,
-                );
-            }
-            let mut reports = if overlay.sound_enabled {
-                presentation.play(&preview_events, music.as_ref())
-            } else {
-                Vec::new()
-            };
-            if let Some(owner) = music.as_mut() {
-                reports.extend(owner.drain_reports());
-            }
+            let (_, reports) =
+                advance_screensaver_scene(preview, &mut preview_clock, &presentation, &mut music);
             for report in reports {
                 match report {
                     MusicReport::Unavailable { reason } => {
@@ -6287,26 +6366,8 @@ pub async fn run(
                 (480.0 * scale) as i32,
             ));
             set_camera(&camera);
-            presentation.draw_virtual_tank(preview.scene(), true);
-            if overlay.dim_alpha > 0 {
-                draw_rectangle(
-                    0.0,
-                    0.0,
-                    640.0,
-                    480.0,
-                    Color::from_rgba(0, 0, 0, overlay.dim_alpha),
-                );
-            }
+            draw_screensaver_scene(&presentation, preview);
             draw_text("SCREENSAVER PREVIEW", 16.0, 29.0, 20.0, YELLOW);
-            if let Some(shells) = overlay.shells_collected {
-                draw_text(
-                    format!("Collected shells: {shells}"),
-                    16.0,
-                    458.0,
-                    20.0,
-                    WHITE,
-                );
-            }
             ui_button(Rect::new(485.0, 8.0, 140.0, 34.0), "Close");
             if settings.settings.custom_cursor {
                 draw_circle(pointer.x, pointer.y, 5.0, YELLOW);
@@ -7853,6 +7914,305 @@ pub async fn run(
         cli::write_json(
             &evidence.root.join("final.local.json"),
             &serde_json::json!({"session":session,"game_after":after,"elapsed_seconds":get_time()-started,"session_elapsed_seconds":session.ticks.saturating_sub(start_session_tick) as f64 * f64::from(TICK_MS) / 1000.0,"test_speed":options.test_speed,"time_mode":options.time_mode(),"game_unchanged":true}),
+        )?;
+    }
+    Ok(())
+}
+
+/// Run the project-owned scene as a Windows screensaver surface. The selected
+/// profile is only a source for disposable scene clones; this path never saves it.
+pub async fn run_screensaver(
+    options: Options,
+    game_root: PathBuf,
+    identity: InstallIdentity,
+    assets: GameAssets,
+    profiles: Profiles,
+    settings: SettingsSave,
+    command: ScreenCommand,
+) -> Result<(), Box<dyn Error>> {
+    let parent = match command {
+        ScreenCommand::Preview(parent) | ScreenCommand::Configure(Some(parent)) => Some(parent),
+        _ => None,
+    };
+    if let Some(parent) = parent {
+        parent.validate()?;
+    }
+    let configuring = matches!(command, ScreenCommand::Configure(_));
+    if configuring && options.evidence_dir.is_some() {
+        return Err("Screensaver evidence requires an active /s or /p scene".into());
+    }
+    let path = options.save_dir.join("screensaver.json");
+    let (mut file, mut load_error) = match ScreensaverSettingsFile::load_or_default(&path) {
+        Ok(file) => (file, None),
+        Err(error) if configuring => {
+            eprintln!("Screensaver settings load failed: {error}");
+            (ScreensaverSettingsFile::default(), Some(error.to_string()))
+        }
+        Err(error) => return Err(error),
+    };
+    let muted = options.muted || matches!(command, ScreenCommand::Preview(_));
+    let presentation = Presentation::load(&game_root, &assets, muted).await?;
+    let mut music = if muted {
+        None
+    } else {
+        match MusicOwner::start(game_root.clone()) {
+            Ok(owner) => Some(owner),
+            Err(error) => {
+                eprintln!("Screensaver audio unavailable: {error}");
+                None
+            }
+        }
+    };
+    if let Some(owner) = music.as_ref() {
+        owner.set_music_volume(settings.settings.music_volume)?;
+        owner.set_effects_volume(settings.settings.effects_volume)?;
+    }
+    let mut preview_settings = file.settings;
+    if matches!(command, ScreenCommand::Preview(_)) {
+        preview_settings.sound = false;
+    }
+    let mut preview = if configuring {
+        None
+    } else {
+        Some(prepare_screensaver_preview(
+            &profiles,
+            preview_settings,
+            wall_seconds(),
+        )?)
+    };
+    let mut evidence = match (options.evidence_dir.as_ref(), preview.as_ref()) {
+        (Some(path), Some(scene)) => Some(Evidence::open(
+            path,
+            &identity,
+            scene.scene(),
+            options.seed,
+            1,
+        )?),
+        _ => None,
+    };
+    if let Some(evidence) = evidence.as_ref() {
+        cli::write_json(
+            &evidence.root.join("screensaver.local.json"),
+            &serde_json::json!({"command":if matches!(command, ScreenCommand::Preview(_)) {"preview"} else {"fullscreen"},"disposable_screensaver":true,"profile_scene_cloned":true,"test_speed":1,"time_mode":"normal","earned_playable_claim":false}),
+        )?;
+    }
+    let mut power_guard = if preview.is_some() {
+        Some(MonitorPowerGuard::new(file.settings.power_save)?)
+    } else {
+        None
+    };
+    let own_window = if matches!(command, ScreenCommand::Preview(_)) {
+        Some(OwnWindow::capture_active()?)
+    } else {
+        None
+    };
+    let mut attachment = match (own_window.as_ref(), command) {
+        (Some(own_window), ScreenCommand::Preview(parent)) => {
+            Some(own_window.attach_preview(parent)?)
+        }
+        _ => None,
+    };
+    if matches!(command, ScreenCommand::Fullscreen) {
+        set_fullscreen(true);
+        show_mouse(false);
+    } else if matches!(command, ScreenCommand::Preview(_)) {
+        show_mouse(false);
+    }
+    let mut clock = StepClock::new(1);
+    let mut ui = SelectorUi {
+        panel: Some(SelectorPanel::Screensaver),
+        ..SelectorUi::default()
+    };
+    let mut help = HelpController::new();
+    let mut dirty = false;
+    let mut mouse_anchor = mouse_position();
+    let started = get_time();
+    prevent_quit();
+    loop {
+        if is_quit_requested() || wall_deadline_reached(get_time() - started, options.quit_after) {
+            break;
+        }
+        if let Some(attachment) = attachment.as_mut() {
+            match attachment.poll()? {
+                PreviewStatus::Alive => {}
+                PreviewStatus::ParentClosed => break,
+            }
+        } else if configuring && let Some(parent) = parent {
+            match parent.validate() {
+                Ok(()) => {}
+                Err(turbofish_screenhost::HostError::ParentClosed) => break,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let scale = (screen_width() / 640.0).min(screen_height() / 480.0);
+        let offset = vec2(
+            (screen_width() - 640.0 * scale) / 2.0,
+            (screen_height() - 480.0 * scale) / 2.0,
+        );
+        let pointer = (vec2(mouse_position().0, mouse_position().1) - offset) / scale;
+        if matches!(command, ScreenCommand::Fullscreen) {
+            if get_time() - started < 0.6 {
+                mouse_anchor = mouse_position();
+                let _ = get_last_key_pressed();
+            } else if get_last_key_pressed()
+                .is_some_and(|key| key != KeyCode::F12 || evidence.is_none())
+                || is_mouse_button_pressed(MouseButton::Left)
+                || is_mouse_button_pressed(MouseButton::Right)
+                || mouse_wheel() != (0.0, 0.0)
+                || (vec2(
+                    mouse_position().0 - mouse_anchor.0,
+                    mouse_position().1 - mouse_anchor.1,
+                )
+                .length_squared()
+                    > 16.0)
+            {
+                break;
+            }
+        }
+        if configuring {
+            if preview.is_some() {
+                if is_key_pressed(KeyCode::Escape)
+                    || (is_mouse_button_pressed(MouseButton::Left)
+                        && Rect::new(485.0, 8.0, 140.0, 34.0).contains(pointer))
+                {
+                    preview = None;
+                    power_guard = None;
+                    clock.clear_backlog();
+                    if let Some(owner) = music.as_mut() {
+                        owner.sync_cue(None, false);
+                    }
+                    next_frame().await;
+                    continue;
+                }
+            } else {
+                if is_key_pressed(KeyCode::Q) {
+                    break;
+                }
+                let (_, action) = ui.input(&profiles, settings.settings, pointer, true, &mut help);
+                if ui.panel.is_none() {
+                    break;
+                }
+                match action {
+                    Some(UiCommand::ScreensaverToggle(index)) => {
+                        match index {
+                            0 => file.settings.sound = !file.settings.sound,
+                            1 => file.settings.rotate_backdrops = !file.settings.rotate_backdrops,
+                            2 => file.settings.periodic_dim = !file.settings.periodic_dim,
+                            3 => file.settings.show_money = !file.settings.show_money,
+                            4 if cfg!(windows) => {
+                                file.settings.power_save = !file.settings.power_save
+                            }
+                            _ => unreachable!("only supported screensaver switches"),
+                        }
+                        dirty = true;
+                        ui.error.clear();
+                    }
+                    Some(UiCommand::ScreensaverSave) => match file.save(&path) {
+                        Ok(()) => {
+                            dirty = false;
+                            load_error = None;
+                            ui.error.clear();
+                        }
+                        Err(error) => ui.error = error.to_string(),
+                    },
+                    Some(UiCommand::ScreensaverPreview) => {
+                        match prepare_screensaver_preview(&profiles, file.settings, wall_seconds())
+                        {
+                            Ok(scene) => match MonitorPowerGuard::new(file.settings.power_save) {
+                                Ok(guard) => {
+                                    power_guard = Some(guard);
+                                    preview = Some(scene);
+                                    clock.clear_backlog();
+                                    ui.error.clear();
+                                }
+                                Err(error) => ui.error = error.to_string(),
+                            },
+                            Err(error) => ui.error = error.to_string(),
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let Some(scene) = preview.as_mut() {
+            let (events, reports) =
+                advance_screensaver_scene(scene, &mut clock, &presentation, &mut music);
+            if let Some(evidence) = evidence.as_mut() {
+                evidence.record(&events, &[], scene.scene(), get_time() - started, false)?;
+                evidence.record_music(&reports, get_time() - started, scene.scene())?;
+            }
+            for report in reports {
+                match report {
+                    MusicReport::Unavailable { reason }
+                    | MusicReport::EffectFailed { reason }
+                    | MusicReport::Overload { reason } => {
+                        eprintln!("Screensaver audio warning: {reason}");
+                    }
+                    _ => {}
+                }
+            }
+        }
+        clear_background(BLACK);
+        let mut camera = Camera2D::from_display_rect(Rect::new(0.0, 0.0, 640.0, 480.0));
+        camera.zoom.y = 2.0 / 480.0;
+        camera.viewport = Some((
+            offset.x as i32,
+            offset.y as i32,
+            (640.0 * scale) as i32,
+            (480.0 * scale) as i32,
+        ));
+        set_camera(&camera);
+        if let Some(scene) = preview.as_ref() {
+            draw_screensaver_scene(&presentation, scene);
+            if configuring {
+                draw_text("SCREENSAVER PREVIEW", 16.0, 29.0, 20.0, YELLOW);
+                ui_button(Rect::new(485.0, 8.0, 140.0, 34.0), "Close");
+            }
+        } else {
+            ui.draw(
+                &profiles,
+                settings.settings,
+                RuntimeSettingsBackend {
+                    audio: music.as_ref(),
+                }
+                .capabilities(),
+                file.settings,
+                dirty,
+                load_error.as_deref(),
+            );
+        }
+        set_default_camera();
+        if let (Some(evidence), Some(scene)) = (evidence.as_ref(), preview.as_ref()) {
+            let legacy_request = evidence.root.join("capture.request");
+            let local_request = evidence.root.join("capture-request.local.json");
+            if is_key_pressed(KeyCode::F12) || legacy_request.exists() || local_request.exists() {
+                evidence.capture(scene.scene().ticks);
+                if legacy_request.exists() {
+                    fs::remove_file(&legacy_request)?;
+                }
+                if local_request.exists() {
+                    fs::remove_file(&local_request)?;
+                }
+                cli::write_json(
+                    &evidence.root.join("capture-result.local.json"),
+                    &serde_json::json!({"frame":format!("frame-{:06}.png",scene.scene().ticks),"session_tick":scene.scene().ticks,"disposable_screensaver":true}),
+                )?;
+            }
+        }
+        next_frame().await;
+    }
+    drop(attachment);
+    drop(power_guard);
+    show_mouse(true);
+    let after = install::identify(&game_root)?;
+    if after.inventory_sha256 != identity.inventory_sha256 {
+        return Err("Owned installation changed during screensaver run".into());
+    }
+    if let (Some(evidence), Some(scene)) = (evidence.as_mut(), preview.as_ref()) {
+        evidence.record(&[], &[], scene.scene(), get_time() - started, false)?;
+        cli::write_json(
+            &evidence.root.join("final.local.json"),
+            &serde_json::json!({"session":scene.scene(),"game_after":after,"elapsed_seconds":get_time()-started,"test_speed":1,"time_mode":"normal","disposable_screensaver":true,"earned_playable_claim":false,"game_unchanged":true}),
         )?;
     }
     Ok(())
