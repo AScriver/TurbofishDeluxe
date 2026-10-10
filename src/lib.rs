@@ -6,6 +6,7 @@ pub mod assets;
 pub mod bilaterus;
 pub mod bonus;
 pub mod breeder;
+pub mod bubbles;
 pub mod challenge;
 pub mod cli;
 pub mod clyde;
