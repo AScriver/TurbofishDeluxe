@@ -335,6 +335,9 @@ pub enum AdventurePhase {
         tank: u8,
     },
     VirtualTank,
+    VirtualPrestoDialog {
+        pressed: Option<PetKind>,
+    },
     VirtualStore,
     VirtualPurchaseConfirm {
         cycle: u64,
@@ -514,6 +517,70 @@ impl AdventureSession {
         self.virtual_saved_at_seconds = now_seconds;
     }
 
+    fn apply_virtual_click(&mut self, x: f32, y: f32, events: &mut Vec<Event>) {
+        let Some(board) = &mut self.virtual_board else {
+            return;
+        };
+        if !x.is_finite()
+            || !y.is_finite()
+            || !(0.0..=640.0).contains(&x)
+            || !(40.0..=480.0).contains(&y)
+        {
+            events.push(Event::Rejected {
+                tick: self.ticks,
+                reason: Rejection::OutsideTank,
+            });
+            return;
+        }
+        // Project input policy: coin, interactive pet, combat, fish selection,
+        // then free food. Retail overlapping widget precedence remains pending.
+        if let Some(amount) = board.collect(
+            x,
+            y,
+            &mut self.virtual_tank,
+            &mut self.progress.shell_balance,
+        ) {
+            events.push(Event::VirtualCoinCollected {
+                tick: self.ticks,
+                amount,
+                shell_balance: self.progress.shell_balance,
+            });
+            return;
+        }
+        if let Some(specialty) = board.click_pet(x, y) {
+            if specialty == crate::virtual_board::VirtualPetClick::AmpShock {
+                board.discharge_amp(self.virtual_tank.settings.drop_shells);
+            }
+            events.push(Event::VirtualTankChanged { tick: self.ticks });
+            return;
+        }
+        let seed = Cell::new(self.virtual_seed);
+        let (handled, changes) =
+            board.click_combat(x, y, self.virtual_tank.settings.drop_shells, &mut |limit| {
+                virtual_roll(&seed) as u64 % limit.max(1)
+            });
+        self.virtual_seed = seed.get();
+        events.extend(changes);
+        if handled {
+            return;
+        }
+        if let Some(id) = board
+            .poses
+            .iter()
+            .find(|pose| (pose.x - x).abs() < 40.0 && (pose.y - y).abs() < 40.0)
+            .map(|pose| pose.fish_id)
+        {
+            let _ = self.virtual_tank.select_fish(id);
+        } else if !board.feed(x, y) {
+            events.push(Event::Rejected {
+                tick: self.ticks,
+                reason: Rejection::OutsideTank,
+            });
+            return;
+        }
+        events.push(Event::VirtualTankChanged { tick: self.ticks });
+    }
+
     fn apply_virtual_action(&mut self, action: &Action, events: &mut Vec<Event>) {
         let tick = self.ticks;
         let reject =
@@ -566,6 +633,58 @@ impl AdventureSession {
             }
             (AdventurePhase::VirtualTank, Action::OpenVirtualSetup) => {
                 self.phase = AdventurePhase::VirtualSetup;
+                changed(events);
+            }
+            (
+                AdventurePhase::VirtualTank,
+                Action::VirtualTankClick {
+                    x,
+                    y,
+                    now_seconds,
+                    day_start_seconds,
+                },
+            ) => {
+                if valid_virtual_day(*now_seconds, *day_start_seconds) {
+                    self.virtual_saved_at_seconds = *now_seconds;
+                    self.apply_virtual_click(*x, *y, events);
+                } else {
+                    reject(events, Rejection::Locked);
+                }
+            }
+            (AdventurePhase::VirtualTank, Action::RightClick { x, y }) => {
+                if self
+                    .virtual_board
+                    .as_ref()
+                    .is_some_and(|board| board.open_presto_dialog(*x, *y))
+                {
+                    self.phase = AdventurePhase::VirtualPrestoDialog { pressed: None };
+                    changed(events);
+                }
+            }
+            (AdventurePhase::VirtualPrestoDialog { .. }, Action::PrestoPress { pet })
+                if time_trial::selectable_pet(*pet) && self.progress.has_pet(*pet) =>
+            {
+                self.phase = AdventurePhase::VirtualPrestoDialog {
+                    pressed: Some(*pet),
+                };
+            }
+            (AdventurePhase::VirtualPrestoDialog { pressed }, Action::PrestoRelease { pet }) => {
+                if let Some(target) = (*pet).filter(|target| Some(*target) == pressed) {
+                    if self.virtual_board.as_mut().is_some_and(|board| {
+                        board.morph_presto(target, &self.progress.unlocked_pets)
+                    }) {
+                        changed(events);
+                    } else {
+                        reject(events, Rejection::Locked);
+                    }
+                }
+                self.phase = AdventurePhase::VirtualTank;
+            }
+            (
+                AdventurePhase::VirtualPrestoDialog { .. },
+                Action::PrestoCancel | Action::OpenMenu,
+            ) => {
+                self.phase = AdventurePhase::VirtualTank;
                 changed(events);
             }
             (
@@ -1486,6 +1605,7 @@ impl AdventureSession {
         if matches!(
             self.phase,
             AdventurePhase::VirtualTank
+                | AdventurePhase::VirtualPrestoDialog { .. }
                 | AdventurePhase::VirtualStore
                 | AdventurePhase::VirtualPurchaseConfirm { .. }
                 | AdventurePhase::VirtualSetup
@@ -1776,8 +1896,23 @@ impl AdventureSession {
             .as_ref()
             .ok_or("Virtual Tank Board is missing")?;
         board.validate(&self.virtual_tank)?;
+        if board
+            .pets
+            .iter()
+            .any(|pet| pet.kind == PetKind::Presto && !self.progress.has_pet(pet.active_form))
+        {
+            return Err("Virtual Tank Presto form is not unlocked".into());
+        }
         match &self.phase {
             AdventurePhase::VirtualTank | AdventurePhase::VirtualSetup => Ok(()),
+            AdventurePhase::VirtualPrestoDialog { pressed }
+                if board.pets.iter().any(|pet| pet.kind == PetKind::Presto)
+                    && pressed.is_none_or(|pet| {
+                        time_trial::selectable_pet(pet) && self.progress.has_pet(pet)
+                    }) =>
+            {
+                Ok(())
+            }
             AdventurePhase::VirtualStore if self.virtual_tank.stock.is_some() => Ok(()),
             AdventurePhase::VirtualFishSaleConfirm { id }
                 if self.virtual_tank.active_fish().any(|fish| fish.id == *id) =>
@@ -2066,6 +2201,7 @@ impl AdventureSession {
             if matches!(
                 self.phase,
                 AdventurePhase::VirtualTank
+                    | AdventurePhase::VirtualPrestoDialog { .. }
                     | AdventurePhase::VirtualStore
                     | AdventurePhase::VirtualPurchaseConfirm { .. }
                     | AdventurePhase::VirtualSetup
@@ -2077,7 +2213,9 @@ impl AdventureSession {
                     tick: self.ticks,
                     action: action.clone(),
                 });
+                let was_dialog = matches!(self.phase, AdventurePhase::VirtualPrestoDialog { .. });
                 self.apply_virtual_action(action, &mut events);
+                entered_playing |= was_dialog && self.phase == AdventurePhase::VirtualTank;
                 continue;
             }
             match self.phase.clone() {
@@ -2865,7 +3003,12 @@ impl AdventureSession {
                             fish.refresh_calendar(*now_seconds, *day_start_seconds);
                         }
                         if self.virtual_board.is_none() {
-                            self.virtual_board = Some(VirtualBoardState::new(&self.virtual_tank));
+                            let mut board = VirtualBoardState::new(&self.virtual_tank);
+                            let seed = Cell::new(self.virtual_seed);
+                            board.combat =
+                                crate::virtual_combat::VirtualCombatState::new(virtual_roll(&seed));
+                            self.virtual_seed = seed.get();
+                            self.virtual_board = Some(board);
                         }
                         self.phase = AdventurePhase::VirtualTank;
                         events.push(Event::VirtualTankChanged { tick: self.ticks });
@@ -3081,6 +3224,7 @@ impl AdventureSession {
                     }
                 }
                 AdventurePhase::VirtualTank
+                | AdventurePhase::VirtualPrestoDialog { .. }
                 | AdventurePhase::VirtualStore
                 | AdventurePhase::VirtualPurchaseConfirm { .. }
                 | AdventurePhase::VirtualSetup
@@ -3111,14 +3255,20 @@ impl AdventureSession {
                     events.extend(board.update_objects());
                 }
             }
-            AdventurePhase::VirtualTank => {
+            AdventurePhase::VirtualTank if !entered_playing => {
                 if let Some(board) = &mut self.virtual_board {
                     let day_start = self.virtual_saved_at_seconds / 86_400 * 86_400;
+                    let seed = Cell::new(self.virtual_seed);
                     board.update(
                         &mut self.virtual_tank,
                         self.virtual_saved_at_seconds,
                         day_start,
+                        &mut |limit| virtual_roll(&seed) as u64 % limit.max(1),
                     );
+                    events.extend(board.update_combat(&self.virtual_tank, &mut |limit| {
+                        virtual_roll(&seed) as u64 % limit.max(1)
+                    }));
+                    self.virtual_seed = seed.get();
                     let collected = board.collect_pet_coins(
                         &mut self.virtual_tank,
                         &mut self.progress.shell_balance,
@@ -3344,6 +3494,8 @@ impl AdventureSession {
             | AdventurePhase::ChallengePetSelectionConfirmation { .. }
             | AdventurePhase::ChallengeLost
             | AdventurePhase::ChallengeInterlude { .. }
+            | AdventurePhase::VirtualTank
+            | AdventurePhase::VirtualPrestoDialog { .. }
             | AdventurePhase::VirtualStore
             | AdventurePhase::VirtualPurchaseConfirm { .. }
             | AdventurePhase::VirtualSetup

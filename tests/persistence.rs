@@ -4943,7 +4943,10 @@ fn current33_seven_slot_receipt_and_virtual_tank_checkout_reopen_as_one_profile(
     let bytes = current_bytes(session.clone());
     let reopened = cli::decode_save(&bytes).unwrap();
     assert_eq!(reopened.virtual_tank, session.virtual_tank);
-    assert_eq!(reopened.virtual_board, session.virtual_board);
+    assert_eq!(
+        serde_json::to_value(&reopened.virtual_board).unwrap(),
+        serde_json::to_value(&session.virtual_board).unwrap(),
+    );
     assert_eq!(reopened.progress, session.progress);
 
     let mut missing: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
@@ -6267,6 +6270,102 @@ fn modern_missing_state_and_contradictory_completed_legacy_board_are_rejected() 
         .unwrap()
         .remove("first_stage_best_seconds");
     assert!(cli::decode_save(&serde_json::to_vec(&missing_score).unwrap()).is_err());
+}
+
+#[test]
+fn current35_virtual_combat_preserves_owned_fish_and_reopens_active_state() {
+    use turbofish_deluxe::invasion::WarningCoords;
+    use turbofish_deluxe::virtual_board::VirtualCoinPose;
+    use turbofish_deluxe::virtual_combat::VirtualCombatState;
+    use turbofish_deluxe::virtual_tank::VirtualCoinKind;
+
+    // Project-owned fixture: store purchase and attractor are not an earned
+    // retail profile. Combat may affect transient prey, never the fish ledger.
+    let mut session = AdventureSession::new(0x4535);
+    session.board = None;
+    session.phase = AdventurePhase::GameSelector;
+    session.progress.shell_balance = 100;
+    session.apply_actions(&[
+        Action::PlayVirtualTank {
+            now_seconds: 100_000,
+            day_start_seconds: 86_400,
+        },
+        Action::OpenVirtualStore {
+            now_seconds: 100_000,
+            day_start_seconds: 86_400,
+        },
+        Action::VirtualStoreOffer { slot: 0 },
+        Action::VirtualSetPurchaseName {
+            name: "Atlas".into(),
+        },
+        Action::VirtualConfirmPurchase {
+            accept: true,
+            now_seconds: 100_000,
+            day_start_seconds: 86_400,
+        },
+        Action::Continue,
+    ]);
+    let owned_id = session.virtual_tank.active_fish().next().unwrap().id;
+    session.virtual_tank.alien_attractor_owned = true;
+    session.virtual_tank.settings.alien_attractor_shown = true;
+    let board = session.virtual_board.as_mut().unwrap();
+    board.combat = VirtualCombatState::new(0);
+    board.combat.wave.countdown = 1;
+    board.combat.wave.warning = Some(WarningCoords {
+        first_x: 228,
+        first_y: 140,
+        second_x: 20,
+        second_y: 105,
+    });
+    board.poses[0].x = 300.0;
+    board.poses[0].y = 220.0;
+    assert!(board.feed(620.0, 400.0));
+    board.coins.push(VirtualCoinPose {
+        id: board.next_object_id,
+        x: 20.0,
+        y: 400.0,
+        kind: VirtualCoinKind::Silver,
+        niko_owner: None,
+        age: 0,
+    });
+    board.next_object_id += 1;
+    session.step(&[]);
+    assert!(
+        session
+            .virtual_board
+            .as_ref()
+            .unwrap()
+            .combat
+            .wave
+            .has_live_alien()
+    );
+    assert_eq!(
+        session.virtual_tank.active_fish().next().unwrap().id,
+        owned_id
+    );
+    session.validate().unwrap();
+
+    let mut reopened = cli::decode_save(&current_bytes(session.clone())).unwrap();
+    assert_eq!(
+        serde_json::to_value(&reopened).unwrap(),
+        serde_json::to_value(&session).unwrap()
+    );
+    reopened.apply_actions(&[Action::OpenVirtualSetup]);
+    let held = serde_json::to_value(&reopened.virtual_board).unwrap();
+    reopened.step(&[]);
+    assert_eq!(serde_json::to_value(&reopened.virtual_board).unwrap(), held);
+
+    let saved: serde_json::Value = serde_json::from_slice(&current_bytes(session)).unwrap();
+    let mut missing_owner = saved.clone();
+    missing_owner["session"]["virtual_board"]["coins"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("niko_owner");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing_owner).unwrap()).is_err());
+    let mut conflicting_id = saved;
+    conflicting_id["session"]["virtual_board"]["coins"][0]["id"] =
+        conflicting_id["session"]["virtual_board"]["food"][0]["id"].clone();
+    assert!(cli::decode_save(&serde_json::to_vec(&conflicting_id).unwrap()).is_err());
 }
 
 #[cfg(windows)]

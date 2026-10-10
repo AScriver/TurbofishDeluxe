@@ -1927,6 +1927,26 @@ impl Invasion1_2 {
         events
     }
 
+    /// Virtual Tank's age limit uses RemoveHelper02, bypassing the ordinary
+    /// death body and diamond route. The caller owns the one-encounter clock.
+    pub fn expire_virtual_threat(
+        &mut self,
+        id: u64,
+        missiles_present: bool,
+    ) -> Option<Vec<InvasionEvent>> {
+        if !matches!(self.plan, WavePlan::Fixed(_) | WavePlan::FixedBilaterus) {
+            return None;
+        }
+        if let Some(index) = self.actors.iter().position(|actor| actor.id == id) {
+            self.actors.remove(index);
+        } else if let Some(index) = self.bilaterus.iter().position(|group| group.id == id) {
+            self.bilaterus.remove(index);
+        } else {
+            return None;
+        }
+        Some(self.finish_if_no_threats(missiles_present))
+    }
+
     /// The board calls this after alien and missile transactions. Peaceful
     /// empty waves do not synthesize another end event.
     pub fn finish_if_no_threats(&mut self, missiles_present: bool) -> Vec<InvasionEvent> {

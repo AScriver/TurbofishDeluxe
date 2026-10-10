@@ -34,5 +34,7 @@ pub mod time_trial;
 pub mod timing;
 pub mod ultra;
 pub mod virtual_board;
+pub mod virtual_combat;
+pub mod virtual_pet_combat;
 pub mod virtual_tank;
 pub mod walter;

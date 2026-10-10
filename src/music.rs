@@ -123,6 +123,7 @@ impl MusicCue {
             | AdventurePhase::TimeTrialGameOver { .. }
             | AdventurePhase::ChallengeLost
             | AdventurePhase::VirtualTank
+            | AdventurePhase::VirtualPrestoDialog { .. }
             | AdventurePhase::VirtualStore
             | AdventurePhase::VirtualPurchaseConfirm { .. }
             | AdventurePhase::VirtualSetup

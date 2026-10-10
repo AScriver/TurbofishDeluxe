@@ -687,6 +687,12 @@ pub enum Action {
         now_seconds: u64,
         day_start_seconds: u64,
     },
+    VirtualTankClick {
+        x: f32,
+        y: f32,
+        now_seconds: u64,
+        day_start_seconds: u64,
+    },
     VirtualFeed {
         x: f32,
         y: f32,
@@ -6689,6 +6695,7 @@ impl AdventureState {
             | Action::VirtualStoreOffer { .. }
             | Action::VirtualSetPurchaseName { .. }
             | Action::VirtualConfirmPurchase { .. }
+            | Action::VirtualTankClick { .. }
             | Action::VirtualFeed { .. }
             | Action::VirtualCollect { .. }
             | Action::VirtualSelectFish { .. }

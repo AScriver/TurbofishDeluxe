@@ -21,7 +21,7 @@ use crate::{
     },
     timing::{InputPress, StepClock, wall_deadline_reached},
     ultra::UltraPose,
-    virtual_tank::{NamedFish, StoreProduct, VirtualFishKind},
+    virtual_tank::{NamedFish, StoreProduct, VirtualCoinKind, VirtualFishKind},
 };
 use macroquad::miniquad::{BlendFactor, BlendState, BlendValue, Equation};
 use macroquad::prelude::*;
@@ -3534,19 +3534,57 @@ impl Presentation {
                     self.fonts["Pix118"].text(&fish.name, pose.x - 18.0, pose.y - 26.0, WHITE);
                 }
             }
-            for coin in &board.coins {
+            for corpse in &board.corpses {
+                // Physical state remains on the Board. This compact death
+                // projection does not claim retail animation timing parity.
+                let (image, size, row) = match corpse.kind {
+                    crate::virtual_tank::VirtualFoodKind::Guppy => ("IMAGE_SMALLDIE", 80.0, 0.0),
+                    crate::virtual_tank::VirtualFoodKind::Ultra => ("IMAGE_ULTRA", 160.0, 480.0),
+                    _ => ("IMAGE_SMALLDIE", 80.0, 320.0),
+                };
                 self.sprite(
-                    "IMAGE_SHELLS",
-                    coin.x - 16.0,
-                    coin.y - 16.0,
-                    Some(Rect::new(0.0, 0.0, 32.0, 32.0)),
+                    image,
+                    corpse.x - size / 2.0,
+                    corpse.y - size / 2.0,
+                    Some(Rect::new(
+                        f32::from(((125 - corpse.life) / 4).min(9)) * size,
+                        row,
+                        size,
+                        size,
+                    )),
                     false,
                     1.0,
-                    1.0,
+                    (f32::from(corpse.life) / 30.0).min(1.0),
                 );
             }
+            for coin in &board.coins {
+                if matches!(
+                    coin.kind,
+                    VirtualCoinKind::Pearl | VirtualCoinKind::NikoPearl
+                ) {
+                    self.sprite(
+                        "IMAGE_PEARL",
+                        coin.x - 20.0,
+                        coin.y - 20.0,
+                        None,
+                        false,
+                        1.0,
+                        1.0,
+                    );
+                } else {
+                    self.sprite(
+                        "IMAGE_SHELLS",
+                        coin.x - 16.0,
+                        coin.y - 16.0,
+                        Some(Rect::new(0.0, 0.0, 32.0, 32.0)),
+                        false,
+                        1.0,
+                        1.0,
+                    );
+                }
+            }
             for pet in &board.pets {
-                let image_id = format!("IMAGE_SCL_{:?}", pet.kind).to_uppercase();
+                let image_id = format!("IMAGE_SCL_{:?}", pet.active_form).to_uppercase();
                 if let Some(image) = self.images.get(&image_id) {
                     let width = image.width() / 10.0;
                     let height = image.height();
@@ -3565,7 +3603,19 @@ impl Presentation {
                         1.0,
                     );
                 }
+                if let Some(glove) = pet.glove {
+                    self.sprite(
+                        "IMAGE_WALTER",
+                        (glove.x + 40) as f32,
+                        glove.y as f32,
+                        Some(Rect::new(400.0, 160.0, 80.0, 80.0)),
+                        glove.right,
+                        1.0,
+                        1.0,
+                    );
+                }
             }
+            self.draw_virtual_combat(&board.combat.wave, &board.combat.missiles);
         }
         draw_rectangle(0.0, 0.0, 640.0, 70.0, Color::new(0.02, 0.08, 0.13, 0.94));
         self.centered_text(
@@ -3717,6 +3767,214 @@ impl Presentation {
             self.main_button(Rect::new(140.0, 305.0, 150.0, 38.0), "Sell");
             self.main_button(Rect::new(350.0, 305.0, 150.0, 38.0), "Cancel");
         }
+        if let AdventurePhase::VirtualPrestoDialog { pressed } = &session.phase {
+            self.draw_presto_dialog(&session.progress.unlocked_pets, *pressed);
+        }
+    }
+
+    fn draw_virtual_combat(
+        &self,
+        wave: &crate::invasion::Invasion1_2,
+        missiles: &[crate::missile::ClassicMissile],
+    ) {
+        if wave.warning.is_some() {
+            self.centered_text("JungleFever17outline", "DANGER!", 114.0, YELLOW);
+        }
+        for warp in &wave.warps {
+            let frame = 17_i32 - i32::from(warp.remaining_ticks) / 2;
+            if (0..17).contains(&frame) {
+                self.sprite(
+                    "IMAGE_WARPHOLE",
+                    (warp.x + 20) as f32,
+                    warp.y as f32,
+                    Some(Rect::new(frame as f32 * 60.0, 0.0, 60.0, 220.0)),
+                    false,
+                    1.0,
+                    1.0,
+                );
+                self.sprite(
+                    "IMAGE_WARPGLOW",
+                    warp.x as f32,
+                    warp.y as f32,
+                    Some(Rect::new(frame as f32 * 100.0, 0.0, 100.0, 220.0)),
+                    false,
+                    1.0,
+                    0.7,
+                );
+            }
+        }
+        for alien in &wave.actors {
+            if alien.spawn_ticks > 9 {
+                continue;
+            }
+            let inset = f32::from(alien.spawn_ticks) * 16.0;
+            let image = match alien.kind {
+                SylvesterKind::Balrog => "IMAGE_BALROG",
+                SylvesterKind::Gus => "IMAGE_GUS",
+                SylvesterKind::Destructor => "IMAGE_DESTRUCTOR",
+                SylvesterKind::Ulysses => "IMAGE_ULYSSES",
+                SylvesterKind::Psychosquid => "IMAGE_PSYCHOSQUID",
+                SylvesterKind::Cyrax => "IMAGE_BOSS",
+                SylvesterKind::MiniSylvester => "IMAGE_MINISYLV",
+                SylvesterKind::Weak | SylvesterKind::Strong => "IMAGE_SYLV",
+            };
+            self.sprite(
+                image,
+                alien.widget_x as f32 + inset / 2.0,
+                alien.widget_y as f32 + inset / 2.0,
+                Some(Rect::new(
+                    f32::from(alien.sprite_frame()) * 160.0,
+                    f32::from(alien.sprite_row()) * 160.0,
+                    160.0,
+                    160.0,
+                )),
+                alien.facing_right(),
+                (160.0 - inset) / 160.0,
+                1.0,
+            );
+        }
+        for group in &wave.bilaterus {
+            for index in 0..2 {
+                if let (Some(head), Some(scale), Some((row, frame, facing_right))) = (
+                    group.heads[index].as_ref(),
+                    group.head_emergence_scale(index),
+                    group.head_sprite_pose(index),
+                ) {
+                    let inset = 80.0 * (1.0 - scale) / 2.0;
+                    self.sprite(
+                        "IMAGE_BILATERUS",
+                        head.widget_x as f32 + inset,
+                        head.widget_y as f32 + inset,
+                        Some(Rect::new(
+                            f32::from(frame) * 80.0,
+                            f32::from(row) * 80.0,
+                            80.0,
+                            80.0,
+                        )),
+                        facing_right,
+                        scale,
+                        1.0,
+                    );
+                }
+            }
+            if group.emergence_ticks == 0 {
+                for index in (0..group.bones.len()).rev() {
+                    let bone = &group.bones[index];
+                    let predecessor_x = if index == 0 {
+                        group.active().x
+                    } else {
+                        group.bones[index - 1].x
+                    };
+                    self.sprite(
+                        "IMAGE_BILATERUS",
+                        bone.widget_x as f32,
+                        bone.widget_y as f32,
+                        Some(Rect::new(
+                            f32::from(bone.sprite_frame(predecessor_x)) * 80.0,
+                            f32::from(crate::bilaterus::BilaterusBone::sprite_row(index)) * 80.0,
+                            80.0,
+                            80.0,
+                        )),
+                        false,
+                        1.0,
+                        1.0,
+                    );
+                }
+            }
+        }
+        for fragment in &wave.fragments {
+            self.sprite(
+                "IMAGE_BILATERUS",
+                fragment.widget_x as f32,
+                fragment.widget_y as f32,
+                Some(Rect::new(
+                    f32::from(fragment.sprite_frame()) * 80.0,
+                    f32::from(fragment.sprite_row()) * 80.0,
+                    80.0,
+                    80.0,
+                )),
+                fragment.kind != crate::bilaterus::FragmentKind::Bone && fragment.facing_right(),
+                1.0,
+                1.0,
+            );
+        }
+        for missile in missiles {
+            let (image, scale) = match missile.kind {
+                MissileKind::Classic | MissileKind::EnergyBall => ("IMAGE_MISSILE", 1.0),
+                MissileKind::Stanley => ("IMAGE_MISSILE", 0.625),
+            };
+            self.sprite(
+                image,
+                missile.widget_x as f32,
+                missile.widget_y as f32,
+                Some(Rect::new(f32::from(missile.frame) * 80.0, 0.0, 80.0, 80.0)),
+                false,
+                scale,
+                1.0,
+            );
+        }
+        for laser in &wave.lasers {
+            let frame = laser.frame();
+            if frame < 10 {
+                for row in 0..2 {
+                    self.sprite(
+                        "IMAGE_LASERS",
+                        laser.x as f32,
+                        laser.y as f32,
+                        Some(Rect::new(
+                            f32::from(frame) * 80.0,
+                            row as f32 * 80.0,
+                            80.0,
+                            80.0,
+                        )),
+                        false,
+                        1.0,
+                        1.0,
+                    );
+                }
+            }
+        }
+        for body in &wave.dead_aliens {
+            let image = match body.kind {
+                SylvesterKind::Balrog => "IMAGE_BALROG",
+                SylvesterKind::Gus => "IMAGE_GUS",
+                SylvesterKind::Destructor => "IMAGE_DESTRUCTOR",
+                SylvesterKind::Ulysses => "IMAGE_ULYSSES",
+                SylvesterKind::Psychosquid => "IMAGE_PSYCHOSQUID",
+                SylvesterKind::Cyrax => "IMAGE_BOSS",
+                SylvesterKind::MiniSylvester => "IMAGE_MINISYLV",
+                SylvesterKind::Weak | SylvesterKind::Strong => "IMAGE_SYLV",
+            };
+            self.sprite(
+                image,
+                body.widget_x as f32,
+                body.widget_y as f32,
+                Some(Rect::new(f32::from(body.frame) * 160.0, 0.0, 160.0, 160.0)),
+                body.facing_right,
+                1.0,
+                body.opacity,
+            );
+        }
+    }
+
+    fn draw_presto_dialog(&self, unlocked_pets: &[PetKind], pressed: Option<PetKind>) {
+        draw_rectangle(0.0, 0.0, 640.0, 480.0, Color::new(0.0, 0.0, 0.0, 0.82));
+        self.centered_text("JungleFever17outline", "Choose Presto's form", 48.0, WHITE);
+        for pet in unlocked_pets {
+            if crate::time_trial::selectable_pet(*pet) {
+                let rect = presto_choice_rect(*pet as usize);
+                self.main_button(rect, &format!("{pet:?}"));
+                if pressed == Some(*pet) {
+                    draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 2.0, YELLOW);
+                }
+            }
+        }
+        self.centered_text(
+            "JungleFever10outline",
+            "Press and release the same form. Esc cancels.",
+            440.0,
+            WHITE,
+        );
     }
 
     fn draw(
@@ -3734,7 +3992,8 @@ impl Presentation {
             | AdventurePhase::VirtualSetup
             | AdventurePhase::VirtualFishSaleConfirm { .. }
             | AdventurePhase::VirtualBackdropSaleConfirm
-            | AdventurePhase::VirtualRename { .. } => self.draw_virtual_tank(session),
+            | AdventurePhase::VirtualRename { .. }
+            | AdventurePhase::VirtualPrestoDialog { .. } => self.draw_virtual_tank(session),
             AdventurePhase::Hatch { pet, updates } => self.draw_hatch(pet, updates),
             AdventurePhase::TankFourFinaleHatch { updates } => self.draw_finale_hatch(updates),
             AdventurePhase::AdventureFinaleInterlude => {
@@ -3793,30 +4052,7 @@ impl Presentation {
                     | AdventurePhase::ChallengePrestoDialog { pressed, .. }
                     | AdventurePhase::SandboxPrestoDialog { pressed, .. } = session.phase
                     {
-                        draw_rectangle(0.0, 0.0, 640.0, 480.0, Color::new(0.0, 0.0, 0.0, 0.82));
-                        self.centered_text(
-                            "JungleFever17outline",
-                            "Choose Presto's form",
-                            48.0,
-                            WHITE,
-                        );
-                        for pet in &session.progress.unlocked_pets {
-                            if crate::time_trial::selectable_pet(*pet) {
-                                let rect = presto_choice_rect(*pet as usize);
-                                self.main_button(rect, &format!("{pet:?}"));
-                                if pressed == Some(*pet) {
-                                    draw_rectangle_lines(
-                                        rect.x, rect.y, rect.w, rect.h, 2.0, YELLOW,
-                                    );
-                                }
-                            }
-                        }
-                        self.centered_text(
-                            "JungleFever10outline",
-                            "Press and release the same form. Esc cancels.",
-                            440.0,
-                            WHITE,
-                        );
+                        self.draw_presto_dialog(&session.progress.unlocked_pets, pressed);
                     }
                     if board.time_trial {
                         let limit = crate::time_trial::limit_seconds(board.tank).unwrap_or(0);
@@ -5330,6 +5566,7 @@ pub async fn run(
                     | AdventurePhase::AdventurePrestoDialog { .. }
                     | AdventurePhase::ChallengePrestoDialog { .. }
                     | AdventurePhase::SandboxPrestoDialog { .. }
+                    | AdventurePhase::VirtualPrestoDialog { .. }
             ) && !paused
             {
                 pending_actions.push(Action::PrestoCancel);
@@ -5407,6 +5644,7 @@ pub async fn run(
                     | AdventurePhase::AdventurePrestoDialog { .. }
                     | AdventurePhase::ChallengePrestoDialog { .. }
                     | AdventurePhase::SandboxPrestoDialog { .. }
+                    | AdventurePhase::VirtualPrestoDialog { .. }
             ) && !paused
             {
                 if let Some(pet) =
@@ -5463,30 +5701,8 @@ pub async fn run(
                             Action::OpenVirtualSetup
                         } else if Rect::new(514.0, 4.0, 110.0, 32.0).contains(pointer) {
                             Action::OpenMenu
-                        } else if session.virtual_board.as_ref().is_some_and(|board| {
-                            board.coins.iter().any(|coin| {
-                                (coin.x - pointer.x).abs() < 25.0
-                                    && (coin.y - pointer.y).abs() < 25.0
-                            })
-                        }) {
-                            Action::VirtualCollect {
-                                x: pointer.x,
-                                y: pointer.y,
-                            }
-                        } else if let Some(id) = session
-                            .virtual_board
-                            .as_ref()
-                            .and_then(|board| {
-                                board.poses.iter().find(|pose| {
-                                    (pose.x - pointer.x).abs() < 32.0
-                                        && (pose.y - pointer.y).abs() < 32.0
-                                })
-                            })
-                            .map(|pose| pose.fish_id)
-                        {
-                            Action::VirtualSelectFish { id }
                         } else {
-                            Action::VirtualFeed {
+                            Action::VirtualTankClick {
                                 x: pointer.x,
                                 y: pointer.y,
                                 now_seconds,
@@ -6117,6 +6333,7 @@ pub async fn run(
                     | AdventurePhase::AdventurePrestoDialog { .. }
                     | AdventurePhase::ChallengePrestoDialog { .. }
                     | AdventurePhase::SandboxPrestoDialog { .. }
+                    | AdventurePhase::VirtualPrestoDialog { .. }
             ) && !paused
             {
                 pending_actions.push(Action::PrestoRelease {
@@ -6137,6 +6354,7 @@ pub async fn run(
                     | AdventurePhase::Playing
                     | AdventurePhase::ChallengePlaying
                     | AdventurePhase::SandboxPlaying
+                    | AdventurePhase::VirtualTank
             )
         {
             pending_actions.push(Action::RightClick {

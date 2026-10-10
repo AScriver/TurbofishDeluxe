@@ -25,7 +25,7 @@ The subsequent2026-10-10 steering defers work outside remaining-system implement
 
 [Virtual Tank/store](virtual-tank.md) owns the current33 ownership, transaction and load contract. Keep Profile as the shell authority and durable fish separate from transient positions/food/coins; preserve Adventure while visiting store/setup. Cursor5 gains a real seven-pet consumer while ordinary choices remain capped4. Use pinned secondary behavior for the completion sweep; do not invent offline catch-up or claim unverified retail RNG/coin/render parity.
 
-The [next VT combat/pet contract](virtual-tank.md#next-combat-and-pet-increment) preserves purchased fish, shares stable transient-object allocation, retains one pet pose/form authority and separates timeout removal from defeat rewards. Root serializes shared input/persistence joins after independent combat and pet production; a new database recovery pass or presentation polish is not required for these source-backed interactions.
+The [current35 VT combat/pet checkpoint](virtual-tank.md#current35-combat-and-pet-checkpoint) preserves purchased fish, shares stable transient-object allocation, retains one pet pose/form authority and separates timeout removal from defeat rewards. Root serialized shared input/persistence joins after independent combat and pet production. Next audio joins reuse existing cues; a new database recovery pass or presentation polish is not required for these source-backed interactions.
 
 ## Sandbox integration decisions
 
