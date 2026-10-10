@@ -4,7 +4,7 @@ use turbofish_deluxe::{
     assets::GameAssets,
     cli::{self, Options},
     install,
-    screensaver_bank::NormalWriterLease,
+    screensaver_bank::{NormalWriterLease, ScreensaverSceneLease},
 };
 use turbofish_screenhost::ScreenCommand;
 
@@ -97,6 +97,14 @@ fn prepare() -> Result<(), Box<dyn Error>> {
     } else {
         None
     };
+    let saver_scene_lease = if matches!(screensaver, Some(ScreenCommand::Fullscreen)) {
+        Some(
+            ScreensaverSceneLease::try_acquire(&options.save_dir)?
+                .ok_or("Another screensaver is already evolving this project scene")?,
+        )
+    } else {
+        None
+    };
     let mut profiles = cli::load_profiles(&options)?;
     if screensaver.is_none() {
         if !profiles_path.exists() || options.new_game {
@@ -106,6 +114,9 @@ fn prepare() -> Result<(), Box<dyn Error>> {
         let credited = profiles.claim_screensaver(&options.save_dir)?;
         if credited > 0 {
             println!("Claimed {credited} screensaver shells");
+        }
+        if profiles.adopt_screensaver_scene(&options.save_dir)? {
+            println!("Resumed screensaver Virtual Tank continuation");
         }
     }
     let settings = turbofish_deluxe::settings::SettingsSave::load_or_default(
@@ -150,6 +161,7 @@ fn prepare() -> Result<(), Box<dyn Error>> {
     }
     macroquad::Window::from_config(window, async move {
         let writer_lease = normal_writer_lease;
+        let scene_lease = saver_scene_lease;
         let result = if let Some(command) = screensaver {
             app::run_screensaver(
                 options, game_root, identity, assets, profiles, settings, command,
@@ -159,6 +171,7 @@ fn prepare() -> Result<(), Box<dyn Error>> {
             app::run(options, game_root, identity, assets, profiles, settings).await
         };
         drop(writer_lease);
+        drop(scene_lease);
         if let Err(error) = result {
             eprintln!("Runtime failed: {error}");
             std::process::exit(1);
