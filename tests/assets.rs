@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use turbofish_deluxe::assets::{GameAssets, SoundData};
+use turbofish_deluxe::assets::{AnimationKind, GameAssets, SoundData};
 
 #[test]
 #[ignore = "requires OWNED_GAME_DIR pointing to an owned installation with fishsongs"]
@@ -122,6 +122,54 @@ impl Drop for Fixture {
 }
 
 const MANIFEST: &str = "<ResourceManifest><Resources id=Tank><SetDefaults path=images idprefix=IMAGE_/><Image id=FISH path=fish cols=2 rows=1 ddsurface/><Image id=MASKONLY path=maskonly/><Image id=GRID path=grid cols=2 alphagrid=gridmask/><Image id=EXPLICIT path=explicit alphaimage=shared/><SetDefaults path=sounds idprefix=SOUND_/><Sound id=CLICK path=click/></Resources></ResourceManifest>";
+
+#[test]
+fn manifest_animation_preserves_pingpong_delays_and_hidden_once_cel() {
+    let fixture = Fixture::new(
+        "<ResourceManifest><Resources><SetDefaults path=images idprefix=IMAGE_/><Image id=SWELL path=swell rows=3 anim=pingpong framedelay=2 begindelay=4/><Image id=BLINK path=blink cols=3 anim=once framemap='2,1,-1' perframedelay='3,1,2'/></Resources></ResourceManifest>",
+    );
+    let assets = GameAssets::open(fixture.path()).expect("source animation syntax");
+    let swell = assets
+        .image_entry("IMAGE_SWELL")
+        .unwrap()
+        .animation
+        .as_ref()
+        .unwrap();
+    assert_eq!(swell.kind, AnimationKind::PingPong);
+    assert_eq!(swell.duration_ticks(), 10);
+    assert_eq!(
+        (0..=10)
+            .map(|tick| swell.cel_at_time(tick))
+            .collect::<Vec<_>>(),
+        [
+            Some(0),
+            Some(0),
+            Some(0),
+            Some(0),
+            Some(1),
+            Some(1),
+            Some(2),
+            Some(2),
+            Some(1),
+            Some(1),
+            Some(0)
+        ]
+    );
+    let blink = assets
+        .image_entry("IMAGE_BLINK")
+        .unwrap()
+        .animation
+        .as_ref()
+        .unwrap();
+    assert_eq!(blink.kind, AnimationKind::Once);
+    assert_eq!(blink.duration_ticks(), 6);
+    assert_eq!(
+        (0..=6)
+            .map(|tick| blink.cel_at_time(tick))
+            .collect::<Vec<_>>(),
+        [Some(2), Some(2), Some(2), Some(1), None, None, None]
+    );
+}
 
 #[test]
 fn parses_stock_attribute_forms_and_replaces_alpha_with_mask_blue() {

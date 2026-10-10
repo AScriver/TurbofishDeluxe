@@ -2073,7 +2073,7 @@ impl AdventureSession {
         match (&self.phase, &self.board, &self.time_trial) {
             (AdventurePhase::TimeTrialTankSelection, None, None) => Ok(()),
             (AdventurePhase::TimeTrialPetSelection { tank, selected }, None, None)
-                if time_trial::limit_seconds(*tank).is_some()
+                if self.time_trial_tank_available(*tank)
                     && self.progress.unlocked_pets.len() >= 4
                     && selected.len() <= self.progress.selection_capacity()
                     && selected.iter().all(|pet| {
@@ -2204,6 +2204,13 @@ impl AdventureSession {
             }
             _ => Err("Time Trial phase and board disagree".into()),
         }
+    }
+
+    /// The four Time Trial cards use Adventure progress, even when an action
+    /// reaches the session without passing through the tank chooser.
+    pub fn time_trial_tank_available(&self, tank: u8) -> bool {
+        time_trial::limit_seconds(tank).is_some()
+            && (self.progress.adventure_completed || self.progress.tank > tank)
     }
 
     fn challenge_tank_available(&self, tank: u8) -> bool {
@@ -2684,7 +2691,7 @@ impl AdventureSession {
                     });
                     match action {
                         Action::SelectTimeTrialTank { tank }
-                            if time_trial::limit_seconds(*tank).is_some() =>
+                            if self.time_trial_tank_available(*tank) =>
                         {
                             self.last_non_adventure_tank = *tank;
                             if self.progress.unlocked_pets.len() >= 4 {
@@ -3697,6 +3704,13 @@ impl AdventureSession {
         initial_pets: Vec<PetKind>,
         events: &mut Vec<Event>,
     ) -> bool {
+        if !self.time_trial_tank_available(tank) {
+            events.push(Event::Rejected {
+                tick: self.ticks,
+                reason: Rejection::Locked,
+            });
+            return false;
+        }
         let Ok(board) = AdventureState::new_time_trial(self.next_seed, tank, &initial_pets) else {
             events.push(Event::Rejected {
                 tick: self.ticks,
@@ -4251,6 +4265,72 @@ mod tests {
         ]);
         assert_eq!(session.phase, AdventurePhase::TimeTrialPlaying);
         session
+    }
+
+    #[test]
+    fn time_trial_tank_admission_preserves_locked_selection_and_allows_earned_cards() {
+        let mut session = tank_four_first_session();
+        session.board = None;
+        session.phase = AdventurePhase::GameSelector;
+        session.apply_actions(&[Action::PlayTimeTrial]);
+        assert_eq!(session.phase, AdventurePhase::TimeTrialTankSelection);
+        assert!(!session.time_trial_tank_available(4));
+        assert!(session.time_trial_tank_available(3));
+        let before = serde_json::to_value(&session).unwrap();
+        let next_seed = session.next_seed;
+        let events = session.apply_actions(&[Action::SelectTimeTrialTank { tank: 4 }]);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Rejected {
+                reason: Rejection::Locked,
+                ..
+            }
+        )));
+        assert_eq!(serde_json::to_value(&session).unwrap(), before);
+        assert!(session.board.is_none());
+        assert_eq!(session.next_seed, next_seed);
+
+        session.apply_actions(&[Action::SelectTimeTrialTank { tank: 3 }]);
+        assert!(matches!(
+            session.phase,
+            AdventurePhase::TimeTrialPetSelection { tank: 3, .. }
+        ));
+        assert_eq!(session.last_non_adventure_tank, 3);
+
+        let mut invalid_selection = session.clone();
+        invalid_selection.phase = AdventurePhase::TimeTrialPetSelection {
+            tank: 4,
+            selected: Vec::new(),
+        };
+        assert!(invalid_selection.validate().is_err());
+        let next_seed = invalid_selection.next_seed;
+        assert!(
+            invalid_selection
+                .apply_actions(&[Action::Continue])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::Locked,
+                        ..
+                    }
+                ))
+        );
+        assert!(invalid_selection.board.is_none());
+        assert_eq!(invalid_selection.next_seed, next_seed);
+
+        let mut completed = completed_replay_session();
+        completed.progress.tank = 1;
+        completed.progress.level = 1;
+        completed.progress.cyrax_attempts = 0;
+        completed.validate().unwrap();
+        completed.apply_actions(&[Action::PlayTimeTrial]);
+        assert!(completed.time_trial_tank_available(4));
+        completed.apply_actions(&[Action::SelectTimeTrialTank { tank: 4 }]);
+        assert!(matches!(
+            completed.phase,
+            AdventurePhase::TimeTrialPetSelection { tank: 4, .. }
+        ));
     }
 
     fn time_trial_survivor_fixture(tank: u8, initial_pets: Vec<PetKind>) -> AdventureSession {

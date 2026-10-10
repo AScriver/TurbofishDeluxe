@@ -197,8 +197,13 @@ pub trait SelectorResources {
     fn font(&self, font: SelectorFont) -> Option<FontMetadata>;
     fn text_width(&self, font: SelectorFont, text: &str) -> Option<u32>;
     /// Resolve the supplied countdown with the actual resource's AnimInfo.
-    /// Return None when that mapping is unavailable, not a fabricated cel.
+    /// Return None when the mapping is unavailable or its cel is hidden.
     fn animation_cel(&self, image: SelectorImage, countdown: u16) -> Option<u32>;
+    /// A present AnimInfo can deliberately select a hidden (-1) cel. Keep
+    /// that distinct from an unavailable mapping; neither draws a frame.
+    fn animation_is_hidden(&self, _image: SelectorImage, _countdown: u16) -> bool {
+        false
+    }
     fn hint_text(&self, _hint: HintKey) -> Option<&str> {
         None
     }
@@ -807,6 +812,9 @@ impl SelectorScene {
         // Report missing image separately instead of inventing an animation.
         if let Err(issue) = checked_image(resources, image) {
             self.missing(issue);
+            return;
+        }
+        if resources.animation_is_hidden(image, countdown) {
             return;
         }
         if let Some(cel) = resources.animation_cel(image, countdown) {

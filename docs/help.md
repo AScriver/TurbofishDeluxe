@@ -65,6 +65,8 @@ No game process launched, actual save/OS state changed, shared analysis database
 
 ## Runtime integration
 
+E112 closes the earlier missing-WAVE metadata gap using the [owned animation API](asset-animation.md). Exact native animation/render fidelity and the separately pending credits BubbleMgr join remain unverified.
+
 E111 loads the declared sheets/fonts and uses [`app/help_runtime.rs`](../src/app/help_runtime.rs) for the complete typed illustration/chrome plan. Input hits the same plan's controls; existing caller-owned Help returns remain intact. Help's independent28ms demo clock advances while the retained tank is paused. Image crops, glyphs, tiles and primitives use safe CPU clipping; the runtime crate keeps its unsafe-code prohibition. Missing WAVE animation metadata reports an unavailable illustration rather than guessing frames. Credits ambient BubbleMgr insertion, native input/render/audio, font placement and retail comparison remain pending. [STATUS](../STATUS.md#current-build-verification) owns combined integration checks; the isolated model checks above are historical.
 
 ## Deferred details

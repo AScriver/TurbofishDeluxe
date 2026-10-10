@@ -41,8 +41,14 @@ impl HelpAssets for Assets<'_> {
         )
     }
 
-    // The current decoded manifest supplies sheet grids, but no WAVE animation
-    // cadence. The model reports MissingAnimation instead of guessing a cel.
+    fn wave_cell(&self, updates: u64) -> Option<u16> {
+        let cel = self
+            .0
+            .image_animations
+            .get("IMAGE_WAVE")?
+            .cel_at_time(updates)?;
+        u16::try_from(cel).ok()
+    }
 }
 
 pub(super) fn plan(presentation: &Presentation, help: &HelpController) -> Option<HelpRenderPlan> {

@@ -148,7 +148,7 @@ fn bubbulator_origin(backdrop: u8) -> (i32, i32) {
     }
 }
 
-fn draw_op(presentation: &Presentation, op: BubbleRenderOp) {
+pub(super) fn draw_op(presentation: &Presentation, op: BubbleRenderOp) {
     let id = op.sheet.resource_key();
     let Some(texture) = presentation.images.get(id) else {
         return;

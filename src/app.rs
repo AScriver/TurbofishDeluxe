@@ -1,7 +1,7 @@
 use crate::{
     adventure::{AdventurePhase, AdventureSession, results_offer},
     alien::SylvesterKind,
-    assets::{GameAssets, SoundData},
+    assets::{AnimationInfo, GameAssets, SoundData},
     bonus::{BonusResult, BonusState, PurchaseReceipt, ShellKind, ShellState},
     cli::{self, Options},
     fish_pet::FishPetKind,
@@ -307,6 +307,7 @@ void main() {
 pub struct Presentation {
     images: HashMap<String, Texture2D>,
     image_cells: HashMap<String, (u32, u32)>,
+    image_animations: HashMap<String, AnimationInfo>,
     sounds: HashMap<String, Arc<[u8]>>,
     fonts: HashMap<String, RenderedFont>,
     additive: Material,
@@ -510,16 +511,26 @@ impl Presentation {
     ) -> Result<Self, Box<dyn Error>> {
         let mut images = HashMap::new();
         let mut image_cells = HashMap::new();
+        let mut image_animations = HashMap::new();
         for id in presentation_image_ids() {
             if let Some((image, cells)) =
                 title.as_ref().and_then(|loader| loader.bootstrap_image(id))
             {
                 images.insert(id.into(), image);
                 image_cells.insert(id.into(), cells);
+                if let Some(animation) = assets
+                    .image_entry(id)
+                    .and_then(|entry| entry.animation.as_ref())
+                {
+                    image_animations.insert(id.into(), animation.clone());
+                }
                 continue;
             }
             let image = assets.load_image(id)?;
             image_cells.insert(id.into(), (image.cols, image.rows));
+            if let Some(animation) = image.animation.clone() {
+                image_animations.insert(id.into(), animation);
+            }
             let width = u16::try_from(image.width)?;
             let height = u16::try_from(image.height)?;
             let texture = Texture2D::from_rgba8(width, height, &image.pixels);
@@ -584,6 +595,7 @@ impl Presentation {
         Ok(Self {
             images,
             image_cells,
+            image_animations,
             sounds,
             fonts,
             additive,

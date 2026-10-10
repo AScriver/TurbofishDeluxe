@@ -41,7 +41,46 @@ pub struct ImageEntry {
     pub path: PathBuf,
     pub cols: u32,
     pub rows: u32,
+    pub animation: Option<AnimationInfo>,
     alpha: Option<AlphaSource>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AnimationKind {
+    Once,
+    Loop,
+    PingPong,
+}
+
+/// Immutable manifest timing, measured in source update ticks.
+#[derive(Clone, Debug)]
+pub struct AnimationInfo {
+    pub kind: AnimationKind,
+    frames: Vec<Option<u32>>,
+    delays: Vec<u32>,
+    duration_ticks: u64,
+}
+
+impl AnimationInfo {
+    pub fn duration_ticks(&self) -> u64 {
+        self.duration_ticks
+    }
+
+    /// Returns the source cel, or None for a manifest's hidden (-1) cel.
+    pub fn cel_at_time(&self, ticks: u64) -> Option<u32> {
+        let mut remaining = if self.kind == AnimationKind::Once {
+            ticks.min(self.duration_ticks - 1)
+        } else {
+            ticks % self.duration_ticks
+        };
+        for (cel, delay) in self.frames.iter().zip(&self.delays) {
+            if remaining < u64::from(*delay) {
+                return *cel;
+            }
+            remaining -= u64::from(*delay);
+        }
+        unreachable!("validated animation delays cover duration")
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -75,6 +114,7 @@ pub struct DecodedImage {
     pub pixels: Vec<u8>,
     pub cols: u32,
     pub rows: u32,
+    pub animation: Option<AnimationInfo>,
 }
 
 #[derive(Debug)]
@@ -132,14 +172,15 @@ impl GameAssets {
     }
 
     pub fn load_image(&self, id_or_stem: &str) -> Result<DecodedImage, AssetError> {
-        let (relative, cols, rows, alpha) = match self.images.get(id_or_stem) {
+        let (relative, cols, rows, alpha, animation) = match self.images.get(id_or_stem) {
             Some(entry) => (
                 entry.path.clone(),
                 entry.cols,
                 entry.rows,
                 entry.alpha.as_ref(),
+                entry.animation.clone(),
             ),
-            None => (fallback_path("images", id_or_stem)?, 1, 1, None),
+            None => (fallback_path("images", id_or_stem)?, 1, 1, None, None),
         };
         let color = self.find_extension(&relative, &["jpg", "png", "gif"])?;
         let mask_path = if let Some(source) = alpha {
@@ -242,6 +283,7 @@ impl GameAssets {
             pixels: rgba.into_raw(),
             cols,
             rows,
+            animation,
         })
     }
 
@@ -430,6 +472,7 @@ fn parse_manifest(manifest: &str) -> Result<ParsedManifest, AssetError> {
                 if name == "Image" {
                     let cols = positive_grid(&attrs, "cols")?;
                     let rows = positive_grid(&attrs, "rows")?;
+                    let animation = parse_animation(&attrs, cols, rows, &id)?;
                     let alpha = match (attrs.get("alphaimage"), attrs.get("alphagrid")) {
                         (Some(_), Some(_)) => {
                             return Err(AssetError::Manifest(format!(
@@ -449,6 +492,7 @@ fn parse_manifest(manifest: &str) -> Result<ParsedManifest, AssetError> {
                         path,
                         cols,
                         rows,
+                        animation,
                         alpha,
                     };
                     if images.insert(id.clone(), entry).is_some() {
@@ -501,6 +545,115 @@ fn positive_grid(attrs: &HashMap<String, String>, key: &str) -> Result<u32, Asse
             .filter(|number| *number > 0)
             .ok_or_else(|| AssetError::Manifest(format!("invalid {key}={value:?}"))),
     }
+}
+
+fn animation_number(attrs: &HashMap<String, String>, key: &str) -> Result<u32, AssetError> {
+    match attrs.get(key) {
+        None => Ok(0),
+        Some(value) => value
+            .parse()
+            .map_err(|_| AssetError::Manifest(format!("invalid {key}={value:?}"))),
+    }
+}
+
+fn animation_list(attrs: &HashMap<String, String>, key: &str) -> Result<Vec<i32>, AssetError> {
+    let Some(value) = attrs.get(key) else {
+        return Ok(Vec::new());
+    };
+    if value.is_empty() || value.split(',').count() > 4096 {
+        return Err(AssetError::Manifest(format!("invalid {key} sequence")));
+    }
+    value
+        .split(',')
+        .map(|part| {
+            part.trim()
+                .parse()
+                .map_err(|_| AssetError::Manifest(format!("invalid {key} value {part:?}")))
+        })
+        .collect()
+}
+
+fn parse_animation(
+    attrs: &HashMap<String, String>,
+    cols: u32,
+    rows: u32,
+    id: &str,
+) -> Result<Option<AnimationInfo>, AssetError> {
+    let kind = match attrs.get("anim").map(String::as_str) {
+        None | Some("none") => return Ok(None),
+        Some("once") => AnimationKind::Once,
+        Some("loop") => AnimationKind::Loop,
+        Some("pingpong") => AnimationKind::PingPong,
+        Some(value) => {
+            return Err(AssetError::Manifest(format!(
+                "image {id} has unsupported anim={value:?}"
+            )));
+        }
+    };
+    // ResourceManager uses the longer strip dimension, not cols * rows.
+    let cel_count = usize::try_from(cols.max(rows)).unwrap_or(usize::MAX);
+    if cel_count == 0 || cel_count > 2048 {
+        return Err(AssetError::Manifest(format!(
+            "image {id} animation strip is too large"
+        )));
+    }
+    let explicit_map = animation_list(attrs, "framemap")?;
+    let frames: Vec<Option<u32>> = if kind == AnimationKind::PingPong && cel_count > 1 {
+        (0..cel_count)
+            .chain((1..cel_count - 1).rev())
+            .map(|cel| Some(cel as u32))
+            .collect()
+    } else if !explicit_map.is_empty() {
+        explicit_map
+            .into_iter()
+            .map(|cel| match cel {
+                -1 => Ok(None),
+                0.. => u32::try_from(cel)
+                    .ok()
+                    .filter(|cel| *cel < cols.max(rows))
+                    .map(Some)
+                    .ok_or_else(|| {
+                        AssetError::Manifest(format!("image {id} has invalid framemap cel {cel}"))
+                    }),
+                _ => Err(AssetError::Manifest(format!(
+                    "image {id} has invalid framemap cel {cel}"
+                ))),
+            })
+            .collect::<Result<_, _>>()?
+    } else {
+        (0..cel_count).map(|cel| Some(cel as u32)).collect()
+    };
+    if frames.is_empty() || frames.len() > 4096 {
+        return Err(AssetError::Manifest(format!(
+            "image {id} animation sequence is invalid"
+        )));
+    }
+    let frame_delay = animation_number(attrs, "framedelay")?.max(1);
+    let mut delays = vec![frame_delay; frames.len()];
+    for (index, value) in animation_list(attrs, "perframedelay")?
+        .into_iter()
+        .take(delays.len())
+        .enumerate()
+    {
+        if value > 0 {
+            delays[index] = value as u32;
+        }
+    }
+    let begin_delay = animation_number(attrs, "begindelay")?;
+    if begin_delay > 0 {
+        delays[0] = begin_delay;
+    }
+    let end_delay = animation_number(attrs, "enddelay")?;
+    if end_delay > 0 {
+        *delays.last_mut().expect("nonempty sequence") = end_delay;
+    }
+    let duration_ticks = delays.iter().map(|delay| u64::from(*delay)).sum();
+    Ok(Some(AnimationInfo {
+        kind,
+        frames,
+        delays,
+        duration_ticks,
+    }))
 }
 
 fn parse_attributes(input: &str) -> Result<HashMap<String, String>, AssetError> {
