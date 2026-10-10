@@ -2,6 +2,10 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-10 — Add game license notice
+
+At the user's request, README now states directly below the title that this project requires a valid Insaniquarium Deluxe license and links to the supplied Steam purchase page. The host-validated `scripts/Test-Workflow.ps1` passed, and the scoped `git diff --check` passed. This documentation change requires no runtime checks; the current implementation handoff remains in STATUS.
+
 ## 2026-10-10 — Verify fourth-slot and preserve current31
 
 E99 implements [C1–C4](docs/extra-pets.md#fourth-slot-integration-contract) in `src/{adventure,app,bonus,cli,sim}.rs` and `tests/persistence.rs`. An explicit capacity outcome debits40,000 shells once at cursor4, advances to5 and raises Profile capacity to4 without a pet unlock or actor spawn. Ordinary/replay and initial TT selectors/generalized Board constructors consume four choices; narrower stage guards, acquired TT eggs and Tank5's fixed18 suffix retain their contracts. Earned unlock ordering counts the four pet purchases separately from the capacity receipt. Cursor5 is unavailable until VT exists. Current31 adds no migration/default/backfill.

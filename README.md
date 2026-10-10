@@ -1,5 +1,7 @@
 # Turbofish Deluxe
 
+This project requires a valid license for Insaniquarium Deluxe. You can purchase the game on [Steam](https://store.steampowered.com/app/3320/Insaniquarium_Deluxe/).
+
 An intended standalone Rust reimplementation of Insaniquarium Deluxe, targeting Windows first and reading assets from each user's owned installation. This is an unofficial fan project, unaffiliated with the game's developers or publisher.
 
 The workflow is installed. Normal-speed Rust runs cover earned1-1 through2-5 completion, feeding/growth/currency, Stinky/Niko/Oscar/Itchy/Prego/Zorf/Clyde/Starcatcher/Vert/Rufus/Meryl, weak/strong/Balrog/Gus/Destructor combat and missiles, upgrades, Wadsworth hatch/ten-pet selection, both shell bonuses/results, Potion→Star and save/reload. A separate controlled run exercises the finale's paired aliens. Fish facing was corrected and visually checked. Full gameplay fidelity remains unverified. Installed binaries are authoritative and WinFish is secondary. See [STATUS.md](STATUS.md) for evidence and gaps.
