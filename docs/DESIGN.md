@@ -39,6 +39,8 @@ Build a disposable preview from the selected profile's actual Virtual Tank. Clon
 
 Keep Windows registration, `.scr` entry/embedding and OS activation separately visible until their backend is implemented; an in-app preview cannot claim installed screensaver support. Local code must not alter the current Windows configuration or original installation while implementing these paths. Exact original rendering, coin caps, rotation/reposition, native embedding and audible behavior remain deferred where unverified. The next increment integrates settings/preview before that OS boundary.
 
+The subsequent Windows host uses a narrow platform crate for native window parenting/sizing and screensaver command dispatch, keeping unsafe FFI outside the simulation crate. Reuse the installed graphics/window dependency and pinned Windows bindings where possible. `/s` runs a disposable full-screen VT; `/p <HWND>` embeds only the project-owned child in the supplied preview parent; `/c` opens project preferences. Input dismissal and parent lifetime are host concerns, not gameplay actions. Runtime registration must not change system settings during development; packaging/activation is a separately explicit operation. Do not present unsupported native paths as implemented.
+
 ## Sandbox integration decisions
 
 [Sandbox/Relax](sandbox.md) owns admission, keyboard/setup/save boundaries. Keep Sandbox distinct from the Relax flag, and require the actual cursor>5 gate. Its Board is disposable and cannot overwrite the retained Adventure scene. Capacity11 is the recovered floor; ordinary/VT consumers retain4/7 limits. Relax setup can be represented internally while its retail activation remains unknown; no guessed selector unlock.

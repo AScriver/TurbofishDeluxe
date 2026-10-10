@@ -16,6 +16,7 @@ use crate::{
     oscar::OscarPose,
     profiles::{Profiles, ScoreTab},
     sandbox::{EntryCode, SelectorKey},
+    screensaver::{ScreensaverPreview, ScreensaverSettings, ScreensaverSettingsFile},
     settings::{GameSettings, SettingChange, SettingsBackend, SettingsCapabilities, SettingsSave},
     sim::{
         Action, AdventureState, CoinKind, Event, FishPose, FishSize, FoodType, PetKind, TICK_MS,
@@ -3629,7 +3630,7 @@ impl Presentation {
         }
     }
 
-    fn draw_virtual_tank(&self, session: &AdventureSession) {
+    fn draw_virtual_tank(&self, session: &AdventureSession, preview: bool) {
         let background = match session.virtual_tank.backdrop {
             0 => "IMAGE_AQUARIUM1",
             1 => "IMAGE_AQUARIUM2",
@@ -3874,6 +3875,9 @@ impl Presentation {
                 }
             }
             self.draw_virtual_combat(&board.combat.wave, &board.combat.missiles);
+        }
+        if preview {
+            return;
         }
         draw_rectangle(0.0, 0.0, 640.0, 70.0, Color::new(0.02, 0.08, 0.13, 0.94));
         self.centered_text(
@@ -4251,7 +4255,7 @@ impl Presentation {
             | AdventurePhase::VirtualFishSaleConfirm { .. }
             | AdventurePhase::VirtualBackdropSaleConfirm
             | AdventurePhase::VirtualRename { .. }
-            | AdventurePhase::VirtualPrestoDialog { .. } => self.draw_virtual_tank(session),
+            | AdventurePhase::VirtualPrestoDialog { .. } => self.draw_virtual_tank(session, false),
             AdventurePhase::Hatch { pet, updates } => self.draw_hatch(pet, updates),
             AdventurePhase::TankFourFinaleHatch { updates } => self.draw_finale_hatch(updates),
             AdventurePhase::AdventureFinaleInterlude => {
@@ -5074,6 +5078,7 @@ enum SelectorPanel {
     Profiles,
     Options,
     Scores,
+    Screensaver,
 }
 
 #[derive(Clone, Copy)]
@@ -5089,6 +5094,9 @@ enum UiCommand {
     Rename(u64, String),
     Delete(u64),
     Setting(SettingChange),
+    ScreensaverToggle(usize),
+    ScreensaverSave,
+    ScreensaverPreview,
     Stories,
     Quit,
 }
@@ -5559,6 +5567,21 @@ impl SelectorUi {
                             self.page += 1;
                         }
                     }
+                    SelectorPanel::Screensaver => {
+                        for index in 0..4 {
+                            if Rect::new(95.0, 130.0 + index as f32 * 45.0, 445.0, 36.0)
+                                .contains(pointer)
+                            {
+                                return (true, Some(UiCommand::ScreensaverToggle(index)));
+                            }
+                        }
+                        if Rect::new(95.0, 365.0, 180.0, 36.0).contains(pointer) {
+                            return (true, Some(UiCommand::ScreensaverSave));
+                        }
+                        if Rect::new(295.0, 365.0, 180.0, 36.0).contains(pointer) {
+                            return (true, Some(UiCommand::ScreensaverPreview));
+                        }
+                    }
                 }
             }
             return (true, None);
@@ -5590,11 +5613,24 @@ impl SelectorUi {
             if Rect::new(8.0, 44.0, 118.0, 32.0).contains(pointer) {
                 return (true, Some(UiCommand::Stories));
             }
+            if Rect::new(132.0, 44.0, 118.0, 32.0).contains(pointer) {
+                self.panel = Some(SelectorPanel::Screensaver);
+                self.error.clear();
+                return (true, None);
+            }
         }
         (false, None)
     }
 
-    fn draw(&self, profiles: &Profiles, settings: GameSettings, caps: SettingsCapabilities) {
+    fn draw(
+        &self,
+        profiles: &Profiles,
+        settings: GameSettings,
+        caps: SettingsCapabilities,
+        screensaver: ScreensaverSettings,
+        screensaver_dirty: bool,
+        screensaver_load_error: Option<&str>,
+    ) {
         if self.panel.is_none() {
             for (index, title) in ["Profiles", "Options", "Scores", "Help", "Quit"]
                 .into_iter()
@@ -5606,8 +5642,9 @@ impl SelectorUi {
                 );
             }
             ui_button(Rect::new(8.0, 44.0, 118.0, 32.0), "Stories");
+            ui_button(Rect::new(132.0, 44.0, 118.0, 32.0), "Saver");
             if let Some(entry) = profiles.current() {
-                draw_text(format!("Player: {}", entry.name), 140.0, 67.0, 20.0, WHITE);
+                draw_text(format!("Player: {}", entry.name), 260.0, 67.0, 20.0, WHITE);
             }
             return;
         }
@@ -5755,6 +5792,42 @@ impl SelectorUi {
                 ui_button(Rect::new(85.0, 365.0, 85.0, 30.0), "Prev");
                 ui_button(Rect::new(455.0, 365.0, 85.0, 30.0), "Next");
             }
+            SelectorPanel::Screensaver => {
+                draw_text("SCREENSAVER PREVIEW", 85.0, 100.0, 27.0, YELLOW);
+                for (index, (name, enabled)) in [
+                    ("Sound", screensaver.sound),
+                    ("Rotate owned backdrops", screensaver.rotate_backdrops),
+                    ("Periodic dimming", screensaver.periodic_dim),
+                    ("Show collected shells", screensaver.show_money),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    ui_button(
+                        Rect::new(95.0, 130.0 + index as f32 * 45.0, 445.0, 36.0),
+                        &format!("{name}: {}", if enabled { "On" } else { "Off" }),
+                    );
+                }
+                draw_text(
+                    "Power save: unavailable (renderer cadence pending)",
+                    95.0,
+                    339.0,
+                    17.0,
+                    GRAY,
+                );
+                if let Some(error) = screensaver_load_error {
+                    draw_text(format!("Load failed: {error}"), 95.0, 359.0, 16.0, ORANGE);
+                }
+                ui_button(
+                    Rect::new(95.0, 365.0, 180.0, 36.0),
+                    if screensaver_dirty {
+                        "Save changes"
+                    } else {
+                        "Save"
+                    },
+                );
+                ui_button(Rect::new(295.0, 365.0, 180.0, 36.0), "Preview");
+            }
         }
         if !self.error.is_empty() {
             draw_text(&self.error, 85.0, 410.0, 18.0, ORANGE);
@@ -5856,6 +5929,15 @@ pub async fn run(
     let started = get_time();
     let mut start_session_tick = profiles.current().map_or(0, |entry| entry.session.ticks);
     let mut clock = StepClock::new(options.test_speed);
+    let mut preview_clock = StepClock::new(1);
+    let screensaver_path = options.save_dir.join("screensaver.json");
+    let (mut screensaver_file, mut screensaver_load_error) =
+        match ScreensaverSettingsFile::load_or_default(&screensaver_path) {
+            Ok(file) => (file, None),
+            Err(error) => (ScreensaverSettingsFile::default(), Some(error.to_string())),
+        };
+    let mut screensaver_dirty = false;
+    let mut screensaver_preview = None::<ScreensaverPreview>;
     let mut pending_actions = Vec::new();
     let mut paused = false;
     let mut hatch_pointer_owned = false;
@@ -5930,6 +6012,7 @@ pub async fn run(
             None
         };
         let story_was_active = story_browser_open;
+        let preview_was_active = screensaver_preview.is_some();
         if story_was_active {
             match story_input(pointer, &mut story_scroll) {
                 Some(StoryInput::Close) => {
@@ -5955,23 +6038,25 @@ pub async fn run(
                 story_catalog.as_ref(),
             );
         }
-        let (ui_owned_input, ui_command) = if help_was_active || story_was_active {
-            (true, None)
-        } else {
-            selector_ui.input(
-                &profiles,
-                settings.settings,
-                pointer,
-                selector_open,
-                &mut help,
-            )
-        };
+        let (ui_owned_input, ui_command) =
+            if help_was_active || story_was_active || preview_was_active {
+                (true, None)
+            } else {
+                selector_ui.input(
+                    &profiles,
+                    settings.settings,
+                    pointer,
+                    selector_open,
+                    &mut help,
+                )
+            };
         let mut help_active_frame = help_was_active || help.view().is_some();
         let story_active_frame = story_was_active || story_browser_open;
         let mut ui_active = selector_ui.panel.is_some()
             || profiles.current().is_none()
             || help_active_frame
-            || story_active_frame;
+            || story_active_frame
+            || preview_was_active;
         if let Some(exit) = help_exit {
             match exit {
                 HelpExit::Continue => pending_actions.push(Action::Continue),
@@ -6036,6 +6121,45 @@ pub async fn run(
                         },
                     }
                 }
+                UiCommand::ScreensaverToggle(index) => {
+                    let settings = &mut screensaver_file.settings;
+                    match index {
+                        0 => settings.sound = !settings.sound,
+                        1 => settings.rotate_backdrops = !settings.rotate_backdrops,
+                        2 => settings.periodic_dim = !settings.periodic_dim,
+                        3 => settings.show_money = !settings.show_money,
+                        _ => unreachable!("only four supported screensaver switches"),
+                    }
+                    screensaver_dirty = true;
+                    Ok(false)
+                }
+                UiCommand::ScreensaverSave => {
+                    screensaver_file.settings.power_save = false;
+                    match screensaver_file.save(&screensaver_path) {
+                        Ok(()) => {
+                            screensaver_dirty = false;
+                            screensaver_load_error = None;
+                            Ok(false)
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                UiCommand::ScreensaverPreview => {
+                    let source = &profiles.current().ok_or("No current profile")?.session;
+                    let mut preview_settings = screensaver_file.settings;
+                    preview_settings.power_save = false;
+                    match ScreensaverPreview::start(source, preview_settings, wall_seconds()) {
+                        Ok(preview) => {
+                            screensaver_preview = Some(preview);
+                            preview_clock.clear_backlog();
+                            clock.clear_backlog();
+                            song_player.pause((get_time() * 1000.0) as u64);
+                            ui_active = true;
+                            Ok(false)
+                        }
+                        Err(error) => Err(format!("Preview unavailable: {error:?}").into()),
+                    }
+                }
                 UiCommand::Stories => {
                     story_browser = profiles.current().and_then(|entry| {
                         entry
@@ -6073,6 +6197,7 @@ pub async fn run(
                         help = HelpController::new();
                         help_restore_paused = None;
                         story_browser_open = false;
+                        screensaver_preview = None;
                         story_browser = None;
                         story_scroll = 0;
                         last_challenge_story = None;
@@ -6090,6 +6215,105 @@ pub async fn run(
                 }
                 Err(error) => selector_ui.error = error.to_string(),
             }
+        }
+        if screensaver_preview.is_some() {
+            if is_quit_requested() || wall_deadline_reached(elapsed, options.quit_after) {
+                break;
+            }
+            if is_key_pressed(KeyCode::Escape)
+                || (is_mouse_button_pressed(MouseButton::Left)
+                    && Rect::new(485.0, 8.0, 140.0, 34.0).contains(pointer))
+            {
+                screensaver_preview = None;
+                preview_clock.clear_backlog();
+                clock.clear_backlog();
+                if let (Some(owner), Some(entry)) = (music.as_mut(), profiles.current()) {
+                    owner.sync_cue(
+                        presentation_music_cue(
+                            &entry.session,
+                            story_browser_open,
+                            interlude.as_ref(),
+                        ),
+                        paused,
+                    );
+                }
+                next_frame().await;
+                continue;
+            }
+            let preview = screensaver_preview.as_mut().expect("preview checked above");
+            preview_clock.add_frame(get_frame_time(), false);
+            let mut preview_events = Vec::new();
+            while preview_clock.step_due() {
+                preview_clock.consume_step(false);
+                preview_events.extend(preview.advance(wall_seconds()));
+            }
+            let overlay = preview.overlay();
+            if let Some(owner) = music.as_mut() {
+                owner.sync_cue(
+                    if overlay.sound_enabled {
+                        MusicCue::for_session(preview.scene())
+                    } else {
+                        None
+                    },
+                    false,
+                );
+            }
+            let mut reports = if overlay.sound_enabled {
+                presentation.play(&preview_events, music.as_ref())
+            } else {
+                Vec::new()
+            };
+            if let Some(owner) = music.as_mut() {
+                reports.extend(owner.drain_reports());
+            }
+            for report in reports {
+                match report {
+                    MusicReport::Unavailable { reason } => {
+                        music_unavailable.get_or_insert(reason);
+                    }
+                    MusicReport::EffectFailed { reason } | MusicReport::Overload { reason } => {
+                        eprintln!("Screensaver preview audio warning: {reason}");
+                    }
+                    _ => {}
+                }
+            }
+            clear_background(BLACK);
+            let mut camera = Camera2D::from_display_rect(Rect::new(0.0, 0.0, 640.0, 480.0));
+            camera.zoom.y = 2.0 / 480.0;
+            camera.viewport = Some((
+                offset.x as i32,
+                offset.y as i32,
+                (640.0 * scale) as i32,
+                (480.0 * scale) as i32,
+            ));
+            set_camera(&camera);
+            presentation.draw_virtual_tank(preview.scene(), true);
+            if overlay.dim_alpha > 0 {
+                draw_rectangle(
+                    0.0,
+                    0.0,
+                    640.0,
+                    480.0,
+                    Color::from_rgba(0, 0, 0, overlay.dim_alpha),
+                );
+            }
+            draw_text("SCREENSAVER PREVIEW", 16.0, 29.0, 20.0, YELLOW);
+            if let Some(shells) = overlay.shells_collected {
+                draw_text(
+                    format!("Collected shells: {shells}"),
+                    16.0,
+                    458.0,
+                    20.0,
+                    WHITE,
+                );
+            }
+            ui_button(Rect::new(485.0, 8.0, 140.0, 34.0), "Close");
+            if settings.settings.custom_cursor {
+                draw_circle(pointer.x, pointer.y, 5.0, YELLOW);
+            }
+            set_default_camera();
+            next_frame().await;
+            continue;
         }
         if profiles.current().is_none() {
             if is_quit_requested() {
@@ -6112,6 +6336,9 @@ pub async fn run(
                     audio: music.as_ref(),
                 }
                 .capabilities(),
+                screensaver_file.settings,
+                screensaver_dirty,
+                screensaver_load_error.as_deref(),
             );
             if let Some(view) = help.view() {
                 draw_help(view);
@@ -7562,6 +7789,9 @@ pub async fn run(
                     audio: music.as_ref(),
                 }
                 .capabilities(),
+                screensaver_file.settings,
+                screensaver_dirty,
+                screensaver_load_error.as_deref(),
             );
         }
         if let Some(view) = help.view() {

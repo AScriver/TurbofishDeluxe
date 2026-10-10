@@ -10,7 +10,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 
 ## Start here
 
-- Current36 integrates [paged Help and earned Story browsing](docs/shared-interface.md#help-and-earned-stories); four focused cases, lint and build passed. [Virtual Tank](docs/virtual-tank.md), [Sandbox](docs/sandbox.md), [shared profiles/options/scores/songs/ending](docs/shared-interface.md), [Challenge](docs/challenge.md) and [Adventure replay](docs/adventure-replay.md) remain integrated. Next: screensaver settings/preview and remaining functional omissions. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
+- Current36 integrates [paged Help/earned Stories](docs/shared-interface.md#help-and-earned-stories) and [isolated screensaver preferences/preview](docs/screensaver.md). Focused checks/build passed. [Virtual Tank](docs/virtual-tank.md), [Sandbox](docs/sandbox.md), [shared interface/ending](docs/shared-interface.md), [Challenge](docs/challenge.md) and [Adventure replay](docs/adventure-replay.md) remain integrated. Next: Windows screensaver host and remaining functional omissions. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
 - Agents: read [AGENTS.md](AGENTS.md), then follow its startup order.
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).

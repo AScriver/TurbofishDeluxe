@@ -28,6 +28,7 @@ pub mod profiles;
 pub mod rhubarb;
 pub mod rufus;
 pub mod sandbox;
+pub mod screensaver;
 pub mod settings;
 pub mod sim;
 pub mod starcatcher;
