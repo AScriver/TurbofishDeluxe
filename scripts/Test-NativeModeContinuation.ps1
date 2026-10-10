@@ -4,9 +4,10 @@ Runs one leased, isolated current37 mode/save continuation scenario at normal sp
 .DESCRIPTION
 Requires a completed immutable build, prepared-not-earned profile fixture and explicit
 serialized native resource lease. No fixture generator, schema conversion or earned
-progress is supplied. Current helpers cannot observe/capture Title: clicking its
-supported Start route is attempted, but Title appearance/readiness remains unproved.
-Successful conservation checks therefore produce a partial result requiring visual review.
+progress is supplied. Requires the app-owned format1 ui-state.local.json sideband
+and capture-result.local.json same-draw receipt. Title input uses observed ready Start
+bounds; underlying Session phase cannot establish Title/Menu visibility. Native checks
+leave captured-pixel and retail/human judgments for review.
 
 Fixture receipt (schema_version 1, kind native-mode-continuation-fixture) must declare
 save_origin prepared-not-earned, session_format 37, profile_format 3, fixture_directory,
@@ -199,27 +200,108 @@ function Wait-ContinuationState {
         -Description $Description -Predicate $Predicate -TimeoutSeconds (Get-ContinuationBudget)
 }
 
+function Assert-ContinuationUi {
+    param($Playtest, [System.Collections.IDictionary]$Observation)
+    foreach ($field in @('format_version', 'process_id', 'ui_frame', 'wall_elapsed_seconds', 'ui_stage',
+        'title', 'session_tick', 'session_phase', 'coordinate_space')) {
+        if (-not $Observation.Contains($field)) { throw "UI observation missing $field; supporting format1 build required." }
+    }
+    if ($Observation.format_version -ne 1 -or $Observation.process_id -ne $Playtest.Process.Id -or
+        $Observation.ui_frame -isnot [long] -or $Observation.ui_frame -lt 1 -or
+        $Observation.ui_stage -cnotin @('Title', 'Menu', 'Scene', 'ScreensaverPreview') -or
+        $Observation.coordinate_space.width -ne 640 -or $Observation.coordinate_space.height -ne 480 -or
+        -not [double]::IsFinite($Observation.wall_elapsed_seconds) -or $Observation.wall_elapsed_seconds -lt 0) {
+        throw 'UI observation differs in schema/owned PID/frame/coordinate/timing identity.'
+    }
+    if ($Observation.ui_stage -ceq 'Title') {
+        if ($null -ne $Observation.session_tick -or $null -ne $Observation.session_phase -or $null -eq $Observation.title) {
+            throw 'Title observation must have Title payload and null Session identity.'
+        }
+        foreach ($field in @('loading_status', 'completed_tasks', 'total_tasks', 'ready', 'start_visible', 'start_bounds', 'start_hovered', 'start_pressed')) {
+            if (-not $Observation.title.Contains($field)) { throw "Title observation missing $field." }
+        }
+        if ($Observation.title.ready -isnot [bool] -or $Observation.title.start_visible -isnot [bool] -or
+            $Observation.title.loading_status -cnotin @('Running', 'Succeeded', 'Failed')) { throw 'Invalid Title readiness/status types.' }
+        if ($Observation.title.loading_status -ceq 'Failed') { throw 'Observed Title loading failure; no input is admitted.' }
+    } elseif ($null -ne $Observation.title -or $null -eq $Observation.session_tick -or $null -eq $Observation.session_phase) {
+        throw 'This profile scenario requires non-Title UI observations with retained Session identity.'
+    }
+}
+
+function Wait-ContinuationUi {
+    param($Playtest, [string]$Stage, [long]$AfterFrame = -1, [double]$Limit = 5, [switch]$ReadyTitle)
+    $waitTimer = [System.Diagnostics.Stopwatch]::StartNew()
+    $waitLimit = Get-ContinuationBudget -Limit $Limit
+    $lastReadError = $null
+    do {
+        $Playtest.Process.Refresh()
+        if ($Playtest.Process.HasExited) { throw "Process exited awaiting actual $Stage UI draw." }
+        $observation = $null
+        try { $observation = Read-TurbofishJson $Playtest.UiStatePath }
+        catch [System.IO.IOException] { $lastReadError = $_.Exception.Message }
+        catch [System.ArgumentException] { $lastReadError = $_.Exception.Message }
+        if ($null -ne $observation) {
+            Assert-ContinuationUi $Playtest $observation
+            $titleAdmitted = -not $ReadyTitle -or ($observation.ui_stage -ceq 'Title' -and
+                $observation.title.start_visible -and $observation.title.ready -and $observation.title.loading_status -ceq 'Succeeded')
+            if ($observation.ui_stage -ceq $Stage -and $observation.ui_frame -gt $AfterFrame -and $titleAdmitted) {
+                return $observation
+            }
+        }
+        Start-Sleep -Milliseconds 25
+    } while ($waitTimer.Elapsed.TotalSeconds -lt $waitLimit)
+    throw "Timed out awaiting fresh owned-PID $Stage UI frame after $AfterFrame; format1 UI build required; last read error: $lastReadError"
+}
+
+function Wait-ContinuationScene {
+    param($Playtest, [long]$AfterMenuFrame, [string]$Phase)
+    $observation = Wait-ContinuationUi -Playtest $Playtest -Stage Scene -AfterFrame $AfterMenuFrame
+    if ($observation.session_phase -cne $Phase) { throw "Actual Scene draw is not expected phase $Phase." }
+    $checks.Add([ordered]@{ description = 'fresh owned-PID Menu-to-Scene transition'; result = 'passed'
+        after_menu_ui_frame = $AfterMenuFrame; scene_ui_frame = $observation.ui_frame; session_phase = $observation.session_phase })
+    return $observation
+}
+
 function Save-ContinuationCheckpoint {
-    param($Playtest, [string]$Name)
+    param($Playtest, [string]$Name, [ValidateSet('Title', 'Menu', 'Scene')][string]$Stage = 'Menu', [long]$AfterUiFrame = -1)
+    $beforeUi = Wait-ContinuationUi -Playtest $Playtest -Stage $Stage -AfterFrame $AfterUiFrame
     $framePath = Request-TurbofishCapture -Playtest $Playtest -TimeoutSeconds (Get-ContinuationBudget -Limit 3)
-    $sample = Read-TurbofishJson $Playtest.StatePath
-    Assert-TurbofishSnapshot $sample
+    $captureReceiptPath = Join-Path $Playtest.EvidenceDirectory 'capture-result.local.json'
+    $captureReceipt = Read-TurbofishJson $captureReceiptPath
+    $observation = $captureReceipt.observation
+    Assert-ContinuationUi $Playtest $observation
+    $expectedFrameName = 'frame-ui-{0}-{1:000000}.png' -f $Playtest.Process.Id, $observation.ui_frame
+    if ($captureReceipt.frame -cne [System.IO.Path]::GetFileName($framePath) -or $captureReceipt.frame -cne $expectedFrameName -or
+        $observation.ui_stage -cne $Stage -or $observation.ui_frame -le $beforeUi.ui_frame) {
+        throw 'Capture is not the requested fresh owned-PID stage with a matching same-draw receipt.'
+    }
+    $sample = $null
+    $eventRecord = $null
+    if ($Stage -cne 'Title') {
+        $sample = Read-TurbofishJson $Playtest.StatePath
+        Assert-TurbofishSnapshot $sample
+        if ($Stage -ceq 'Menu' -and ($sample.session_tick -ne $observation.session_tick -or
+            ($sample.phase | ConvertTo-Json -Compress -Depth 100) -cne ($observation.session_phase | ConvertTo-Json -Compress -Depth 100))) {
+            throw 'Frozen Menu live Session identity differs from its actual captured draw.'
+        }
+        $sample['ui_observation'] = $observation
+        $eventRecord = Get-ContinuationFile (Join-Path $Playtest.EvidenceDirectory 'events.local.jsonl')
+    }
     $retainedFrame = Join-Path $captureRoot ($Name + '.png')
     if (Test-Path -LiteralPath $retainedFrame) { throw 'Checkpoint frame already exists.' }
     $frameRecord = Get-ContinuationFile $framePath
-    # Runtime names frames by tick. Menus freeze that tick. Retain the consumed
-    # frame under its checkpoint name, so the shared helper can require a new
-    # native filename on the next request, even at the same frozen tick.
-    Move-Item -LiteralPath $framePath -Destination $retainedFrame -ErrorAction Stop
+    # Unique UI-frame native captures stay in evidence for standard manifests.
+    # A checked checkpoint copy and receipt preserve exact selected pixels/binding.
+    Copy-Item -LiteralPath $framePath -Destination $retainedFrame -ErrorAction Stop
     $retainedRecord = Get-ContinuationFile $retainedFrame $frameRecord.sha256
-    $eventRecord = Get-ContinuationFile (Join-Path $Playtest.EvidenceDirectory 'events.local.jsonl')
     $checkpoint = [ordered]@{ name = $Name; process_id = $Playtest.Process.Id; captured_utc = [DateTimeOffset]::UtcNow.ToString('o')
-        frame = $retainedRecord; native_frame_name = [System.IO.Path]::GetFileName($framePath); sample = $sample
+        frame = $retainedRecord; native_frame = $frameRecord; capture_receipt = $captureReceipt; sample = $sample
         events_prefix = $eventRecord; inputs_path = $Playtest.InputLogPath
-        snapshot_freshness = 'consumed capture confirms a new physical frame; frozen UI has no distinct live route field'
-        visual_verdict = 'not reviewed; capture files alone do not prove visible route/acceptance' }
+        ui_freshness = 'owned PID, increasing ui_frame, explicit stage and exact PNG/same-draw observation binding'
+        visual_verdict = 'not reviewed; UI observation/capture files alone do not establish pixel fidelity' }
     $checkpointPath = Write-ContinuationJson -Name ($Name + '.local.json') -Value $checkpoint
     $checkpoints.Add([ordered]@{ name = $Name; path = $checkpointPath; frame = $retainedRecord })
+    if ($Stage -ceq 'Title') { return $observation }
     return $sample
 }
 
@@ -246,7 +328,8 @@ function Invoke-ContinuationProcess {
     if (-not $retainedProcess.Start()) { throw 'Owned project process did not start.' }
     $playtest = [pscustomobject]@{ Process = $retainedProcess; RunDirectory = $processRoot; EvidenceDirectory = $evidenceRoot
         SavePath = $savePath; StatePath = (Join-Path $evidenceRoot 'state.local.json')
-        InputLogPath = (Join-Path $processRoot 'inputs.local.jsonl'); Cleanup = $null; TestSpeed = $TestSpeed }
+        InputLogPath = (Join-Path $processRoot 'inputs.local.jsonl'); UiStatePath = (Join-Path $evidenceRoot 'ui-state.local.json')
+        Cleanup = $null; TestSpeed = $TestSpeed }
     $ownedProcesses.Add($playtest)
     [ordered]@{ process_id = $retainedProcess.Id; arguments = $nativeArguments; executable = $executableRecord
         build_receipt = $buildRecord; fixture_receipt = $fixtureRecord; native_lease = $leaseRecord
@@ -270,31 +353,28 @@ function Invoke-ContinuationProcess {
 function Open-ContinuationStartup {
     param($Playtest, [string]$Name)
     $identityPath = Join-Path $Playtest.EvidenceDirectory 'identity.local.json'
-    $startTimer = [System.Diagnostics.Stopwatch]::StartNew()
-    $startLimit = Get-ContinuationBudget -Limit 30
-    $nextClickAt = 0.0
-    do {
-        $Playtest.Process.Refresh()
-        if ($Playtest.Process.HasExited) { throw 'Process exited awaiting Title Start/main-loop evidence.' }
-        if (Test-Path -LiteralPath $identityPath -PathType Leaf) { break }
-        if ($startTimer.Elapsed.TotalSeconds -ge $nextClickAt) {
-            # Source authority: TitleScreen's actual loader-bar Start rectangle,
-            # x180/y415. This point is outside selector mode/dialog buttons.
-            Send-TurbofishClick -Playtest $Playtest -X 320 -Y 425 -Reason 'attempt Title Start captured press/release; no Title observation claim'
-            $nextClickAt = $startTimer.Elapsed.TotalSeconds + 0.75
-        }
-        Start-Sleep -Milliseconds 25
-    } while ($startTimer.Elapsed.TotalSeconds -lt $startLimit)
-    if (-not (Test-Path -LiteralPath $identityPath -PathType Leaf)) { throw 'Title Start route produced no main-loop identity; no input/focus bypass attempted.' }
+    $readyTitle = Wait-ContinuationUi -Playtest $Playtest -Stage Title -ReadyTitle -Limit 30
+    $capturedTitle = Save-ContinuationCheckpoint -Playtest $Playtest -Name ($Name + '-title') -Stage Title -AfterUiFrame $readyTitle.ui_frame
+    if (-not $capturedTitle.title.start_visible -or -not $capturedTitle.title.ready -or $capturedTitle.title.loading_status -cne 'Succeeded') {
+        throw 'Captured Title is not ready for Start input.'
+    }
+    $startBounds = $capturedTitle.title.start_bounds
+    foreach ($field in @('x', 'y', 'width', 'height')) { if (-not $startBounds.Contains($field)) { throw "Observed Start bounds missing $field." } }
+    if ($startBounds.width -le 0 -or $startBounds.height -le 0 -or $startBounds.x -lt 0 -or $startBounds.y -lt 0 -or
+        $startBounds.x + $startBounds.width -gt 640 -or $startBounds.y + $startBounds.height -gt 480) { throw 'Observed Start rectangle is outside logical viewport.' }
+    $startX = $startBounds.x + $startBounds.width / 2.0
+    $startY = $startBounds.y + $startBounds.height / 2.0
+    Send-TurbofishClick -Playtest $Playtest -X $startX -Y $startY -Reason 'ready Title Start press/release in observed same-draw bounds'
+    $menuUi = Wait-ContinuationUi -Playtest $Playtest -Stage Menu -AfterFrame $capturedTitle.ui_frame
     $identity = Read-TurbofishJson $identityPath
     if ($identity.rust_executable_sha256 -ine $ExecutableSha256 -or $identity.test_speed -ne 1 -or $identity.time_mode -cne 'normal') {
         throw 'Runtime identity does not match leased normal1x executable.'
     }
     $null = Wait-TurbofishState -Playtest $Playtest -Description 'complete main-loop snapshot after Title route' `
         -Predicate { param($sample) $sample.phase -ceq 'Playing' -and $null -ne $sample.state } -TimeoutSeconds (Get-ContinuationBudget)
-    $null = Save-ContinuationCheckpoint -Playtest $Playtest -Name $Name
-    # No UI route field exists. Neither this Playing snapshot nor elapsed time
-    # establishes Title/menu appearance. Review the retained selector pixels.
+    $null = Save-ContinuationCheckpoint -Playtest $Playtest -Name $Name -Stage Menu -AfterUiFrame $menuUi.ui_frame
+    $checks.Add([ordered]@{ description = 'ready Title input and fresh owned-PID Title-to-Menu draw transition'; result = 'passed'
+        title_ui_frame = $capturedTitle.ui_frame; menu_ui_frame = $menuUi.ui_frame; observed_start_bounds = $startBounds })
     return $identity
 }
 
@@ -322,9 +402,11 @@ function Suspend-ContinuationBoard {
 
 function Open-ContinuationMenu {
     param($Playtest, [string]$Name)
+    $sceneUi = Wait-ContinuationUi -Playtest $Playtest -Stage Scene
     Send-TurbofishClick -Playtest $Playtest -X 575 -Y 17 -Reason 'open actual transient tank Menu'
-    $firstSample = Save-ContinuationCheckpoint -Playtest $Playtest -Name ($Name + '-open')
-    $secondSample = Save-ContinuationCheckpoint -Playtest $Playtest -Name ($Name + '-hold')
+    $menuUi = Wait-ContinuationUi -Playtest $Playtest -Stage Menu -AfterFrame $sceneUi.ui_frame
+    $firstSample = Save-ContinuationCheckpoint -Playtest $Playtest -Name ($Name + '-open') -Stage Menu -AfterUiFrame $menuUi.ui_frame
+    $secondSample = Save-ContinuationCheckpoint -Playtest $Playtest -Name ($Name + '-hold') -Stage Menu -AfterUiFrame $firstSample.ui_observation.ui_frame
     Assert-ContinuationEqual 'transient Menu freezes actual phase/tick/progress/Board between consumed frames' `
         ([ordered]@{ tick = $firstSample.session_tick; phase = $firstSample.phase; progress = $firstSample.progress; board = $firstSample.state; paused = $firstSample.paused }) `
         ([ordered]@{ tick = $secondSample.session_tick; phase = $secondSample.phase; progress = $secondSample.progress; board = $secondSample.state; paused = $secondSample.paused })
@@ -478,19 +560,22 @@ try {
         fixture = $fixtureRecord; source_current_profile_id = $sourceCurrent.id; lease = $leaseRecord; driver_sha256 = $driverSha256
         helper_sha256 = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'Playtest-Helpers.ps1')).Hash
         save_origin = 'prepared-not-earned'; test_speed = $TestSpeed; muted = [bool]$Mute; purpose = 'normal1x native UI/save timing'
-        title_capability = 'no Title telemetry/capture hook in current helpers; Title acceptance remains not tested' })
+        ui_capability = 'app-owned ui-state.local.json format1 and same-draw capture-result.local.json required; native check unperformed until leased' })
 
     $firstProcess = Invoke-ContinuationProcess 1
     $firstIdentity = Open-ContinuationStartup $firstProcess 'startup-menu'
     Assert-ContinuationReopen $sourceSession $firstIdentity.start
     $firstMenu = Read-TurbofishJson $firstProcess.StatePath
+    $firstMenuUi = Wait-ContinuationUi -Playtest $firstProcess -Stage Menu
     $saveToken = Get-ContinuationSaveToken
     Send-TurbofishClick -Playtest $firstProcess -X 465 -Y 81 -Reason 'same-mode Adventure resume from startup Menu'
     $sameModeSave = Wait-ContinuationSave $firstProcess $saveToken 'Adventure' 'Playing'
     Assert-ContinuationEqual 'same-mode startup resume preserves complete active scene' (Get-ContinuationScene $firstIdentity.start) (Get-ContinuationScene (Get-ContinuationCurrent $sameModeSave).session)
+    $firstSceneUi = Wait-ContinuationScene $firstProcess $firstMenuUi.ui_frame 'Playing'
     $adventureLive = Wait-ContinuationState $firstProcess $firstMenu.session_tick 'normal-speed Adventure resume advances Board' {
         param($sample) -not $sample.paused -and $sample.phase -ceq 'Playing' -and $sample.state.tick -ge $firstMenu.state.tick + 3
     }
+    $null = Save-ContinuationCheckpoint -Playtest $firstProcess -Name 'adventure-live' -Stage Scene -AfterUiFrame $firstSceneUi.ui_frame
     $adventurePaused = Suspend-ContinuationBoard $firstProcess $adventureLive 'Playing'
     $adventureMenu = Open-ContinuationMenu $firstProcess 'adventure-menu'
     if ($adventureMenu.state.tick -ne $adventurePaused.state.tick) { throw 'Opening Menu evolved paused Adventure Board clock.' }
@@ -504,10 +589,11 @@ try {
     Assert-ContinuationEqual 'Menu route parks full Adventure payload without an extra Board update' $expectedAdventure $parkedAdventure
     Assert-ContinuationEqual 'TT route resumes supplied retained payload' $sourceSession.retained_time_trial (Get-ContinuationScene $timeTrialSession)
     if ($timeTrialSession.ticks -ne $adventureMenu.session_tick -or $null -ne $timeTrialSession.retained_time_trial) { throw 'Route invented a tick or duplicated TT ownership.' }
+    $timeTrialSceneUi = Wait-ContinuationScene $firstProcess $adventureMenu.ui_observation.ui_frame 'TimeTrialPlaying'
     $ttLive = Wait-ContinuationState $firstProcess $adventureMenu.session_tick 'normal-speed TT Board progresses' {
         param($sample) -not $sample.paused -and $sample.phase -ceq 'TimeTrialPlaying' -and $sample.state.tick -ge $sourceSession.retained_time_trial.board.tick + 3
     }
-    $null = Save-ContinuationCheckpoint $firstProcess 'time-trial-live'
+    $null = Save-ContinuationCheckpoint -Playtest $firstProcess -Name 'time-trial-live' -Stage Scene -AfterUiFrame $timeTrialSceneUi.ui_frame
     $ttPaused = Suspend-ContinuationBoard $firstProcess $ttLive 'TimeTrialPlaying'
     $ttMenu = Open-ContinuationMenu $firstProcess 'time-trial-menu'
     if ($ttMenu.state.tick -ne $ttPaused.state.tick) { throw 'Opening Menu evolved paused TT Board clock.' }
@@ -521,6 +607,7 @@ try {
     if ($returnSession.ticks -ne $ttMenu.session_tick -or $null -ne $returnSession.retained_adventure -or $parkedTimeTrial.phase -cne 'TimeTrialPlaying') {
         throw 'Return route invented a tick or duplicated active Adventure ownership.'
     }
+    $null = Wait-ContinuationScene $firstProcess $ttMenu.ui_observation.ui_frame 'Playing'
     $adventureReturned = Wait-ContinuationState $firstProcess $ttMenu.session_tick 'returned Adventure Board advances' {
         param($sample) -not $sample.paused -and $sample.phase -ceq 'Playing' -and $sample.state.tick -ge $parkedAdventure.board.tick + 3
     }
@@ -539,13 +626,16 @@ try {
     Assert-ContinuationReopen $closedSession $secondIdentity.start
     Assert-ContinuationEqual 'parked TT conserved through actual graceful file reopen' $parkedTimeTrial $secondIdentity.start.retained_time_trial
     $secondMenu = Read-TurbofishJson $secondProcess.StatePath
+    $secondMenuUi = Wait-ContinuationUi -Playtest $secondProcess -Stage Menu
     $saveToken = Get-ContinuationSaveToken
     Send-TurbofishClick -Playtest $secondProcess -X 465 -Y 81 -Reason 'same-mode Adventure resume after actual file reopen'
     $reopenedSave = Wait-ContinuationSave $secondProcess $saveToken 'Adventure' 'Playing'
     Assert-ContinuationEqual 'reopened same-mode resume preserves full conserved scene' (Get-ContinuationScene $secondIdentity.start) (Get-ContinuationScene (Get-ContinuationCurrent $reopenedSave).session)
+    $reopenedSceneUi = Wait-ContinuationScene $secondProcess $secondMenuUi.ui_frame 'Playing'
     $reopenedLive = Wait-ContinuationState $secondProcess $secondMenu.session_tick 'reopened Adventure resumes at normal speed' {
         param($sample) -not $sample.paused -and $sample.phase -ceq 'Playing' -and $sample.state.tick -ge $closedSession.board.tick + 3
     }
+    $null = Save-ContinuationCheckpoint -Playtest $secondProcess -Name 'reopened-adventure-live' -Stage Scene -AfterUiFrame $reopenedSceneUi.ui_frame
     $reopenedPaused = Suspend-ContinuationBoard $secondProcess $reopenedLive 'Playing'
     Send-TurbofishKey -Playtest $secondProcess -Key Escape
     $resumedAfterPause = Wait-ContinuationState $secondProcess $reopenedPaused.session_tick 'explicit Escape unpause after reopen' {
@@ -599,10 +689,11 @@ finally {
             $null = Write-ContinuationJson 'event-index.local.json' $events.ToArray()
         }
         catch { $failureMessage = "$failureMessage Event review error: $($_.Exception.Message)" }
-        $result = [ordered]@{ result = $(if ($failureMessage) { 'failed' } else { 'partial' }); failure = $failureMessage
+        $result = [ordered]@{ result = $(if ($failureMessage) { 'failed' } else { 'passed-awaiting-visual-review' }); failure = $failureMessage
             scope = 'prepared current37 mode/save/pause native conservation; no earned progression or full runtime acceptance'
-            native_conservation = $(if ($failureMessage) { 'failed/incomplete' } else { 'passed' }); title_observation = 'not tested: no Title telemetry/capture hook'
-            menu_visuals = 'pending pixel review; underlying Playing snapshot is not menu visibility evidence'
+            native_conservation = $(if ($failureMessage) { 'failed/incomplete' } else { 'passed' })
+            title_menu_stage_checks = $(if ($failureMessage) { 'failed/incomplete' } else { 'passed: owned PID, fresh UI frame, observed ready bounds and same-draw captures' })
+            captured_visuals = 'pending pixel review; stage telemetry does not establish pixel fidelity'
             retail_audio_human = 'not tested'; test_speed = 1; time_mode = 'normal'; wall_elapsed_seconds = $scenarioTimer.Elapsed.TotalSeconds
             checks = $checks.ToArray(); checkpoints = $checkpoints.ToArray(); cleanup = @($ownedProcesses | ForEach-Object { $_.Cleanup })
             immutable_inputs = $immutableInputs.ToArray(); save_origin = 'prepared-not-earned' }
