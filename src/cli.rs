@@ -141,7 +141,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 31;
+pub const SAVE_FORMAT_VERSION: u32 = 32;
 
 #[cfg(test)]
 mod current_twenty_one_tests {
@@ -229,7 +229,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             );
         }
     }
-    if version_number.is_some_and(|version| (24..=31).contains(&version)) {
+    if version_number.is_some_and(|version| (24..=32).contains(&version)) {
         let session = value
             .get("session")
             .and_then(serde_json::Value::as_object)
@@ -254,7 +254,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Older save cannot claim Time Trial mode".into());
     }
-    if version_number.is_some_and(|version| (26..=31).contains(&version))
+    if version_number.is_some_and(|version| (26..=32).contains(&version))
         && (value
             .pointer("/session/progress/adventure_completions")
             .is_none()
@@ -269,7 +269,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Incomplete format-twenty-six replay state".into());
     }
-    if version_number.is_some_and(|version| (27..=31).contains(&version)) {
+    if version_number.is_some_and(|version| (27..=32).contains(&version)) {
         let purchase = |result: &serde_json::Value| {
             result.get("purchase").is_some_and(|receipt| {
                 ["offered_cursor", "confirming", "purchased"]
@@ -298,7 +298,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             return Err("Incomplete format-twenty-seven purchase or Brinkley state".into());
         }
     }
-    if version_number.is_some_and(|version| (28..=31).contains(&version))
+    if version_number.is_some_and(|version| (28..=32).contains(&version))
         && (value
             .pointer("/session/board/fish_pets")
             .and_then(serde_json::Value::as_array)
@@ -326,7 +326,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Incomplete format-twenty-eight Nostradamus state".into());
     }
-    if version_number.is_some_and(|version| (29..=31).contains(&version))
+    if version_number.is_some_and(|version| (29..=32).contains(&version))
         && (value
             .pointer("/session/board/fish_pets")
             .and_then(serde_json::Value::as_array)
@@ -357,7 +357,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Incomplete format-twenty-nine Stanley state".into());
     }
-    if version_number.is_some_and(|version| (30..=31).contains(&version))
+    if version_number.is_some_and(|version| (30..=32).contains(&version))
         && value
             .pointer("/session/board")
             .filter(|board| !board.is_null())
@@ -401,6 +401,36 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
         })
     {
         return Err("Fourth-slot purchase requires format thirty-one".into());
+    }
+    if version_number.is_some_and(|version| version < 32)
+        && (value.pointer("/session/challenge").is_some()
+            || value.pointer("/session/challenge_scores").is_some()
+            || value
+                .pointer("/session/progress/challenge_completed")
+                .is_some()
+            || value.pointer("/session/board/challenge_shop").is_some())
+    {
+        return Err("Challenge state requires format thirty-two".into());
+    }
+    if version_number == Some(32)
+        && (value.pointer("/session/challenge").is_none()
+            || value.pointer("/session/challenge_scores").is_none()
+            || value
+                .pointer("/session/challenge")
+                .filter(|run| !run.is_null())
+                .is_some_and(|run| run.get("result").is_none())
+            || value
+                .pointer("/session/progress/challenge_completed")
+                .and_then(serde_json::Value::as_array)
+                .is_none_or(|flags| {
+                    flags.len() != 4 || flags.iter().any(|flag| !flag.is_boolean())
+                })
+            || value
+                .pointer("/session/board")
+                .filter(|board| !board.is_null())
+                .is_some_and(|board| board.get("challenge_shop").is_none()))
+    {
+        return Err("Incomplete format-thirty-two Challenge state".into());
     }
     if let Some(version @ 1..=6) = version_number {
         validate_legacy_boundary(&value, version)?;
@@ -498,7 +528,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=31) => {
+        Some(version @ 5..=32) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -840,6 +870,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     29 => "twenty-nine",
                     30 => "thirty",
                     31 => "thirty-one",
+                    32 => "thirty-two",
                     _ => unreachable!("bounded format range"),
                 };
                 return Err(format!(

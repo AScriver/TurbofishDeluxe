@@ -590,6 +590,129 @@ fn current_bytes(session: AdventureSession) -> Vec<u8> {
     .unwrap()
 }
 
+#[test]
+fn current_challenge_requires_state_keys_and_resumes_shop_and_clock() {
+    // Prepared post-Adventure fixture; this is a project contract test, not earned retail evidence.
+    let mut session = prepared_tank_five_session(0);
+    session.progress.level = 2;
+    session.progress.adventure_completed = true;
+    session.progress.adventure_completions = 1;
+    session.progress.unlocked_pets.push(PetKind::Presto);
+    session.board = None;
+    session.phase = AdventurePhase::GameSelector;
+    session.validate().unwrap();
+    let mut time_trial_selector = session.clone();
+    time_trial_selector.apply_actions(&[Action::PlayTimeTrial]);
+    assert_eq!(
+        time_trial_selector.phase,
+        AdventurePhase::TimeTrialTankSelection
+    );
+    time_trial_selector.validate().unwrap();
+    session.apply_actions(&[
+        Action::PlayChallenge,
+        Action::SelectChallengeTank { tank: 1 },
+        Action::TogglePet {
+            pet: PetKind::Stinky,
+        },
+        Action::TogglePet { pet: PetKind::Niko },
+        Action::TogglePet {
+            pet: PetKind::Itchy,
+        },
+        Action::Continue,
+    ]);
+    assert_eq!(session.phase, AdventurePhase::ChallengePlaying);
+    let mut forged_wave = session.clone();
+    let wave = &mut forged_wave
+        .board
+        .as_mut()
+        .unwrap()
+        .invasion
+        .as_mut()
+        .unwrap()
+        .plan;
+    let turbofish_deluxe::invasion::WavePlan::Challenge { wave_count, .. } = wave else {
+        panic!("fresh Challenge wave");
+    };
+    *wave_count = 1;
+    assert!(forged_wave.validate().is_err());
+    assert!(cli::decode_save(&current_bytes(forged_wave)).is_err());
+    session.step(&[]);
+    session.validate().unwrap();
+    time_trial_selector.challenge = session.challenge.clone();
+    assert!(time_trial_selector.validate().is_err());
+    assert!(cli::decode_save(&current_bytes(time_trial_selector)).is_err());
+    let value = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: session.clone(),
+    })
+    .unwrap();
+    for (path, invalid) in [
+        ("/session/board/weapon_strength", serde_json::json!(255)),
+        ("/session/board/upgrades/quantity", serde_json::json!(0)),
+        ("/session/board/potion_unlocked", serde_json::json!(true)),
+    ] {
+        let mut forged = value.clone();
+        *forged.pointer_mut(path).unwrap() = invalid;
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&forged).unwrap()).is_err(),
+            "{path}"
+        );
+    }
+    let mut completed = session.clone();
+    completed.board.as_mut().unwrap().balance = 30_000;
+    completed.apply_actions(&[Action::BuyEgg, Action::BuyEgg, Action::BuyEgg]);
+    assert_eq!(completed.phase, AdventurePhase::ChallengeResults);
+    completed.validate().unwrap();
+    let mut forged_wallet = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: completed,
+    })
+    .unwrap();
+    *forged_wallet
+        .pointer_mut("/session/challenge/result/shell_balance_before")
+        .unwrap() = serde_json::json!(u32::MAX);
+    assert!(cli::decode_save(&serde_json::to_vec(&forged_wallet).unwrap()).is_err());
+    for (path, key) in [
+        ("/session", "challenge_scores"),
+        ("/session", "challenge"),
+        ("/session/progress", "challenge_completed"),
+        ("/session/challenge", "result"),
+        ("/session/board", "challenge_shop"),
+    ] {
+        let mut missing = value.clone();
+        missing
+            .pointer_mut(path)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(key);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "{path}/{key}"
+        );
+        if key == "challenge_shop" {
+            let board = missing.pointer("/session/board").unwrap().clone();
+            assert!(serde_json::from_value::<AdventureState>(board).is_err());
+        }
+    }
+    let mut relabeled = value.clone();
+    relabeled["format_version"] = 31.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&relabeled).unwrap()).is_err());
+
+    let mut reopened = cli::decode_save(&serde_json::to_vec(&value).unwrap()).unwrap();
+    assert_eq!(reopened.board.as_ref().unwrap().egg_price, 5000);
+    for _ in 0..16 {
+        assert_eq!(
+            serde_json::to_value(session.step(&[])).unwrap(),
+            serde_json::to_value(reopened.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&session).unwrap(),
+            serde_json::to_value(&reopened).unwrap()
+        );
+    }
+}
+
 fn prepared_tank_five_session(attempts: u32) -> AdventureSession {
     // Prepared unit fixture at the post-4-5 boundary; it is not earned
     // progression or native-game evidence.

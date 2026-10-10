@@ -9,6 +9,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::challenge::{self, ChallengeResult, ChallengeRun, ChallengeScores};
 pub use crate::sim::PetKind;
 use crate::sim::{
     Action, AdventureState, BonusPurchaseOutcome, EGG_PRICE, Event, Rejection, TICK_MS,
@@ -58,6 +59,8 @@ pub struct AdventureProgress {
     pub adventure_completions: u32,
     /// Profile +b0: committed bonus-pet offers advance this cursor.
     pub purchase_cursor: u8,
+    /// Profile completion bytes for Challenge tanks 1–4.
+    pub challenge_completed: [bool; 4],
 }
 
 fn default_pet_capacity() -> u8 {
@@ -275,6 +278,28 @@ pub enum AdventurePhase {
     TimeTrialGameOver {
         updates: u32,
     },
+    ChallengeTankSelection,
+    ChallengePetSelection {
+        tank: u8,
+        selected: Vec<PetKind>,
+    },
+    ChallengePetSelectionConfirmation {
+        tank: u8,
+        selected: Vec<PetKind>,
+    },
+    ChallengePlaying,
+    ChallengePrestoDialog {
+        opener_id: u64,
+        pressed: Option<PetKind>,
+    },
+    ChallengeInvasionTutorial {
+        tip: InvasionTip,
+    },
+    ChallengeResults,
+    ChallengeLost,
+    ChallengeInterlude {
+        tank: u8,
+    },
     FirstTankRescue,
     InvasionTutorial {
         tip: InvasionTip,
@@ -311,6 +336,7 @@ pub enum GameMode {
     #[default]
     Adventure,
     TimeTrial,
+    Challenge,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -334,6 +360,9 @@ pub struct AdventureSession {
     pub time_trial_scores: TimeTrialScores,
     #[serde(default)]
     pub time_trial: Option<TimeTrialRun>,
+    pub challenge_scores: ChallengeScores,
+    #[serde(deserialize_with = "Option::<ChallengeRun>::deserialize")]
+    pub challenge: Option<ChallengeRun>,
     next_seed: u64,
     #[serde(skip)]
     hatch_held: bool,
@@ -357,6 +386,7 @@ impl AdventureSession {
                 adventure_completed: false,
                 adventure_completions: 0,
                 purchase_cursor: 0,
+                challenge_completed: [false; 4],
             },
             board: Some(board),
             phase: AdventurePhase::Playing,
@@ -364,6 +394,8 @@ impl AdventureSession {
             mode: GameMode::Adventure,
             time_trial_scores: TimeTrialScores::default(),
             time_trial: None,
+            challenge_scores: ChallengeScores::new(),
+            challenge: None,
             next_seed,
             hatch_held: false,
         }
@@ -403,6 +435,7 @@ impl AdventureSession {
                     adventure_completed: false,
                     adventure_completions: 0,
                     purchase_cursor: 0,
+                    challenge_completed: [false; 4],
                 },
                 board: None,
                 phase: AdventurePhase::Hatch {
@@ -413,6 +446,8 @@ impl AdventureSession {
                 mode: GameMode::Adventure,
                 time_trial_scores: TimeTrialScores::default(),
                 time_trial: None,
+                challenge_scores: ChallengeScores::new(),
+                challenge: None,
                 next_seed,
                 hatch_held: false,
             };
@@ -435,6 +470,7 @@ impl AdventureSession {
                 adventure_completed: false,
                 adventure_completions: 0,
                 purchase_cursor: 0,
+                challenge_completed: [false; 4],
             },
             board: Some(board),
             phase: AdventurePhase::Playing,
@@ -442,6 +478,8 @@ impl AdventureSession {
             mode: GameMode::Adventure,
             time_trial_scores: TimeTrialScores::default(),
             time_trial: None,
+            challenge_scores: ChallengeScores::new(),
+            challenge: None,
             next_seed,
             hatch_held: false,
         };
@@ -454,6 +492,20 @@ impl AdventureSession {
     /// Reject a decoded session whose board, profile, and screen disagree.
     pub fn validate(&self) -> Result<(), String> {
         self.time_trial_scores.validate()?;
+        self.challenge_scores.validate()?;
+        if self
+            .progress
+            .challenge_completed
+            .iter()
+            .enumerate()
+            .any(|(index, completed)| {
+                (*completed && !self.progress.adventure_completed)
+                    || (index > 0 && *completed && !self.progress.challenge_completed[index - 1])
+                    || *completed != self.challenge_scores.personal_best[index].is_some()
+            })
+        {
+            return Err("Challenge completion and lower-time records disagree".into());
+        }
         if !matches!(
             (self.progress.tank, self.progress.level),
             (1, 1..=6) | (2, 1..=6) | (3, 1..=6) | (4, 1..=5) | (5, 1..=2)
@@ -788,8 +840,20 @@ impl AdventureSession {
         }) {
             return Err("Walter actor exceeds profile pet entitlement".into());
         }
+        if self.mode != GameMode::Challenge
+            && (self.challenge.is_some()
+                || self
+                    .board
+                    .as_ref()
+                    .is_some_and(|board| board.challenge_shop.is_some()))
+        {
+            return Err("non-Challenge phase retains Challenge state".into());
+        }
         if self.mode == GameMode::TimeTrial {
             return self.validate_time_trial();
+        }
+        if self.mode == GameMode::Challenge {
+            return self.validate_challenge();
         }
         if self.time_trial.is_some() || self.board.as_ref().is_some_and(|board| board.time_trial) {
             return Err("Adventure phase retains Time Trial state".into());
@@ -1194,6 +1258,99 @@ impl AdventureSession {
         }
     }
 
+    fn challenge_tank_available(&self, tank: u8) -> bool {
+        match tank {
+            1 => self.progress.adventure_completed,
+            2..=4 => self.progress.challenge_completed[usize::from(tank - 2)],
+            _ => false,
+        }
+    }
+
+    fn validate_challenge(&self) -> Result<(), String> {
+        if self.time_trial.is_some()
+            || self.board.as_ref().is_some_and(|board| board.time_trial)
+            || !self.progress.adventure_completed
+        {
+            return Err("Challenge phase retains another mode or locked profile".into());
+        }
+        match (&self.phase, &self.board, &self.challenge) {
+            (AdventurePhase::ChallengeTankSelection, None, None) => Ok(()),
+            (AdventurePhase::ChallengePetSelection { tank, selected }, None, None)
+            | (AdventurePhase::ChallengePetSelectionConfirmation { tank, selected }, None, None)
+                if self.challenge_tank_available(*tank)
+                    && self.progress.valid_selection(selected)
+                    && (self.progress.unlocked_pets.len() >= 4)
+                    && (!matches!(
+                        self.phase,
+                        AdventurePhase::ChallengePetSelectionConfirmation { .. }
+                    ) || (selected.len() < 3 && *selected == self.progress.selected_pets)) =>
+            {
+                Ok(())
+            }
+            (
+                AdventurePhase::ChallengePlaying
+                | AdventurePhase::ChallengePrestoDialog { .. }
+                | AdventurePhase::ChallengeInvasionTutorial { .. }
+                | AdventurePhase::ChallengeLost
+                | AdventurePhase::ChallengeResults
+                | AdventurePhase::ChallengeInterlude { .. },
+                Some(board),
+                Some(run),
+            ) => {
+                if !self.challenge_tank_available(run.tank)
+                    || board.tank != run.tank
+                    || board.level != 5
+                    || board.challenge_shop.is_none()
+                    || board.time_trial
+                    || board.tick > self.ticks
+                    || board.pets != run.initial_pets
+                    || run.initial_pets != self.progress.selected_pets
+                    || !self.progress.valid_selection(&run.initial_pets)
+                    || run.result.is_some() != matches!(self.phase, AdventurePhase::ChallengeResults | AdventurePhase::ChallengeInterlude { .. })
+                    || (matches!(self.phase, AdventurePhase::ChallengeLost) && (board.has_live_fish() || board.victory))
+                    // The last fish can die during update_objects; loss opens
+                    // on the next Board update, so this boundary is durable.
+                    || (matches!(self.phase, AdventurePhase::ChallengePlaying) && (board.victory || board.invasion.as_ref().is_some_and(|wave| wave.pending_modal.is_some())))
+                    || (matches!(self.phase, AdventurePhase::ChallengeInvasionTutorial { .. })
+                        && board.invasion.as_ref().and_then(|wave| wave.pending_modal)
+                            != match &self.phase { AdventurePhase::ChallengeInvasionTutorial { tip } => Some(*tip), _ => None })
+                    || (matches!(self.phase, AdventurePhase::ChallengePrestoDialog { .. })
+                        && !matches!(self.phase, AdventurePhase::ChallengePrestoDialog { opener_id, pressed }
+                            if board.presto_actor().is_some_and(|actor| actor.id == opener_id && actor.remaining_ticks == 0)
+                                && pressed.is_none_or(|pet| self.progress.has_pet(pet))))
+                    || (matches!(self.phase, AdventurePhase::ChallengeResults | AdventurePhase::ChallengeInterlude { .. }) && (!board.victory || board.eggs != 3))
+                    || (matches!(self.phase, AdventurePhase::ChallengeInterlude { tank } if tank != run.tank))
+                {
+                    return Err("Challenge phase, roster, or Board disagree".into());
+                }
+                if let Some(result) = &run.result {
+                    result.purchase.validate(result.updates)?;
+                    let expected_wallet = result
+                        .shell_balance_before
+                        .saturating_add(result.credited_shells)
+                        .min(MAX_SHELL_BALANCE);
+                    if result.tank != run.tank
+                        || result.seconds != challenge::default_score_seconds(board.tick)
+                        || result.personal_best > result.seconds
+                        || result.shell_balance_before > MAX_SHELL_BALANCE
+                        || self.challenge_scores.personal_best[usize::from(run.tank - 1)]
+                            != Some(result.personal_best)
+                        || result.credited_shells
+                            != challenge::shell_reward(run.tank).unwrap() as u32
+                        || !self.progress.challenge_completed[usize::from(run.tank - 1)]
+                        || !self
+                            .progress
+                            .valid_purchase_wallet(expected_wallet, &result.purchase)
+                    {
+                        return Err("Challenge result or wallet disagree".into());
+                    }
+                }
+                board.validate()
+            }
+            _ => Err("Challenge phase and Board disagree".into()),
+        }
+    }
+
     /// Apply ordered inputs without advancing either clock. This is also the
     /// save boundary: already accepted actions can be persisted immediately.
     pub fn apply_actions(&mut self, actions: &[Action]) -> Vec<Event> {
@@ -1206,6 +1363,229 @@ impl AdventureSession {
         let mut entered_hatch = false;
         for action in actions {
             match self.phase.clone() {
+                AdventurePhase::ChallengeTankSelection => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    match action {
+                        Action::SelectChallengeTank { tank }
+                            if self.challenge_tank_available(*tank) =>
+                        {
+                            self.progress.selected_pets.clear();
+                            if self.progress.unlocked_pets.len() >= 4 {
+                                self.phase = AdventurePhase::ChallengePetSelection {
+                                    tank: *tank,
+                                    selected: Vec::new(),
+                                };
+                                events.push(Event::PetSelectionOpened {
+                                    tick: self.ticks,
+                                    capacity: self.progress.selection_capacity() as u8,
+                                });
+                            } else {
+                                entered_playing = self.start_challenge(
+                                    *tank,
+                                    self.progress.unlocked_pets.clone(),
+                                    &mut events,
+                                );
+                            }
+                        }
+                        Action::OpenMenu => self.leave_challenge(&mut events),
+                        _ => events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        }),
+                    }
+                }
+                AdventurePhase::ChallengePetSelection { tank, mut selected } => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    match action {
+                        Action::TogglePet { pet }
+                            if self.progress.has_pet(*pet) && time_trial::selectable_pet(*pet) =>
+                        {
+                            if let Some(index) = selected.iter().position(|old| old == pet) {
+                                selected.remove(index);
+                            } else if selected.len() < self.progress.selection_capacity() {
+                                selected.push(*pet);
+                            } else {
+                                events.push(Event::Rejected {
+                                    tick: self.ticks,
+                                    reason: Rejection::Locked,
+                                });
+                                continue;
+                            }
+                            selected = self
+                                .progress
+                                .unlocked_pets
+                                .iter()
+                                .copied()
+                                .filter(|pet| selected.contains(pet))
+                                .collect();
+                            events.push(Event::PetSelectionChanged {
+                                tick: self.ticks,
+                                selected: selected.clone(),
+                            });
+                            self.phase = AdventurePhase::ChallengePetSelection { tank, selected };
+                        }
+                        Action::Continue => {
+                            self.progress.selected_pets = selected.clone();
+                            if selected.len() < 3 {
+                                events.push(Event::PetSelectionConfirmation {
+                                    tick: self.ticks,
+                                    selected: selected.clone(),
+                                });
+                                self.phase = AdventurePhase::ChallengePetSelectionConfirmation {
+                                    tank,
+                                    selected,
+                                };
+                            } else {
+                                events.push(Event::PetSelectionAccepted {
+                                    tick: self.ticks,
+                                    selected: selected.clone(),
+                                });
+                                entered_playing = self.start_challenge(tank, selected, &mut events);
+                            }
+                        }
+                        Action::OpenMenu => self.phase = AdventurePhase::ChallengeTankSelection,
+                        _ => events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        }),
+                    }
+                }
+                AdventurePhase::ChallengePetSelectionConfirmation { tank, selected } => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    match action {
+                        Action::ConfirmPetSelection { accept: true } => {
+                            events.push(Event::PetSelectionAccepted {
+                                tick: self.ticks,
+                                selected: selected.clone(),
+                            });
+                            entered_playing = self.start_challenge(tank, selected, &mut events);
+                        }
+                        Action::ConfirmPetSelection { accept: false } => {
+                            self.phase = AdventurePhase::ChallengePetSelection { tank, selected };
+                        }
+                        Action::OpenMenu => self.phase = AdventurePhase::ChallengeTankSelection,
+                        _ => events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        }),
+                    }
+                }
+                AdventurePhase::ChallengePlaying => {
+                    let board = self.board.as_mut().expect("Challenge Board");
+                    if let Action::RightClick { x, y } = action {
+                        events.push(Event::Action {
+                            tick: board.tick,
+                            action: action.clone(),
+                        });
+                        if let Some(opener_id) = board.presto_hit(*x as i32, *y as i32)
+                            && board
+                                .presto_actor()
+                                .is_some_and(|actor| actor.remaining_ticks == 0)
+                        {
+                            self.phase = AdventurePhase::ChallengePrestoDialog {
+                                opener_id,
+                                pressed: None,
+                            };
+                        } else {
+                            events.push(Event::Rejected {
+                                tick: board.tick,
+                                reason: Rejection::Locked,
+                            });
+                        }
+                    } else {
+                        events.extend(board.apply(action.clone()));
+                        if board.victory {
+                            self.finish_challenge(&mut events);
+                        }
+                    }
+                }
+                AdventurePhase::ChallengeInvasionTutorial { .. } => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    if *action == Action::Continue {
+                        self.board
+                            .as_mut()
+                            .expect("Challenge Board")
+                            .invasion
+                            .as_mut()
+                            .expect("Challenge wave")
+                            .acknowledge_modal();
+                        self.phase = AdventurePhase::ChallengePlaying;
+                    } else {
+                        events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        });
+                    }
+                }
+                AdventurePhase::ChallengeLost => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    if *action == Action::Continue {
+                        self.leave_challenge(&mut events);
+                    } else {
+                        events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        });
+                    }
+                }
+                AdventurePhase::ChallengeResults => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    let result = self
+                        .challenge
+                        .as_mut()
+                        .and_then(|run| run.result.as_mut())
+                        .expect("Challenge result");
+                    if apply_purchase_action(
+                        &mut self.progress,
+                        &mut result.purchase,
+                        result.updates,
+                        action,
+                        self.ticks,
+                        &mut events,
+                    ) {
+                    } else if !result.purchase.confirming && *action == Action::Continue {
+                        self.leave_challenge(&mut events);
+                    } else if !result.purchase.confirming && *action == Action::ChallengeStory {
+                        self.phase = AdventurePhase::ChallengeInterlude { tank: result.tank };
+                    } else {
+                        events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        });
+                    }
+                }
+                AdventurePhase::ChallengeInterlude { .. } => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    if matches!(action, Action::Continue | Action::OpenMenu) {
+                        self.leave_challenge(&mut events);
+                    } else {
+                        events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        });
+                    }
+                }
                 AdventurePhase::TimeTrialTankSelection => {
                     events.push(Event::Action {
                         tick: self.ticks,
@@ -1361,8 +1741,13 @@ impl AdventureSession {
                 | AdventurePhase::AdventurePrestoDialog {
                     opener_id,
                     mut pressed,
+                }
+                | AdventurePhase::ChallengePrestoDialog {
+                    opener_id,
+                    mut pressed,
                 } => {
                     let time_trial = self.mode == GameMode::TimeTrial;
+                    let challenge = self.mode == GameMode::Challenge;
                     events.push(Event::Action {
                         tick: self.ticks,
                         action: action.clone(),
@@ -1374,6 +1759,8 @@ impl AdventureSession {
                             pressed = Some(*pet);
                             self.phase = if time_trial {
                                 AdventurePhase::TimeTrialPrestoDialog { opener_id, pressed }
+                            } else if challenge {
+                                AdventurePhase::ChallengePrestoDialog { opener_id, pressed }
                             } else {
                                 AdventurePhase::AdventurePrestoDialog { opener_id, pressed }
                             };
@@ -1404,6 +1791,8 @@ impl AdventureSession {
                             }
                             self.phase = if time_trial {
                                 AdventurePhase::TimeTrialPlaying
+                            } else if challenge {
+                                AdventurePhase::ChallengePlaying
                             } else {
                                 AdventurePhase::Playing
                             };
@@ -1412,6 +1801,8 @@ impl AdventureSession {
                         Action::PrestoCancel | Action::OpenMenu => {
                             self.phase = if time_trial {
                                 AdventurePhase::TimeTrialPlaying
+                            } else if challenge {
+                                AdventurePhase::ChallengePlaying
                             } else {
                                 AdventurePhase::Playing
                             };
@@ -1625,6 +2016,10 @@ impl AdventureSession {
                     {
                         self.mode = GameMode::TimeTrial;
                         self.phase = AdventurePhase::TimeTrialTankSelection;
+                    } else if *action == Action::PlayChallenge && self.progress.adventure_completed
+                    {
+                        self.mode = GameMode::Challenge;
+                        self.phase = AdventurePhase::ChallengeTankSelection;
                     } else if *action == Action::PlayAdventure {
                         if self.progress.adventure_completed
                             && (self.progress.tank, self.progress.level) == (5, 2)
@@ -1847,6 +2242,23 @@ impl AdventureSession {
         self.ticks += 1;
         let (mut events, entered_playing, entered_hatch) = self.apply_actions_inner(actions);
         match &mut self.phase {
+            AdventurePhase::ChallengePlaying if !entered_playing => {
+                let board = self.board.as_mut().expect("Challenge Board");
+                events.extend(board.begin_tick());
+                if !board.has_live_fish() {
+                    self.phase = AdventurePhase::ChallengeLost;
+                    events.push(Event::ChallengeLost {
+                        tick: self.ticks,
+                        tank: board.tank,
+                    });
+                } else if let Some(tip) =
+                    board.invasion.as_ref().and_then(|wave| wave.pending_modal)
+                {
+                    self.phase = AdventurePhase::ChallengeInvasionTutorial { tip };
+                } else {
+                    events.extend(board.update_objects());
+                }
+            }
             AdventurePhase::TimeTrialPlaying if !entered_playing => {
                 if let Some(board) = &mut self.board {
                     let next_second = board
@@ -1979,6 +2391,11 @@ impl AdventureSession {
                     result.updates = result.updates.saturating_add(1);
                 }
             }
+            AdventurePhase::ChallengeResults => {
+                if let Some(result) = self.challenge.as_mut().and_then(|run| run.result.as_mut()) {
+                    result.updates = result.updates.saturating_add(1);
+                }
+            }
             AdventurePhase::GameOver { updates } => {
                 if let Some(board) = &mut self.board {
                     board.paused_board_update();
@@ -2027,6 +2444,14 @@ impl AdventureSession {
             | AdventurePhase::TimeTrialTankSelection
             | AdventurePhase::TimeTrialPetSelection { .. }
             | AdventurePhase::TimeTrialTimesUp
+            | AdventurePhase::ChallengePlaying
+            | AdventurePhase::ChallengePrestoDialog { .. }
+            | AdventurePhase::ChallengeInvasionTutorial { .. }
+            | AdventurePhase::ChallengeTankSelection
+            | AdventurePhase::ChallengePetSelection { .. }
+            | AdventurePhase::ChallengePetSelectionConfirmation { .. }
+            | AdventurePhase::ChallengeLost
+            | AdventurePhase::ChallengeInterlude { .. }
             | AdventurePhase::FirstTankRescue
             | AdventurePhase::InvasionTutorial { .. }
             | AdventurePhase::GameSelector
@@ -2043,6 +2468,7 @@ impl AdventureSession {
             AdventurePhase::FirstTankRescue
                 | AdventurePhase::InvasionTutorial { .. }
                 | AdventurePhase::TimeTrialInvasionTutorial { .. }
+                | AdventurePhase::ChallengeInvasionTutorial { .. }
         ) && let Some(board) = &mut self.board
         {
             // A newly opened modal already received this update's pre-pause
@@ -2069,6 +2495,7 @@ impl AdventureSession {
             self.phase,
             AdventurePhase::TimeTrialPrestoDialog { .. }
                 | AdventurePhase::AdventurePrestoDialog { .. }
+                | AdventurePhase::ChallengePrestoDialog { .. }
         ) && let Some(board) = &mut self.board
         {
             board.paused_board_update();
@@ -2104,6 +2531,78 @@ impl AdventureSession {
             tank,
         });
         true
+    }
+
+    fn start_challenge(
+        &mut self,
+        tank: u8,
+        selected: Vec<PetKind>,
+        events: &mut Vec<Event>,
+    ) -> bool {
+        let Ok(board) = AdventureState::new_challenge(self.next_seed, tank, &selected) else {
+            events.push(Event::Rejected {
+                tick: self.ticks,
+                reason: Rejection::UnsupportedStage,
+            });
+            return false;
+        };
+        self.progress.selected_pets = selected.clone();
+        self.board = Some(board);
+        self.challenge = Some(ChallengeRun {
+            tank,
+            initial_pets: selected,
+            result: None,
+        });
+        self.phase = AdventurePhase::ChallengePlaying;
+        events.push(Event::ChallengeStarted {
+            tick: self.ticks,
+            tank,
+        });
+        true
+    }
+
+    fn finish_challenge(&mut self, events: &mut Vec<Event>) {
+        let board = self.board.as_ref().expect("Challenge Board");
+        let tank = board.tank;
+        let seconds = challenge::default_score_seconds(board.tick);
+        self.challenge_scores
+            .record(tank, seconds)
+            .expect("Challenge tank");
+        self.progress.challenge_completed[usize::from(tank - 1)] = true;
+        let reward = challenge::shell_reward(tank).expect("Challenge tank") as u32;
+        let before = self.progress.shell_balance;
+        self.progress.shell_balance = before.saturating_add(reward).min(MAX_SHELL_BALANCE);
+        self.challenge.as_mut().expect("Challenge run").result = Some(ChallengeResult {
+            tank,
+            seconds,
+            personal_best: self.challenge_scores.personal_best[usize::from(tank - 1)]
+                .expect("recorded score"),
+            shell_balance_before: before,
+            credited_shells: reward,
+            updates: 0,
+            purchase: PurchaseReceipt::new(self.progress.purchase_cursor),
+        });
+        self.phase = AdventurePhase::ChallengeResults;
+        events.push(Event::ChallengeCompleted {
+            tick: self.ticks,
+            tank,
+            seconds,
+        });
+        events.push(Event::ChallengeShellsCredited {
+            tick: self.ticks,
+            amount: reward,
+            shell_balance: self.progress.shell_balance,
+        });
+    }
+
+    fn leave_challenge(&mut self, events: &mut Vec<Event>) {
+        if let Some(board) = self.board.take() {
+            self.next_seed = board.transition_seed();
+        }
+        self.challenge = None;
+        self.mode = GameMode::Adventure;
+        self.phase = AdventurePhase::GameSelector;
+        events.push(Event::GameSelectorOpened { tick: self.ticks });
     }
 
     fn leave_time_trial(&mut self, events: &mut Vec<Event>) {
@@ -3798,6 +4297,105 @@ mod tests {
         session.phase = AdventurePhase::GameSelector;
         session.validate().unwrap();
         session
+    }
+
+    fn challenge_first_tank_session() -> AdventureSession {
+        let mut session = completed_replay_session();
+        session.apply_actions(&[
+            Action::PlayChallenge,
+            Action::SelectChallengeTank { tank: 1 },
+            Action::TogglePet {
+                pet: PetKind::Stinky,
+            },
+            Action::TogglePet { pet: PetKind::Niko },
+            Action::TogglePet {
+                pet: PetKind::Itchy,
+            },
+            Action::Continue,
+        ]);
+        assert_eq!(session.phase, AdventurePhase::ChallengePlaying);
+        session.validate().unwrap();
+        session
+    }
+
+    #[test]
+    fn challenge_entry_failed_payment_reset_and_third_egg_commit() {
+        let mut session = challenge_first_tank_session();
+        let board = session.board.as_ref().unwrap();
+        assert_eq!(
+            (board.tank, board.level, board.balance, board.eggs),
+            (1, 5, 200, 0)
+        );
+        assert_eq!(board.challenge_slot_price(0), Some(100));
+        assert_eq!(board.egg_price, 5000);
+        assert_eq!(board.invasion.as_ref().unwrap().countdown, 3000);
+
+        session.step(&[]); // Project widget projection; retail first-creation timing is unresolved.
+        let board = session.board.as_ref().unwrap();
+        assert_eq!(board.challenge_slot_price(0), Some(100));
+        assert_eq!(board.egg_price, 5000);
+        let before = (
+            board.balance,
+            board.eggs,
+            board.egg_price,
+            board.challenge_shop.clone(),
+        );
+        session.apply_actions(&[Action::BuyEgg]);
+        let board = session.board.as_ref().unwrap();
+        assert_eq!(
+            (
+                board.balance,
+                board.eggs,
+                board.egg_price,
+                board.challenge_shop.clone()
+            ),
+            before
+        );
+
+        session.board.as_mut().unwrap().balance = 30_000;
+        session.apply_actions(&[Action::BuyEgg]);
+        let board = session.board.as_ref().unwrap();
+        assert_eq!(board.eggs, 1);
+        assert_eq!(board.balance, 25_000);
+        assert_eq!(board.egg_price, 5000);
+        assert_eq!(board.challenge_slot_price(0), Some(100));
+        assert_eq!(board.challenge_shop.as_ref().unwrap().reset_cooldown, 500);
+        session.apply_actions(&[Action::BuyEgg, Action::BuyEgg]);
+        assert_eq!(session.phase, AdventurePhase::ChallengeResults);
+        assert_eq!(session.board.as_ref().unwrap().eggs, 3);
+        assert_eq!(session.progress.shell_balance, 3234);
+        assert!(session.progress.challenge_completed[0]);
+        assert_eq!(session.challenge_scores.personal_best[0], Some(0));
+        assert_eq!(
+            session
+                .challenge
+                .as_ref()
+                .unwrap()
+                .result
+                .as_ref()
+                .unwrap()
+                .credited_shells,
+            2000
+        );
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn challenge_no_survivors_opens_loss_then_selector_without_reward() {
+        let mut session = challenge_first_tank_session();
+        let wallet = session.progress.shell_balance;
+        session.board.as_mut().unwrap().fish.clear();
+        session.validate().unwrap(); // Last removal may precede the next-update loss modal.
+        session.step(&[]);
+        assert_eq!(session.phase, AdventurePhase::ChallengeLost);
+        assert_eq!(session.progress.shell_balance, wallet);
+        assert_eq!(session.challenge_scores.personal_best[0], None);
+        session.validate().unwrap();
+        session.apply_actions(&[Action::Continue]);
+        assert_eq!(session.phase, AdventurePhase::GameSelector);
+        assert_eq!(session.mode, GameMode::Adventure);
+        assert!(session.board.is_none());
+        session.validate().unwrap();
     }
 
     #[test]

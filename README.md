@@ -10,7 +10,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 
 ## Start here
 
-- Current31 adds the 40,000-shell [fourth pet slot](docs/extra-pets.md#current31-implementation-checkpoint) after Brinkley, Nostradamus, Stanley and Walter. Adventure/replay and initial Time Trial selections consume four choices; acquired TT pets and Tank5's fixed roster stay separate. [Checkpoint checks](MODLOG.md#2026-10-10--verify-fourth-slot-and-preserve-current31) passed. [Completed Adventure replay](docs/adventure-replay.md) preserves earned history and retained-Board results. Next: Challenge and remaining modes. The [broad recovery](docs/binary-recovery.md) covers all remaining systems; native/manual acceptance stays deferred.
+- Current32 integrates [Challenge](docs/challenge.md#current32-implementation-checkpoint): four tanks, prices/waves, three paid eggs, records/results and loss routing. [Focused checks](MODLOG.md#2026-10-10--verify-challenge-and-preserve-current32) passed; native/manual acceptance stays deferred. [Fourth-slot purchases](docs/extra-pets.md#current31-implementation-checkpoint) and [Adventure replay](docs/adventure-replay.md) remain integrated. Next: Virtual Tank/store, then the remaining systems in the [completion sweep](docs/DESIGN.md#completion-sweep).
 - Agents: read [AGENTS.md](AGENTS.md), then follow its startup order.
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).

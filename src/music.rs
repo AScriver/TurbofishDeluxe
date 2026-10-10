@@ -72,12 +72,19 @@ impl MusicCue {
             | AdventurePhase::TimeTrialPetSelection { .. }
             | AdventurePhase::TimeTrialTankSelection
             | AdventurePhase::TimeTrialTimesUp
-            | AdventurePhase::TimeTrialResults => Some(Self::PetSelection),
+            | AdventurePhase::TimeTrialResults
+            | AdventurePhase::ChallengeTankSelection
+            | AdventurePhase::ChallengePetSelection { .. }
+            | AdventurePhase::ChallengePetSelectionConfirmation { .. }
+            | AdventurePhase::ChallengeResults => Some(Self::PetSelection),
             AdventurePhase::Playing
             | AdventurePhase::TimeTrialPlaying
             | AdventurePhase::TimeTrialPrestoDialog { .. }
             | AdventurePhase::AdventurePrestoDialog { .. }
             | AdventurePhase::TimeTrialInvasionTutorial { .. }
+            | AdventurePhase::ChallengePlaying
+            | AdventurePhase::ChallengePrestoDialog { .. }
+            | AdventurePhase::ChallengeInvasionTutorial { .. }
             | AdventurePhase::FirstTankRescue
             | AdventurePhase::InvasionTutorial { .. } => {
                 let board = session.board.as_ref()?;
@@ -101,8 +108,11 @@ impl MusicCue {
                 }
             }
             AdventurePhase::GameSelector | AdventurePhase::HelpScreen => Some(Self::PetSelection),
-            AdventurePhase::AdventureFinaleInterlude => Some(Self::Interlude),
-            AdventurePhase::GameOver { .. } | AdventurePhase::TimeTrialGameOver { .. } => None,
+            AdventurePhase::AdventureFinaleInterlude
+            | AdventurePhase::ChallengeInterlude { .. } => Some(Self::Interlude),
+            AdventurePhase::GameOver { .. }
+            | AdventurePhase::TimeTrialGameOver { .. }
+            | AdventurePhase::ChallengeLost => None,
         }
     }
 }

@@ -2,6 +2,7 @@
 //! WinFish f919b3c (see docs/behavior-contract.md); retail parity is untested.
 //! Positions are logical 640x480 coordinates and advance in 28 ms ticks.
 
+use crate::challenge::{self, ChallengeShop};
 use crate::{
     alien::{AlienFoodView, AlienRuntimeRequest, PreyView, SylvesterKind},
     bilaterus::BilaterusPreyView,
@@ -622,6 +623,9 @@ pub enum Action {
     PlayAdventure,
     PlayTimeTrial,
     SelectTimeTrialTank { tank: u8 },
+    PlayChallenge,
+    SelectChallengeTank { tank: u8 },
+    ChallengeStory,
     Continue,
     HatchHold { down: bool },
 }
@@ -676,6 +680,33 @@ pub enum Event {
         tick: u64,
     },
     TimeTrialStarted {
+        tick: u64,
+        tank: u8,
+    },
+    ChallengeStarted {
+        tick: u64,
+        tank: u8,
+    },
+    ChallengeEggBought {
+        tick: u64,
+        pieces: u8,
+        price: i32,
+        balance: i32,
+    },
+    ChallengePricesInflated {
+        tick: u64,
+    },
+    ChallengeCompleted {
+        tick: u64,
+        tank: u8,
+        seconds: i32,
+    },
+    ChallengeShellsCredited {
+        tick: u64,
+        amount: u32,
+        shell_balance: u32,
+    },
+    ChallengeLost {
         tick: u64,
         tank: u8,
     },
@@ -1302,6 +1333,8 @@ pub struct AdventureState {
     pub egg_price: i32,
     #[serde(default)]
     pub time_trial: bool,
+    #[serde(deserialize_with = "Option::<ChallengeShop>::deserialize")]
+    pub challenge_shop: Option<ChallengeShop>,
     /// Fresh Adventure Board populated from committed profile flags. This is
     /// distinct from the persistent completed-game/profile cursor.
     pub profile_population: bool,
@@ -1408,6 +1441,7 @@ impl AdventureState {
             potion_armed: false,
             egg_price: EGG_PRICE,
             time_trial: false,
+            challenge_shop: None,
             profile_population: false,
             bonus_active: false,
             bonus_tally: 0,
@@ -2283,6 +2317,54 @@ impl AdventureState {
         state.invasion = Some(Invasion1_2::new_time_trial(tank));
         for pet in pets {
             state.spawn_time_trial_pet(*pet)?;
+        }
+        if tank == 4 {
+            let x = state.rand_range(520) as i32 + 20;
+            let y = state.rand_range(265) as i32 + 105;
+            let id = state.id();
+            let mut rng_state = state.rng_state;
+            let starter = BreederState::spawn_starter(id, x, y, &mut |upper| {
+                Self::advance_rng(&mut rng_state) % upper
+            });
+            state.rng_state = rng_state;
+            state.breeders.push(starter);
+        } else {
+            state.spawn_starter_guppies(false);
+        }
+        Ok(state)
+    }
+
+    pub fn new_challenge(seed: u64, tank: u8, pets: &[PetKind]) -> Result<Self, String> {
+        if challenge::initial_egg_price(tank).is_none()
+            || pets.len() > 4
+            || pets
+                .iter()
+                .any(|pet| !crate::time_trial::selectable_pet(*pet))
+            || pets.windows(2).any(|pair| pair[0] as u8 >= pair[1] as u8)
+        {
+            return Err("invalid Challenge tank or selected pets".into());
+        }
+        let mut state = Self::empty_board(seed);
+        state.tank = tank;
+        state.level = 5;
+        state.profile_population = true;
+        state.egg_price = challenge::initial_egg_price(tank).expect("validated Challenge tank");
+        state.challenge_shop = ChallengeShop::new(tank);
+        state.invasion = Some(Invasion1_2::new_challenge(tank));
+        state.guppy_unlocked = tank != 4;
+        state.breeder_unlocked = tank == 4;
+        state.upgrades.quality_unlocked = true;
+        state.upgrades.quantity_unlocked = true;
+        state.oscar_unlocked = matches!(tank, 1 | 4);
+        state.potion_unlocked = tank == 2;
+        state.starcatcher_unlocked = tank == 2;
+        state.grubber_unlocked = tank == 3;
+        state.gekko_unlocked = tank == 3;
+        state.ultra_unlocked = tank == 4;
+        state.weapon_unlocked = true;
+        state.egg_unlocked = true;
+        for pet in pets {
+            state.spawn_profile_pet(*pet);
         }
         if tank == 4 {
             let x = state.rand_range(520) as i32 + 20;
@@ -3280,6 +3362,110 @@ impl AdventureState {
             .fold(pearl_funds, |funds, _| funds.saturating_add(LARVA_VALUE))
     }
 
+    pub fn challenge_slot_price(&self, slot: usize) -> Option<i32> {
+        self.challenge_shop
+            .as_ref()?
+            .slot_price(self.tank, slot, self.egg_price)
+    }
+
+    pub fn challenge_available_slots(&self) -> [bool; 12] {
+        // Fresh Challenge setup clears the widget marker bytes and skips the
+        // eager creation loop. The exact later ensure call is unresolved; the
+        // project projects mapped widgets after one active Board update.
+        // Affordability, max state, and armed state do not remove a widget.
+        if self.tick == 0 {
+            return [false; 12];
+        }
+        std::array::from_fn(|slot| self.challenge_slot_price(slot).is_some())
+    }
+
+    fn price_for_slot(&self, slot: usize, ordinary_price: i32) -> i32 {
+        self.challenge_slot_price(slot).unwrap_or(ordinary_price)
+    }
+
+    fn validate_challenge_counters(&self) -> Result<(), String> {
+        let tank = self.tank;
+        let has = |pets: PetKind| self.pets.contains(&pets);
+        if self.balance < 0
+            || self.upgrades.quality > 2
+            || !(1..=9).contains(&self.upgrades.quantity)
+            || !self.upgrades.quality_unlocked
+            || !self.upgrades.quantity_unlocked
+            || !(2..=12).contains(&self.weapon_strength)
+            || self.punch_sound_cooldown > 11
+            || self.guppy_unlocked != (tank != 4)
+            || self.breeder_unlocked != (tank == 4)
+            || self.oscar_unlocked != matches!(tank, 1 | 4)
+            || self.potion_unlocked != (tank == 2)
+            || self.starcatcher_unlocked != (tank == 2)
+            || self.grubber_unlocked != (tank == 3)
+            || self.gekko_unlocked != (tank == 3)
+            || self.ultra_unlocked != (tank == 4)
+            || !self.weapon_unlocked
+            || !self.egg_unlocked
+            || (self.potion_armed && tank != 2)
+            || (tank != 4 && (!self.breeders.is_empty() || !self.dead_breeders.is_empty()))
+            || (tank != 1 && tank != 4 && (!self.oscars.is_empty() || !self.dead_oscars.is_empty()))
+            || (tank != 4 && (!self.ultras.is_empty() || !self.dead_ultras.is_empty()))
+            || (tank != 2 && (!self.starcatchers.is_empty() || !self.dead_starcatchers.is_empty()))
+            || (tank != 3
+                && (!self.grubbers.is_empty()
+                    || !self.dead_grubbers.is_empty()
+                    || !self.larvae.is_empty()
+                    || !self.gekkos.is_empty()
+                    || !self.dead_gekkos.is_empty()))
+            || self
+                .food
+                .iter()
+                .filter(|food| food.direction == 0 && food.food_type == FoodType::Ordinary)
+                .count()
+                > usize::from(self.upgrades.quantity)
+            || self.food.iter().any(|food| {
+                food.quality > 3
+                    || (food.picked_up && food.food_type != FoodType::Nostradamus)
+                    || (food.food_type == FoodType::Nostradamus
+                        && (food.quality != 0
+                            || food.direction != 0
+                            || food.free_from_zorf
+                            || food.nimbus_rising))
+                    || food.direction > 2
+                    || !(3..=4).contains(&food.animation_period)
+                    || !food.x.is_finite()
+                    || !food.y.is_finite()
+                    || !food.vx.is_finite()
+                    || !food.vy.is_finite()
+                    || (food.free_from_zorf
+                        && (food.quality != 1
+                            || food.direction == 0
+                            || !(has(PetKind::Zorf) || has(PetKind::Presto))))
+                    || (!food.free_from_zorf && food.direction != 0)
+                    || (food.nimbus_rising
+                        && (!(has(PetKind::Nimbus) || has(PetKind::Presto)) || food.direction != 0))
+                    || (food.quality == 3 && tank != 2)
+            })
+            || self.coins.iter().any(|coin| {
+                (coin.penta_rising && coin.kind != CoinKind::DiamondPenta && !coin.kind.is_shell())
+                    || coin.animation_ticks > 79
+                    || coin.frame > 9
+                    || !coin.x.is_finite()
+                    || !coin.y.is_finite()
+                    || (coin.kind == CoinKind::Pearl
+                        && !(has(PetKind::Niko) || has(PetKind::Presto) || has(PetKind::Brinkley)))
+                    || (coin.kind == CoinKind::ShrapnelBomb
+                        && (!(has(PetKind::Shrapnel) || has(PetKind::Presto))
+                            || coin.fade_ticks != 0))
+                    || (coin.kind.is_shell() && !(has(PetKind::Nimbus) || has(PetKind::Presto)))
+                    || (coin.kind == CoinKind::Treasure
+                        && tank != 4
+                        && !(has(PetKind::Brinkley) || has(PetKind::Presto)))
+                    || (coin.kind == CoinKind::DiamondPenta && tank != 2)
+            })
+        {
+            return Err("invalid Challenge counters, mapped shop, or product ownership".into());
+        }
+        Ok(())
+    }
+
     fn validate_tank5(&self) -> Result<(), String> {
         const FISH_PETS: [FishPetKind; 13] = [
             FishPetKind::Itchy,
@@ -3515,11 +3701,11 @@ impl AdventureState {
                 | (4, 4, Some(WavePlan::CyclingTank4Fourth { .. }))
                 | (4, 5, Some(WavePlan::CyclingTank4Finale { .. }))
                 | (5, 1, Some(WavePlan::Tank5Finale))
-        );
+        ) || matches!(wave, Some(WavePlan::Challenge { tank, .. }) if self.challenge_shop.is_some() && tank == self.tank);
         if !expected_wave {
             return Err("profile Adventure wave disagrees with stage".into());
         }
-        if self.profile_shop_invalid() {
+        if self.challenge_shop.is_none() && self.profile_shop_invalid() {
             return Err("profile Adventure shop disagrees with stage".into());
         }
         let mut ordinary = Vec::new();
@@ -3808,6 +3994,9 @@ impl AdventureState {
     /// Validate durable board relationships before accepting a project save.
     /// The profile and screen phase are checked by AdventureSession separately.
     pub fn validate(&self) -> Result<(), String> {
+        if self.challenge_shop.is_some() && (self.time_trial || self.bonus_active) {
+            return Err("Challenge board shares another mode's state".into());
+        }
         if self.fish.iter().any(|fish| !fish.walter.validate()) {
             return Err("Fish Walter impact state exceeds bounds".into());
         }
@@ -3851,6 +4040,25 @@ impl AdventureState {
         }
         if self.time_trial {
             self.validate_time_trial_header()?;
+        } else if let Some(shop) = &self.challenge_shop {
+            if !(1..=4).contains(&self.tank)
+                || self.level != 5
+                || !self.profile_population
+                || self.next_id == 0
+                || self.next_id == u64::MAX
+                || self.rng_state == 0
+                || self.eggs > 3
+                || self.victory != (self.eggs == 3)
+                || self.invasion.as_ref().is_none_or(|wave| {
+                    !matches!(wave.plan, WavePlan::Challenge { tank, wave_count, .. }
+                        if tank == self.tank && u64::from(wave_count) * 3000 <= self.tick)
+                })
+            {
+                return Err("invalid Challenge board header".into());
+            }
+            shop.validate(self.tank, self.egg_price)?;
+            self.validate_challenge_counters()?;
+            self.validate_profile_population()?;
         } else {
             if !((self.tank == 1 && (1..=5).contains(&self.level))
                 || (self.tank == 2 && (1..=5).contains(&self.level))
@@ -4576,6 +4784,7 @@ impl AdventureState {
             rhubarb.validate()?;
         }
         let projectile_stage = self.time_trial
+            || self.challenge_shop.is_some()
             || self.tank == 2 && (4..=5).contains(&self.level)
             || matches!(
                 (self.tank, self.level),
@@ -4611,6 +4820,7 @@ impl AdventureState {
             }
             if missile.kind != MissileKind::Stanley
                 && !self.time_trial
+                && self.challenge_shop.is_none()
                 && !matches!(self.tank, 4 | 5)
                 && (matches!((self.tank, self.level), (3, 4 | 5))
                     != (missile.kind == MissileKind::EnergyBall))
@@ -4657,6 +4867,7 @@ impl AdventureState {
             }
         }
         if !self.time_trial
+            && self.challenge_shop.is_none()
             && (self.tank, self.level) == (3, 5)
             && self
                 .missiles
@@ -4742,7 +4953,9 @@ impl AdventureState {
         }
         if self.bomb_shots.iter().any(|shot| {
             if shot.shot_type == 2 {
-                !self.time_trial && !matches!((self.tank, self.level), (3, 4 | 5))
+                !self.time_trial
+                    && self.challenge_shop.is_none()
+                    && !matches!((self.tank, self.level), (3, 4 | 5))
             } else {
                 (!self.time_trial
                     && !self.profile_population
@@ -5777,18 +5990,19 @@ impl AdventureState {
                 }
             }
             Action::BuyGuppy => {
+                let price = self.price_for_slot(0, GUPPY_PRICE);
                 if self.tank == 4 || !self.guppy_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
                     });
-                } else if self.available_funds() < GUPPY_PRICE {
+                } else if self.available_funds() < price {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::InsufficientFunds,
                     });
                 } else {
-                    self.balance -= GUPPY_PRICE;
+                    self.balance -= price;
                     let id = self.spawn_bought_guppy();
                     self.tutorial.buy_fish_hint = false;
                     events.push(Event::GuppyBought {
@@ -5799,18 +6013,19 @@ impl AdventureState {
                 }
             }
             Action::BuyBreeder => {
+                let price = self.price_for_slot(1, BREEDER_PRICE);
                 if self.tank != 4 || !self.breeder_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
                     });
-                } else if self.available_funds() < BREEDER_PRICE {
+                } else if self.available_funds() < price {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::InsufficientFunds,
                     });
                 } else {
-                    self.balance -= BREEDER_PRICE;
+                    self.balance -= price;
                     let id = self.id();
                     let mut rng_state = self.rng_state;
                     let actor = BreederState::spawn_bought(id, &mut |upper| {
@@ -5844,8 +6059,22 @@ impl AdventureState {
                         reason: Rejection::InsufficientFunds,
                     });
                 } else {
-                    self.balance -= self.egg_price;
+                    let price = self.egg_price;
+                    self.balance -= price;
                     self.eggs += 1;
+                    if let Some(shop) = self.challenge_shop.as_mut() {
+                        shop.paid_reset(self.tank).expect("valid Challenge tank");
+                        events.push(Event::ChallengeEggBought {
+                            tick: self.tick,
+                            pieces: self.eggs,
+                            price,
+                            balance: self.balance,
+                        });
+                        if self.eggs == 3 {
+                            self.victory = true;
+                        }
+                        return events;
+                    }
                     if self.eggs == 1 && self.tutorial.buy_egg_hint {
                         self.tutorial.buy_egg_hint = false;
                         events.push(Event::Tutorial {
@@ -5880,19 +6109,20 @@ impl AdventureState {
             Action::BuyFoodQuality => self.buy_food_upgrade(true, &mut events),
             Action::BuyFoodQuantity => self.buy_food_upgrade(false, &mut events),
             Action::BuyPotion => {
+                let price = self.price_for_slot(5, POTION_PRICE);
                 if !self.potion_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
                     });
                 } else if !self.potion_armed {
-                    if self.available_funds() < POTION_PRICE {
+                    if self.available_funds() < price {
                         events.push(Event::Rejected {
                             tick: self.tick,
                             reason: Rejection::InsufficientFunds,
                         });
                     } else {
-                        self.balance -= POTION_PRICE;
+                        self.balance -= price;
                         self.potion_armed = true;
                         events.push(Event::PotionBought {
                             tick: self.tick,
@@ -5902,18 +6132,19 @@ impl AdventureState {
                 }
             }
             Action::BuyOscar => {
+                let price = self.price_for_slot(4, OSCAR_PRICE);
                 if !matches!(self.tank, 1 | 4) || !self.oscar_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
                     });
-                } else if self.available_funds() < OSCAR_PRICE {
+                } else if self.available_funds() < price {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::InsufficientFunds,
                     });
                 } else {
-                    self.balance -= OSCAR_PRICE;
+                    self.balance -= price;
                     let id = self.id();
                     let mut rng_state = self.rng_state;
                     let oscar = OscarState::spawn_bought(id, &mut |upper| {
@@ -5936,18 +6167,19 @@ impl AdventureState {
                 }
             }
             Action::BuyUltra => {
+                let price = self.price_for_slot(9, ULTRA_PRICE);
                 if !matches!((self.tank, self.level), (4, 2..=5)) || !self.ultra_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
                     });
-                } else if self.available_funds() < ULTRA_PRICE {
+                } else if self.available_funds() < price {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::InsufficientFunds,
                     });
                 } else {
-                    self.balance -= ULTRA_PRICE;
+                    self.balance -= price;
                     let id = self.id();
                     let mut rng_state = self.rng_state;
                     let actor = UltraState::spawn_bought(id, &mut |upper| {
@@ -5963,18 +6195,19 @@ impl AdventureState {
                 }
             }
             Action::BuyStarcatcher => {
+                let price = self.price_for_slot(6, STARCATCHER_PRICE);
                 if !(self.tank == 2 && (2..=5).contains(&self.level) && self.starcatcher_unlocked) {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
                     });
-                } else if self.available_funds() < STARCATCHER_PRICE {
+                } else if self.available_funds() < price {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::InsufficientFunds,
                     });
                 } else {
-                    self.balance -= STARCATCHER_PRICE;
+                    self.balance -= price;
                     let id = self.id();
                     let mut rng_state = self.rng_state;
                     let actor = StarcatcherState::spawn_bought(id, &mut |upper| {
@@ -5992,18 +6225,19 @@ impl AdventureState {
                 }
             }
             Action::BuyGrubber => {
+                let price = self.price_for_slot(7, GRUBBER_PRICE);
                 if self.tank != 3 || !(1..=5).contains(&self.level) || !self.grubber_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
                     });
-                } else if self.available_funds() < GRUBBER_PRICE {
+                } else if self.available_funds() < price {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::InsufficientFunds,
                     });
                 } else {
-                    self.balance -= GRUBBER_PRICE;
+                    self.balance -= price;
                     let grubber_id = self.id();
                     let mut rng_state = self.rng_state;
                     let actor = GrubberState::spawn_bought(grubber_id, &mut |upper| {
@@ -6024,18 +6258,19 @@ impl AdventureState {
                 }
             }
             Action::BuyGekko => {
+                let price = self.price_for_slot(8, GEKKO_PRICE);
                 if self.tank != 3 || !(2..=5).contains(&self.level) || !self.gekko_unlocked {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::Locked,
                     });
-                } else if self.available_funds() < GEKKO_PRICE {
+                } else if self.available_funds() < price {
                     events.push(Event::Rejected {
                         tick: self.tick,
                         reason: Rejection::InsufficientFunds,
                     });
                 } else {
-                    self.balance -= GEKKO_PRICE;
+                    self.balance -= price;
                     let gekko_id = self.id();
                     let mut rng_state = self.rng_state;
                     let actor = GekkoState::spawn_bought(gekko_id, &mut |upper| {
@@ -6053,11 +6288,12 @@ impl AdventureState {
                 }
             }
             Action::BuyWeapon => {
-                let price = match self.tank {
+                let ordinary_price = match self.tank {
                     3 => 2000,
                     4 => TANK4_WEAPON_PRICE,
                     _ => WEAPON_PRICE,
                 };
+                let price = self.price_for_slot(10, ordinary_price);
                 if !(self.tank == 1
                     || (self.tank == 2 && (2..=5).contains(&self.level))
                     || (self.tank == 3 && (2..=5).contains(&self.level))
@@ -6102,6 +6338,9 @@ impl AdventureState {
             | Action::OfferBonusPurchase
             | Action::ConfirmBonusPurchase { .. }
             | Action::SelectTimeTrialTank { .. }
+            | Action::PlayChallenge
+            | Action::SelectChallengeTank { .. }
+            | Action::ChallengeStory
             | Action::RightClick { .. }
             | Action::PrestoPress { .. }
             | Action::PrestoRelease { .. }
@@ -6494,11 +6733,14 @@ impl AdventureState {
         } else {
             self.upgrades.quantity >= 9
         };
-        let price = if quality {
+        let ordinary_price = if quality {
             FOOD_QUALITY_PRICE
         } else {
             FOOD_QUANTITY_PRICE
         };
+        // PB05 case 2 (retail "Food Quantity") changes the two-step food
+        // value stored here as quality; case 3 changes the nine-step feed cap.
+        let price = self.price_for_slot(if quality { 2 } else { 3 }, ordinary_price);
         let rejection = if !unlocked {
             Some(Rejection::Locked)
         } else if maxed {
@@ -6642,6 +6884,18 @@ impl AdventureState {
                 self.fire_missile_only_laser(x as i32, y as i32, &mut events);
             }
             self.shoot_first_missile(x as i32, y as i32, &mut events);
+        }
+        let available = self.challenge_available_slots();
+        if let Some(shop) = self.challenge_shop.as_mut()
+            && shop.tick_active(
+                self.tank,
+                self.tick,
+                self.eggs,
+                available,
+                &mut self.egg_price,
+            )
+        {
+            events.push(Event::ChallengePricesInflated { tick: self.tick });
         }
         self.advance_board_clock();
         if self.tank == 5 {
