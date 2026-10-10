@@ -4,6 +4,7 @@ use turbofish_deluxe::{
     assets::GameAssets,
     cli::{self, Options},
     install,
+    screensaver_bank::{NormalWriterLease, ScreensaverSceneLease},
 };
 use turbofish_screenhost::ScreenCommand;
 
@@ -86,11 +87,41 @@ fn prepare() -> Result<(), Box<dyn Error>> {
         }
         return Ok(());
     }
-    let profiles = cli::load_profiles(&options)?;
+    let screensaver = options.screensaver;
+    let profiles_path = options.save_dir.join("profiles.json");
+    if matches!(screensaver, Some(ScreenCommand::Fullscreen)) && !profiles_path.is_file() {
+        return Err("Screensaver income requires an existing current project profile".into());
+    }
+    let normal_writer_lease = if screensaver.is_none() {
+        Some(NormalWriterLease::try_acquire(&options.save_dir)?)
+    } else {
+        None
+    };
+    let saver_scene_lease = if matches!(screensaver, Some(ScreenCommand::Fullscreen)) {
+        Some(
+            ScreensaverSceneLease::try_acquire(&options.save_dir)?
+                .ok_or("Another screensaver is already evolving this project scene")?,
+        )
+    } else {
+        None
+    };
+    let mut profiles = cli::load_profiles(&options)?;
+    if screensaver.is_none() {
+        if !profiles_path.exists() || options.new_game {
+            // Establish profile generation before another saver can read it.
+            cli::save_profiles_checkpoint(&options, &profiles)?;
+        }
+        let credited = profiles.claim_screensaver(&options.save_dir)?;
+        if credited > 0 {
+            println!("Claimed {credited} screensaver shells");
+        }
+        if profiles.adopt_screensaver_scene(&options.save_dir)? {
+            println!("Resumed screensaver Virtual Tank continuation");
+        }
+    }
     let settings = turbofish_deluxe::settings::SettingsSave::load_or_default(
         &options.save_dir.join("settings.json"),
     )?;
-    let screensaver = options.screensaver;
     #[cfg(not(windows))]
     if screensaver.is_some() {
         return Err(turbofish_screenhost::HostError::UnsupportedPlatform.into());
@@ -129,6 +160,8 @@ fn prepare() -> Result<(), Box<dyn Error>> {
         }
     }
     macroquad::Window::from_config(window, async move {
+        let writer_lease = normal_writer_lease;
+        let scene_lease = saver_scene_lease;
         let result = if let Some(command) = screensaver {
             app::run_screensaver(
                 options, game_root, identity, assets, profiles, settings, command,
@@ -137,6 +170,8 @@ fn prepare() -> Result<(), Box<dyn Error>> {
         } else {
             app::run(options, game_root, identity, assets, profiles, settings).await
         };
+        drop(writer_lease);
+        drop(scene_lease);
         if let Err(error) = result {
             eprintln!("Runtime failed: {error}");
             std::process::exit(1);

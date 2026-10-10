@@ -3,6 +3,11 @@
 //! The page split and navigation follow pinned WinFish HelpScreen.cpp (constructor,
 //! Draw, and ButtonDepress). The short guidance below is written for this runtime.
 
+#[path = "help_demo.rs"]
+pub mod demo;
+
+use std::time::Duration;
+
 pub const LAST_PAGE: u8 = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +48,7 @@ struct HelpSession {
 pub struct HelpController {
     active: Option<HelpSession>,
     last_ordinary_page: u8,
+    demo_clock: demo::DemoClock,
 }
 
 impl Default for HelpController {
@@ -50,6 +56,7 @@ impl Default for HelpController {
         Self {
             active: None,
             last_ordinary_page: 1,
+            demo_clock: demo::DemoClock::default(),
         }
     }
 }
@@ -65,11 +72,13 @@ impl HelpController {
 
     pub fn open_instructions(&mut self, return_to: HelpReturn) {
         self.remember_current_page();
+        self.demo_clock.reset();
         self.active = Some(HelpSession { page: 0, return_to });
     }
 
     pub fn open_pages(&mut self, return_to: HelpReturn) {
         self.remember_current_page();
+        self.demo_clock.reset();
         self.active = Some(HelpSession {
             page: self.last_ordinary_page,
             return_to,
@@ -85,6 +94,32 @@ impl HelpController {
             lines,
             return_to: session.return_to,
         })
+    }
+
+    /// Advance Help's own 28ms clock even while the retained tank is paused.
+    /// The returned update count lets the caller advance its separate ambient bubbles.
+    pub fn advance_demo(&mut self, elapsed: Duration) -> u64 {
+        if self.active.is_some() {
+            self.demo_clock.advance(elapsed)
+        } else {
+            0
+        }
+    }
+
+    /// Fixed-step equivalent for a caller that already owns Help's update cadence.
+    pub fn advance_demo_ticks(&mut self, updates: u64) {
+        if self.active.is_some() {
+            self.demo_clock.advance_ticks(updates);
+        }
+    }
+
+    pub fn demo_clock(&self) -> &demo::DemoClock {
+        &self.demo_clock
+    }
+
+    /// Sampling does not advance the animation or access gameplay state.
+    pub fn render_plan(&self, assets: &impl demo::HelpAssets) -> Option<demo::HelpRenderPlan> {
+        demo::compose(self.view()?, &self.demo_clock, assets)
     }
 
     /// Hidden on the instruction page, as in the source Help screen.

@@ -17,6 +17,7 @@ use crate::{
     profiles::{Profiles, ScoreTab},
     sandbox::{EntryCode, SelectorKey},
     screensaver::{ScreensaverPreview, ScreensaverSettings, ScreensaverSettingsFile},
+    screensaver_bank::ScreensaverBank,
     settings::{GameSettings, SettingChange, SettingsBackend, SettingsCapabilities, SettingsSave},
     sim::{
         Action, AdventureState, CoinKind, Event, FishPose, FishSize, FoodType, PetKind, TICK_MS,
@@ -42,6 +43,10 @@ use std::{
 };
 use turbofish_screenhost::{MonitorPowerGuard, OwnWindow, PreviewStatus, ScreenCommand};
 
+#[path = "app/bubble_runtime.rs"]
+mod bubble_runtime;
+use bubble_runtime::BubbleRuntime;
+
 const IMAGE_IDS: &[&str] = &[
     "IMAGE_AQUARIUM1",
     "IMAGE_AQUARIUM2",
@@ -49,6 +54,14 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_AQUARIUM4",
     "IMAGE_AQUARIUM5",
     "IMAGE_AQUARIUM6",
+    "IMAGE_BUBBLES",
+    "IMAGE_BUBBULATOR",
+    "IMAGE_SIMSWIM1",
+    "IMAGE_SIMSWIM2",
+    "IMAGE_SIMSWIM3",
+    "IMAGE_SIMTURN1",
+    "IMAGE_SIMTURN2",
+    "IMAGE_SIMTURN3",
     "IMAGE_MENUBAR",
     "IMAGE_SMALLSWIM",
     "IMAGE_SMALLEAT",
@@ -3570,26 +3583,6 @@ impl Presentation {
                 1.0,
             );
         }
-        if let Some(image) = self.images.get("IMAGE_BUBBLES") {
-            let width = image.width() / 4.0;
-            // Source-shaped bursts use a deterministic visual projection;
-            // the retail particle RNG/speeds are not recovered here.
-            for pulse in [13, 33, 53] {
-                if let Some(age) = cycle.checked_sub(pulse).filter(|age| *age < 120) {
-                    for index in 0..7 {
-                        let rise = f32::from(age) * (1.8 + index as f32 * 0.08);
-                        self.additive_sprite(
-                            "IMAGE_BUBBLES",
-                            x + 5.0 + index as f32 * 6.0,
-                            y - 15.0 - rise,
-                            Rect::new((index % 4) as f32 * width, 0.0, width, image.height()),
-                            false,
-                            1.0,
-                        );
-                    }
-                }
-            }
-        }
     }
 
     fn draw_virtual_food(&self, kind: VirtualFoodKind, x: f32, y: f32, tick: u64) {
@@ -5917,6 +5910,7 @@ fn prepare_screensaver_preview(
 fn advance_screensaver_scene(
     preview: &mut ScreensaverPreview,
     clock: &mut StepClock,
+    bubbles: &mut BubbleRuntime,
     presentation: &Presentation,
     music: &mut Option<MusicOwner>,
 ) -> (Vec<Event>, Vec<MusicReport>) {
@@ -5924,7 +5918,9 @@ fn advance_screensaver_scene(
     let mut events = Vec::new();
     while clock.step_due() {
         clock.consume_step(false);
-        events.extend(preview.advance(wall_seconds()));
+        let step_events = preview.advance(wall_seconds());
+        bubbles.advance(preview.scene(), &step_events);
+        events.extend(step_events);
     }
     let sound = preview.overlay().sound_enabled;
     if let Some(owner) = music.as_mut() {
@@ -5942,14 +5938,23 @@ fn advance_screensaver_scene(
     } else {
         Vec::new()
     };
+    let ambient = bubbles.take_ambient_sound_request();
+    if sound && ambient {
+        reports.extend(play_bubble_sound(presentation, music.as_ref()));
+    }
     if let Some(owner) = music.as_mut() {
         reports.extend(owner.drain_reports());
     }
     (events, reports)
 }
 
-fn draw_screensaver_scene(presentation: &Presentation, preview: &ScreensaverPreview) {
+fn draw_screensaver_scene(
+    presentation: &Presentation,
+    preview: &ScreensaverPreview,
+    bubbles: &BubbleRuntime,
+) {
     presentation.draw_virtual_tank(preview.scene(), true);
+    bubbles.draw(presentation);
     let overlay = preview.overlay();
     if overlay.dim_alpha > 0 {
         draw_rectangle(
@@ -5969,6 +5974,45 @@ fn draw_screensaver_scene(presentation: &Presentation, preview: &ScreensaverPrev
             WHITE,
         );
     }
+}
+
+/// Include Board dialogs for frozen drawing; callers advance effects only in
+/// the actual unpaused simulation branch and when the Board clock increased.
+fn bubble_board_clock(
+    session: &AdventureSession,
+) -> Option<((crate::adventure::GameMode, u8, u8), u64)> {
+    use crate::adventure::GameMode;
+    match session.phase {
+        AdventurePhase::VirtualTank | AdventurePhase::VirtualPrestoDialog { .. } => session
+            .virtual_board
+            .as_ref()
+            .map(|board| ((GameMode::VirtualTank, 0, 0), board.tick)),
+        AdventurePhase::SandboxPlaying | AdventurePhase::SandboxPrestoDialog { .. } => session
+            .sandbox_board
+            .as_ref()
+            .map(|board| ((GameMode::Sandbox, board.tank, board.level), board.tick)),
+        AdventurePhase::Playing
+        | AdventurePhase::TimeTrialPlaying
+        | AdventurePhase::ChallengePlaying
+        | AdventurePhase::AdventurePrestoDialog { .. }
+        | AdventurePhase::TimeTrialPrestoDialog { .. }
+        | AdventurePhase::ChallengePrestoDialog { .. } => session
+            .board
+            .as_ref()
+            .map(|board| ((session.mode, board.tank, board.level), board.tick)),
+        _ => None,
+    }
+}
+
+fn play_bubble_sound(
+    presentation: &Presentation,
+    music: Option<&MusicOwner>,
+) -> Option<MusicReport> {
+    presentation
+        .sounds
+        .get("SOUND_BUBBLES")
+        .zip(music)
+        .and_then(|(sound, owner)| owner.play_effect(sound.clone()))
 }
 
 pub async fn run(
@@ -6023,6 +6067,8 @@ pub async fn run(
     let mut start_session_tick = profiles.current().map_or(0, |entry| entry.session.ticks);
     let mut clock = StepClock::new(options.test_speed);
     let mut preview_clock = StepClock::new(1);
+    let mut bubbles = BubbleRuntime::new(options.seed);
+    let mut preview_bubbles = BubbleRuntime::new(options.seed ^ 0x0050_5245_5649_4557);
     let screensaver_path = options.save_dir.join("screensaver.json");
     let (mut screensaver_file, mut screensaver_load_error) =
         match ScreensaverSettingsFile::load_or_default(&screensaver_path) {
@@ -6031,6 +6077,7 @@ pub async fn run(
         };
     let mut screensaver_dirty = false;
     let mut screensaver_preview = None::<ScreensaverPreview>;
+    let mut screensaver_claim_error = None::<String>;
     // Keep the thread power policy alive until preview closes; Drop restores it.
     let mut _screensaver_power_guard = None::<MonitorPowerGuard>;
     let mut pending_actions = Vec::new();
@@ -6248,6 +6295,8 @@ pub async fn run(
                                 Ok(guard) => {
                                     _screensaver_power_guard = Some(guard);
                                     screensaver_preview = Some(preview);
+                                    preview_bubbles
+                                        .reinitialize(options.seed ^ 0x0050_5245_5649_4557);
                                     preview_clock.clear_backlog();
                                     clock.clear_backlog();
                                     song_player.pause((get_time() * 1000.0) as u64);
@@ -6285,6 +6334,8 @@ pub async fn run(
                 Ok(switched) => {
                     selector_ui.error.clear();
                     if switched {
+                        bubbles.reinitialize(options.seed);
+                        preview_bubbles.clear();
                         if let Some(owner) = music.as_ref() {
                             let _ = owner.stop_song(song_id);
                         }
@@ -6311,6 +6362,30 @@ pub async fn run(
                         entry_code = EntryCode::default();
                         if let Some(entry) = profiles.current() {
                             start_session_tick = entry.session.ticks;
+                        }
+                        if profiles.current().is_some() {
+                            match profiles.claim_screensaver(&options.save_dir) {
+                                Ok(_) => screensaver_claim_error = None,
+                                Err(error) => {
+                                    screensaver_claim_error = Some(error.to_string());
+                                    eprintln!("Screensaver credit claim pending: {error}");
+                                }
+                            }
+                            if profiles.current().is_some_and(|entry| {
+                                entry.session.phase == AdventurePhase::GameSelector
+                            }) {
+                                match profiles.adopt_screensaver_scene(&options.save_dir) {
+                                    Ok(adopted) => {
+                                        if adopted {
+                                            clock.clear_backlog();
+                                        }
+                                    }
+                                    Err(error) => {
+                                        screensaver_claim_error = Some(error.to_string());
+                                        eprintln!("Screensaver scene handoff pending: {error}");
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -6343,8 +6418,13 @@ pub async fn run(
                 continue;
             }
             let preview = screensaver_preview.as_mut().expect("preview checked above");
-            let (_, reports) =
-                advance_screensaver_scene(preview, &mut preview_clock, &presentation, &mut music);
+            let (_, reports) = advance_screensaver_scene(
+                preview,
+                &mut preview_clock,
+                &mut preview_bubbles,
+                &presentation,
+                &mut music,
+            );
             for report in reports {
                 match report {
                     MusicReport::Unavailable { reason } => {
@@ -6366,7 +6446,7 @@ pub async fn run(
                 (480.0 * scale) as i32,
             ));
             set_camera(&camera);
-            draw_screensaver_scene(&presentation, preview);
+            draw_screensaver_scene(&presentation, preview, &preview_bubbles);
             draw_text("SCREENSAVER PREVIEW", 16.0, 29.0, 20.0, YELLOW);
             ui_button(Rect::new(485.0, 8.0, 140.0, 34.0), "Close");
             if settings.settings.custom_cursor {
@@ -6401,6 +6481,18 @@ pub async fn run(
                 screensaver_dirty,
                 screensaver_load_error.as_deref(),
             );
+            if let Some(error) = screensaver_claim_error.as_deref() {
+                draw_text(
+                    format!(
+                        "Saver sync pending: {}",
+                        error.chars().take(65).collect::<String>()
+                    ),
+                    12.0,
+                    442.0,
+                    16.0,
+                    YELLOW,
+                );
+            }
             if let Some(view) = help.view() {
                 draw_help(view);
             }
@@ -7508,7 +7600,33 @@ pub async fn run(
                         });
                     }
                     let previous_phase = std::mem::discriminant(&session.phase);
+                    let previous_bubble_clock = bubble_board_clock(session);
                     let step_events = session.step(&step_actions);
+                    match bubble_board_clock(session) {
+                        Some((identity, tick)) => {
+                            let same_board =
+                                previous_bubble_clock.is_some_and(|(previous, old_tick)| {
+                                    previous == identity && tick >= old_tick
+                                });
+                            if !same_board {
+                                bubbles.reinitialize(options.seed ^ session.ticks);
+                            }
+                            if same_board
+                                && previous_bubble_clock.is_some_and(|(_, old)| tick > old)
+                                && matches!(
+                                    session.phase,
+                                    AdventurePhase::Playing
+                                        | AdventurePhase::TimeTrialPlaying
+                                        | AdventurePhase::ChallengePlaying
+                                        | AdventurePhase::SandboxPlaying
+                                        | AdventurePhase::VirtualTank
+                                )
+                            {
+                                bubbles.advance(session, &step_events);
+                            }
+                        }
+                        None => bubbles.clear(),
+                    }
                     if session.phase == AdventurePhase::AdventureFinaleInterlude {
                         if interlude.is_none() {
                             interlude = InterludeController::new(&session.finale_fallen_pets).ok();
@@ -7758,6 +7876,9 @@ pub async fn run(
             matches!(session.phase, AdventurePhase::Playing),
         );
         let mut music_reports = presentation.play(&events, music.as_ref());
+        if bubbles.take_ambient_sound_request() {
+            music_reports.extend(play_bubble_sound(&presentation, music.as_ref()));
+        }
         let song_now_ms = (get_time() * 1000.0) as u64;
         if paused || ui_active || session.phase != AdventurePhase::VirtualTank {
             song_player.pause(song_now_ms);
@@ -7830,6 +7951,9 @@ pub async fn run(
             healing_warning_until_tick,
             interlude.as_ref(),
         );
+        if bubble_board_clock(session).is_some() {
+            bubbles.draw(&presentation);
+        }
         if let AdventurePhase::ChallengeInterlude { story, .. } = session.phase {
             draw_story(
                 &presentation,
@@ -7884,6 +8008,18 @@ pub async fn run(
         if music_unavailable.is_some() {
             draw_text("Music unavailable", 425.0, 470.0, 18.0, YELLOW);
         }
+        if let Some(error) = screensaver_claim_error.as_deref() {
+            draw_text(
+                format!(
+                    "Saver sync pending: {}",
+                    error.chars().take(65).collect::<String>()
+                ),
+                12.0,
+                442.0,
+                16.0,
+                YELLOW,
+            );
+        }
         set_default_camera();
         if let Some(evidence) = evidence.as_ref() {
             let request = evidence.root.join("capture.request");
@@ -7895,6 +8031,42 @@ pub async fn run(
             }
         }
         profiles.record_events(&options.save_dir.join("profiles.json"), &events)?;
+        if phase_transitioned
+            && profiles.current().is_some_and(|entry| {
+                matches!(
+                    entry.session.phase,
+                    AdventurePhase::GameSelector
+                        | AdventurePhase::VirtualStore
+                        | AdventurePhase::VirtualSetup
+                )
+            })
+        {
+            match profiles.claim_screensaver(&options.save_dir) {
+                Ok(_) => screensaver_claim_error = None,
+                Err(error) => {
+                    screensaver_claim_error = Some(error.to_string());
+                    eprintln!("Screensaver credit claim pending: {error}");
+                }
+            }
+        }
+        if phase_transitioned
+            && profiles
+                .current()
+                .is_some_and(|entry| entry.session.phase == AdventurePhase::GameSelector)
+        {
+            match profiles.adopt_screensaver_scene(&options.save_dir) {
+                Ok(adopted) => {
+                    if adopted {
+                        clock.clear_backlog();
+                        bubbles.reinitialize(options.seed);
+                    }
+                }
+                Err(error) => {
+                    screensaver_claim_error = Some(error.to_string());
+                    eprintln!("Screensaver scene handoff pending: {error}");
+                }
+            }
+        }
         if save_due {
             cli::save_profiles_checkpoint(&options, &profiles)?;
         }
@@ -7926,7 +8098,7 @@ pub async fn run_screensaver(
     game_root: PathBuf,
     identity: InstallIdentity,
     assets: GameAssets,
-    profiles: Profiles,
+    mut profiles: Profiles,
     settings: SettingsSave,
     command: ScreenCommand,
 ) -> Result<(), Box<dyn Error>> {
@@ -7938,6 +8110,38 @@ pub async fn run_screensaver(
         parent.validate()?;
     }
     let configuring = matches!(command, ScreenCommand::Configure(_));
+    let saver_key = profiles.current().map(|entry| entry.screensaver_key());
+    if matches!(command, ScreenCommand::Fullscreen) && saver_key.is_none() {
+        return Err("Fullscreen screensaver needs a selected saved profile".into());
+    }
+    let mut saver_baseline_digest = None::<String>;
+    let mut resumed_scene_sequence = None::<u64>;
+    if matches!(command, ScreenCommand::Fullscreen) {
+        let current = profiles
+            .current()
+            .expect("fullscreen profile checked above");
+        let baseline = current.session.virtual_baseline_digest()?;
+        let consumed = current.screensaver_scene_consumed;
+        let snapshot = ScreensaverBank::new(options.save_dir.as_path()).read_snapshot(
+            saver_key
+                .as_ref()
+                .expect("fullscreen profile checked above"),
+        )?;
+        if let Some(pending) = snapshot.pending_scene {
+            if pending.sequence > consumed && pending.baseline_digest == baseline {
+                profiles
+                    .current_mut()
+                    .expect("fullscreen profile checked above")
+                    .session
+                    .apply_virtual_continuation(&pending.continuation)
+                    .map_err(|error| format!("Screensaver continuation unavailable: {error}"))?;
+                resumed_scene_sequence = Some(pending.sequence);
+            } else if pending.sequence > consumed {
+                eprintln!("Screensaver scene baseline changed; starting from current profile");
+            }
+        }
+        saver_baseline_digest = Some(baseline);
+    }
     if configuring && options.evidence_dir.is_some() {
         return Err("Screensaver evidence requires an active /s or /p scene".into());
     }
@@ -7993,7 +8197,7 @@ pub async fn run_screensaver(
     if let Some(evidence) = evidence.as_ref() {
         cli::write_json(
             &evidence.root.join("screensaver.local.json"),
-            &serde_json::json!({"command":if matches!(command, ScreenCommand::Preview(_)) {"preview"} else {"fullscreen"},"disposable_screensaver":true,"profile_scene_cloned":true,"test_speed":1,"time_mode":"normal","earned_playable_claim":false}),
+            &serde_json::json!({"command":if matches!(command, ScreenCommand::Preview(_)) {"preview"} else {"fullscreen"},"disposable_screensaver":true,"profile_scene_cloned":true,"source_baseline_digest":saver_baseline_digest.as_deref(),"resumed_scene_sequence":resumed_scene_sequence,"test_speed":1,"time_mode":"normal","earned_playable_claim":false}),
         )?;
     }
     let mut power_guard = if preview.is_some() {
@@ -8019,6 +8223,7 @@ pub async fn run_screensaver(
         show_mouse(false);
     }
     let mut clock = StepClock::new(1);
+    let mut bubbles = BubbleRuntime::new(options.seed ^ 0x0000_0053_4156_4552);
     let mut ui = SelectorUi {
         panel: Some(SelectorPanel::Screensaver),
         ..SelectorUi::default()
@@ -8135,8 +8340,13 @@ pub async fn run_screensaver(
             }
         }
         if let Some(scene) = preview.as_mut() {
-            let (events, reports) =
-                advance_screensaver_scene(scene, &mut clock, &presentation, &mut music);
+            let (events, reports) = advance_screensaver_scene(
+                scene,
+                &mut clock,
+                &mut bubbles,
+                &presentation,
+                &mut music,
+            );
             if let Some(evidence) = evidence.as_mut() {
                 evidence.record(&events, &[], scene.scene(), get_time() - started, false)?;
                 evidence.record_music(&reports, get_time() - started, scene.scene())?;
@@ -8163,7 +8373,7 @@ pub async fn run_screensaver(
         ));
         set_camera(&camera);
         if let Some(scene) = preview.as_ref() {
-            draw_screensaver_scene(&presentation, scene);
+            draw_screensaver_scene(&presentation, scene, &bubbles);
             if configuring {
                 draw_text("SCREENSAVER PREVIEW", 16.0, 29.0, 20.0, YELLOW);
                 ui_button(Rect::new(485.0, 8.0, 140.0, 34.0), "Close");
@@ -8204,6 +8414,49 @@ pub async fn run_screensaver(
     drop(attachment);
     drop(power_guard);
     show_mouse(true);
+    let deposited_delta = if matches!(command, ScreenCommand::Fullscreen) {
+        preview
+            .as_ref()
+            .map_or(0, ScreensaverPreview::collected_shells)
+    } else {
+        0
+    };
+    let bank_snapshot = if matches!(command, ScreenCommand::Fullscreen) {
+        let bank = ScreensaverBank::new(options.save_dir.as_path());
+        let key = saver_key
+            .as_ref()
+            .expect("fullscreen profile checked above");
+        let baseline = saver_baseline_digest
+            .as_deref()
+            .expect("fullscreen baseline captured above");
+        let scene = preview.as_ref().expect("fullscreen scene started above");
+        match bank.checkpoint(
+            key,
+            u64::from(deposited_delta),
+            baseline,
+            scene.continuation(),
+        ) {
+            Ok(snapshot) => Some(snapshot),
+            Err(error) => {
+                eprintln!(
+                    "Screensaver scene and {deposited_delta} shells could not be checkpointed: {error}"
+                );
+                if let Some(evidence) = evidence.as_ref() {
+                    cli::write_json(
+                        &evidence.root.join("checkpoint-error.local.json"),
+                        &serde_json::json!({"deposited_delta":0,"pending_delta":deposited_delta,"source_baseline_digest":baseline,"bank_key":{"profile_id":key.profile_id,"generation":&key.generation},"error":error.to_string()}),
+                    )?;
+                }
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
+    let cumulative = bank_snapshot.as_ref().map(|snapshot| snapshot.cumulative);
+    let scene_sequence = bank_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.pending_scene.as_ref().map(|scene| scene.sequence));
     let after = install::identify(&game_root)?;
     if after.inventory_sha256 != identity.inventory_sha256 {
         return Err("Owned installation changed during screensaver run".into());
@@ -8212,7 +8465,7 @@ pub async fn run_screensaver(
         evidence.record(&[], &[], scene.scene(), get_time() - started, false)?;
         cli::write_json(
             &evidence.root.join("final.local.json"),
-            &serde_json::json!({"session":scene.scene(),"game_after":after,"elapsed_seconds":get_time()-started,"test_speed":1,"time_mode":"normal","disposable_screensaver":true,"earned_playable_claim":false,"game_unchanged":true}),
+            &serde_json::json!({"session":scene.scene(),"game_after":after,"elapsed_seconds":get_time()-started,"test_speed":1,"time_mode":"normal","disposable_screensaver":true,"profile_scene_saved":false,"source_baseline_digest":saver_baseline_digest.as_deref(),"resumed_scene_sequence":resumed_scene_sequence,"scene_sequence":scene_sequence,"deposited_delta":deposited_delta,"bank_cumulative":cumulative,"bank_key":saver_key.as_ref().map(|key| serde_json::json!({"profile_id":key.profile_id,"generation":&key.generation})),"earned_playable_claim":false,"game_unchanged":true}),
         )?;
     }
     Ok(())

@@ -1,5 +1,11 @@
 # Transient bubble effects
 
+## Runtime integration
+
+E110 joins the registered model through `src/app/bubble_runtime.rs` and the actual app loop. The app loads bubble/Bubbulator/swim/turn resources and owns independent normal, selector-preview and standalone-saver effects. Existing particles update before typed actor/ambient/device requests on an actual unpaused Board tick; pause freezes drawing and owner replacement clears transient state. The deterministic seven-particle Bubbulator projection was removed; device artwork and existing first-burst sound remain. Ambient sound requests use the current audio owner and honor mute. These effects never enter profiles or consume gameplay RNG.
+
+Timing/caps/coordinates follow pinned W1 `Board.cpp:614–621,660–678,884–894,1696–1706`; the separate private FX stream is an explicit project adaptation, not exact retail randomness. Rendering honors model order/tint/additive blend and CPU clip cropping while restoring the default material. E110 formatting/production lint/build/package passed; no duplicate model tests or visual-only tests were run. [STATUS](../STATUS.md) and [MODLOG](../MODLOG.md#2026-10-10--integrate-saver-scenes-and-board-bubbles) own build/check scope and retained failures. Actual normal-speed visual/audio, palette/turn stride, interlude managers, StartGame/key-trigger bursts and retail/human acceptance remain pending.
+
 ## Scope and ownership
 
 This increment supplies an independent Rust bubble-effects module for later caller integration. It owns only `src/bubbles.rs`, this document and the `pub mod bubbles` declaration in `src/lib.rs`. It does not change simulation, frontend, Virtual Tank, screensaver, saves, dependencies or central handoff records. Effects are transient; there is no profile, gameplay actor, save, clock scheduler or RNG authority in this module.
