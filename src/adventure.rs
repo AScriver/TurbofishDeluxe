@@ -41,6 +41,9 @@ pub struct AdventureProgress {
     /// Guards the ordinary first-completion award across saves and re-entry.
     #[serde(default)]
     pub adventure_completed: bool,
+    /// Profile completion count survives the replay cursor and per-run
+    /// Cyrax-attempt reset (PB05 profile+50 versus +54).
+    pub adventure_completions: u32,
 }
 
 fn default_pet_capacity() -> u8 {
@@ -114,6 +117,10 @@ pub enum AdventurePhase {
     },
     TimeTrialPlaying,
     TimeTrialPrestoDialog {
+        opener_id: u64,
+        pressed: Option<PetKind>,
+    },
+    AdventurePrestoDialog {
         opener_id: u64,
         pressed: Option<PetKind>,
     },
@@ -205,6 +212,7 @@ impl AdventureSession {
                 later_stage_best_seconds: Vec::new(),
                 cyrax_attempts: 0,
                 adventure_completed: false,
+                adventure_completions: 0,
             },
             board: Some(board),
             phase: AdventurePhase::Playing,
@@ -249,6 +257,7 @@ impl AdventureSession {
                     later_stage_best_seconds: Vec::new(),
                     cyrax_attempts: 0,
                     adventure_completed: false,
+                    adventure_completions: 0,
                 },
                 board: None,
                 phase: AdventurePhase::Hatch {
@@ -279,6 +288,7 @@ impl AdventureSession {
                 later_stage_best_seconds: Vec::new(),
                 cyrax_attempts: 0,
                 adventure_completed: false,
+                adventure_completions: 0,
             },
             board: Some(board),
             phase: AdventurePhase::Playing,
@@ -550,9 +560,14 @@ impl AdventureSession {
             ],
             _ => unreachable!("progress checked above"),
         };
-        if self.progress.unlocked_pets != expected_pets
-            || self.progress.adventure_completed
-                != ((self.progress.tank, self.progress.level) == (5, 2))
+        let completed_unlocks = self.progress.unlocked_pets.len() == 20
+            && self.progress.unlocked_pets[..19] == time_trial::SUPPORTED_PETS
+            && self.progress.unlocked_pets[19] == PetKind::Presto;
+        if (self.progress.adventure_completed && !completed_unlocks)
+            || (!self.progress.adventure_completed
+                && (self.progress.unlocked_pets != expected_pets
+                    || (self.progress.tank, self.progress.level) == (5, 2)))
+            || self.progress.adventure_completed != (self.progress.adventure_completions > 0)
         {
             return Err("Adventure pet unlocks disagree with completed stages".into());
         }
@@ -572,11 +587,25 @@ impl AdventureSession {
             return Err("Adventure phase retains Time Trial state".into());
         }
         if let Some(board) = &self.board
-            && self.progress.unlocked_pets.len() >= 4
-            && (self.progress.tank, self.progress.level) != (5, 1)
-            && board.pets != self.progress.selected_pets
+            && !board.bonus_active
         {
-            return Err("active pet roster disagrees with committed selection".into());
+            let mut expected = self.progress.selected_pets.clone();
+            if (board.tank, board.level) == (5, 1) && board.profile_population {
+                expected.extend(crate::sim::TANK5_PETS);
+            }
+            if board.profile_population {
+                if board.pets != expected
+                    || (!self.progress.adventure_completed && (board.tank, board.level) != (5, 1))
+                {
+                    return Err("profile-populated board disagrees with committed selection".into());
+                }
+            } else if self.progress.adventure_completed
+                || self.progress.unlocked_pets.len() >= 4
+                    && (self.progress.tank, self.progress.level) != (5, 1)
+                    && board.pets != self.progress.selected_pets
+            {
+                return Err("active pet roster disagrees with committed selection".into());
+            }
         }
         if let Some(board) = &self.board
             && (board.tank, board.level) == (5, 1)
@@ -601,7 +630,8 @@ impl AdventureSession {
             if !matches!(
                 (result.tank, result.level),
                 (1, 2..=5) | (2, 1..=5) | (3, 1..=5) | (4, 1..=5) | (5, 1)
-            ) || (self.progress.tank, self.progress.level) <= (result.tank, result.level)
+            ) || (!self.progress.adventure_completed
+                && (self.progress.tank, self.progress.level) <= (result.tank, result.level))
                 || recorded_stages.contains(&(result.tank, result.level))
             {
                 return Err("invalid or duplicate completed-stage time".into());
@@ -609,7 +639,10 @@ impl AdventureSession {
             recorded_stages.push((result.tank, result.level));
         }
         match (&self.phase, &self.board) {
-            (AdventurePhase::Playing, Some(board)) => {
+            (
+                AdventurePhase::Playing | AdventurePhase::AdventurePrestoDialog { .. },
+                Some(board),
+            ) => {
                 if (board.tank, board.level) != (self.progress.tank, self.progress.level)
                     || board.victory
                     || board.eggs >= 3
@@ -623,6 +656,20 @@ impl AdventureSession {
                     .is_some_and(|wave| wave.pending_modal.is_some())
                 {
                     return Err("playing board has an unacknowledged invasion modal".into());
+                }
+                if let AdventurePhase::AdventurePrestoDialog { opener_id, .. } = &self.phase
+                    && !board
+                        .presto_actor()
+                        .is_some_and(|actor| actor.id == *opener_id && actor.remaining_ticks == 0)
+                {
+                    return Err("Adventure Presto dialog opener disagrees".into());
+                }
+                if let AdventurePhase::AdventurePrestoDialog {
+                    pressed: Some(pet), ..
+                } = &self.phase
+                    && (!time_trial::selectable_pet(*pet) || !self.progress.has_pet(*pet))
+                {
+                    return Err("Adventure Presto dialog selection disagrees".into());
                 }
                 board.validate()
             }
@@ -718,15 +765,44 @@ impl AdventureSession {
                 None,
             ) if (self.progress.tank, self.progress.level) == (1, 6) => Ok(()),
             (AdventurePhase::Bonus { state }, None)
-                if self.progress.level == 6
+                if !self.progress.adventure_completed
+                    && self.progress.level == 6
                     && self.progress.tank == state.origin_tank
+                    && state.origin_level == 6
                     && state.tick <= self.ticks =>
             {
                 state.validate()
             }
+            (AdventurePhase::Bonus { state }, Some(board))
+                if self.progress.adventure_completed
+                    && board.bonus_active
+                    && (board.tank, board.level) == (state.origin_tank, state.origin_level)
+                    && (self.progress.tank, self.progress.level) == (board.tank, board.level)
+                    && board.bonus_tally == state.shells_earned
+                    && state.next_entity_id() >= board.replay_bonus_identity().1
+                    && state.tick <= self.ticks =>
+            {
+                state.validate()?;
+                board.validate()
+            }
             (AdventurePhase::BonusResults { result }, None)
-                if matches!(result.origin_tank, 1..=3)
-                    && (self.progress.tank, self.progress.level) == (result.origin_tank + 1, 1)
+                if (!self.progress.adventure_completed
+                    && matches!(result.origin_tank, 1..=3)
+                    && result.origin_level == 6
+                    && (self.progress.tank, self.progress.level)
+                        == (result.origin_tank + 1, 1)
+                    || self.progress.adventure_completed
+                        && result.origin_tank == 5
+                        && result.origin_level == 1
+                        && (self.progress.tank, self.progress.level) == (5, 2)
+                        && self.progress.adventure_completions > 1
+                        && result.earned
+                            == self
+                                .progress
+                                .adventure_completions
+                                .saturating_sub(1)
+                                .clamp(1, 5)
+                                .saturating_mul(5000))
                     && self.progress.shell_balance
                         == result
                             .previous_balance
@@ -734,6 +810,26 @@ impl AdventureSession {
                             .min(MAX_SHELL_BALANCE) =>
             {
                 result.validate()
+            }
+            (AdventurePhase::BonusResults { result }, Some(board))
+                if self.progress.adventure_completed
+                    && board.bonus_active
+                    && (board.tank, board.level) == (result.origin_tank, result.origin_level)
+                    && (self.progress.tank, self.progress.level)
+                        == if result.origin_level == 5 {
+                            (result.origin_tank.saturating_add(1), 1)
+                        } else {
+                            (result.origin_tank, result.origin_level.saturating_add(1))
+                        }
+                    && board.bonus_tally == result.earned
+                    && self.progress.shell_balance
+                        == result
+                            .previous_balance
+                            .saturating_add(result.earned)
+                            .min(MAX_SHELL_BALANCE) =>
+            {
+                result.validate()?;
+                board.validate()
             }
             (AdventurePhase::PetSelection { selected }, None)
                 if self.progress.unlocked_pets.len() >= 4
@@ -1051,7 +1147,12 @@ impl AdventureSession {
                 AdventurePhase::TimeTrialPrestoDialog {
                     opener_id,
                     mut pressed,
+                }
+                | AdventurePhase::AdventurePrestoDialog {
+                    opener_id,
+                    mut pressed,
                 } => {
+                    let time_trial = self.mode == GameMode::TimeTrial;
                     events.push(Event::Action {
                         tick: self.ticks,
                         action: action.clone(),
@@ -1061,8 +1162,11 @@ impl AdventureSession {
                             if time_trial::selectable_pet(*pet) && self.progress.has_pet(*pet) =>
                         {
                             pressed = Some(*pet);
-                            self.phase =
-                                AdventurePhase::TimeTrialPrestoDialog { opener_id, pressed };
+                            self.phase = if time_trial {
+                                AdventurePhase::TimeTrialPrestoDialog { opener_id, pressed }
+                            } else {
+                                AdventurePhase::AdventurePrestoDialog { opener_id, pressed }
+                            };
                         }
                         Action::PrestoRelease { pet } => {
                             if let Some(target) = (*pet).filter(|kind| {
@@ -1088,11 +1192,19 @@ impl AdventureSession {
                                     }),
                                 }
                             }
-                            self.phase = AdventurePhase::TimeTrialPlaying;
+                            self.phase = if time_trial {
+                                AdventurePhase::TimeTrialPlaying
+                            } else {
+                                AdventurePhase::Playing
+                            };
                             entered_playing = true;
                         }
                         Action::PrestoCancel | Action::OpenMenu => {
-                            self.phase = AdventurePhase::TimeTrialPlaying;
+                            self.phase = if time_trial {
+                                AdventurePhase::TimeTrialPlaying
+                            } else {
+                                AdventurePhase::Playing
+                            };
                             entered_playing = true;
                         }
                         _ => events.push(Event::Rejected {
@@ -1188,7 +1300,29 @@ impl AdventureSession {
                     let Some(board) = self.board.as_mut() else {
                         continue;
                     };
-                    events.extend(board.apply(action.clone()));
+                    if let Action::RightClick { x, y } = action {
+                        events.push(Event::Action {
+                            tick: board.tick,
+                            action: action.clone(),
+                        });
+                        if let Some(opener_id) = board.presto_hit(*x as i32, *y as i32)
+                            && board
+                                .presto_actor()
+                                .is_some_and(|actor| actor.remaining_ticks == 0)
+                        {
+                            self.phase = AdventurePhase::AdventurePrestoDialog {
+                                opener_id,
+                                pressed: None,
+                            };
+                        } else {
+                            events.push(Event::Rejected {
+                                tick: board.tick,
+                                reason: Rejection::Locked,
+                            });
+                        }
+                    } else {
+                        events.extend(board.apply(action.clone()));
+                    }
                     if board.victory {
                         self.finish_stage(&mut events);
                         entered_hatch = true;
@@ -1265,8 +1399,14 @@ impl AdventureSession {
                     {
                         self.mode = GameMode::TimeTrial;
                         self.phase = AdventurePhase::TimeTrialTankSelection;
-                    } else if *action == Action::PlayAdventure && !self.progress.adventure_completed
-                    {
+                    } else if *action == Action::PlayAdventure {
+                        if self.progress.adventure_completed
+                            && (self.progress.tank, self.progress.level) == (5, 2)
+                        {
+                            self.progress.tank = 1;
+                            self.progress.level = 1;
+                            self.progress.cyrax_attempts = 0;
+                        }
                         self.phase = AdventurePhase::HelpScreen;
                     } else {
                         events.push(Event::Rejected {
@@ -1280,7 +1420,7 @@ impl AdventureSession {
                         tick: self.ticks,
                         action: action.clone(),
                     });
-                    if *action == Action::Continue && !self.progress.adventure_completed {
+                    if *action == Action::Continue {
                         entered_playing = self.start_current_stage(&mut events);
                     } else {
                         events.push(Event::Rejected {
@@ -1302,7 +1442,9 @@ impl AdventureSession {
                     } else if let Action::HatchHold { down } = action {
                         self.hatch_held = *down;
                     } else if *action == Action::Continue && updates > HATCH_READY_CHECK {
-                        if self.progress.adventure_completed {
+                        if self.progress.adventure_completed
+                            && (self.progress.tank, self.progress.level) == (5, 2)
+                        {
                             self.phase = AdventurePhase::AdventureFinaleInterlude;
                         } else {
                             entered_playing = self.start_current_stage(&mut events);
@@ -1344,7 +1486,12 @@ impl AdventureSession {
                         action: action.clone(),
                     });
                     if *action == Action::Continue && result.updates >= 30 {
-                        entered_playing = self.start_current_stage(&mut events);
+                        if (self.progress.tank, self.progress.level) == (5, 2) {
+                            self.board = None;
+                            self.phase = AdventurePhase::AdventureFinaleInterlude;
+                        } else {
+                            entered_playing = self.start_current_stage(&mut events);
+                        }
                     } else {
                         events.push(Event::Rejected {
                             tick: self.ticks,
@@ -1535,19 +1682,41 @@ impl AdventureSession {
                         .into_iter()
                         .map(|event| Event::Bonus { tick, event }),
                 );
+                if let Some(board) = self.board.as_mut()
+                    && board.bonus_active
+                {
+                    board.bonus_tally = state.shells_earned;
+                }
                 if update.completed {
                     let origin_tank = state.origin_tank;
-                    let earned = state.shells_earned;
+                    let origin_level = state.origin_level;
+                    let earned = self
+                        .board
+                        .as_ref()
+                        .filter(|board| board.bonus_active)
+                        .map_or(state.shells_earned, |board| board.bonus_tally);
                     self.next_seed = state.transition_seed();
+                    let replay = if let Some(board) = self.board.as_mut()
+                        && board.bonus_active
+                    {
+                        board.finish_replay_bonus(state.transition_seed(), state.next_entity_id());
+                        true
+                    } else {
+                        false
+                    };
                     let previous_balance = self.progress.shell_balance;
                     self.progress.shell_balance = previous_balance
                         .saturating_add(earned)
                         .min(MAX_SHELL_BALANCE);
-                    self.progress.tank = origin_tank + 1;
-                    self.progress.level = 1;
+                    (self.progress.tank, self.progress.level) = if replay && origin_level < 5 {
+                        (origin_tank, origin_level + 1)
+                    } else {
+                        (origin_tank + 1, 1)
+                    };
                     self.phase = AdventurePhase::BonusResults {
                         result: BonusResult {
                             origin_tank,
+                            origin_level,
                             earned,
                             previous_balance,
                             updates: 0,
@@ -1605,6 +1774,7 @@ impl AdventureSession {
                 *updates += 1;
             }
             AdventurePhase::Playing
+            | AdventurePhase::AdventurePrestoDialog { .. }
             | AdventurePhase::TimeTrialPlaying
             | AdventurePhase::TimeTrialPrestoDialog { .. }
             | AdventurePhase::TimeTrialInvasionTutorial { .. }
@@ -1650,8 +1820,11 @@ impl AdventureSession {
 
     pub fn paused_step(&mut self) {
         self.ticks += 1;
-        if !matches!(self.phase, AdventurePhase::TimeTrialPrestoDialog { .. })
-            && let Some(board) = &mut self.board
+        if !matches!(
+            self.phase,
+            AdventurePhase::TimeTrialPrestoDialog { .. }
+                | AdventurePhase::AdventurePrestoDialog { .. }
+        ) && let Some(board) = &mut self.board
         {
             board.paused_board_update();
         }
@@ -1746,7 +1919,6 @@ impl AdventureSession {
             return true;
         }
         if self.progress.unlocked_pets.len() >= 4 {
-            self.progress.selected_pets.clear();
             self.board = None;
             self.phase = AdventurePhase::PetSelection {
                 selected: Vec::new(),
@@ -1762,75 +1934,105 @@ impl AdventureSession {
     }
 
     fn start_board(&mut self, events: &mut Vec<Event>) {
-        let board = match (self.progress.tank, self.progress.level) {
-            (1, 1) => AdventureState::new_adventure(self.next_seed),
-            (1, 2) => AdventureState::new_second_stage(self.next_seed),
-            (1, 3) => AdventureState::new_third_stage(self.next_seed),
-            (1, 4) => AdventureState::new_fourth_stage(self.next_seed),
-            (1, 5) => AdventureState::new_fifth_stage(self.next_seed, &self.progress.selected_pets)
+        let board = if self.progress.adventure_completed
+            || (self.progress.tank, self.progress.level) == (5, 1)
+                && !self.progress.selected_pets.is_empty()
+        {
+            AdventureState::new_profile_stage(
+                self.next_seed,
+                self.progress.tank,
+                self.progress.level,
+                &self.progress.selected_pets,
+                self.progress.cyrax_attempts,
+            )
+            .expect("profile selection is validated before starting a board")
+        } else {
+            match (self.progress.tank, self.progress.level) {
+                (1, 1) => AdventureState::new_adventure(self.next_seed),
+                (1, 2) => AdventureState::new_second_stage(self.next_seed),
+                (1, 3) => AdventureState::new_third_stage(self.next_seed),
+                (1, 4) => AdventureState::new_fourth_stage(self.next_seed),
+                (1, 5) => {
+                    AdventureState::new_fifth_stage(self.next_seed, &self.progress.selected_pets)
+                        .expect("session selection is validated before starting a board")
+                }
+                (2, 1) => AdventureState::new_tank2_first_stage(
+                    self.next_seed,
+                    &self.progress.selected_pets,
+                )
                 .expect("session selection is validated before starting a board"),
-            (2, 1) => {
-                AdventureState::new_tank2_first_stage(self.next_seed, &self.progress.selected_pets)
-                    .expect("session selection is validated before starting a board")
+                (2, 2) => AdventureState::new_tank2_second_stage(
+                    self.next_seed,
+                    &self.progress.selected_pets,
+                )
+                .expect("session selection is validated before starting a board"),
+                (2, 3) => AdventureState::new_tank2_third_stage(
+                    self.next_seed,
+                    &self.progress.selected_pets,
+                )
+                .expect("session selection is validated before starting a board"),
+                (2, 4) => AdventureState::new_tank2_fourth_stage(
+                    self.next_seed,
+                    &self.progress.selected_pets,
+                )
+                .expect("session selection is validated before starting a board"),
+                (2, 5) => AdventureState::new_tank2_fifth_stage(
+                    self.next_seed,
+                    &self.progress.selected_pets,
+                )
+                .expect("session selection is validated before starting a board"),
+                (3, 1) => AdventureState::new_tank3_first_stage(
+                    self.next_seed,
+                    &self.progress.selected_pets,
+                )
+                .expect("session selection is validated before starting a board"),
+                (3, 2) => AdventureState::new_tank3_second_stage(
+                    self.next_seed,
+                    &self.progress.selected_pets,
+                )
+                .expect("session selection is validated before starting a board"),
+                (3, 3) => AdventureState::new_tank3_third_stage(
+                    self.next_seed,
+                    &self.progress.selected_pets,
+                )
+                .expect("session selection is validated before starting a board"),
+                (3, 4) => AdventureState::new_tank3_fourth_stage(
+                    self.next_seed,
+                    &self.progress.selected_pets,
+                )
+                .expect("session selection is validated before starting a board"),
+                (3, 5) => AdventureState::new_tank3_fifth_stage(
+                    self.next_seed,
+                    &self.progress.selected_pets,
+                )
+                .expect("session selection is validated before starting a board"),
+                (4, 1) => AdventureState::new_tank4_first_stage(
+                    self.next_seed,
+                    &self.progress.selected_pets,
+                )
+                .expect("session selection is validated before starting a board"),
+                (4, 2) => AdventureState::new_tank4_second_stage(
+                    self.next_seed,
+                    &self.progress.selected_pets,
+                )
+                .expect("session selection is validated before starting a board"),
+                (4, 3) => AdventureState::new_tank4_third_stage(
+                    self.next_seed,
+                    &self.progress.selected_pets,
+                )
+                .expect("session selection is validated before starting a board"),
+                (4, 4) => AdventureState::new_tank4_fourth_stage(
+                    self.next_seed,
+                    &self.progress.selected_pets,
+                )
+                .expect("session selection is validated before starting a board"),
+                (4, 5) => {
+                    AdventureState::new_tank4_finale(self.next_seed, &self.progress.selected_pets)
+                        .expect("session selection is validated before starting a board")
+                }
+                (5, 1) => AdventureState::new_tank5_1(self.next_seed, self.progress.cyrax_attempts),
+                _ => unreachable!("supported progress validated at load"),
             }
-            (2, 2) => {
-                AdventureState::new_tank2_second_stage(self.next_seed, &self.progress.selected_pets)
-                    .expect("session selection is validated before starting a board")
-            }
-            (2, 3) => {
-                AdventureState::new_tank2_third_stage(self.next_seed, &self.progress.selected_pets)
-                    .expect("session selection is validated before starting a board")
-            }
-            (2, 4) => {
-                AdventureState::new_tank2_fourth_stage(self.next_seed, &self.progress.selected_pets)
-                    .expect("session selection is validated before starting a board")
-            }
-            (2, 5) => {
-                AdventureState::new_tank2_fifth_stage(self.next_seed, &self.progress.selected_pets)
-                    .expect("session selection is validated before starting a board")
-            }
-            (3, 1) => {
-                AdventureState::new_tank3_first_stage(self.next_seed, &self.progress.selected_pets)
-                    .expect("session selection is validated before starting a board")
-            }
-            (3, 2) => {
-                AdventureState::new_tank3_second_stage(self.next_seed, &self.progress.selected_pets)
-                    .expect("session selection is validated before starting a board")
-            }
-            (3, 3) => {
-                AdventureState::new_tank3_third_stage(self.next_seed, &self.progress.selected_pets)
-                    .expect("session selection is validated before starting a board")
-            }
-            (3, 4) => {
-                AdventureState::new_tank3_fourth_stage(self.next_seed, &self.progress.selected_pets)
-                    .expect("session selection is validated before starting a board")
-            }
-            (3, 5) => {
-                AdventureState::new_tank3_fifth_stage(self.next_seed, &self.progress.selected_pets)
-                    .expect("session selection is validated before starting a board")
-            }
-            (4, 1) => {
-                AdventureState::new_tank4_first_stage(self.next_seed, &self.progress.selected_pets)
-                    .expect("session selection is validated before starting a board")
-            }
-            (4, 2) => {
-                AdventureState::new_tank4_second_stage(self.next_seed, &self.progress.selected_pets)
-                    .expect("session selection is validated before starting a board")
-            }
-            (4, 3) => {
-                AdventureState::new_tank4_third_stage(self.next_seed, &self.progress.selected_pets)
-                    .expect("session selection is validated before starting a board")
-            }
-            (4, 4) => {
-                AdventureState::new_tank4_fourth_stage(self.next_seed, &self.progress.selected_pets)
-                    .expect("session selection is validated before starting a board")
-            }
-            (4, 5) => {
-                AdventureState::new_tank4_finale(self.next_seed, &self.progress.selected_pets)
-                    .expect("session selection is validated before starting a board")
-            }
-            (5, 1) => AdventureState::new_tank5_1(self.next_seed, self.progress.cyrax_attempts),
-            _ => unreachable!("supported progress validated at load"),
         };
         self.next_seed = board.transition_seed();
         self.board = Some(board);
@@ -1860,6 +2062,15 @@ impl AdventureSession {
             personal_best_seconds,
         });
         self.next_seed = board.transition_seed();
+        if self.progress.adventure_completed && board.tank <= 4 {
+            let (seed, next_id) = board.replay_bonus_identity();
+            let state = BonusState::new_for_stage(seed, next_id, board.tank, board.level)
+                .expect("completed Adventure stage supports replay bonus");
+            board.begin_replay_bonus();
+            self.board = Some(board);
+            self.phase = AdventurePhase::Bonus { state };
+            return;
+        }
         if (board.tank, board.level) == (4, 5) {
             self.progress.tank = 5;
             self.progress.level = 1;
@@ -1869,10 +2080,42 @@ impl AdventureSession {
             return;
         }
         if (board.tank, board.level) == (5, 1) {
-            debug_assert!(!self.progress.adventure_completed);
+            if self.progress.adventure_completed {
+                self.progress.adventure_completions =
+                    self.progress.adventure_completions.saturating_add(1);
+                let earned = self
+                    .progress
+                    .adventure_completions
+                    .saturating_sub(1)
+                    .clamp(1, 5)
+                    .saturating_mul(5000);
+                let previous_balance = self.progress.shell_balance;
+                self.progress.shell_balance = previous_balance
+                    .saturating_add(earned)
+                    .min(MAX_SHELL_BALANCE);
+                self.progress.tank = 5;
+                self.progress.level = 2;
+                self.phase = AdventurePhase::BonusResults {
+                    result: BonusResult {
+                        origin_tank: 5,
+                        origin_level: 1,
+                        earned,
+                        previous_balance,
+                        updates: 0,
+                    },
+                };
+                events.push(Event::BonusResultsCommitted {
+                    tick: self.ticks,
+                    earned,
+                    previous_balance,
+                    shell_balance: self.progress.shell_balance,
+                });
+                return;
+            }
             self.progress.tank = 5;
             self.progress.level = 2;
             self.progress.adventure_completed = true;
+            self.progress.adventure_completions = 1;
             self.progress.unlocked_pets.push(PetKind::Presto);
             self.progress.shell_balance = self
                 .progress
@@ -2191,6 +2434,7 @@ mod tests {
         session.progress.tank = 5;
         session.progress.level = 2;
         session.progress.adventure_completed = true;
+        session.progress.adventure_completions = 1;
         session.progress.unlocked_pets.push(PetKind::Presto);
         session.board = None;
         session.mode = GameMode::TimeTrial;
@@ -2233,6 +2477,7 @@ mod tests {
         session.progress.tank = 5;
         session.progress.level = 2;
         session.progress.adventure_completed = true;
+        session.progress.adventure_completions = 1;
         session.progress.unlocked_pets.push(PetKind::Presto);
         session.board = None;
         session.phase = AdventurePhase::GameSelector;
@@ -2270,6 +2515,7 @@ mod tests {
         session.progress.tank = 5;
         session.progress.level = 2;
         session.progress.adventure_completed = true;
+        session.progress.adventure_completions = 1;
         session.progress.unlocked_pets.push(PetKind::Presto);
         session.board = None;
         session.phase = AdventurePhase::GameSelector;
@@ -2610,6 +2856,301 @@ mod tests {
         session
     }
 
+    fn completed_replay_session() -> AdventureSession {
+        let mut session = tank_five_session(7);
+        session.progress.level = 2;
+        session.progress.adventure_completed = true;
+        session.progress.adventure_completions = 2;
+        session.progress.unlocked_pets.push(PetKind::Presto);
+        session.progress.shell_balance = 1234;
+        session.progress.first_stage_best_seconds = Some(87);
+        session.board = None;
+        session.phase = AdventurePhase::GameSelector;
+        session.validate().unwrap();
+        session
+    }
+
+    #[test]
+    fn completed_replay_normalizes_only_cursor_and_keeps_profile_history() {
+        let mut session = completed_replay_session();
+        let unlocked = session.progress.unlocked_pets.clone();
+        session.apply_actions(&[Action::PlayAdventure]);
+        assert_eq!((session.progress.tank, session.progress.level), (1, 1));
+        assert_eq!(session.progress.cyrax_attempts, 0);
+        assert_eq!(session.progress.adventure_completions, 2);
+        assert_eq!(session.progress.unlocked_pets, unlocked);
+        assert_eq!(session.progress.shell_balance, 1234);
+        assert_eq!(session.progress.first_stage_best_seconds, Some(87));
+        session.validate().unwrap();
+        session.apply_actions(&[Action::Continue]);
+        assert!(matches!(session.phase, AdventurePhase::PetSelection { .. }));
+        session.apply_actions(&[
+            Action::TogglePet {
+                pet: PetKind::Stinky,
+            },
+            Action::TogglePet { pet: PetKind::Niko },
+            Action::TogglePet {
+                pet: PetKind::Presto,
+            },
+            Action::Continue,
+        ]);
+        assert_eq!(session.phase, AdventurePhase::Playing);
+        let board = session.board.as_ref().unwrap();
+        assert!(board.profile_population);
+        assert_eq!(
+            board.pets,
+            [PetKind::Stinky, PetKind::Niko, PetKind::Presto]
+        );
+        assert!(board.presto_actor().unwrap().id < board.fish[0].id);
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn replay_presto_dialog_requires_matched_release_and_survives_reopen() {
+        let mut session = completed_replay_session();
+        session.apply_actions(&[Action::PlayAdventure, Action::Continue]);
+        session.apply_actions(&[
+            Action::TogglePet {
+                pet: PetKind::Stinky,
+            },
+            Action::TogglePet { pet: PetKind::Niko },
+            Action::TogglePet {
+                pet: PetKind::Presto,
+            },
+            Action::Continue,
+        ]);
+        let actor = session.board.as_ref().unwrap().presto_actor().unwrap();
+        let board_tick = session.board.as_ref().unwrap().tick;
+        session.apply_actions(&[Action::RightClick {
+            x: (actor.widget_x + 4) as f32,
+            y: (actor.widget_y + 4) as f32,
+        }]);
+        assert!(
+            matches!(session.phase, AdventurePhase::AdventurePrestoDialog { opener_id, .. } if opener_id == actor.id)
+        );
+        session.apply_actions(&[Action::PrestoPress { pet: PetKind::Niko }]);
+        session.step(&[]);
+        session.paused_step();
+        assert_eq!(session.board.as_ref().unwrap().tick, board_tick);
+        let saved = serde_json::to_vec(&session).unwrap();
+        let mut resumed: AdventureSession = serde_json::from_slice(&saved).unwrap();
+        resumed.validate().unwrap();
+        resumed.apply_actions(&[Action::PrestoRelease {
+            pet: Some(PetKind::Stinky),
+        }]);
+        assert_eq!(resumed.phase, AdventurePhase::Playing);
+        assert_eq!(
+            resumed.board.as_ref().unwrap().presto_actor().unwrap().kind,
+            PetKind::Presto
+        );
+        let actor = resumed.board.as_ref().unwrap().presto_actor().unwrap();
+        resumed.apply_actions(&[Action::RightClick {
+            x: (actor.widget_x + 4) as f32,
+            y: (actor.widget_y + 4) as f32,
+        }]);
+        resumed.apply_actions(&[
+            Action::PrestoPress { pet: PetKind::Niko },
+            Action::PrestoRelease {
+                pet: Some(PetKind::Niko),
+            },
+        ]);
+        assert_eq!(
+            resumed.board.as_ref().unwrap().presto_actor().unwrap().kind,
+            PetKind::Niko
+        );
+        assert_eq!(resumed.board.as_ref().unwrap().niko.len(), 2);
+        resumed.validate().unwrap();
+    }
+
+    #[test]
+    fn replay_bonus_retains_cash_clears_board_and_credits_shells_once() {
+        let mut session = completed_replay_session();
+        session.apply_actions(&[Action::PlayAdventure, Action::Continue]);
+        session.apply_actions(&[
+            Action::TogglePet {
+                pet: PetKind::Stinky,
+            },
+            Action::TogglePet { pet: PetKind::Niko },
+            Action::TogglePet {
+                pet: PetKind::Presto,
+            },
+            Action::Continue,
+        ]);
+        let board = session.board.as_mut().unwrap();
+        board.balance = 935;
+        board.eggs = 3;
+        board.victory = true;
+        let old_identity = board.replay_bonus_identity();
+        let retired_fish = board.fish[0].clone();
+        session.finish_stage(&mut Vec::new());
+        assert_eq!((session.progress.tank, session.progress.level), (1, 1));
+        let board = session.board.as_ref().unwrap();
+        assert!(board.bonus_active && board.profile_population);
+        assert_eq!(board.balance, 935);
+        assert_eq!(board.bonus_tally, 0);
+        assert_eq!(board.replay_bonus_identity(), old_identity);
+        assert!(board.pets.is_empty() && board.fish.is_empty() && board.invasion.is_none());
+        session.validate().unwrap();
+        let mut forged = session.clone();
+        forged.board.as_mut().unwrap().fish.push(retired_fish);
+        assert!(forged.validate().is_err());
+        let mut forged = session.clone();
+        forged.board.as_mut().unwrap().bonus_tally = 1;
+        assert!(forged.validate().is_err());
+
+        session.apply_actions(&[Action::Click { x: 0.0, y: 0.0 }]);
+        session.step(&[]);
+        let AdventurePhase::Bonus { state } = &session.phase else {
+            panic!("bonus expected")
+        };
+        let shell = &state.shells[0];
+        session.apply_actions(&[Action::Click {
+            x: shell.x as f32 + 1.0,
+            y: shell.y as f32 + 1.0,
+        }]);
+        for _ in 0..16 {
+            session.step(&[]);
+        }
+        let earned = session.board.as_ref().unwrap().bonus_tally;
+        assert!(earned > 0);
+        assert_eq!(session.board.as_ref().unwrap().balance, 935);
+        session.validate().unwrap();
+        let mut resumed: AdventureSession =
+            serde_json::from_slice(&serde_json::to_vec(&session).unwrap()).unwrap();
+        resumed.validate().unwrap();
+        for _ in 0..5 {
+            assert_eq!(
+                serde_json::to_value(session.step(&[])).unwrap(),
+                serde_json::to_value(resumed.step(&[])).unwrap()
+            );
+        }
+        let AdventurePhase::Bonus { state } = &mut resumed.phase else {
+            panic!("bonus expected")
+        };
+        state.shells.clear();
+        state.draw_order.clear();
+        state.tick = 400;
+        state.timed_out = true;
+        state.empty_updates = 101;
+        resumed.ticks = 400;
+        resumed.validate().unwrap();
+        resumed.step(&[]);
+        assert!(matches!(resumed.phase, AdventurePhase::BonusResults { .. }));
+        assert_eq!((resumed.progress.tank, resumed.progress.level), (1, 2));
+        assert_eq!(resumed.progress.shell_balance, 1234 + earned);
+        assert_eq!(resumed.board.as_ref().unwrap().balance, 935);
+        resumed.validate().unwrap();
+        let mut reopened: AdventureSession =
+            serde_json::from_slice(&serde_json::to_vec(&resumed).unwrap()).unwrap();
+        for _ in 0..30 {
+            reopened.step(&[]);
+        }
+        reopened.apply_actions(&[Action::Continue]);
+        assert!(matches!(
+            reopened.phase,
+            AdventurePhase::PetSelection { .. }
+        ));
+        assert_eq!(reopened.progress.shell_balance, 1234 + earned);
+        reopened.validate().unwrap();
+    }
+
+    #[test]
+    fn repeat_cyrax_result_counts_before_capped_award_and_reopens_once() {
+        for (completed_before, reward) in [(1, 5000), (2, 10_000), (6, 25_000)] {
+            let mut session = completed_replay_session();
+            session.progress.tank = 5;
+            session.progress.level = 1;
+            session.progress.adventure_completions = completed_before;
+            session.board = Some(
+                AdventureState::new_profile_stage(
+                    0x3760,
+                    5,
+                    1,
+                    &session.progress.selected_pets,
+                    session.progress.cyrax_attempts,
+                )
+                .unwrap(),
+            );
+            session.phase = AdventurePhase::Playing;
+            let board = session.board.as_mut().unwrap();
+            board.eggs = 3;
+            board.victory = true;
+            let before_shells = session.progress.shell_balance;
+            session.finish_stage(&mut Vec::new());
+            assert_eq!(session.progress.adventure_completions, completed_before + 1);
+            assert_eq!(session.progress.shell_balance, before_shells + reward);
+            assert_eq!((session.progress.tank, session.progress.level), (5, 2));
+            assert!(session.board.is_none());
+            assert!(
+                matches!(session.phase, AdventurePhase::BonusResults { ref result } if result.earned == reward)
+            );
+            session.validate().unwrap();
+            let mut reopened: AdventureSession =
+                serde_json::from_slice(&serde_json::to_vec(&session).unwrap()).unwrap();
+            for _ in 0..30 {
+                reopened.step(&[]);
+            }
+            reopened.apply_actions(&[Action::Continue]);
+            assert_eq!(reopened.phase, AdventurePhase::AdventureFinaleInterlude);
+            assert_eq!(reopened.progress.shell_balance, before_shells + reward);
+            assert_eq!(
+                reopened.progress.adventure_completions,
+                completed_before + 1
+            );
+            reopened.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn completed_replay_cannot_claim_boardless_ordinary_bonus_or_results() {
+        let first_bonus = bonus_session();
+        first_bonus.validate().unwrap();
+        let mut first_results = first_bonus.clone();
+        (first_results.progress.tank, first_results.progress.level) = (2, 1);
+        first_results.phase = AdventurePhase::BonusResults {
+            result: BonusResult {
+                origin_tank: 1,
+                origin_level: 6,
+                earned: 0,
+                previous_balance: first_results.progress.shell_balance,
+                updates: 0,
+            },
+        };
+        first_results.validate().unwrap();
+
+        let mut completed = completed_replay_session();
+        (completed.progress.tank, completed.progress.level) = (1, 6);
+        completed.phase = AdventurePhase::Bonus {
+            state: BonusState::new_for_tank(42, 1).unwrap(),
+        };
+        assert!(completed.validate().is_err());
+
+        (completed.progress.tank, completed.progress.level) = (2, 1);
+        completed.phase = AdventurePhase::BonusResults {
+            result: BonusResult {
+                origin_tank: 1,
+                origin_level: 6,
+                earned: 0,
+                previous_balance: completed.progress.shell_balance,
+                updates: 0,
+            },
+        };
+        assert!(completed.validate().is_err());
+
+        (completed.progress.tank, completed.progress.level) = (5, 2);
+        completed.progress.shell_balance += 5000;
+        completed.phase = AdventurePhase::BonusResults {
+            result: BonusResult {
+                origin_tank: 5,
+                origin_level: 1,
+                earned: 5000,
+                previous_balance: completed.progress.shell_balance - 5000,
+                updates: 0,
+            },
+        };
+        completed.validate().unwrap();
+    }
+
     #[test]
     fn tank_five_entry_bypasses_selection_without_changing_profile_choices() {
         let mut session = tank_five_session(0);
@@ -2630,7 +3171,9 @@ mod tests {
                 .any(|event| matches!(event, Event::PetSelectionOpened { .. }))
         );
         let board = session.board.as_ref().unwrap();
-        assert_eq!(board.pets.as_slice(), crate::sim::TANK5_PETS.as_slice());
+        assert!(board.profile_population);
+        assert_eq!(board.pets[0], PetKind::Angie);
+        assert_eq!(&board.pets[1..], crate::sim::TANK5_PETS.as_slice());
         assert!(board.fish.is_empty());
         assert_eq!((board.eggs, board.egg_price), (2, 0));
         assert_eq!(session.progress.selected_pets, vec![PetKind::Angie]);
@@ -2833,19 +3376,14 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, Event::GameSelectorOpened { .. }))
         );
-        assert!(
-            interlude
-                .apply_actions(&[Action::PlayAdventure])
-                .iter()
-                .any(|event| matches!(
-                    event,
-                    Event::Rejected {
-                        reason: Rejection::Locked,
-                        ..
-                    }
-                ))
-        );
-        assert_eq!(interlude.progress, before);
+        interlude.apply_actions(&[Action::PlayAdventure]);
+        assert_eq!(interlude.phase, AdventurePhase::HelpScreen);
+        assert_eq!(before.adventure_completions, 1);
+        let mut replay_progress = before;
+        replay_progress.tank = 1;
+        replay_progress.level = 1;
+        replay_progress.cyrax_attempts = 0;
+        assert_eq!(interlude.progress, replay_progress);
         interlude.validate().unwrap();
     }
 
@@ -3899,7 +4437,9 @@ mod tests {
         );
         assert_eq!(restored.phase, AdventurePhase::Playing);
         let board = restored.board.as_ref().unwrap();
-        assert_eq!(board.pets.as_slice(), crate::sim::TANK5_PETS.as_slice());
+        assert!(board.profile_population);
+        assert_eq!(board.pets[0], PetKind::Angie);
+        assert_eq!(&board.pets[1..], crate::sim::TANK5_PETS.as_slice());
         assert!(board.fish.is_empty());
         assert_eq!(board.eggs, 2);
         assert_eq!(restored.progress.selected_pets, vec![PetKind::Angie]);
@@ -4426,6 +4966,7 @@ mod tests {
         session.phase = AdventurePhase::BonusResults {
             result: BonusResult {
                 origin_tank: 255,
+                origin_level: 6,
                 earned: 217,
                 previous_balance: 539,
                 updates: 40,

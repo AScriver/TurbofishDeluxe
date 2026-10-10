@@ -1206,6 +1206,12 @@ pub struct AdventureState {
     pub egg_price: i32,
     #[serde(default)]
     pub time_trial: bool,
+    /// Fresh Adventure Board populated from committed profile flags. This is
+    /// distinct from the persistent completed-game/profile cursor.
+    pub profile_population: bool,
+    /// The won Board keeps cash during replay bonus; shell income is separate.
+    pub bonus_active: bool,
+    pub bonus_tally: u32,
     #[serde(default)]
     pub pets: Vec<PetKind>,
     #[serde(default)]
@@ -1306,6 +1312,9 @@ impl AdventureState {
             potion_armed: false,
             egg_price: EGG_PRICE,
             time_trial: false,
+            profile_population: false,
+            bonus_active: false,
+            bonus_tally: 0,
             pets: Vec::new(),
             stinky: Vec::new(),
             clyde: Vec::new(),
@@ -1931,6 +1940,204 @@ impl AdventureState {
         state
     }
 
+    /// A fresh profile-selected Adventure board uses the same stage economy
+    /// and opening wave, then constructs selected pets before starter fish or
+    /// the Tank 5 fixed roster (PB05 005498b0). First-run constructors remain
+    /// separate so their historical fixed rosters and draw schedules stay put.
+    fn profile_egg_price(tank: u8, level: u8) -> Option<i32> {
+        Some(match (tank, level) {
+            (1, 1) => EGG_PRICE,
+            (1, 2) => SECOND_STAGE_EGG_PRICE,
+            (1, 3) => THIRD_STAGE_EGG_PRICE,
+            (1, 4) => FOURTH_STAGE_EGG_PRICE,
+            (1, 5) => FIFTH_STAGE_EGG_PRICE,
+            (2, 1) => TANK2_FIRST_EGG_PRICE,
+            (2, 2) => TANK2_SECOND_EGG_PRICE,
+            (2, 3) => TANK2_THIRD_EGG_PRICE,
+            (2, 4) => TANK2_FOURTH_EGG_PRICE,
+            (2, 5) => TANK2_FIFTH_EGG_PRICE,
+            (3, 1) => TANK3_FIRST_EGG_PRICE,
+            (3, 2) => TANK3_SECOND_EGG_PRICE,
+            (3, 3) => TANK3_THIRD_EGG_PRICE,
+            (3, 4) => TANK3_FOURTH_EGG_PRICE,
+            (3, 5) => TANK3_FIFTH_EGG_PRICE,
+            (4, 1) => TANK4_FIRST_EGG_PRICE,
+            (4, 2) => TANK4_SECOND_EGG_PRICE,
+            (4, 3) => TANK4_THIRD_EGG_PRICE,
+            (4, 4) => TANK4_FOURTH_EGG_PRICE,
+            (4, 5) => TANK4_FINALE_EGG_PRICE,
+            (5, 1) => 0,
+            _ => return None,
+        })
+    }
+
+    pub fn new_profile_stage(
+        seed: u64,
+        tank: u8,
+        level: u8,
+        pets: &[PetKind],
+        profile_attempts: u32,
+    ) -> Result<Self, String> {
+        if !matches!((tank, level), (1..=4, 1..=5) | (5, 1))
+            || pets.len() > 3
+            || pets
+                .iter()
+                .any(|pet| !crate::time_trial::selectable_pet(*pet))
+            || pets
+                .iter()
+                .enumerate()
+                .any(|(index, pet)| pets[..index].contains(pet))
+            || pets.windows(2).any(|pair| pair[0] as u8 >= pair[1] as u8)
+        {
+            return Err("invalid selected Adventure profile roster".into());
+        }
+        let mut state = Self::empty_board(seed);
+        state.tank = tank;
+        state.level = level;
+        state.profile_population = true;
+        state.egg_price = Self::profile_egg_price(tank, level).expect("stage checked above");
+        state.invasion = match (tank, level) {
+            (1, 1) => None,
+            (1, 2) => Some(Invasion1_2::new()),
+            (1, 3) | (2, 1) => Some(Invasion1_2::new_strong()),
+            (1, 4) | (2, 2) | (3, 1) | (4, 1) => Some(Invasion1_2::new_balrog()),
+            (1, 5) => Some(Invasion1_2::new_tank1_finale()),
+            (2, 3) => Some(Invasion1_2::new_gus()),
+            (2, 4) => Some(Invasion1_2::new_destructor()),
+            (2, 5) => {
+                let first = if state.rand_range(2) != 0 {
+                    SylvesterKind::Destructor
+                } else {
+                    SylvesterKind::Gus
+                };
+                Some(Invasion1_2::new_tank2_finale(first))
+            }
+            (3, 2) => {
+                let first = if state.rand_range(2) == 0 {
+                    SylvesterKind::Gus
+                } else {
+                    SylvesterKind::Destructor
+                };
+                Some(Invasion1_2::new_tank3_second_stage(first))
+            }
+            (3, 3) => Some(Invasion1_2::new_psychosquid()),
+            (3, 4) => Some(Invasion1_2::new_ulysses()),
+            (3, 5) => {
+                let first = if state.rand_range(2) == 0 {
+                    SylvesterKind::Ulysses
+                } else {
+                    SylvesterKind::Psychosquid
+                };
+                Some(Invasion1_2::new_tank3_finale(first))
+            }
+            (4, 2) => Some(Invasion1_2::new_bilaterus()),
+            (4, 3) => Some(Invasion1_2::new_tank4_third_stage()),
+            (4, 4) => Some(Invasion1_2::new_tank4_fourth_stage()),
+            (4, 5) => Some(Invasion1_2::new_tank4_finale()),
+            (5, 1) => {
+                state.eggs = 2;
+                Some(Invasion1_2::new_tank5_finale(profile_attempts))
+            }
+            _ => unreachable!("stage checked above"),
+        };
+        for pet in pets {
+            state.spawn_profile_pet(*pet);
+        }
+        match tank {
+            1..=3 => state.spawn_starter_guppies(tank == 1 && level == 1),
+            4 => {
+                let x = state.rand_range(520) as i32 + 20;
+                let y = state.rand_range(265) as i32 + 105;
+                let id = state.id();
+                let mut rng_state = state.rng_state;
+                let starter = BreederState::spawn_starter(id, x, y, &mut |upper| {
+                    Self::advance_rng(&mut rng_state) % upper
+                });
+                state.rng_state = rng_state;
+                state.breeders.push(starter);
+            }
+            5 => {
+                for pet in TANK5_PETS {
+                    state.spawn_profile_pet(pet);
+                }
+            }
+            _ => unreachable!("stage checked above"),
+        }
+        Ok(state)
+    }
+
+    fn spawn_profile_pet(&mut self, kind: PetKind) {
+        match kind {
+            PetKind::Stinky => {
+                let pet = self.spawn_stinky(StinkyOrigin::StageStart);
+                self.stinky.push(pet);
+            }
+            PetKind::Niko => {
+                let id = self.id();
+                let pet = match self.tank {
+                    1 => NikoState::spawn_tank1(id, &mut |upper| self.rand_range(upper)),
+                    2 => NikoState::spawn_tank2(id, &mut |upper| self.rand_range(upper)),
+                    3 => NikoState::spawn_tank3(id, &mut |upper| self.rand_range(upper)),
+                    4 => NikoState::spawn_tank4(id, &mut |upper| self.rand_range(upper)),
+                    5 => NikoState::spawn_tank5(id, &mut |upper| self.rand_range(upper)),
+                    _ => unreachable!(),
+                };
+                self.niko.push(pet);
+            }
+            PetKind::Clyde => {
+                let id = self.id();
+                let mut rng_state = self.rng_state;
+                let pet = if self.tank == 5 {
+                    ClydeState::spawn_tank5(id, &mut |upper| {
+                        Self::advance_rng(&mut rng_state) % upper
+                    })
+                } else {
+                    ClydeState::spawn_tank2(id, &mut |upper| {
+                        Self::advance_rng(&mut rng_state) % upper
+                    })
+                };
+                self.rng_state = rng_state;
+                self.clyde.push(pet);
+            }
+            PetKind::Rufus => {
+                let id = self.id();
+                let mut rng_state = self.rng_state;
+                let pet = if self.tank == 5 {
+                    RufusState::spawn_tank5(id, &mut |upper| {
+                        Self::advance_rng(&mut rng_state) % upper
+                    })
+                } else {
+                    RufusState::spawn_tank2(id, &mut |upper| {
+                        Self::advance_rng(&mut rng_state) % upper
+                    })
+                };
+                self.rng_state = rng_state;
+                self.rufus.push(pet);
+            }
+            PetKind::Rhubarb => {
+                let id = self.id();
+                let x = self.rand_range(265) as i32 + 105;
+                let y = self.rand_range(520) as i32 + 20;
+                let mut rng_state = self.rng_state;
+                let pet = if self.tank == 5 {
+                    RhubarbState::spawn_tank5(id, x, y, &mut |upper| {
+                        Self::advance_rng(&mut rng_state) % upper
+                    })
+                } else {
+                    RhubarbState::spawn_tank4(id, x, y, &mut |upper| {
+                        Self::advance_rng(&mut rng_state) % upper
+                    })
+                };
+                self.rng_state = rng_state;
+                self.rhubarb.push(pet);
+            }
+            other => self.spawn_fish_pet(
+                Self::fish_kind_from_pet(other).expect("profile raw kind is supported"),
+            ),
+        }
+        self.pets.push(kind);
+    }
+
     /// Fresh Time Trial Board uses the mapped level-five tank setup and
     /// constructs its initial pets before the ordinary starter actors.
     pub fn new_time_trial(seed: u64, tank: u8, pets: &[PetKind]) -> Result<Self, String> {
@@ -2107,7 +2314,7 @@ impl AdventureState {
         events: &mut Vec<Event>,
     ) -> Result<PrestoChangeEligibility, String> {
         let old = self.presto_actor().ok_or("missing Presto incarnation")?;
-        if !self.time_trial
+        if !(self.time_trial || self.profile_population)
             || !self.pets.contains(&PetKind::Presto)
             || old.id != opener_id
             || !crate::time_trial::selectable_pet(target)
@@ -2902,12 +3109,13 @@ impl AdventureState {
             return Err("Tank 5 finale state missing".into());
         };
         if wave.plan != WavePlan::Tank5Finale
-            || self.pets.as_slice() != TANK5_PETS.as_slice()
-            || self.fish_pets.iter().any(|pet| !FISH_PETS.contains(&pet.kind))
-            || self.fish_pets.windows(2).any(|pair| {
+            || (!self.profile_population && self.pets.as_slice() != TANK5_PETS.as_slice())
+            || (!self.profile_population
+                && self.fish_pets.iter().any(|pet| !FISH_PETS.contains(&pet.kind)))
+            || (!self.profile_population && self.fish_pets.windows(2).any(|pair| {
                 FISH_PETS.iter().position(|kind| *kind == pair[0].kind)
                     >= FISH_PETS.iter().position(|kind| *kind == pair[1].kind)
-            })
+            }))
             || !(2..=3).contains(&self.eggs)
             || self.guppy_unlocked
             || self.oscar_unlocked
@@ -2961,8 +3169,276 @@ impl AdventureState {
         Ok(())
     }
 
+    pub(crate) fn replay_bonus_identity(&self) -> (u64, u64) {
+        (self.rng_state, self.next_id)
+    }
+
+    pub(crate) fn begin_replay_bonus(&mut self) {
+        self.bonus_active = true;
+        self.bonus_tally = 0;
+        self.pets.clear();
+        self.stinky.clear();
+        self.niko.clear();
+        self.clyde.clear();
+        self.rufus.clear();
+        self.rhubarb.clear();
+        self.fish_pets.clear();
+        self.fish.clear();
+        self.dead_fish.clear();
+        self.oscars.clear();
+        self.dead_oscars.clear();
+        self.starcatchers.clear();
+        self.dead_starcatchers.clear();
+        self.grubbers.clear();
+        self.dead_grubbers.clear();
+        self.gekkos.clear();
+        self.dead_gekkos.clear();
+        self.breeders.clear();
+        self.dead_breeders.clear();
+        self.ultras.clear();
+        self.dead_ultras.clear();
+        self.larvae.clear();
+        self.food.clear();
+        self.coins.clear();
+        self.pearls.clear();
+        self.missiles.clear();
+        self.bomb_shots.clear();
+        self.notes.clear();
+        self.invasion = None;
+        self.held_feed = None;
+        self.held_fire = None;
+    }
+
+    pub(crate) fn finish_replay_bonus(&mut self, seed: u64, next_id: u64) {
+        self.rng_state = seed;
+        self.next_id = next_id;
+    }
+
+    fn validate_replay_bonus(&self) -> Result<(), String> {
+        if !self.profile_population
+            || !self.bonus_active
+            || self.time_trial
+            || !matches!((self.tank, self.level), (1..=4, 1..=5))
+            || !self.victory
+            || self.eggs != 3
+            || Self::profile_egg_price(self.tank, self.level) != Some(self.egg_price)
+            || self.profile_shop_invalid()
+            || self.upgrades.quality > 2
+            || !(1..=9).contains(&self.upgrades.quantity)
+            || (!self.upgrades.quality_unlocked && self.upgrades.quality > 0)
+            || (!self.upgrades.quantity_unlocked && self.upgrades.quantity > 1)
+            || !(2..=12).contains(&self.weapon_strength)
+            || (self.potion_armed && !self.potion_unlocked)
+            || self.bonus_tally > crate::bonus::MAX_SHELL_BALANCE
+            || self.next_id == 0
+            || self.next_id == u64::MAX
+            || self.rng_state == 0
+            || !self.pets.is_empty()
+            || !self.stinky.is_empty()
+            || !self.niko.is_empty()
+            || !self.clyde.is_empty()
+            || !self.rufus.is_empty()
+            || !self.rhubarb.is_empty()
+            || !self.fish_pets.is_empty()
+            || !self.fish.is_empty()
+            || !self.dead_fish.is_empty()
+            || !self.oscars.is_empty()
+            || !self.dead_oscars.is_empty()
+            || !self.starcatchers.is_empty()
+            || !self.dead_starcatchers.is_empty()
+            || !self.grubbers.is_empty()
+            || !self.dead_grubbers.is_empty()
+            || !self.gekkos.is_empty()
+            || !self.dead_gekkos.is_empty()
+            || !self.breeders.is_empty()
+            || !self.dead_breeders.is_empty()
+            || !self.ultras.is_empty()
+            || !self.dead_ultras.is_empty()
+            || !self.larvae.is_empty()
+            || !self.food.is_empty()
+            || !self.coins.is_empty()
+            || !self.pearls.is_empty()
+            || !self.missiles.is_empty()
+            || !self.bomb_shots.is_empty()
+            || !self.notes.is_empty()
+            || self.invasion.is_some()
+        {
+            return Err(
+                "replay bonus Board retains registered play actors or invalid state".into(),
+            );
+        }
+        Ok(())
+    }
+
+    fn validate_profile_population(&self) -> Result<(), String> {
+        let (selected, fixed) = if (self.tank, self.level) == (5, 1) {
+            let count = self
+                .pets
+                .len()
+                .checked_sub(TANK5_PETS.len())
+                .ok_or("Tank 5 selected roster is short")?;
+            self.pets.split_at(count)
+        } else {
+            (self.pets.as_slice(), &[][..])
+        };
+        if selected.len() > 3
+            || selected
+                .iter()
+                .any(|pet| !crate::time_trial::selectable_pet(*pet))
+            || selected
+                .windows(2)
+                .any(|pair| pair[0] as u8 >= pair[1] as u8)
+            || fixed
+                != if self.tank == 5 {
+                    TANK5_PETS.as_slice()
+                } else {
+                    &[]
+                }
+        {
+            return Err("invalid profile-selected Adventure roster".into());
+        }
+        let wave = self.invasion.as_ref().map(|wave| wave.plan);
+        let expected_wave = matches!(
+            (self.tank, self.level, wave),
+            (1, 1, None)
+                | (1, 2, Some(WavePlan::Fixed(SylvesterKind::Weak)))
+                | (1, 3, Some(WavePlan::Fixed(SylvesterKind::Strong)))
+                | (1, 4, Some(WavePlan::Fixed(SylvesterKind::Balrog)))
+                | (1, 5, Some(WavePlan::CyclingTank1Finale { .. }))
+                | (2, 1, Some(WavePlan::Fixed(SylvesterKind::Strong)))
+                | (2, 2, Some(WavePlan::Fixed(SylvesterKind::Balrog)))
+                | (2, 3, Some(WavePlan::Fixed(SylvesterKind::Gus)))
+                | (2, 4, Some(WavePlan::Fixed(SylvesterKind::Destructor)))
+                | (2, 5, Some(WavePlan::CyclingTank2Finale { .. }))
+                | (3, 1, Some(WavePlan::Fixed(SylvesterKind::Balrog)))
+                | (3, 2, Some(WavePlan::CyclingTank3Second { .. }))
+                | (3, 3, Some(WavePlan::Fixed(SylvesterKind::Psychosquid)))
+                | (3, 4, Some(WavePlan::Fixed(SylvesterKind::Ulysses)))
+                | (3, 5, Some(WavePlan::CyclingTank3Finale { .. }))
+                | (4, 1, Some(WavePlan::Fixed(SylvesterKind::Balrog)))
+                | (4, 2, Some(WavePlan::FixedBilaterus))
+                | (4, 3, Some(WavePlan::CyclingTank4Third { .. }))
+                | (4, 4, Some(WavePlan::CyclingTank4Fourth { .. }))
+                | (4, 5, Some(WavePlan::CyclingTank4Finale { .. }))
+                | (5, 1, Some(WavePlan::Tank5Finale))
+        );
+        if !expected_wave {
+            return Err("profile Adventure wave disagrees with stage".into());
+        }
+        if self.profile_shop_invalid() {
+            return Err("profile Adventure shop disagrees with stage".into());
+        }
+        let mut ordinary = Vec::new();
+        let mut flagged = 0;
+        for (kind, form) in self
+            .stinky
+            .iter()
+            .map(|pet| (PetKind::Stinky, pet.presto_form))
+            .chain(self.niko.iter().map(|pet| (PetKind::Niko, pet.presto_form)))
+            .chain(
+                self.clyde
+                    .iter()
+                    .map(|pet| (PetKind::Clyde, pet.presto_form)),
+            )
+            .chain(
+                self.rufus
+                    .iter()
+                    .map(|pet| (PetKind::Rufus, pet.presto_form)),
+            )
+            .chain(
+                self.rhubarb
+                    .iter()
+                    .map(|pet| (PetKind::Rhubarb, pet.presto_form)),
+            )
+            .chain(
+                self.fish_pets
+                    .iter()
+                    .map(|pet| (Self::pet_kind_from_fish(pet.kind), pet.presto_form)),
+            )
+        {
+            if form.is_some() {
+                flagged += 1;
+            } else {
+                ordinary.push(kind);
+            }
+        }
+        let mut expected: Vec<_> = self
+            .pets
+            .iter()
+            .copied()
+            .filter(|pet| *pet != PetKind::Presto)
+            .collect();
+        ordinary.sort_by_key(|pet| *pet as u8);
+        expected.sort_by_key(|pet| *pet as u8);
+        if flagged != usize::from(selected.contains(&PetKind::Presto)) || ordinary != expected {
+            return Err("profile physical pets disagree with logical roster".into());
+        }
+        Ok(())
+    }
+
+    fn profile_shop_invalid(&self) -> bool {
+        let quality = self.upgrades.quality_unlocked;
+        let quantity = self.upgrades.quantity_unlocked;
+        match (self.tank, self.level) {
+            (1, 1) => quality || quantity || self.weapon_unlocked || self.oscar_unlocked,
+            (1, 2) => self.weapon_unlocked || self.oscar_unlocked || self.weapon_strength != 2,
+            (1, 3..=5) => {
+                quality != quantity
+                    || quality != self.oscar_unlocked
+                    || self.egg_unlocked && !self.oscar_unlocked
+            }
+            (2, 1) => {
+                self.oscar_unlocked
+                    || self.weapon_unlocked
+                    || self.weapon_strength != 2
+                    || quality != quantity
+                    || quality != self.potion_unlocked
+                    || quality != self.egg_unlocked
+            }
+            (2, 2..=5) => {
+                self.oscar_unlocked
+                    || quality != quantity
+                    || quality != self.potion_unlocked
+                    || quality != self.starcatcher_unlocked
+                    || self.egg_unlocked != self.weapon_unlocked
+                    || self.egg_unlocked && !self.starcatcher_unlocked
+            }
+            (3, 1) => {
+                self.oscar_unlocked
+                    || self.weapon_unlocked
+                    || self.weapon_strength != 2
+                    || quality != quantity
+                    || quality != self.grubber_unlocked
+                    || self.egg_unlocked && !self.grubber_unlocked
+            }
+            (3, 2..=5) => {
+                self.oscar_unlocked
+                    || quality != quantity
+                    || quality != self.grubber_unlocked
+                    || self.egg_unlocked != self.weapon_unlocked
+                    || self.egg_unlocked && !self.gekko_unlocked
+                    || self.gekko_unlocked && !self.grubber_unlocked
+            }
+            (4, 1..=5) => {
+                self.guppy_unlocked
+                    || quality != quantity
+                    || quality != self.oscar_unlocked
+                    || self.egg_unlocked && !self.oscar_unlocked
+                    || if self.level == 1 {
+                        self.weapon_unlocked || self.weapon_strength != 2 || self.ultra_unlocked
+                    } else {
+                        self.weapon_unlocked != self.ultra_unlocked
+                            || self.ultra_unlocked != self.egg_unlocked
+                    }
+            }
+            (5, 1) => false,
+            _ => unreachable!("profile stage checked above"),
+        }
+    }
+
     fn validate_time_trial_header(&self) -> Result<(), String> {
         if !(1..=4).contains(&self.tank)
+            || self.profile_population
             || self.level != 5
             || self.next_id == 0
             || self.next_id == u64::MAX
@@ -3117,8 +3593,15 @@ impl AdventureState {
     /// Validate durable board relationships before accepting a project save.
     /// The profile and screen phase are checked by AdventureSession separately.
     pub fn validate(&self) -> Result<(), String> {
+        if self.bonus_active {
+            return self.validate_replay_bonus();
+        }
+        if self.bonus_tally != 0 {
+            return Err("inactive Adventure Board retains bonus tally".into());
+        }
         let tank5 = (self.tank, self.level) == (5, 1);
         if !self.time_trial
+            && !self.profile_population
             && (self.clyde.iter().any(|pet| pet.presto_form.is_some())
                 || self.niko.iter().any(|pet| pet.presto_form.is_some())
                 || self.rufus.iter().any(|pet| pet.presto_form.is_some())
@@ -3136,12 +3619,14 @@ impl AdventureState {
                 || self.next_id == 0
                 || self.next_id == u64::MAX
                 || self.rng_state == 0
-                || self.fish_pets.iter().any(|pet| pet.presto_form.is_some())
-                || self.stinky.len() > 1
-                || self.niko.len() > 1
-                || self.clyde.len() > 1
-                || self.rufus.len() > 1
-                || self.rhubarb.len() > 1
+                || (!self.profile_population
+                    && self.fish_pets.iter().any(|pet| pet.presto_form.is_some()))
+                || (!self.profile_population
+                    && (self.stinky.len() > 1
+                        || self.niko.len() > 1
+                        || self.clyde.len() > 1
+                        || self.rufus.len() > 1
+                        || self.rhubarb.len() > 1))
                 || self.eggs > 3
                 || self.victory != (self.eggs == 3)
                 || self.upgrades.quality > 2
@@ -3159,13 +3644,19 @@ impl AdventureState {
                         || !food.vx.is_finite()
                         || !food.vy.is_finite()
                         || (food.free_from_zorf
-                            && (!(2..=4).contains(&self.tank)
-                                || !self.pets.contains(&PetKind::Zorf)
+                            && (!(2..=4).contains(&self.tank) && !self.profile_population
+                                || !(self.pets.contains(&PetKind::Zorf)
+                                    || self.profile_population
+                                        && self.pets.contains(&PetKind::Presto))
                                 || food.quality != 1
                                 || food.direction == 0))
                         || (!food.free_from_zorf && food.direction != 0)
                         || (food.nimbus_rising
                             && (!matches!((self.tank, self.level), (4, 2..=5))
+                                && !self.profile_population
+                                || self.profile_population
+                                    && !(self.pets.contains(&PetKind::Nimbus)
+                                        || self.pets.contains(&PetKind::Presto))
                                 || food.direction != 0
                                 || food.free_from_zorf))
                         || (food.quality == 3 && (self.tank != 2 || !self.potion_unlocked))
@@ -3173,34 +3664,45 @@ impl AdventureState {
                 || !(2..=12).contains(&self.weapon_strength)
                 || (!tank5 && !self.weapon_unlocked && self.weapon_strength > 2)
                 || self.punch_sound_cooldown > 11
-                || (!matches!((self.tank, self.level), (4, 3..=5) | (5, 1))
+                || (!self.profile_population
+                    && !matches!((self.tank, self.level), (4, 3..=5) | (5, 1))
                     && self.pets.contains(&PetKind::Amp))
-                || (!matches!((self.tank, self.level), (4, 4..=5) | (5, 1))
+                || (!self.profile_population
+                    && !matches!((self.tank, self.level), (4, 4..=5) | (5, 1))
                     && self.pets.contains(&PetKind::Gash))
-                || (!matches!((self.tank, self.level), (4, 5) | (5, 1))
+                || (!self.profile_population
+                    && !matches!((self.tank, self.level), (4, 5) | (5, 1))
                     && self.pets.contains(&PetKind::Angie))
-                || (!matches!((self.tank, self.level), (4, 2..=5) | (5, 1))
+                || (!self.profile_population
+                    && !matches!((self.tank, self.level), (4, 2..=5) | (5, 1))
                     && self.pets.contains(&PetKind::Nimbus))
                 || (!matches!((self.tank, self.level), (4, 2..=5))
                     && (self.ultra_unlocked
                         || !self.ultras.is_empty()
                         || !self.dead_ultras.is_empty()))
-                || (!matches!((self.tank, self.level), (4, 1..=5) | (5, 1))
+                || (!self.profile_population
+                    && !matches!((self.tank, self.level), (4, 1..=5) | (5, 1))
                     && self.pets.contains(&PetKind::Rhubarb))
-                || !matches!((self.tank, self.level), (3, 5) | (4, 1..=5) | (5, 1))
+                || !self.profile_population
+                    && !matches!((self.tank, self.level), (3, 5) | (4, 1..=5) | (5, 1))
                     && self.pets.contains(&PetKind::Blip)
-                || !matches!((self.tank, self.level), (3, 4..=5) | (4, 1..=5) | (5, 1))
+                || !self.profile_population
+                    && !matches!((self.tank, self.level), (3, 4..=5) | (4, 1..=5) | (5, 1))
                     && self.pets.contains(&PetKind::Gumbo)
-                || !matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=5) | (5, 1))
+                || !self.profile_population
+                    && !matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=5) | (5, 1))
                     && self.pets.contains(&PetKind::Shrapnel)
-                || !matches!((self.tank, self.level), (3, 2..=5) | (4, 1..=5) | (5, 1))
+                || !self.profile_population
+                    && !matches!((self.tank, self.level), (3, 2..=5) | (4, 1..=5) | (5, 1))
                     && self.pets.contains(&PetKind::Seymour)
-                || !matches!(self.tank, 3..=5) && self.pets.contains(&PetKind::Wadsworth)
+                || !self.profile_population
+                    && !matches!(self.tank, 3..=5)
+                    && self.pets.contains(&PetKind::Wadsworth)
                 || (!matches!((self.tank, self.level), (4, 1..=5) | (5, 1))
                     && (self.breeder_unlocked
                         || !self.breeders.is_empty()
                         || !self.dead_breeders.is_empty()
-                        || !self.rhubarb.is_empty()))
+                        || (!self.profile_population && !self.rhubarb.is_empty())))
                 || (self.tank != 3
                     && (self.grubber_unlocked
                         || !self.grubbers.is_empty()
@@ -3214,7 +3716,8 @@ impl AdventureState {
                     && (self.starcatcher_unlocked
                         || !self.starcatchers.is_empty()
                         || !self.dead_starcatchers.is_empty())
-                || (!self.clyde.is_empty()
+                || (!self.profile_population
+                    && !self.clyde.is_empty()
                     && !matches!(
                         (self.tank, self.level),
                         (2, 2..=5) | (3, 1..=5) | (4, 1..=5) | (5, 1)
@@ -3228,12 +3731,24 @@ impl AdventureState {
                         || !coin.x.is_finite()
                         || !coin.y.is_finite()
                         || (coin.kind == CoinKind::Pearl
-                            && !(self.tank == 3 && (2..=5).contains(&self.level)))
+                            && !(self.tank == 3 && (2..=5).contains(&self.level))
+                            && !(self.profile_population
+                                && (self.pets.contains(&PetKind::Niko)
+                                    || self.pets.contains(&PetKind::Presto))))
                         || (coin.kind == CoinKind::ShrapnelBomb
-                            && (!matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=5))
-                                || !self.pets.contains(&PetKind::Shrapnel)
+                            && (!self.profile_population
+                                && !matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=5))
+                                || !(self.pets.contains(&PetKind::Shrapnel)
+                                    || self.profile_population
+                                        && self.pets.contains(&PetKind::Presto))
                                 || coin.fade_ticks != 0))
-                        || (coin.kind.is_shell() && !matches!((self.tank, self.level), (4, 2..=5)))
+                        || (coin.kind.is_shell()
+                            && !matches!((self.tank, self.level), (4, 2..=5))
+                            && !self.profile_population)
+                        || (coin.kind.is_shell()
+                            && self.profile_population
+                            && !(self.pets.contains(&PetKind::Nimbus)
+                                || self.pets.contains(&PetKind::Presto)))
                         || (coin.kind == CoinKind::Treasure
                             && !matches!((self.tank, self.level), (4, 2..=5)))
                         || (coin.kind == CoinKind::DiamondPenta
@@ -3292,453 +3807,461 @@ impl AdventureState {
             if tank5 {
                 self.validate_tank5()?;
             }
-            match (self.tank, self.level) {
-                (4, 1..=5)
-                    if self.invasion.as_ref().is_none_or(|wave| {
-                        !matches!(
-                            (self.level, wave.plan),
-                            (1, WavePlan::Fixed(SylvesterKind::Balrog))
-                                | (2, WavePlan::FixedBilaterus)
-                                | (3, WavePlan::CyclingTank4Third { .. })
-                                | (4, WavePlan::CyclingTank4Fourth { .. })
-                                | (5, WavePlan::CyclingTank4Finale { .. })
-                        )
-                    }) || self.pets.len() > 3
-                        || self.pets.windows(2).any(|pair| {
-                            let canonical = [
-                                PetKind::Stinky,
-                                PetKind::Niko,
-                                PetKind::Itchy,
-                                PetKind::Prego,
-                                PetKind::Zorf,
-                                PetKind::Clyde,
-                                PetKind::Vert,
-                                PetKind::Rufus,
-                                PetKind::Meryl,
-                                PetKind::Wadsworth,
-                                PetKind::Seymour,
-                                PetKind::Shrapnel,
-                                PetKind::Gumbo,
-                                PetKind::Blip,
-                                PetKind::Rhubarb,
-                                PetKind::Nimbus,
-                                PetKind::Amp,
-                                PetKind::Gash,
-                                PetKind::Angie,
-                            ];
-                            canonical.iter().position(|pet| *pet == pair[0])
-                                >= canonical.iter().position(|pet| *pet == pair[1])
-                        })
-                        || self.stinky.is_empty() == self.pets.contains(&PetKind::Stinky)
-                        || self.niko.is_empty() == self.pets.contains(&PetKind::Niko)
-                        || self.clyde.is_empty() == self.pets.contains(&PetKind::Clyde)
-                        || self.rufus.is_empty() == self.pets.contains(&PetKind::Rufus)
-                        || self.rhubarb.is_empty() == self.pets.contains(&PetKind::Rhubarb)
-                        || self
-                            .fish_pets
-                            .iter()
-                            .map(|pet| pet.kind)
-                            .collect::<Vec<_>>()
-                            != self
-                                .pets
+            if self.profile_population {
+                self.validate_profile_population()?;
+            } else {
+                match (self.tank, self.level) {
+                    (4, 1..=5)
+                        if self.invasion.as_ref().is_none_or(|wave| {
+                            !matches!(
+                                (self.level, wave.plan),
+                                (1, WavePlan::Fixed(SylvesterKind::Balrog))
+                                    | (2, WavePlan::FixedBilaterus)
+                                    | (3, WavePlan::CyclingTank4Third { .. })
+                                    | (4, WavePlan::CyclingTank4Fourth { .. })
+                                    | (5, WavePlan::CyclingTank4Finale { .. })
+                            )
+                        }) || self.pets.len() > 3
+                            || self.pets.windows(2).any(|pair| {
+                                let canonical = [
+                                    PetKind::Stinky,
+                                    PetKind::Niko,
+                                    PetKind::Itchy,
+                                    PetKind::Prego,
+                                    PetKind::Zorf,
+                                    PetKind::Clyde,
+                                    PetKind::Vert,
+                                    PetKind::Rufus,
+                                    PetKind::Meryl,
+                                    PetKind::Wadsworth,
+                                    PetKind::Seymour,
+                                    PetKind::Shrapnel,
+                                    PetKind::Gumbo,
+                                    PetKind::Blip,
+                                    PetKind::Rhubarb,
+                                    PetKind::Nimbus,
+                                    PetKind::Amp,
+                                    PetKind::Gash,
+                                    PetKind::Angie,
+                                ];
+                                canonical.iter().position(|pet| *pet == pair[0])
+                                    >= canonical.iter().position(|pet| *pet == pair[1])
+                            })
+                            || self.stinky.is_empty() == self.pets.contains(&PetKind::Stinky)
+                            || self.niko.is_empty() == self.pets.contains(&PetKind::Niko)
+                            || self.clyde.is_empty() == self.pets.contains(&PetKind::Clyde)
+                            || self.rufus.is_empty() == self.pets.contains(&PetKind::Rufus)
+                            || self.rhubarb.is_empty() == self.pets.contains(&PetKind::Rhubarb)
+                            || self
+                                .fish_pets
                                 .iter()
-                                .filter_map(|pet| match pet {
-                                    PetKind::Itchy => Some(FishPetKind::Itchy),
-                                    PetKind::Prego => Some(FishPetKind::Prego),
-                                    PetKind::Zorf => Some(FishPetKind::Zorf),
-                                    PetKind::Vert => Some(FishPetKind::Vert),
-                                    PetKind::Meryl => Some(FishPetKind::Meryl),
-                                    PetKind::Wadsworth => Some(FishPetKind::Wadsworth),
-                                    PetKind::Seymour => Some(FishPetKind::Seymour),
-                                    PetKind::Shrapnel => Some(FishPetKind::Shrapnel),
-                                    PetKind::Gumbo => Some(FishPetKind::Gumbo),
-                                    PetKind::Blip => Some(FishPetKind::Blip),
-                                    PetKind::Nimbus => Some(FishPetKind::Nimbus),
-                                    PetKind::Amp => Some(FishPetKind::Amp),
-                                    PetKind::Gash => Some(FishPetKind::Gash),
-                                    PetKind::Angie => Some(FishPetKind::Angie),
-                                    _ => None,
-                                })
+                                .map(|pet| pet.kind)
                                 .collect::<Vec<_>>()
-                        || self.guppy_unlocked
-                        || (self.level == 1
-                            && (self.weapon_unlocked
-                                || self.weapon_strength != 2
-                                || self.ultra_unlocked))
-                        || (self.level >= 2
-                            && (self.weapon_unlocked != self.ultra_unlocked
-                                || self.ultra_unlocked != self.egg_unlocked))
-                        || self.starcatcher_unlocked
-                        || self.grubber_unlocked
-                        || self.gekko_unlocked
-                        || self.potion_unlocked
-                        || !self.starcatchers.is_empty()
-                        || !self.dead_starcatchers.is_empty()
-                        || !self.grubbers.is_empty()
-                        || !self.dead_grubbers.is_empty()
-                        || !self.gekkos.is_empty()
-                        || !self.dead_gekkos.is_empty()
-                        || self.upgrades.quality_unlocked != self.upgrades.quantity_unlocked
-                        || self.upgrades.quality_unlocked != self.oscar_unlocked
-                        || (self.egg_unlocked && !self.oscar_unlocked)
-                        || (!self.oscars.is_empty() && !self.egg_unlocked)
-                        || (!self.dead_oscars.is_empty() && !self.egg_unlocked)
-                        || ((!self.ultras.is_empty() || !self.dead_ultras.is_empty())
-                            && !self.ultra_unlocked) =>
-                {
-                    return Err("first Tank 4 roster or mapped shop gates disagree".into());
-                }
-                (3, 1)
-                    if self
-                        .invasion
-                        .as_ref()
-                        .is_none_or(|wave| wave.plan != WavePlan::Fixed(SylvesterKind::Balrog))
-                        || self.pets.len() > 3
-                        || self.pets.windows(2).any(|pair| {
-                            let canonical = [
-                                PetKind::Stinky,
-                                PetKind::Niko,
-                                PetKind::Itchy,
-                                PetKind::Prego,
-                                PetKind::Zorf,
-                                PetKind::Clyde,
-                                PetKind::Vert,
-                                PetKind::Rufus,
-                                PetKind::Meryl,
-                                PetKind::Wadsworth,
-                            ];
-                            canonical.iter().position(|pet| *pet == pair[0])
-                                >= canonical.iter().position(|pet| *pet == pair[1])
-                        })
-                        || self.stinky.is_empty() == self.pets.contains(&PetKind::Stinky)
-                        || self.niko.is_empty() == self.pets.contains(&PetKind::Niko)
-                        || self.clyde.is_empty() == self.pets.contains(&PetKind::Clyde)
-                        || self.rufus.is_empty() == self.pets.contains(&PetKind::Rufus)
-                        || self
-                            .fish_pets
-                            .iter()
-                            .map(|pet| pet.kind)
-                            .collect::<Vec<_>>()
-                            != self
-                                .pets
-                                .iter()
-                                .filter_map(|pet| match pet {
-                                    PetKind::Itchy => Some(FishPetKind::Itchy),
-                                    PetKind::Prego => Some(FishPetKind::Prego),
-                                    PetKind::Zorf => Some(FishPetKind::Zorf),
-                                    PetKind::Vert => Some(FishPetKind::Vert),
-                                    PetKind::Meryl => Some(FishPetKind::Meryl),
-                                    PetKind::Wadsworth => Some(FishPetKind::Wadsworth),
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>()
-                        || self.oscar_unlocked
-                        || self.starcatcher_unlocked
-                        || self.weapon_unlocked
-                        || self.potion_unlocked
-                        || (self.egg_unlocked && !self.grubber_unlocked)
-                        || (self.grubber_unlocked != self.upgrades.quality_unlocked)
-                        || (self.grubber_unlocked != self.upgrades.quantity_unlocked)
-                        || self.weapon_strength != 2
-                        || !self.oscars.is_empty()
-                        || !self.dead_oscars.is_empty()
-                        || !self.starcatchers.is_empty()
-                        || !self.dead_starcatchers.is_empty() =>
-                {
-                    return Err("third-tank roster or Grubber gates disagree".into());
-                }
-                (3, 2..=5)
-                    if self.invasion.as_ref().is_none_or(|wave| {
-                        if self.level == 2 {
-                            !matches!(wave.plan, WavePlan::CyclingTank3Second { .. })
-                        } else if self.level == 5 {
-                            !matches!(wave.plan, WavePlan::CyclingTank3Finale { .. })
-                        } else if self.level == 4 {
-                            wave.plan != WavePlan::Fixed(SylvesterKind::Ulysses)
-                        } else {
-                            wave.plan != WavePlan::Fixed(SylvesterKind::Psychosquid)
-                        }
-                    }) || self.pets.len() > 3
-                        || self.pets.windows(2).any(|pair| {
-                            let canonical = [
-                                PetKind::Stinky,
-                                PetKind::Niko,
-                                PetKind::Itchy,
-                                PetKind::Prego,
-                                PetKind::Zorf,
-                                PetKind::Clyde,
-                                PetKind::Vert,
-                                PetKind::Rufus,
-                                PetKind::Meryl,
-                                PetKind::Wadsworth,
-                                PetKind::Seymour,
-                                PetKind::Shrapnel,
-                                PetKind::Gumbo,
-                                PetKind::Blip,
-                            ];
-                            canonical.iter().position(|pet| *pet == pair[0])
-                                >= canonical.iter().position(|pet| *pet == pair[1])
-                        })
-                        || self.stinky.is_empty() == self.pets.contains(&PetKind::Stinky)
-                        || self.niko.is_empty() == self.pets.contains(&PetKind::Niko)
-                        || self.clyde.is_empty() == self.pets.contains(&PetKind::Clyde)
-                        || self.rufus.is_empty() == self.pets.contains(&PetKind::Rufus)
-                        || self
-                            .fish_pets
-                            .iter()
-                            .map(|pet| pet.kind)
-                            .collect::<Vec<_>>()
-                            != self
-                                .pets
-                                .iter()
-                                .filter_map(|pet| match pet {
-                                    PetKind::Itchy => Some(FishPetKind::Itchy),
-                                    PetKind::Prego => Some(FishPetKind::Prego),
-                                    PetKind::Zorf => Some(FishPetKind::Zorf),
-                                    PetKind::Vert => Some(FishPetKind::Vert),
-                                    PetKind::Meryl => Some(FishPetKind::Meryl),
-                                    PetKind::Wadsworth => Some(FishPetKind::Wadsworth),
-                                    PetKind::Seymour => Some(FishPetKind::Seymour),
-                                    PetKind::Shrapnel => Some(FishPetKind::Shrapnel),
-                                    PetKind::Gumbo => Some(FishPetKind::Gumbo),
-                                    PetKind::Blip => Some(FishPetKind::Blip),
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>()
-                        || self.oscar_unlocked
-                        || self.starcatcher_unlocked
-                        || self.potion_unlocked
-                        || !self.oscars.is_empty()
-                        || !self.dead_oscars.is_empty()
-                        || !self.starcatchers.is_empty()
-                        || !self.dead_starcatchers.is_empty()
-                        || self.upgrades.quality_unlocked != self.upgrades.quantity_unlocked
-                        || self.upgrades.quality_unlocked != self.grubber_unlocked
-                        || self.weapon_unlocked != self.egg_unlocked
-                        || (self.egg_unlocked && !self.gekko_unlocked)
-                        || (self.gekko_unlocked && !self.grubber_unlocked)
-                        || ((!self.gekkos.is_empty()
+                                != self
+                                    .pets
+                                    .iter()
+                                    .filter_map(|pet| match pet {
+                                        PetKind::Itchy => Some(FishPetKind::Itchy),
+                                        PetKind::Prego => Some(FishPetKind::Prego),
+                                        PetKind::Zorf => Some(FishPetKind::Zorf),
+                                        PetKind::Vert => Some(FishPetKind::Vert),
+                                        PetKind::Meryl => Some(FishPetKind::Meryl),
+                                        PetKind::Wadsworth => Some(FishPetKind::Wadsworth),
+                                        PetKind::Seymour => Some(FishPetKind::Seymour),
+                                        PetKind::Shrapnel => Some(FishPetKind::Shrapnel),
+                                        PetKind::Gumbo => Some(FishPetKind::Gumbo),
+                                        PetKind::Blip => Some(FishPetKind::Blip),
+                                        PetKind::Nimbus => Some(FishPetKind::Nimbus),
+                                        PetKind::Amp => Some(FishPetKind::Amp),
+                                        PetKind::Gash => Some(FishPetKind::Gash),
+                                        PetKind::Angie => Some(FishPetKind::Angie),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                            || self.guppy_unlocked
+                            || (self.level == 1
+                                && (self.weapon_unlocked
+                                    || self.weapon_strength != 2
+                                    || self.ultra_unlocked))
+                            || (self.level >= 2
+                                && (self.weapon_unlocked != self.ultra_unlocked
+                                    || self.ultra_unlocked != self.egg_unlocked))
+                            || self.starcatcher_unlocked
+                            || self.grubber_unlocked
+                            || self.gekko_unlocked
+                            || self.potion_unlocked
+                            || !self.starcatchers.is_empty()
+                            || !self.dead_starcatchers.is_empty()
+                            || !self.grubbers.is_empty()
+                            || !self.dead_grubbers.is_empty()
+                            || !self.gekkos.is_empty()
                             || !self.dead_gekkos.is_empty()
-                            || self.coins.iter().any(|coin| coin.kind == CoinKind::Pearl))
-                            && !self.weapon_unlocked) =>
-                {
-                    return Err("third-tank Gekko roster or purchase gates disagree".into());
-                }
-                (1, 1)
-                    if !self.pets.is_empty()
-                        || !self.stinky.is_empty()
-                        || !self.niko.is_empty()
-                        || self.invasion.is_some()
-                        || !self.pearls.is_empty()
-                        || self.upgrades.quality_unlocked
-                        || self.upgrades.quantity_unlocked
-                        || self.oscar_unlocked
-                        || self.weapon_unlocked
-                        || self.weapon_strength != 2
-                        || !self.oscars.is_empty()
-                        || !self.dead_oscars.is_empty()
-                        || !self.fish_pets.is_empty() =>
-                {
-                    return Err("first-stage roster or upgrades disagree".into());
-                }
-                (1, 2)
-                    if self.pets.as_slice() != [PetKind::Stinky]
-                        || self.stinky.is_empty()
-                        || self.invasion.is_none()
-                        || !self.niko.is_empty()
-                        || !self.pearls.is_empty()
-                        || self.oscar_unlocked
-                        || self.weapon_unlocked
-                        || self.weapon_strength != 2
-                        || !self.oscars.is_empty()
-                        || !self.dead_oscars.is_empty()
-                        || !self.fish_pets.is_empty() =>
-                {
-                    return Err("second-stage roster or wave disagree".into());
-                }
-                (1, 3)
-                    if self.pets.as_slice() != [PetKind::Stinky, PetKind::Niko]
-                        || self.stinky.is_empty()
-                        || self.niko.is_empty()
-                        || self.invasion.as_ref().is_none_or(|wave| {
-                            wave.plan != WavePlan::Fixed(SylvesterKind::Strong)
-                        })
-                        || !self.fish_pets.is_empty() =>
-                {
-                    return Err("third-stage roster disagrees".into());
-                }
-                (1, 4)
-                    if self.pets.as_slice() != [PetKind::Stinky, PetKind::Niko, PetKind::Itchy]
-                        || self.stinky.is_empty()
-                        || self.niko.is_empty()
-                        || self.invasion.as_ref().is_none_or(|wave| {
+                            || self.upgrades.quality_unlocked
+                                != self.upgrades.quantity_unlocked
+                            || self.upgrades.quality_unlocked != self.oscar_unlocked
+                            || (self.egg_unlocked && !self.oscar_unlocked)
+                            || (!self.oscars.is_empty() && !self.egg_unlocked)
+                            || (!self.dead_oscars.is_empty() && !self.egg_unlocked)
+                            || ((!self.ultras.is_empty() || !self.dead_ultras.is_empty())
+                                && !self.ultra_unlocked) =>
+                    {
+                        return Err("first Tank 4 roster or mapped shop gates disagree".into());
+                    }
+                    (3, 1)
+                        if self.invasion.as_ref().is_none_or(|wave| {
                             wave.plan != WavePlan::Fixed(SylvesterKind::Balrog)
-                        })
-                        || self.fish_pets.len() != 1
-                        || self.fish_pets[0].kind != FishPetKind::Itchy =>
-                {
-                    return Err("fourth-stage roster or Balrog wave disagrees".into());
-                }
-                (1, 5)
-                    if self.invasion.as_ref().is_none_or(|wave| {
-                        !matches!(wave.plan, WavePlan::CyclingTank1Finale { .. })
-                    }) || self.pets.len() > 3
-                        || self.pets.iter().any(|pet| {
-                            matches!(
-                                pet,
-                                PetKind::Zorf
-                                    | PetKind::Clyde
-                                    | PetKind::Vert
-                                    | PetKind::Rufus
-                                    | PetKind::Meryl
-                            )
-                        })
-                        || self.pets.windows(2).any(|pair| {
-                            let canonical = [
-                                PetKind::Stinky,
-                                PetKind::Niko,
-                                PetKind::Itchy,
-                                PetKind::Prego,
-                            ];
-                            canonical.iter().position(|pet| *pet == pair[0])
-                                >= canonical.iter().position(|pet| *pet == pair[1])
-                        })
-                        || self.stinky.is_empty() == self.pets.contains(&PetKind::Stinky)
-                        || self.niko.is_empty() == self.pets.contains(&PetKind::Niko)
-                        || self
-                            .fish_pets
-                            .iter()
-                            .map(|pet| pet.kind)
-                            .collect::<Vec<_>>()
-                            != self
-                                .pets
+                        }) || self.pets.len() > 3
+                            || self.pets.windows(2).any(|pair| {
+                                let canonical = [
+                                    PetKind::Stinky,
+                                    PetKind::Niko,
+                                    PetKind::Itchy,
+                                    PetKind::Prego,
+                                    PetKind::Zorf,
+                                    PetKind::Clyde,
+                                    PetKind::Vert,
+                                    PetKind::Rufus,
+                                    PetKind::Meryl,
+                                    PetKind::Wadsworth,
+                                ];
+                                canonical.iter().position(|pet| *pet == pair[0])
+                                    >= canonical.iter().position(|pet| *pet == pair[1])
+                            })
+                            || self.stinky.is_empty() == self.pets.contains(&PetKind::Stinky)
+                            || self.niko.is_empty() == self.pets.contains(&PetKind::Niko)
+                            || self.clyde.is_empty() == self.pets.contains(&PetKind::Clyde)
+                            || self.rufus.is_empty() == self.pets.contains(&PetKind::Rufus)
+                            || self
+                                .fish_pets
                                 .iter()
-                                .filter_map(|pet| match pet {
-                                    PetKind::Itchy => Some(FishPetKind::Itchy),
-                                    PetKind::Prego => Some(FishPetKind::Prego),
-                                    PetKind::Zorf => None,
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>() =>
-                {
-                    return Err("fifth-stage selected pet roster disagrees".into());
-                }
-                (2, 1)
-                    if self
-                        .invasion
-                        .as_ref()
-                        .is_none_or(|wave| wave.plan != WavePlan::Fixed(SylvesterKind::Strong))
-                        || self.pets.len() > 3
-                        || self.pets.iter().any(|pet| {
-                            matches!(
-                                pet,
-                                PetKind::Clyde | PetKind::Vert | PetKind::Rufus | PetKind::Meryl
-                            )
-                        })
-                        || self.pets.windows(2).any(|pair| {
-                            let canonical = [
-                                PetKind::Stinky,
-                                PetKind::Niko,
-                                PetKind::Itchy,
-                                PetKind::Prego,
-                                PetKind::Zorf,
-                            ];
-                            canonical.iter().position(|pet| *pet == pair[0])
-                                >= canonical.iter().position(|pet| *pet == pair[1])
-                        })
-                        || self.stinky.is_empty() == self.pets.contains(&PetKind::Stinky)
-                        || self.niko.is_empty() == self.pets.contains(&PetKind::Niko)
-                        || self
-                            .fish_pets
-                            .iter()
-                            .map(|pet| pet.kind)
-                            .collect::<Vec<_>>()
-                            != self
-                                .pets
-                                .iter()
-                                .filter_map(|pet| match pet {
-                                    PetKind::Itchy => Some(FishPetKind::Itchy),
-                                    PetKind::Prego => Some(FishPetKind::Prego),
-                                    PetKind::Zorf => Some(FishPetKind::Zorf),
-                                    _ => None,
-                                })
+                                .map(|pet| pet.kind)
                                 .collect::<Vec<_>>()
-                        || self.oscar_unlocked
-                        || self.weapon_unlocked
-                        || self.weapon_strength != 2
-                        || !self.oscars.is_empty()
-                        || !self.dead_oscars.is_empty()
-                        || (self.egg_unlocked && !self.upgrades.quality_unlocked)
-                        || (self.upgrades.quality_unlocked != self.upgrades.quantity_unlocked)
-                        || (self.upgrades.quality_unlocked != self.potion_unlocked)
-                        || (self.upgrades.quality_unlocked != self.egg_unlocked) =>
-                {
-                    return Err("second-tank roster or upgrade gates disagree".into());
-                }
-                (2, 2..=5)
-                    if self.invasion.as_ref().is_none_or(|wave| {
-                        if self.level == 5 {
-                            !matches!(wave.plan, WavePlan::CyclingTank2Finale { .. })
-                        } else {
-                            wave.plan
-                                != WavePlan::Fixed(match self.level {
-                                    2 => SylvesterKind::Balrog,
-                                    3 => SylvesterKind::Gus,
-                                    _ => SylvesterKind::Destructor,
-                                })
-                        }
-                    }) || self.pets.len() > 3
-                        || (self.level != 5 && self.pets.contains(&PetKind::Meryl))
-                        || (self.level < 4 && self.pets.contains(&PetKind::Rufus))
-                        || (self.level == 2 && self.pets.contains(&PetKind::Vert))
-                        || self.pets.windows(2).any(|pair| {
-                            let canonical = [
-                                PetKind::Stinky,
-                                PetKind::Niko,
-                                PetKind::Itchy,
-                                PetKind::Prego,
-                                PetKind::Zorf,
-                                PetKind::Clyde,
-                                PetKind::Vert,
-                                PetKind::Rufus,
-                                PetKind::Meryl,
-                            ];
-                            canonical.iter().position(|pet| *pet == pair[0])
-                                >= canonical.iter().position(|pet| *pet == pair[1])
-                        })
-                        || self.stinky.is_empty() == self.pets.contains(&PetKind::Stinky)
-                        || self.niko.is_empty() == self.pets.contains(&PetKind::Niko)
-                        || self.clyde.is_empty() == self.pets.contains(&PetKind::Clyde)
-                        || self.rufus.is_empty() == self.pets.contains(&PetKind::Rufus)
-                        || self
-                            .fish_pets
-                            .iter()
-                            .map(|pet| pet.kind)
-                            .collect::<Vec<_>>()
-                            != self
-                                .pets
+                                != self
+                                    .pets
+                                    .iter()
+                                    .filter_map(|pet| match pet {
+                                        PetKind::Itchy => Some(FishPetKind::Itchy),
+                                        PetKind::Prego => Some(FishPetKind::Prego),
+                                        PetKind::Zorf => Some(FishPetKind::Zorf),
+                                        PetKind::Vert => Some(FishPetKind::Vert),
+                                        PetKind::Meryl => Some(FishPetKind::Meryl),
+                                        PetKind::Wadsworth => Some(FishPetKind::Wadsworth),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                            || self.oscar_unlocked
+                            || self.starcatcher_unlocked
+                            || self.weapon_unlocked
+                            || self.potion_unlocked
+                            || (self.egg_unlocked && !self.grubber_unlocked)
+                            || (self.grubber_unlocked != self.upgrades.quality_unlocked)
+                            || (self.grubber_unlocked != self.upgrades.quantity_unlocked)
+                            || self.weapon_strength != 2
+                            || !self.oscars.is_empty()
+                            || !self.dead_oscars.is_empty()
+                            || !self.starcatchers.is_empty()
+                            || !self.dead_starcatchers.is_empty() =>
+                    {
+                        return Err("third-tank roster or Grubber gates disagree".into());
+                    }
+                    (3, 2..=5)
+                        if self.invasion.as_ref().is_none_or(|wave| {
+                            if self.level == 2 {
+                                !matches!(wave.plan, WavePlan::CyclingTank3Second { .. })
+                            } else if self.level == 5 {
+                                !matches!(wave.plan, WavePlan::CyclingTank3Finale { .. })
+                            } else if self.level == 4 {
+                                wave.plan != WavePlan::Fixed(SylvesterKind::Ulysses)
+                            } else {
+                                wave.plan != WavePlan::Fixed(SylvesterKind::Psychosquid)
+                            }
+                        }) || self.pets.len() > 3
+                            || self.pets.windows(2).any(|pair| {
+                                let canonical = [
+                                    PetKind::Stinky,
+                                    PetKind::Niko,
+                                    PetKind::Itchy,
+                                    PetKind::Prego,
+                                    PetKind::Zorf,
+                                    PetKind::Clyde,
+                                    PetKind::Vert,
+                                    PetKind::Rufus,
+                                    PetKind::Meryl,
+                                    PetKind::Wadsworth,
+                                    PetKind::Seymour,
+                                    PetKind::Shrapnel,
+                                    PetKind::Gumbo,
+                                    PetKind::Blip,
+                                ];
+                                canonical.iter().position(|pet| *pet == pair[0])
+                                    >= canonical.iter().position(|pet| *pet == pair[1])
+                            })
+                            || self.stinky.is_empty() == self.pets.contains(&PetKind::Stinky)
+                            || self.niko.is_empty() == self.pets.contains(&PetKind::Niko)
+                            || self.clyde.is_empty() == self.pets.contains(&PetKind::Clyde)
+                            || self.rufus.is_empty() == self.pets.contains(&PetKind::Rufus)
+                            || self
+                                .fish_pets
                                 .iter()
-                                .filter_map(|pet| match pet {
-                                    PetKind::Itchy => Some(FishPetKind::Itchy),
-                                    PetKind::Prego => Some(FishPetKind::Prego),
-                                    PetKind::Zorf => Some(FishPetKind::Zorf),
-                                    PetKind::Vert => Some(FishPetKind::Vert),
-                                    PetKind::Meryl => Some(FishPetKind::Meryl),
-                                    _ => None,
-                                })
+                                .map(|pet| pet.kind)
                                 .collect::<Vec<_>>()
-                        || self.oscar_unlocked
-                        || !self.oscars.is_empty()
-                        || !self.dead_oscars.is_empty()
-                        || self.upgrades.quality_unlocked != self.upgrades.quantity_unlocked
-                        || self.upgrades.quality_unlocked != self.potion_unlocked
-                        || self.upgrades.quality_unlocked != self.starcatcher_unlocked
-                        || self.egg_unlocked != self.weapon_unlocked
-                        || (self.egg_unlocked && !self.starcatcher_unlocked) =>
-                {
-                    return Err("second-tank roster or purchase gates disagree".into());
+                                != self
+                                    .pets
+                                    .iter()
+                                    .filter_map(|pet| match pet {
+                                        PetKind::Itchy => Some(FishPetKind::Itchy),
+                                        PetKind::Prego => Some(FishPetKind::Prego),
+                                        PetKind::Zorf => Some(FishPetKind::Zorf),
+                                        PetKind::Vert => Some(FishPetKind::Vert),
+                                        PetKind::Meryl => Some(FishPetKind::Meryl),
+                                        PetKind::Wadsworth => Some(FishPetKind::Wadsworth),
+                                        PetKind::Seymour => Some(FishPetKind::Seymour),
+                                        PetKind::Shrapnel => Some(FishPetKind::Shrapnel),
+                                        PetKind::Gumbo => Some(FishPetKind::Gumbo),
+                                        PetKind::Blip => Some(FishPetKind::Blip),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                            || self.oscar_unlocked
+                            || self.starcatcher_unlocked
+                            || self.potion_unlocked
+                            || !self.oscars.is_empty()
+                            || !self.dead_oscars.is_empty()
+                            || !self.starcatchers.is_empty()
+                            || !self.dead_starcatchers.is_empty()
+                            || self.upgrades.quality_unlocked
+                                != self.upgrades.quantity_unlocked
+                            || self.upgrades.quality_unlocked != self.grubber_unlocked
+                            || self.weapon_unlocked != self.egg_unlocked
+                            || (self.egg_unlocked && !self.gekko_unlocked)
+                            || (self.gekko_unlocked && !self.grubber_unlocked)
+                            || ((!self.gekkos.is_empty()
+                                || !self.dead_gekkos.is_empty()
+                                || self.coins.iter().any(|coin| coin.kind == CoinKind::Pearl))
+                                && !self.weapon_unlocked) =>
+                    {
+                        return Err("third-tank Gekko roster or purchase gates disagree".into());
+                    }
+                    (1, 1)
+                        if !self.pets.is_empty()
+                            || !self.stinky.is_empty()
+                            || !self.niko.is_empty()
+                            || self.invasion.is_some()
+                            || !self.pearls.is_empty()
+                            || self.upgrades.quality_unlocked
+                            || self.upgrades.quantity_unlocked
+                            || self.oscar_unlocked
+                            || self.weapon_unlocked
+                            || self.weapon_strength != 2
+                            || !self.oscars.is_empty()
+                            || !self.dead_oscars.is_empty()
+                            || !self.fish_pets.is_empty() =>
+                    {
+                        return Err("first-stage roster or upgrades disagree".into());
+                    }
+                    (1, 2)
+                        if self.pets.as_slice() != [PetKind::Stinky]
+                            || self.stinky.is_empty()
+                            || self.invasion.is_none()
+                            || !self.niko.is_empty()
+                            || !self.pearls.is_empty()
+                            || self.oscar_unlocked
+                            || self.weapon_unlocked
+                            || self.weapon_strength != 2
+                            || !self.oscars.is_empty()
+                            || !self.dead_oscars.is_empty()
+                            || !self.fish_pets.is_empty() =>
+                    {
+                        return Err("second-stage roster or wave disagree".into());
+                    }
+                    (1, 3)
+                        if self.pets.as_slice() != [PetKind::Stinky, PetKind::Niko]
+                            || self.stinky.is_empty()
+                            || self.niko.is_empty()
+                            || self.invasion.as_ref().is_none_or(|wave| {
+                                wave.plan != WavePlan::Fixed(SylvesterKind::Strong)
+                            })
+                            || !self.fish_pets.is_empty() =>
+                    {
+                        return Err("third-stage roster disagrees".into());
+                    }
+                    (1, 4)
+                        if self.pets.as_slice()
+                            != [PetKind::Stinky, PetKind::Niko, PetKind::Itchy]
+                            || self.stinky.is_empty()
+                            || self.niko.is_empty()
+                            || self.invasion.as_ref().is_none_or(|wave| {
+                                wave.plan != WavePlan::Fixed(SylvesterKind::Balrog)
+                            })
+                            || self.fish_pets.len() != 1
+                            || self.fish_pets[0].kind != FishPetKind::Itchy =>
+                    {
+                        return Err("fourth-stage roster or Balrog wave disagrees".into());
+                    }
+                    (1, 5)
+                        if self.invasion.as_ref().is_none_or(|wave| {
+                            !matches!(wave.plan, WavePlan::CyclingTank1Finale { .. })
+                        }) || self.pets.len() > 3
+                            || self.pets.iter().any(|pet| {
+                                matches!(
+                                    pet,
+                                    PetKind::Zorf
+                                        | PetKind::Clyde
+                                        | PetKind::Vert
+                                        | PetKind::Rufus
+                                        | PetKind::Meryl
+                                )
+                            })
+                            || self.pets.windows(2).any(|pair| {
+                                let canonical = [
+                                    PetKind::Stinky,
+                                    PetKind::Niko,
+                                    PetKind::Itchy,
+                                    PetKind::Prego,
+                                ];
+                                canonical.iter().position(|pet| *pet == pair[0])
+                                    >= canonical.iter().position(|pet| *pet == pair[1])
+                            })
+                            || self.stinky.is_empty() == self.pets.contains(&PetKind::Stinky)
+                            || self.niko.is_empty() == self.pets.contains(&PetKind::Niko)
+                            || self
+                                .fish_pets
+                                .iter()
+                                .map(|pet| pet.kind)
+                                .collect::<Vec<_>>()
+                                != self
+                                    .pets
+                                    .iter()
+                                    .filter_map(|pet| match pet {
+                                        PetKind::Itchy => Some(FishPetKind::Itchy),
+                                        PetKind::Prego => Some(FishPetKind::Prego),
+                                        PetKind::Zorf => None,
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>() =>
+                    {
+                        return Err("fifth-stage selected pet roster disagrees".into());
+                    }
+                    (2, 1)
+                        if self.invasion.as_ref().is_none_or(|wave| {
+                            wave.plan != WavePlan::Fixed(SylvesterKind::Strong)
+                        }) || self.pets.len() > 3
+                            || self.pets.iter().any(|pet| {
+                                matches!(
+                                    pet,
+                                    PetKind::Clyde
+                                        | PetKind::Vert
+                                        | PetKind::Rufus
+                                        | PetKind::Meryl
+                                )
+                            })
+                            || self.pets.windows(2).any(|pair| {
+                                let canonical = [
+                                    PetKind::Stinky,
+                                    PetKind::Niko,
+                                    PetKind::Itchy,
+                                    PetKind::Prego,
+                                    PetKind::Zorf,
+                                ];
+                                canonical.iter().position(|pet| *pet == pair[0])
+                                    >= canonical.iter().position(|pet| *pet == pair[1])
+                            })
+                            || self.stinky.is_empty() == self.pets.contains(&PetKind::Stinky)
+                            || self.niko.is_empty() == self.pets.contains(&PetKind::Niko)
+                            || self
+                                .fish_pets
+                                .iter()
+                                .map(|pet| pet.kind)
+                                .collect::<Vec<_>>()
+                                != self
+                                    .pets
+                                    .iter()
+                                    .filter_map(|pet| match pet {
+                                        PetKind::Itchy => Some(FishPetKind::Itchy),
+                                        PetKind::Prego => Some(FishPetKind::Prego),
+                                        PetKind::Zorf => Some(FishPetKind::Zorf),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                            || self.oscar_unlocked
+                            || self.weapon_unlocked
+                            || self.weapon_strength != 2
+                            || !self.oscars.is_empty()
+                            || !self.dead_oscars.is_empty()
+                            || (self.egg_unlocked && !self.upgrades.quality_unlocked)
+                            || (self.upgrades.quality_unlocked
+                                != self.upgrades.quantity_unlocked)
+                            || (self.upgrades.quality_unlocked != self.potion_unlocked)
+                            || (self.upgrades.quality_unlocked != self.egg_unlocked) =>
+                    {
+                        return Err("second-tank roster or upgrade gates disagree".into());
+                    }
+                    (2, 2..=5)
+                        if self.invasion.as_ref().is_none_or(|wave| {
+                            if self.level == 5 {
+                                !matches!(wave.plan, WavePlan::CyclingTank2Finale { .. })
+                            } else {
+                                wave.plan
+                                    != WavePlan::Fixed(match self.level {
+                                        2 => SylvesterKind::Balrog,
+                                        3 => SylvesterKind::Gus,
+                                        _ => SylvesterKind::Destructor,
+                                    })
+                            }
+                        }) || self.pets.len() > 3
+                            || (self.level != 5 && self.pets.contains(&PetKind::Meryl))
+                            || (self.level < 4 && self.pets.contains(&PetKind::Rufus))
+                            || (self.level == 2 && self.pets.contains(&PetKind::Vert))
+                            || self.pets.windows(2).any(|pair| {
+                                let canonical = [
+                                    PetKind::Stinky,
+                                    PetKind::Niko,
+                                    PetKind::Itchy,
+                                    PetKind::Prego,
+                                    PetKind::Zorf,
+                                    PetKind::Clyde,
+                                    PetKind::Vert,
+                                    PetKind::Rufus,
+                                    PetKind::Meryl,
+                                ];
+                                canonical.iter().position(|pet| *pet == pair[0])
+                                    >= canonical.iter().position(|pet| *pet == pair[1])
+                            })
+                            || self.stinky.is_empty() == self.pets.contains(&PetKind::Stinky)
+                            || self.niko.is_empty() == self.pets.contains(&PetKind::Niko)
+                            || self.clyde.is_empty() == self.pets.contains(&PetKind::Clyde)
+                            || self.rufus.is_empty() == self.pets.contains(&PetKind::Rufus)
+                            || self
+                                .fish_pets
+                                .iter()
+                                .map(|pet| pet.kind)
+                                .collect::<Vec<_>>()
+                                != self
+                                    .pets
+                                    .iter()
+                                    .filter_map(|pet| match pet {
+                                        PetKind::Itchy => Some(FishPetKind::Itchy),
+                                        PetKind::Prego => Some(FishPetKind::Prego),
+                                        PetKind::Zorf => Some(FishPetKind::Zorf),
+                                        PetKind::Vert => Some(FishPetKind::Vert),
+                                        PetKind::Meryl => Some(FishPetKind::Meryl),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                            || self.oscar_unlocked
+                            || !self.oscars.is_empty()
+                            || !self.dead_oscars.is_empty()
+                            || self.upgrades.quality_unlocked
+                                != self.upgrades.quantity_unlocked
+                            || self.upgrades.quality_unlocked != self.potion_unlocked
+                            || self.upgrades.quality_unlocked != self.starcatcher_unlocked
+                            || self.egg_unlocked != self.weapon_unlocked
+                            || (self.egg_unlocked && !self.starcatcher_unlocked) =>
+                    {
+                        return Err("second-tank roster or purchase gates disagree".into());
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
             if (self.tank, self.level) == (1, 2)
                 && ((self.upgrades.quantity_unlocked || self.egg_unlocked)
@@ -3757,6 +4280,9 @@ impl AdventureState {
                 return Err("carnivore and weapon unlock order disagrees".into());
             }
             if !(self.notes.is_empty()
+                || (self.profile_population
+                    && (self.pets.contains(&PetKind::Meryl)
+                        || self.pets.contains(&PetKind::Presto)))
                 || (self.tank, self.level) == (2, 5)
                 || (self.tank == 3
                     && (1..=5).contains(&self.level)
@@ -3767,19 +4293,21 @@ impl AdventureState {
                     .notes
                     .iter()
                     .any(|note| note.age_ticks > 100 || note.y < 0 || note.y > 550)
-                || self
-                    .fish_pets
-                    .iter()
-                    .filter(|pet| pet.kind == FishPetKind::Meryl)
-                    .count()
-                    > 1
+                || (!self.profile_population
+                    && self
+                        .fish_pets
+                        .iter()
+                        .filter(|pet| pet.kind == FishPetKind::Meryl)
+                        .count()
+                        > 1)
             {
                 return Err("invalid Meryl note or roster state".into());
             }
         }
         for stinky in &self.stinky {
             stinky.validate()?;
-            if (tank5 || self.time_trial && stinky.presto_form.is_some())
+            if (tank5
+                || (self.time_trial || self.profile_population) && stinky.presto_form.is_some())
                 != stinky.combat_id.is_some()
             {
                 return Err("Stinky combat identity disagrees with Adventure stage".into());
@@ -3800,12 +4328,15 @@ impl AdventureState {
                 (self.tank, self.level),
                 (3, 2 | 4 | 5) | (4, 4..=5) | (5, 1)
             );
-        if !(self.missiles.is_empty() || projectile_stage)
-            || (!self.time_trial
-                && !self.rufus.is_empty()
-                && !matches!((self.tank, self.level), (2, 4..=5) | (3..=5, _)))
+        if !self.missiles.is_empty() && !projectile_stage {
+            return Err("Destructor missiles outside supported Adventure stage".into());
+        }
+        if !self.time_trial
+            && !self.profile_population
+            && !self.rufus.is_empty()
+            && !matches!((self.tank, self.level), (2, 4..=5) | (3..=5, _))
         {
-            return Err("Destructor missiles or Rufus outside Adventure 2-4".into());
+            return Err("Rufus outside Adventure 2-4".into());
         }
         let mut assigned = HashSet::new();
         for missile in &self.missiles {
@@ -3930,9 +4461,12 @@ impl AdventureState {
             if shot.shot_type == 2 {
                 !self.time_trial && !matches!((self.tank, self.level), (3, 4 | 5))
             } else {
-                (!self.time_trial && !matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=5)))
+                (!self.time_trial
+                    && !self.profile_population
+                    && !matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=5)))
                     || !(self.pets.contains(&PetKind::Shrapnel)
-                        || (self.time_trial && self.pets.contains(&PetKind::Presto))
+                        || ((self.time_trial || self.profile_population)
+                            && self.pets.contains(&PetKind::Presto))
                         || ((self.time_trial || matches!((self.tank, self.level), (4, 3..=5)))
                             && self.pets.contains(&PetKind::Amp)))
             }
@@ -3971,6 +4505,7 @@ impl AdventureState {
             pearl.validate()?;
             if pearl.phase == PearlPhase::Finished
                 || (!self.time_trial
+                    && !self.profile_population
                     && !tank5
                     && !self.niko.is_empty()
                     && self.niko.iter().all(|niko| pearl.owner_id != niko.owner_id))
@@ -3978,7 +4513,12 @@ impl AdventureState {
                 return Err("pearl owner or lifecycle disagrees".into());
             }
         }
-        if !tank5 && !self.time_trial && self.niko.is_empty() && !self.pearls.is_empty() {
+        if !tank5
+            && !self.time_trial
+            && !self.profile_population
+            && self.niko.is_empty()
+            && !self.pearls.is_empty()
+        {
             return Err("pearl without Niko owner".into());
         }
         // The project retains an inactive guppy record beside its same-ID
@@ -4105,7 +4645,7 @@ impl AdventureState {
                 return Err("Tank 5 retired pearl owner is invalid".into());
             }
         }
-        if self.time_trial {
+        if self.time_trial || self.profile_population {
             for pearl in &self.pearls {
                 if self.niko.iter().any(|niko| niko.owner_id == pearl.owner_id) {
                     continue;
@@ -14330,6 +14870,79 @@ mod tests {
             board.update_breeders(&mut Vec::new());
             assert_eq!(board.breeders[0].hunger, 399, "size={size:?}");
         }
+    }
+
+    #[test]
+    fn completed_profile_populates_presto_before_starters_and_retains_fixed_tank_five_duplicates() {
+        let mut early =
+            AdventureState::new_profile_stage(0x3755, 1, 1, &[PetKind::Stinky, PetKind::Presto], 0)
+                .unwrap();
+        assert_eq!(early.pets, [PetKind::Stinky, PetKind::Presto]);
+        assert!(early.presto_actor().unwrap().id < early.fish[0].id);
+        let opener = early.presto_actor().unwrap();
+        early
+            .change_presto_form(opener.id, PetKind::Stinky, &mut Vec::new())
+            .unwrap();
+        assert_eq!(early.stinky.len(), 2);
+        early.validate().unwrap();
+        for target in crate::time_trial::SUPPORTED_PETS
+            .into_iter()
+            .chain([PetKind::Presto])
+        {
+            let mut board =
+                AdventureState::new_profile_stage(0x3757, 1, 1, &[PetKind::Presto], 0).unwrap();
+            let initial = board.presto_actor().unwrap();
+            let result = board
+                .change_presto_form(initial.id, target, &mut Vec::new())
+                .unwrap();
+            assert_eq!(
+                result,
+                if target == PetKind::Presto {
+                    PrestoChangeEligibility::SameForm
+                } else {
+                    PrestoChangeEligibility::Ready
+                },
+                "{target:?}"
+            );
+            assert_eq!(board.presto_actor().unwrap().kind, target);
+            board
+                .validate()
+                .unwrap_or_else(|error| panic!("{target:?}: {error}"));
+        }
+        for kind in crate::time_trial::SUPPORTED_PETS {
+            let ordinary = AdventureState::new_profile_stage(0x3759, 1, 1, &[kind], 0).unwrap();
+            ordinary
+                .validate()
+                .unwrap_or_else(|error| panic!("ordinary {kind:?}: {error}"));
+            let mut finale =
+                AdventureState::new_profile_stage(0x375a, 5, 1, &[kind, PetKind::Presto], 0)
+                    .unwrap();
+            let opener = finale.presto_actor().unwrap();
+            finale
+                .change_presto_form(opener.id, kind, &mut Vec::new())
+                .unwrap();
+            finale
+                .validate()
+                .unwrap_or_else(|error| panic!("Tank 5 {kind:?}: {error}"));
+        }
+
+        let tank5 = AdventureState::new_profile_stage(
+            0x3756,
+            5,
+            1,
+            &[PetKind::Stinky, PetKind::Niko, PetKind::Presto],
+            4,
+        )
+        .unwrap();
+        assert_eq!(
+            &tank5.pets[..3],
+            &[PetKind::Stinky, PetKind::Niko, PetKind::Presto]
+        );
+        assert_eq!(&tank5.pets[3..], TANK5_PETS);
+        assert_eq!(tank5.stinky.len(), 2);
+        assert_eq!(tank5.niko.len(), 2);
+        assert_ne!(tank5.stinky[0].combat_id, tank5.stinky[1].combat_id);
+        tank5.validate().unwrap();
     }
 
     #[test]

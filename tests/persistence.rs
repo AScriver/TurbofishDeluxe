@@ -10,7 +10,7 @@ use turbofish_deluxe::{
 };
 
 fn historical_envelope(save: cli::ProjectSave) -> serde_json::Value {
-    assert!(save.format_version < 25);
+    assert!(save.format_version < 26);
     let mut value = serde_json::to_value(save).unwrap();
     let session = value["session"].as_object_mut().unwrap();
     session.remove("mode");
@@ -121,6 +121,7 @@ fn current_time_trial_rejects_acquired_presto_claim_even_with_a_valid_physical_r
     session.progress.tank = 5;
     session.progress.level = 2;
     session.progress.adventure_completed = true;
+    session.progress.adventure_completions = 1;
     session.progress.unlocked_pets.push(PetKind::Presto);
     session.board = None;
     session.phase = AdventurePhase::GameSelector;
@@ -865,6 +866,85 @@ fn current_tank_four_second_rejects_missing_and_impossible_live_state() {
 }
 
 #[test]
+fn current_replay_fields_are_explicit_and_missing_values_reject() {
+    let current = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: AdventureSession::new(0x3758),
+    })
+    .unwrap();
+    for (path, field) in [
+        ("progress", "adventure_completions"),
+        ("board", "profile_population"),
+        ("board", "bonus_active"),
+        ("board", "bonus_tally"),
+    ] {
+        let mut missing = current.clone();
+        missing["session"][path]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "missing {path}.{field}"
+        );
+    }
+    assert!(cli::decode_save(&serde_json::to_vec(&current).unwrap()).is_ok());
+}
+
+#[test]
+fn completed_replay_bonus_board_and_tally_continue_through_current_save() {
+    use turbofish_deluxe::time_trial::SUPPORTED_PETS;
+    let mut session = AdventureSession::new(0x3761);
+    session.progress.tank = 5;
+    session.progress.level = 2;
+    session.progress.adventure_completed = true;
+    session.progress.adventure_completions = 1;
+    session.progress.unlocked_pets = SUPPORTED_PETS
+        .into_iter()
+        .chain([PetKind::Presto])
+        .collect();
+    session.board = None;
+    session.phase = AdventurePhase::GameSelector;
+    session.apply_actions(&[Action::PlayAdventure, Action::Continue]);
+    session.apply_actions(&[
+        Action::TogglePet {
+            pet: PetKind::Stinky,
+        },
+        Action::TogglePet { pet: PetKind::Niko },
+        Action::TogglePet {
+            pet: PetKind::Presto,
+        },
+        Action::Continue,
+    ]);
+    let board = session.board.as_mut().unwrap();
+    board.egg_unlocked = true;
+    board.balance = 1000;
+    session.apply_actions(&[Action::BuyEgg, Action::BuyEgg, Action::BuyEgg]);
+    assert!(matches!(session.phase, AdventurePhase::Bonus { .. }));
+    assert!(session.board.as_ref().unwrap().bonus_active);
+    session.validate().unwrap();
+    let encoded = serde_json::to_vec(&cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: session.clone(),
+    })
+    .unwrap();
+    let mut reopened = cli::decode_save(&encoded).unwrap();
+    for _ in 0..12 {
+        assert_eq!(
+            serde_json::to_value(session.step(&[])).unwrap(),
+            serde_json::to_value(reopened.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&session).unwrap(),
+            serde_json::to_value(&reopened).unwrap()
+        );
+    }
+    let mut forged: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    forged["session"]["board"]["bonus_tally"] = 1.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&forged).unwrap()).is_err());
+}
+
+#[test]
 fn current_tank_four_second_pause_keeps_live_board_while_session_time_advances() {
     let session = pending_tank_four_second_session();
     let mut resumed = cli::decode_save(&current_bytes(session)).unwrap();
@@ -898,7 +978,7 @@ fn current_tank_four_second_pause_keeps_live_board_while_session_time_advances()
 fn current_tank_four_third_accepts_seventeen_rosters_and_persists_live_amp_setup() {
     use turbofish_deluxe::{alien::SylvesterKind, fish_pet::FishPetKind, invasion::EncounterKind};
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 25);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 26);
     let canonical = tank_four_third_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 17);
     for pet in canonical {
@@ -1159,7 +1239,7 @@ fn current_tank_four_fourth_accepts_eighteen_rosters_and_persists_gash_setup() {
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 25);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 26);
     let canonical = tank_four_fourth_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 18);
     for pet in canonical {
@@ -1412,7 +1492,7 @@ fn current_tank_four_finale_accepts_nineteen_rosters_and_starts_with_bilaterus()
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 25);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 26);
     let canonical = tank_four_finale_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 19);
     for pet in canonical {
@@ -1484,7 +1564,7 @@ fn current_twenty_one_requires_revival_clock_on_all_seven_valid_corpse_kinds() {
                 .remove("revival_ticks");
             let error = cli::decode_save(&serde_json::to_vec(&missing).unwrap()).unwrap_err();
             assert!(
-                error.to_string().contains("Incomplete format-twenty-five"),
+                error.to_string().contains("Incomplete format-twenty-six"),
                 "missing {list}[0].revival_ticks: {error}"
             );
         }
@@ -1639,8 +1719,8 @@ fn current_tank_four_finale_pending_balrog_bilaterus_keeps_order_and_counter() {
 }
 
 #[test]
-fn current_tank_four_finale_special_hatch_reload_enters_fixed_tank_five_roster() {
-    use turbofish_deluxe::sim::Event;
+fn current_tank_four_finale_special_hatch_reload_enters_selected_then_fixed_tank_five_roster() {
+    use turbofish_deluxe::{fish_pet::FishPetKind, sim::Event};
 
     // Controlled shop fixture: three actual BuyEgg actions exercise the
     // special phase transaction, without claiming earned native progress.
@@ -1739,8 +1819,37 @@ fn current_tank_four_finale_special_hatch_reload_enters_fixed_tank_five_roster()
         ),
         (5, 1, 200, 2, 0)
     );
-    assert_eq!(board.pets.len(), 18);
-    assert!(!board.pets.contains(&PetKind::Angie));
+    assert_eq!(board.pets[0], PetKind::Angie);
+    assert_eq!(
+        &board.pets[1..],
+        &[
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+            PetKind::Clyde,
+            PetKind::Vert,
+            PetKind::Rufus,
+            PetKind::Meryl,
+            PetKind::Wadsworth,
+            PetKind::Seymour,
+            PetKind::Shrapnel,
+            PetKind::Gumbo,
+            PetKind::Blip,
+            PetKind::Rhubarb,
+            PetKind::Nimbus,
+            PetKind::Amp,
+            PetKind::Gash,
+        ]
+    );
+    let angies: Vec<_> = board
+        .fish_pets
+        .iter()
+        .filter(|pet| pet.kind == FishPetKind::Angie)
+        .collect();
+    assert_eq!(angies.len(), 1);
+    assert!(angies[0].id < board.stinky[0].combat_id.unwrap());
     assert!(board.fish.is_empty());
     assert_eq!(reopened.progress.selected_pets, vec![PetKind::Angie]);
     let final_reload = cli::decode_save(&current_bytes(reopened.clone())).unwrap();
@@ -2065,7 +2174,15 @@ fn current_tank_five_loss_reopen_preserves_strict_attempt_and_fresh_retry() {
                 && !retry.rufus.is_empty()
                 && !retry.rhubarb.is_empty()
         );
-        assert_eq!(retry.fish_pets.len(), 13);
+        let angies: Vec<_> = retry
+            .fish_pets
+            .iter()
+            .filter(|pet| pet.kind == turbofish_deluxe::fish_pet::FishPetKind::Angie)
+            .collect();
+        assert_eq!(retry.fish_pets.len(), 14);
+        assert_eq!(angies.len(), 1);
+        assert!(angies[0].id < retry.stinky[0].combat_id.unwrap());
+        assert_eq!(reopened.progress.selected_pets, vec![PetKind::Angie]);
         assert_eq!(
             retry
                 .invasion
@@ -2284,7 +2401,7 @@ fn format_sixteen_nimbus_hatch_enters_current_four_two_and_old_amp_selector_stil
         },
     ]);
     assert_eq!(loaded.progress.unlocked_pets.len(), 16);
-    assert!(loaded.progress.selected_pets.is_empty());
+    assert_eq!(loaded.progress.selected_pets, vec![PetKind::Rhubarb]);
     assert!(matches!(loaded.phase, AdventurePhase::PetSelection { .. }));
     assert!(
         matches!(&loaded.phase, AdventurePhase::PetSelection { selected } if selected.as_slice() == [PetKind::Nimbus])
@@ -2589,12 +2706,14 @@ fn current_tank_three_bonus_flight_and_immutable_results_survive_reload() {
         );
         resumed.validate().unwrap();
     }
-    let mut missing = current;
-    missing["session"]["phase"]["Bonus"]["state"]
-        .as_object_mut()
-        .unwrap()
-        .remove("origin_tank");
-    assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+    for field in ["origin_tank", "origin_level"] {
+        let mut missing = current.clone();
+        missing["session"]["phase"]["Bonus"]["state"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+    }
     // Result origin stays3 when the profile advances to4-1; balance is already
     // committed and neither presentation nor repeated Continue can credit it.
     session.progress.tank = 4;
@@ -2603,6 +2722,7 @@ fn current_tank_three_bonus_flight_and_immutable_results_survive_reload() {
     session.phase = AdventurePhase::BonusResults {
         result: BonusResult {
             origin_tank: 3,
+            origin_level: 6,
             earned: 217,
             previous_balance: 1347,
             updates: 8,
@@ -2635,6 +2755,112 @@ fn current_tank_three_bonus_flight_and_immutable_results_survive_reload() {
         .unwrap()
         .remove("origin_tank");
     assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+}
+
+#[test]
+fn current_bonus_save_rejects_empty_wait_with_live_shells() {
+    use turbofish_deluxe::bonus::BonusState;
+
+    let mut session = tank_three_fifth_session(&[PetKind::Blip]);
+    session.progress.level = 6;
+    session.progress.unlocked_pets.push(PetKind::Rhubarb);
+    session.board = None;
+    let mut bonus = BonusState::new_for_tank(42, 3).unwrap();
+    bonus.click(0.0, 0.0);
+    while !bonus.timed_out {
+        bonus.update();
+    }
+    assert!(!bonus.shells.is_empty());
+    assert_eq!(bonus.empty_updates, 0);
+    session.ticks = bonus.tick;
+    session.phase = AdventurePhase::Bonus { state: bonus };
+    session.validate().unwrap();
+
+    let current = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    assert!(cli::decode_save(&serde_json::to_vec(&current).unwrap()).is_ok());
+    let mut forged = current;
+    forged["session"]["phase"]["Bonus"]["state"]["empty_updates"] = 1.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&forged).unwrap()).is_err());
+}
+
+#[test]
+fn completed_profile_save_requires_replay_board_for_ordinary_bonus_phases() {
+    use turbofish_deluxe::bonus::{BonusResult, BonusState};
+    use turbofish_deluxe::time_trial::SUPPORTED_PETS;
+
+    let mut first = AdventureSession::new(42);
+    first.progress.tank = 1;
+    first.progress.level = 6;
+    first.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+    ];
+    first.board = None;
+    first.phase = AdventurePhase::Bonus {
+        state: BonusState::new_for_tank(42, 1).unwrap(),
+    };
+    assert!(cli::decode_save(&current_bytes(first.clone())).is_ok());
+    first.progress.tank = 2;
+    first.progress.level = 1;
+    first.phase = AdventurePhase::BonusResults {
+        result: BonusResult {
+            origin_tank: 1,
+            origin_level: 6,
+            earned: 0,
+            previous_balance: 0,
+            updates: 0,
+        },
+    };
+    assert!(cli::decode_save(&current_bytes(first)).is_ok());
+
+    let mut completed = AdventureSession::new(43);
+    completed.progress.tank = 1;
+    completed.progress.level = 6;
+    completed.progress.unlocked_pets = SUPPORTED_PETS
+        .into_iter()
+        .chain([PetKind::Presto])
+        .collect();
+    completed.progress.adventure_completed = true;
+    completed.progress.adventure_completions = 2;
+    completed.board = None;
+    completed.phase = AdventurePhase::Bonus {
+        state: BonusState::new_for_tank(42, 1).unwrap(),
+    };
+    assert!(cli::decode_save(&current_bytes(completed.clone())).is_err());
+
+    completed.progress.tank = 2;
+    completed.progress.level = 1;
+    completed.phase = AdventurePhase::BonusResults {
+        result: BonusResult {
+            origin_tank: 1,
+            origin_level: 6,
+            earned: 0,
+            previous_balance: 0,
+            updates: 0,
+        },
+    };
+    assert!(cli::decode_save(&current_bytes(completed.clone())).is_err());
+
+    completed.progress.tank = 5;
+    completed.progress.level = 2;
+    completed.progress.shell_balance = 5000;
+    completed.phase = AdventurePhase::BonusResults {
+        result: BonusResult {
+            origin_tank: 5,
+            origin_level: 1,
+            earned: 5000,
+            previous_balance: 0,
+            updates: 0,
+        },
+    };
+    assert!(cli::decode_save(&current_bytes(completed)).is_ok());
 }
 
 #[test]
@@ -3735,6 +3961,7 @@ fn current_tank_two_bonus_origin_and_results_credit_survive_reload() {
     session.phase = AdventurePhase::BonusResults {
         result: BonusResult {
             origin_tank: 2,
+            origin_level: 6,
             earned: 217,
             previous_balance: 100,
             updates: 8,
@@ -4262,6 +4489,7 @@ fn bonus_results_reload_does_not_repeat_profile_credit() {
     session.phase = AdventurePhase::BonusResults {
         result: BonusResult {
             origin_tank: 1,
+            origin_level: 6,
             earned: 217,
             previous_balance: 100,
             updates: 8,

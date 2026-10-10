@@ -141,7 +141,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 25;
+pub const SAVE_FORMAT_VERSION: u32 = 26;
 
 #[cfg(test)]
 mod current_twenty_one_tests {
@@ -229,11 +229,11 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             );
         }
     }
-    if version_number.is_some_and(|version| (24..=25).contains(&version)) {
+    if version_number.is_some_and(|version| (24..=26).contains(&version)) {
         let session = value
             .get("session")
             .and_then(serde_json::Value::as_object)
-            .ok_or("Format-twenty-five session missing")?;
+            .ok_or("Format-twenty-six session missing")?;
         if ["mode", "time_trial_scores", "time_trial"]
             .iter()
             .any(|field| !session.contains_key(*field))
@@ -247,12 +247,27 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                         .is_none()
                 })
         {
-            return Err("Incomplete format-twenty-five mode or Time Trial state".into());
+            return Err("Incomplete format-twenty-six mode or Time Trial state".into());
         }
     } else if version_number.is_some_and(|version| version < 24)
         && value.pointer("/session/mode").is_some()
     {
         return Err("Older save cannot claim Time Trial mode".into());
+    }
+    if version_number == Some(26)
+        && (value
+            .pointer("/session/progress/adventure_completions")
+            .is_none()
+            || value
+                .pointer("/session/board")
+                .filter(|board| !board.is_null())
+                .is_some_and(|board| {
+                    ["profile_population", "bonus_active", "bonus_tally"]
+                        .iter()
+                        .any(|field| board.get(*field).is_none())
+                }))
+    {
+        return Err("Incomplete format-twenty-six replay state".into());
     }
     if let Some(version @ 1..=6) = version_number {
         validate_legacy_boundary(&value, version)?;
@@ -350,7 +365,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=25) => {
+        Some(version @ 5..=26) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -686,6 +701,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     23 => "twenty-three",
                     24 => "twenty-four",
                     25 => "twenty-five",
+                    26 => "twenty-six",
                     _ => unreachable!("bounded format range"),
                 };
                 return Err(format!(

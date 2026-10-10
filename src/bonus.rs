@@ -124,6 +124,7 @@ pub struct BonusUpdate {
 pub struct BonusResult {
     /// Completed bonus identity, retained after the profile advances.
     pub origin_tank: u8,
+    pub origin_level: u8,
     pub earned: u32,
     pub previous_balance: u32,
     pub updates: u32,
@@ -150,8 +151,10 @@ impl BonusResult {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if !matches!(self.origin_tank, 1..=3)
-            || self.previous_balance > MAX_SHELL_BALANCE
+        if !matches!(
+            (self.origin_tank, self.origin_level),
+            (1..=3, 1..=6) | (4, 1..=5) | (5, 1)
+        ) || self.previous_balance > MAX_SHELL_BALANCE
             || self.earned > MAX_SHELL_BALANCE
         {
             return Err("invalid bonus result balance or award".into());
@@ -164,6 +167,7 @@ impl BonusResult {
 pub struct BonusState {
     /// Immutable scenario identity; duration/background derive from this field.
     pub origin_tank: u8,
+    pub origin_level: u8,
     pub tick: u64,
     pub initial_count: u64,
     pub started_at: Option<u64>,
@@ -187,11 +191,24 @@ impl BonusState {
     }
 
     pub fn new_for_tank(seed: u64, origin_tank: u8) -> Result<Self, String> {
-        if !matches!(origin_tank, 1..=3) {
+        Self::new_for_stage(AdventureState::initial_rng(seed), 1, origin_tank, 6)
+    }
+
+    pub fn new_for_stage(
+        seed: u64,
+        next_id: u64,
+        origin_tank: u8,
+        origin_level: u8,
+    ) -> Result<Self, String> {
+        if !matches!((origin_tank, origin_level), (1..=3, 1..=6) | (4, 1..=5))
+            || next_id == 0
+            || next_id == u64::MAX
+        {
             return Err("unsupported bonus origin tank".into());
         }
         Ok(Self {
             origin_tank,
+            origin_level,
             tick: 0,
             initial_count: 0,
             started_at: None,
@@ -203,18 +220,22 @@ impl BonusState {
             last_type: None,
             combo_count: 0,
             shells_earned: 0,
-            next_id: 1,
-            rng_state: AdventureState::initial_rng(seed),
+            next_id,
+            rng_state: seed,
         })
     }
 
     pub fn duration_seconds(&self) -> u32 {
-        // PB52: Tank1/2/3 base10/15/20 + ordinary level6 - 1.
-        10 + u32::from(self.origin_tank) * 5
+        // PB05 00537e20: tank base10/15/20/25 plus clamped level minus one.
+        10 + u32::from(self.origin_tank - 1) * 5 + u32::from(self.origin_level - 1)
     }
 
     pub fn transition_seed(&self) -> u64 {
         self.rng_state
+    }
+
+    pub fn next_entity_id(&self) -> u64 {
+        self.next_id
     }
 
     pub fn remaining_seconds(&self) -> u32 {
@@ -290,9 +311,9 @@ impl BonusState {
     fn drop_shells(&mut self, events: &mut Vec<BonusEvent>) {
         let count = self.rand_range(2) + 1;
         for _ in 0..count {
-            let kind = ShellKind::from_roll(self.rand_range(100));
-            let x = self.rand_range(520) as i32 + 20;
             let y = self.rand_range(10) as i32 + 50;
+            let x = self.rand_range(520) as i32 + 20;
+            let kind = ShellKind::from_roll(self.rand_range(100));
             let vy = self.rand_range(10) as f64 / 10.0 * 3.0 + 1.0;
             let id = self.next_id;
             self.next_id += 1;
@@ -412,8 +433,10 @@ impl BonusState {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if !matches!(self.origin_tank, 1..=3)
-            || self.tick < self.initial_count
+        if !matches!(
+            (self.origin_tank, self.origin_level),
+            (1..=3, 1..=6) | (4, 1..=5)
+        ) || self.tick < self.initial_count
             || self.tick == u64::MAX
             || self
                 .started_at
@@ -422,6 +445,7 @@ impl BonusState {
             || (self.timed_out && self.started_at.is_none())
             || self.empty_updates > 102
             || (self.empty_updates > 0 && !self.timed_out)
+            || (self.empty_updates > 0 && !self.shells.is_empty())
             || self.combo_count > 9
             || (self.last_type.is_none() && self.combo_count > 1)
             || (self.last_type.is_some() && self.combo_count == 0)
@@ -528,6 +552,34 @@ mod tests {
             vec![BonusEvent::Started { manual: true }]
         );
         state
+    }
+
+    #[test]
+    fn replay_bonus_uses_stage_duration_and_primary_y_x_type_speed_draw_order() {
+        let seed = AdventureState::initial_rng(0x375b);
+        let mut expected_rng = seed;
+        let count = AdventureState::advance_rng(&mut expected_rng) % 2 + 1;
+        let y = (AdventureState::advance_rng(&mut expected_rng) % 10 + 50) as i32;
+        let x = (AdventureState::advance_rng(&mut expected_rng) % 520 + 20) as i32;
+        let kind = ShellKind::from_roll(AdventureState::advance_rng(&mut expected_rng) % 100);
+        let vy = (AdventureState::advance_rng(&mut expected_rng) % 10) as f64 / 10.0 * 3.0 + 1.0;
+        let mut bonus = BonusState::new_for_stage(seed, 100, 4, 5).unwrap();
+        assert_eq!(bonus.duration_seconds(), 29);
+        bonus.click(0.0, 0.0);
+        bonus.update();
+        assert_eq!(bonus.shells.len(), count as usize);
+        assert_eq!((bonus.shells[0].id, bonus.shells[0].kind), (100, kind));
+        assert_eq!(bonus.shells[0].x as i32, x);
+        assert_eq!(bonus.shells[0].y.to_bits(), (f64::from(y) + vy).to_bits());
+        assert_eq!(bonus.shells[0].vy.to_bits(), vy.to_bits());
+
+        let mut early = BonusState::new_for_stage(seed, 100, 1, 1).unwrap();
+        assert_eq!(early.duration_seconds(), 10);
+        early.click(0.0, 0.0);
+        early.tick = 392;
+        assert!(!early.update().events.contains(&BonusEvent::TimedOut));
+        early.tick = 393;
+        assert!(early.update().events.contains(&BonusEvent::TimedOut));
     }
 
     #[test]
@@ -862,6 +914,20 @@ mod tests {
     }
 
     #[test]
+    fn validation_rejects_empty_wait_with_live_shells_after_timeout() {
+        let mut state = started();
+        while !state.timed_out {
+            state.update();
+        }
+        assert!(!state.shells.is_empty());
+        assert_eq!(state.empty_updates, 0);
+        state.validate().unwrap();
+
+        state.empty_updates = 1;
+        assert!(state.validate().is_err());
+    }
+
+    #[test]
     fn validation_rejects_nonfinite_duplicate_and_disconnected_order() {
         let mut state = started();
         seeded_shell(&mut state, ShellKind::Silver, 200.0, 200.0);
@@ -918,6 +984,7 @@ mod tests {
     fn results_count_up_only_after_thirty_updates_and_caps_presentation() {
         let mut result = BonusResult {
             origin_tank: 1,
+            origin_level: 6,
             earned: 125,
             previous_balance: 9_999_900,
             updates: 30,
@@ -992,6 +1059,7 @@ mod tests {
         state.validate().unwrap();
         let result = BonusResult {
             origin_tank: 3,
+            origin_level: 6,
             earned: 808,
             previous_balance: 1347,
             updates: 30,

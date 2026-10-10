@@ -236,7 +236,7 @@ fn pet_at_pointer(unlocked_pets: &[PetKind], pointer: Vec2) -> Option<PetKind> {
     unlocked_pets
         .iter()
         .enumerate()
-        .find(|(index, pet)| **pet != PetKind::Presto && pet_card_rect(*index).contains(pointer))
+        .find(|(index, _)| pet_card_rect(*index).contains(pointer))
         .map(|(_, pet)| *pet)
 }
 
@@ -2310,6 +2310,7 @@ impl Presentation {
             match bonus.origin_tank {
                 2 => "IMAGE_AQUARIUM2",
                 3 => "IMAGE_AQUARIUM4",
+                4 => "IMAGE_AQUARIUM5",
                 _ => "IMAGE_AQUARIUM1",
             },
             0.0,
@@ -2441,7 +2442,11 @@ impl Presentation {
         );
         self.centered_text(
             "JungleFever17outline",
-            "BONUS RESULTS",
+            if result.origin_tank == 5 {
+                "ADVENTURE RESULTS"
+            } else {
+                "BONUS RESULTS"
+            },
             25.0,
             Color::from_rgba(255, 200, 0, 255),
         );
@@ -2752,13 +2757,6 @@ impl Presentation {
         );
         let mut hovered = None;
         for (index, pet) in session.progress.unlocked_pets.iter().enumerate() {
-            // Time Trial accepts the earned Presto; Adventure replay keeps its
-            // existing selection gate until that separate cursor is modeled.
-            if *pet == PetKind::Presto
-                && !matches!(session.phase, AdventurePhase::TimeTrialPetSelection { .. })
-            {
-                continue;
-            }
             let card = pet_card_rect(index);
             if card.contains(pointer) {
                 hovered = Some(*pet);
@@ -3213,6 +3211,7 @@ impl Presentation {
             AdventurePhase::Playing
             | AdventurePhase::TimeTrialPlaying
             | AdventurePhase::TimeTrialPrestoDialog { .. }
+            | AdventurePhase::AdventurePrestoDialog { .. }
             | AdventurePhase::TimeTrialInvasionTutorial { .. }
             | AdventurePhase::TimeTrialTimesUp
             | AdventurePhase::TimeTrialResults
@@ -3222,7 +3221,9 @@ impl Presentation {
             | AdventurePhase::GameOver { .. } => {
                 if let Some(board) = &session.board {
                     self.draw_board(board);
-                    if let AdventurePhase::TimeTrialPrestoDialog { pressed, .. } = session.phase {
+                    if let AdventurePhase::TimeTrialPrestoDialog { pressed, .. }
+                    | AdventurePhase::AdventurePrestoDialog { pressed, .. } = session.phase
+                    {
                         draw_rectangle(0.0, 0.0, 640.0, 480.0, Color::new(0.0, 0.0, 0.0, 0.82));
                         self.centered_text(
                             "JungleFever17outline",
@@ -3886,7 +3887,12 @@ pub async fn run(
         let (mouse_x, mouse_y) = mouse_position();
         let pointer = (vec2(mouse_x, mouse_y) - offset) / scale;
         if is_key_pressed(KeyCode::Escape) {
-            if matches!(session.phase, AdventurePhase::TimeTrialPrestoDialog { .. }) && !paused {
+            if matches!(
+                session.phase,
+                AdventurePhase::TimeTrialPrestoDialog { .. }
+                    | AdventurePhase::AdventurePrestoDialog { .. }
+            ) && !paused
+            {
                 pending_actions.push(Action::PrestoCancel);
             } else {
                 paused = !paused;
@@ -3910,7 +3916,12 @@ pub async fn run(
             Rect::new(525.0, 3.0, 101.0, 29.0)
         };
         if is_mouse_button_pressed(MouseButton::Left) {
-            if matches!(session.phase, AdventurePhase::TimeTrialPrestoDialog { .. }) && !paused {
+            if matches!(
+                session.phase,
+                AdventurePhase::TimeTrialPrestoDialog { .. }
+                    | AdventurePhase::AdventurePrestoDialog { .. }
+            ) && !paused
+            {
                 if let Some(pet) =
                     presto_choice_at_pointer(&session.progress.unlocked_pets, pointer)
                 {
@@ -4226,7 +4237,12 @@ pub async fn run(
             }
         }
         if is_mouse_button_released(MouseButton::Left) {
-            if matches!(session.phase, AdventurePhase::TimeTrialPrestoDialog { .. }) && !paused {
+            if matches!(
+                session.phase,
+                AdventurePhase::TimeTrialPrestoDialog { .. }
+                    | AdventurePhase::AdventurePrestoDialog { .. }
+            ) && !paused
+            {
                 pending_actions.push(Action::PrestoRelease {
                     pet: presto_choice_at_pointer(&session.progress.unlocked_pets, pointer),
                 });
@@ -4238,7 +4254,10 @@ pub async fn run(
         }
         if !paused
             && is_mouse_button_pressed(MouseButton::Right)
-            && matches!(session.phase, AdventurePhase::TimeTrialPlaying)
+            && matches!(
+                session.phase,
+                AdventurePhase::TimeTrialPlaying | AdventurePhase::Playing
+            )
         {
             pending_actions.push(Action::RightClick {
                 x: pointer.x,
@@ -4583,13 +4602,16 @@ mod feed_input_tests {
     use super::*;
 
     #[test]
-    fn earned_presto_cannot_be_selected_before_its_actor_exists() {
+    fn earned_presto_card_can_be_selected_for_completed_adventure_replay() {
         let unlocked = [PetKind::Stinky, PetKind::Presto];
         assert_eq!(
             pet_at_pointer(&unlocked, vec2(50.0, 80.0)),
             Some(PetKind::Stinky)
         );
-        assert_eq!(pet_at_pointer(&unlocked, vec2(50.0, 165.0)), None);
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(50.0, 165.0)),
+            Some(PetKind::Presto)
+        );
     }
 
     #[test]

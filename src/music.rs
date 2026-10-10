@@ -76,6 +76,7 @@ impl MusicCue {
             AdventurePhase::Playing
             | AdventurePhase::TimeTrialPlaying
             | AdventurePhase::TimeTrialPrestoDialog { .. }
+            | AdventurePhase::AdventurePrestoDialog { .. }
             | AdventurePhase::TimeTrialInvasionTutorial { .. }
             | AdventurePhase::FirstTankRescue
             | AdventurePhase::InvasionTutorial { .. } => {
