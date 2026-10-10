@@ -59,6 +59,15 @@ current37 persistence, selector-with-no-active-scene rule and focused check limi
 
 The [current35 VT combat/pet checkpoint](virtual-tank.md#current35-combat-and-pet-checkpoint) preserves purchased fish, shares stable transient-object allocation, retains one pet pose/form authority and separates timeout removal from defeat rewards. Root serialized shared input/persistence joins after independent combat and pet production. [E104 audio/traits](virtual-tank.md#current35-audio-and-trait-checkpoint) uses typed outcomes and existing cue/effect ownership. [E105 gameplay sheets](virtual-tank.md#current35-gameplay-sprite-checkpoint) use existing species/vitals/pose/Board clock without a parallel actor authority or animation framework. Exact turn/eat/palette/order and native comparison remain deferred details.
 
+[E116 owned biographies](virtual-ui.md#owned-biography-pointer-table-recovery)
+read identified primary pointer tables at runtime; no literal-order inference or
+bundled prose. Unsupported images retain explicit fallback. Saver configuration
+uses the [same-thread ownership guard](screensaver.md#configuration-ownership)
+through capture/poll/explicit restore, while leaving supplied windows untouched.
+Neither addition establishes native/retail behavior. The next actual saver
+production cap must follow its source counter and lifecycle, not a daily cap or
+an arbitrary cap on wallet collection.
+
 ## Transient bubble integration
 
 VT Store/Fish/Tank Setup adapters dispatch each typed action batch through the current Session before refreshing their captured-target snapshot; they add no simulation tick and never retarget a stale dialog. Actual purchase results travel as transient events for feedback/audio, rather than inferred wallet differences. VT pet selection and screensaver settings are transient overlays retaining the same setup/session. Gift confirmation uses the already-held normal writer lease, outside a session borrow, with the existing atomic profile transaction and exact result returned to the dialog. Opening/closing modal frames consume input and do not evolve retained gameplay.

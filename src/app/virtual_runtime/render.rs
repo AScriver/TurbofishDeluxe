@@ -19,6 +19,7 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub(in crate::app) struct BiographyCatalog<'a> {
     pub hometowns: Option<&'a HashMap<u16, String>>,
+    pub special_hometowns: Option<&'a HashMap<u16, String>>,
     pub likes: Option<&'a HashMap<u16, String>>,
 }
 
@@ -345,7 +346,20 @@ impl Renderer<'_> {
             true,
         );
         let mut catalog_missing = false;
-        let hometown = catalog_label(catalog.hometowns, details.hometown, &mut catalog_missing);
+        let hometown = if let Some(named) = details.target.0.properties.named {
+            use crate::virtual_tank::NamedFish;
+            let id = match named {
+                NamedFish::Rocky => 0,
+                NamedFish::Ludwig => 1,
+                NamedFish::Cookie => 2,
+                NamedFish::JohnnyV => 3,
+                NamedFish::Kilgore => 4,
+                NamedFish::Santa => 5,
+            };
+            catalog_label(catalog.special_hometowns, id, &mut catalog_missing)
+        } else {
+            catalog_label(catalog.hometowns, details.hometown, &mut catalog_missing)
+        };
         let likes = details
             .likes
             .iter()
