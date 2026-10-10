@@ -235,7 +235,12 @@ fn parse_finite(value: &str, line: usize, name: &str) -> Result<f64, SongError> 
 }
 
 fn parse_shift(value: &str, line: usize) -> Result<f32, SongError> {
-    let parsed = value
+    // W1 uses atol: retain the numeric prefix in installed "0;" values,
+    // while keeping checked conversion and the project's pitch bounds.
+    let unsigned = value.strip_prefix(['-', '+']).unwrap_or(value);
+    let digit_count = unsigned.bytes().take_while(u8::is_ascii_digit).count();
+    let prefix_len = value.len() - unsigned.len() + digit_count;
+    let parsed = value[..prefix_len]
         .parse::<i32>()
         .map_err(|_| SongError::at(line, "invalid pitch shift"))?;
     if !(-96..=96).contains(&parsed) {
@@ -290,18 +295,35 @@ fn parse_note(token: &str, line: usize) -> Result<(Option<f32>, u32), SongError>
     };
     let suffix: String = chars.collect();
     let (accidental, octave) = match suffix.as_bytes() {
+        // W1 returns its initialized note (pitch/duration 0) for an
+        // unrecognized modifier. The installed Pathetique scores use "an3".
+        [modifier, ..] if !modifier.is_ascii_digit() && !matches!(modifier, b'#' | b'b') => {
+            return Ok((Some(0.0), 0));
+        }
         [] => (0, 4),
         [digit] if digit.is_ascii_digit() => (0, (*digit - b'0') as i32),
         [b'#', digit] if digit.is_ascii_digit() => (1, (*digit - b'0') as i32),
         [b'b', digit] if digit.is_ascii_digit() => (-1, (*digit - b'0') as i32),
-        [b'#'] => (1, 4),
-        [b'b'] => (-1, 4),
+        // W1 retains octave 4 when the character after an accidental is
+        // not a digit. Installed hammerklavier1_long.txt:73 uses "bbe".
+        [b'#'] | [b'#', _] => (1, 4),
+        [b'b'] | [b'b', _] => (-1, 4),
         _ => return Err(SongError::at(line, "invalid note octave or accidental")),
     };
     let pitch = base.map(|base| (base + accidental + (octave - 4) * 12) as f32);
-    if let Ok(number) = duration.parse::<u32>() {
+    // W1's numeric branch uses atol, including installed "0k" durations.
+    // Overflow still fails instead of adopting the source's unchecked cast.
+    let numeric_len = duration.bytes().take_while(u8::is_ascii_digit).count();
+    if numeric_len > 0 {
+        let number = duration[..numeric_len]
+            .parse::<u32>()
+            .map_err(|_| SongError::at(line, "duration out of range"))?;
         return Ok((pitch, number));
     }
+    // W1 NoteData::Parse consumes a final '+' before reaching the end.
+    // Accept exactly one, as used by installed entertainer_long.txt:69;
+    // leading or repeated separators still leave an invalid empty term.
+    let duration = duration.strip_suffix('+').unwrap_or(duration);
     let mut total = 0_u32;
     for term in duration.split('+') {
         if term.is_empty() {
@@ -615,9 +637,64 @@ mod tests {
     }
 
     #[test]
+    fn installed_numeric_suffixes_and_unknown_modifier_follow_source_defaults() {
+        // W1 ParseCommand uses atol for pitch shifts; NoteData::Parse uses
+        // atol for numeric durations and leaves its initialized fields on
+        // the early return for an unknown modifier such as installed "an3".
+        let score = SongData::parse(
+            "numeric.txt",
+            "*shift 12;\n*localshift -12;\nf4 0k, an3 q, c5 e\n",
+        )
+        .unwrap();
+        assert_eq!(score.voices[0].len(), 3);
+        assert_eq!(score.voices[0][0].pitch, Some(5.0));
+        assert_eq!(score.voices[0][0].duration_ms, 0);
+        assert_eq!(score.voices[0][1].pitch, Some(0.0));
+        assert_eq!(score.voices[0][1].duration_ms, 0);
+        assert_eq!(score.voices[0][2].pitch, Some(12.0));
+        assert_eq!(score.voices[0][2].at_ms, 0);
+        assert_eq!(score.voices[0][2].duration_ms, 72);
+        assert!(SongData::parse("bad.txt", "c4 4294967296k").is_err());
+        assert!(SongData::parse("bad.txt", "*shift 97;").is_err());
+        assert!(SongData::parse("bad.txt", "*shift nope").is_err());
+    }
+
+    #[test]
+    fn accidental_with_nondigit_octave_uses_default_octave() {
+        // W1 NoteData::Parse initializes octave 4 and replaces it only
+        // with a digit after an accidental; the installed "bbe" is B-flat4.
+        let score = SongData::parse("octave.txt", "bbe 0, c#x e, bb3 e\n").unwrap();
+        assert_eq!(score.voices[0][0].pitch, Some(10.0));
+        assert_eq!(score.voices[0][0].duration_ms, 0);
+        assert_eq!(score.voices[0][1].pitch, Some(1.0));
+        assert_eq!(score.voices[0][1].at_ms, 0);
+        assert_eq!(score.voices[0][1].duration_ms, 72);
+        assert_eq!(score.voices[0][2].pitch, Some(-2.0));
+        assert_eq!(score.voices[0][2].at_ms, 72);
+    }
+
+    #[test]
+    fn trailing_duration_separator_preserves_timing() {
+        // Installed entertainer_long.txt:69 uses s+s+. Pinned W1
+        // NoteData::Parse consumes one trailing '+' without another term.
+        let score = SongData::parse("trailing.txt", "*speed 3\ng5 s+s+, c4 q+\n").unwrap();
+        assert_eq!(score.voices[0].len(), 2);
+        assert_eq!(score.voices[0][0].pitch, Some(19.0));
+        assert_eq!(score.voices[0][0].at_ms, 0);
+        assert_eq!(score.voices[0][0].duration_ms, 72);
+        assert_eq!(score.voices[0][1].at_ms, 72);
+        assert_eq!(score.voices[0][1].duration_ms, 144);
+    }
+
+    #[test]
     fn malformed_score_reports_line_without_partial_playback() {
         let error = SongData::parse("bad.txt", "*line 4\nc4 q").unwrap_err();
         assert_eq!(error.line, 1);
         assert!(SongData::parse("bad.txt", "*speed 2\nc4 q, c4 nope").is_err());
+        for duration in ["+", "+s", "s++", "s++s", "s+nope"] {
+            let error =
+                SongData::parse("bad.txt", &format!("*speed 3\nc4 {duration}\n")).unwrap_err();
+            assert_eq!(error.line, 2, "{duration}");
+        }
     }
 }

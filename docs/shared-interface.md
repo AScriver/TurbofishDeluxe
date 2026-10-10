@@ -16,6 +16,22 @@ Installed `fishsongs/*.txt` supply bounded parsed scores, three timed voices and
 
 The finale retains the actual absent fixed Tank5 pet kinds before retiring the Board. A transient Interlude controller uses that saved snapshot for scroll, pet return/heal cues, later Lullaby selection and menu exit. Text rows are short project summaries, with owned sprites loaded at runtime; complete retail narration/credits, bubbles, exact layout/fades and human judgment remain deferred. A renderer/controller alone does not establish playable or retail-equivalent behavior.
 
+## Installed song syntax compatibility
+
+Read-only installed-score inspection found five syntax forms rejected by the first Rust parser. One failed score disabled the complete catalog at startup. The correction follows pinned W1 `f919b3c241cfd611c547f1653fb3514f500f761b`, `source/WinFish/FishSongMgr.cpp`, `NoteData::Parse:477–617` and `ParseCommand:426–432`:
+
+| Observed installed input | Secondary-source-derived interpretation |
+|---|---|
+| `entertainer_long.txt:69`, `s+s+` | Consume one final separator; duration remains 24 score units |
+| `hammerklavier1_long.txt:73`, `bbe` | Nondigit after a flat keeps default octave4; pitch10 |
+| `pathetique1_{long,short}.txt:28`, `an3` | Unsupported modifier returns initialized unshifted pitch0/duration0; do not invent an A-natural interpretation |
+| `silentnight.txt:33`, `0k` | Numeric duration uses its integer prefix, zero |
+| `williamtell_long.txt:53`, `*localshift 0;` | Integer-prefix pitch shift, zero |
+
+Checked numeric conversion, finite/bounded timing, pitch limits, note/file/catalog limits and rejection of leading/repeated symbolic separators remain project contracts. Complete-file validation remains atomic; no failing song is skipped. The opt-in `owned_fish_song_catalog_loads_every_installed_score` regression checks exact directory/catalog membership and reports every file failure when loading fails.
+
+Agent verification loaded all72 installed scores/47,577 notes, passed five focused song cases and formatting/strict lint/native build in an isolated checkout of `be850c1` plus the identified parser/test changes. All72 installed score digests remained unchanged. These are parser/build observations; interpretation above remains secondary-derived, and native/audible/retail comparison is unperformed. [MODLOG](../MODLOG.md#2026-10-10--fix-installed-fish-song-catalog-loading) owns commands, failed attempts and build receipts.
+
 ## Help and earned stories
 
 Current36 joins the existing instruction phase with an app-lived Help controller: page0 instructions, remembered ordinary pages1–8, direct tabs and wrapped navigation. Selector Help and tank F1 use explicit return destinations; tank Help restores its prior pause state. Both Help and selector Story browsing suspend ordinary and paused session updates and clear accumulated time on return. Their text/layout is project-authored; original Help art and animated examples remain pending.

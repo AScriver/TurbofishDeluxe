@@ -4,6 +4,65 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use turbofish_deluxe::assets::{GameAssets, SoundData};
 
 #[test]
+#[ignore = "requires OWNED_GAME_DIR pointing to an owned installation with fishsongs"]
+fn owned_fish_song_catalog_loads_every_installed_score() {
+    use turbofish_deluxe::fish_songs::{SongCatalog, SongData};
+
+    let root = PathBuf::from(std::env::var_os("OWNED_GAME_DIR").expect("owned installation"));
+    let mut expected_names: Vec<_> = fs::read_dir(root.join("fishsongs"))
+        .expect("installed score directory")
+        .map(|entry| entry.expect("installed score entry").path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("txt"))
+        })
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    expected_names.sort();
+    assert!(!expected_names.is_empty());
+
+    let catalog = SongCatalog::load_from_install(&root).unwrap_or_else(|catalog_error| {
+        // On failure, report every incompatible file so one early score
+        // does not hide later failures in the installed corpus.
+        let failures: Vec<_> = expected_names
+            .iter()
+            .filter_map(|name| {
+                SongData::from_file(&root.join("fishsongs").join(name))
+                    .err()
+                    .map(|error| format!("{name}: {error}"))
+            })
+            .collect();
+        panic!(
+            "all installed scores parse: {catalog_error}\n{}",
+            failures.join("\n")
+        );
+    });
+    let actual_names: Vec<_> = catalog
+        .songs()
+        .iter()
+        .map(|song| song.file_name.clone())
+        .collect();
+    assert_eq!(actual_names, expected_names);
+    let entertainer = catalog
+        .songs()
+        .iter()
+        .find(|song| song.file_name == "entertainer_long.txt")
+        .expect("reported failing score is included");
+    assert!(entertainer.is_long());
+    assert!(!entertainer.voices[0].is_empty());
+    let notes: usize = catalog
+        .songs()
+        .iter()
+        .flat_map(|song| &song.voices)
+        .map(Vec::len)
+        .sum();
+    println!(
+        "OWNED_FISH_SONGS loaded={} notes={notes}",
+        actual_names.len()
+    );
+}
+
+#[test]
 #[ignore = "requires OWNED_GAME_DIR pointing to the recognized owned installation"]
 fn owned_story_catalog_loads_identified_titles_and_lore() {
     use turbofish_deluxe::story::{StoryCatalog, StoryId};
