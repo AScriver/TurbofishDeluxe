@@ -898,7 +898,7 @@ pub struct PurchaseConfirmation {
     pub fish_biography: Option<FishBiography>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PurchaseResult {
     Cancelled,
     Fish { id: u16, price: u32 },

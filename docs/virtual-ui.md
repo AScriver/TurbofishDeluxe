@@ -39,6 +39,36 @@ table is copied. Preview frames reuse current production species sheets;
 special-color compositing and exact per-species retail preview offsets remain
 qualified presentation details.
 
+## Runtime integration
+
+E114 registers `app/virtual_runtime.rs`, its painter and
+`app/virtual_input_runtime.rs` in the normal app. Owned resource/font/sound
+manifests feed actual loading; missing required assets fail visibly. Store,
+Fish Setup, Tank Setup and their captured dialogs replace the former placeholder
+input and rendering. The same current Session dispatches each ordered action
+batch without a fabricated simulation tick, then refreshes the snapshot before
+another input. Rejected actions are read back too; stale targets are never
+recaptured. The production purchase result is a transient event, supplying
+feedback/audio exactly once without inferring success from a wallet change.
+
+UI time uses a monotonic100Hz clock with focus cancellation, independently of
+gameplay acceleration. Pet choice is a transient overlay over the existing
+setup, using actual unlocked pets and current VT capacity; the Session rechecks
+every toggle. Screensaver settings/preview use the existing configuration and
+isolated preview owner. Closing overlays and immediate phase transitions consume
+their input frame and freeze retained simulation. Profile switches discard all
+captures/controllers. Current36/profile3/bank2 and existing saves are unchanged.
+
+The two handed-off adapters were committed separately (`2c2bd4a`, gift
+`34e5dbe`/`2d6c2bd`) and reconciled into root `f41308c`; root owns the actual
+routing/assets/save joins. A60VTGift01 passed format/lint/build; review then
+closed a closing-frame cancellation hazard and02 passed the changed-code gate.
+**No tests or native runs were performed.** [STATUS](../STATUS.md#current-build-verification)
+and [MODLOG](../MODLOG.md#2026-10-10--join-virtual-tank-and-shell-gift-frontends)
+own receipts. Biography text still uses explicit numeric/unavailable labels;
+the owned catalog is a follow-up. Species preview palette/offsets, date wording,
+native visuals/input/audio, retail comparison and human judgment remain pending.
+
 ## Direct integration
 
 Register `pub mod virtual_ui;` in the caller-owned library, then keep one

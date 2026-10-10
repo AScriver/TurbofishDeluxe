@@ -63,6 +63,14 @@ mod records_runtime;
 mod tank_selection_runtime;
 use menu_runtime::MenuRuntime;
 use records_runtime::RecordsRuntime;
+#[path = "app/shell_gift_runtime.rs"]
+mod shell_gift_runtime;
+#[path = "app/virtual_input_runtime.rs"]
+mod virtual_input_runtime;
+#[path = "app/virtual_runtime.rs"]
+mod virtual_runtime;
+use shell_gift_runtime::ShellGiftRuntime;
+use virtual_runtime::VirtualRuntime;
 
 const FONT_IDS: &[&str] = &[
     "JungleFever10outline",
@@ -84,6 +92,8 @@ fn presentation_image_ids() -> Vec<&'static str> {
     ids.extend_from_slice(tank_selection_runtime::REQUIRED_IMAGE_IDS);
     ids.extend(records_runtime::STORY_PORTRAITS.map(|portrait| portrait.resource_id()));
     ids.extend(records_runtime::HALL_IMAGES.map(|image| image.resource_key()));
+    ids.extend_from_slice(virtual_runtime::REQUIRED_IMAGE_IDS);
+    ids.extend_from_slice(shell_gift_runtime::REQUIRED_IMAGE_IDS);
     ids.sort_unstable();
     ids.dedup();
     ids
@@ -97,6 +107,8 @@ fn presentation_font_ids() -> Vec<&'static str> {
     ids.extend(records_runtime::STORY_FONTS.map(records_runtime::story_font_file));
     ids.extend(records_runtime::HALL_FONTS.map(records_runtime::hall_font_file));
     ids.extend(crate::tank_selection::TankFont::ALL.map(|font| font.script_stem()));
+    ids.extend_from_slice(virtual_runtime::REQUIRED_FONT_STEMS);
+    ids.extend_from_slice(shell_gift_runtime::REQUIRED_FONT_NAMES);
     ids.sort_unstable();
     ids.dedup();
     ids
@@ -105,8 +117,20 @@ fn presentation_font_ids() -> Vec<&'static str> {
 fn title_loading_tasks(muted: bool) -> u64 {
     (presentation_image_ids().len()
         + presentation_font_ids().len()
-        + if muted { 0 } else { SOUND_IDS.len() }
+        + if muted {
+            0
+        } else {
+            presentation_sound_ids().len()
+        }
         + 3) as u64
+}
+
+fn presentation_sound_ids() -> Vec<&'static str> {
+    let mut ids = SOUND_IDS.to_vec();
+    ids.extend_from_slice(virtual_runtime::REQUIRED_SOUND_IDS);
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 const IMAGE_IDS: &[&str] = &[
@@ -570,7 +594,7 @@ impl Presentation {
         }
         let mut sounds = HashMap::new();
         if !muted {
-            for id in SOUND_IDS {
+            for id in presentation_sound_ids() {
                 let bytes = match assets.load_sound(id)? {
                     SoundData::Ogg(bytes) => bytes,
                     SoundData::Pcm16 {
@@ -581,7 +605,7 @@ impl Presentation {
                 let sound: Arc<[u8]> = bytes.into();
                 rodio::Decoder::try_from(std::io::Cursor::new(sound.clone()))
                     .map_err(|error| format!("{id}: {error}"))?;
-                sounds.insert((*id).into(), sound);
+                sounds.insert(id.into(), sound);
                 if let Some(loader) = title.as_deref_mut() {
                     loader.task_completed().await?;
                 }
@@ -620,14 +644,20 @@ impl Presentation {
         if let Some(loader) = title {
             loader.task_completed().await?;
         }
-        Ok(Self {
+        let presentation = Self {
             images,
             image_cells,
             image_animations,
             sounds,
             fonts,
             additive,
-        })
+        };
+        let issues: Vec<virtual_runtime::ResourceIssue> =
+            virtual_runtime::validate_assets(&presentation);
+        if !issues.is_empty() {
+            return Err(format!("Virtual Tank resources unavailable: {issues:?}").into());
+        }
+        Ok(presentation)
     }
 
     #[expect(
@@ -3506,10 +3536,12 @@ impl Presentation {
                 );
             }
         }
-        let remaining = session
-            .progress
-            .selection_capacity()
-            .saturating_sub(selected.len());
+        let capacity = if session.mode == crate::adventure::GameMode::VirtualTank {
+            usize::from(session.progress.pet_capacity).min(crate::virtual_tank::VIRTUAL_PET_LIMIT)
+        } else {
+            session.progress.selection_capacity()
+        };
+        let remaining = capacity.saturating_sub(selected.len());
         if remaining > 0 {
             self.centered_text(
                 "JungleFever10outline",
@@ -5163,6 +5195,7 @@ enum UiCommand {
     ScreensaverSave,
     ScreensaverPreview,
     Stories,
+    Gift,
     Quit,
 }
 
@@ -5703,7 +5736,7 @@ fn route_menu_intent(
     help: &mut HelpController,
     records: &mut RecordsRuntime,
     actions: &mut Vec<Action>,
-) {
+) -> Option<UiCommand> {
     use crate::game_selector::{Destination, DialogIntent, Mode, SelectorIntent};
     match intent {
         SelectorIntent::Navigate(Destination::Mode(mode)) => {
@@ -5737,8 +5770,7 @@ fn route_menu_intent(
                     SelectorPanel::Notice
                 }
                 DialogIntent::OpenGiveDialog => {
-                    ui.error = "Shell gift frontend join pending.".into();
-                    SelectorPanel::Notice
+                    return Some(UiCommand::Gift);
                 }
             });
             ui.page = 0;
@@ -5746,6 +5778,7 @@ fn route_menu_intent(
         }
         SelectorIntent::Pointer(_) | SelectorIntent::Button(_) | SelectorIntent::Sound(_) => {}
     }
+    None
 }
 
 fn play_ui_sound(
@@ -5758,6 +5791,32 @@ fn play_ui_sound(
         .get(resource)
         .zip(music)
         .and_then(|(bytes, owner)| owner.play_effect(bytes.clone()))
+}
+
+fn refresh_virtual_ui(
+    runtime: &mut VirtualRuntime,
+    entry: &crate::profiles::ProfileEntry,
+    focused: bool,
+    blocked: bool,
+) {
+    let now_seconds = wall_seconds();
+    let mut snapshot = crate::virtual_ui::VirtualUiSnapshot::capture(
+        &entry.session.virtual_tank,
+        entry.session.progress.shell_balance,
+        now_seconds,
+        true,
+    );
+    snapshot.external_block = blocked;
+    runtime.refresh(
+        entry.id,
+        &entry.session.phase,
+        snapshot,
+        crate::virtual_ui::UiClock {
+            ticks: (get_time() * 100.0) as u64,
+            focused,
+        },
+        now_seconds / 86_400 * 86_400,
+    );
 }
 
 fn presentation_music_cue(
@@ -6020,6 +6079,10 @@ pub async fn run(
     let mut menu_clock = StepClock::new(1);
     let mut menu_epoch = 0_u64;
     let mut chooser = None::<crate::tank_selection::TankSelection>;
+    let mut virtual_ui = VirtualRuntime::default();
+    let mut virtual_pets = None::<virtual_input_runtime::VirtualPetPicker>;
+    let mut virtual_screensaver_open = false;
+    let mut gift = None::<ShellGiftRuntime>;
     let mut ui_resource_error = None::<String>;
     let mut entry_code = EntryCode::default();
     let song_catalog = match SongCatalog::load_from_install(&game_root) {
@@ -6058,6 +6121,9 @@ pub async fn run(
         let pointer = (vec2(mouse_x, mouse_y) - offset) / scale;
         let focused = focus_window.as_ref().is_none_or(OwnWindow::has_focus);
         let mut ui_music_reports = Vec::new();
+        let mut frontend_events = Vec::new();
+        let mut frontend_transitioned = false;
+        let gift_was_active = gift.as_ref().is_some_and(ShellGiftRuntime::is_open);
         let selector_open = profiles.current().is_none()
             || profiles
                 .current()
@@ -6091,7 +6157,7 @@ pub async fn run(
         let preview_was_active = screensaver_preview.is_some();
         records.advance(
             get_frame_time(),
-            focused && !help_was_active && !preview_was_active,
+            focused && !help_was_active && !preview_was_active && !gift_was_active,
         );
         if story_was_active && let Some(current) = profiles.current() {
             for intent in records.input_story_frame(
@@ -6130,14 +6196,53 @@ pub async fn run(
                 }
             }
         }
-        let (mut ui_owned_input, mut ui_command) =
-            if help_was_active || story_was_active || preview_was_active || hall_was_active {
-                (true, None)
-            } else if selector_ui.panel.is_some() {
-                selector_ui.input(&profiles, settings.settings, pointer, selector_open)
-            } else {
-                (false, None)
-            };
+        let mut gift_active_frame = gift_was_active;
+        if let Some(runtime) = gift.as_mut() {
+            let input = shell_gift_runtime::ShellGiftInput::poll(
+                pointer,
+                focused,
+                help_was_active || story_was_active || preview_was_active || hall_was_active,
+            );
+            let frame = runtime.input(&profiles, &input);
+            gift_active_frame |= frame.consumed;
+            match frame.intent {
+                Some(shell_gift_runtime::ShellGiftIntent::Confirm(request)) => {
+                    // The current normal runtime already holds the writer lease.
+                    // Confirm against the live manager, outside any Session borrow.
+                    let _ = request;
+                    let result = runtime
+                        .confirmation_dialog()
+                        .ok_or(crate::shell_gift::ShellGiftError::DialogClosed)
+                        .and_then(|dialog| {
+                            dialog.confirm(&mut profiles, &options.save_dir.join("profiles.json"))
+                        });
+                    runtime.confirmation_finished(result);
+                }
+                Some(shell_gift_runtime::ShellGiftIntent::Cancel) => runtime.cancel(),
+                None => {}
+            }
+            if !runtime.is_open() {
+                gift = None;
+            }
+            clock.clear_backlog();
+        }
+        let (mut ui_owned_input, mut ui_command) = if help_was_active
+            || story_was_active
+            || preview_was_active
+            || hall_was_active
+            || gift_active_frame
+        {
+            (true, None)
+        } else if selector_ui.panel.is_some() {
+            selector_ui.input(
+                &profiles,
+                settings.settings,
+                pointer,
+                selector_open || virtual_screensaver_open,
+            )
+        } else {
+            (false, None)
+        };
         if let Some(runtime) = menu.as_mut() {
             let modal_open = selector_ui.panel.is_some()
                 || help_was_active
@@ -6147,7 +6252,7 @@ pub async fn run(
                 || ui_owned_input;
             let facts = menu_runtime::facts(&profiles, modal_open, menu_epoch);
             let mut intents = runtime.input_frame(&facts, &presentation, pointer, focused);
-            if focused {
+            if focused && !gift_active_frame {
                 menu_clock.add_frame(get_frame_time(), false);
                 while menu_clock.step_due() {
                     menu_clock.consume_step(false);
@@ -6182,13 +6287,15 @@ pub async fn run(
                 {
                     ui_music_reports.push(report);
                 }
-                route_menu_intent(
+                if let Some(command) = route_menu_intent(
                     intent,
                     &mut selector_ui,
                     &mut help,
                     &mut records,
                     &mut pending_actions,
-                );
+                ) {
+                    ui_command = Some(command);
+                }
             }
             ui_owned_input = true;
         } else {
@@ -6205,8 +6312,11 @@ pub async fn run(
                 }
                 let controller = chooser.as_mut().expect("chooser initialized");
                 controller.set_facts(facts);
-                let modal =
-                    help_was_active || story_was_active || preview_was_active || hall_was_active;
+                let modal = help_was_active
+                    || story_was_active
+                    || preview_was_active
+                    || hall_was_active
+                    || gift_active_frame;
                 let point = crate::tank_selection::Point {
                     x: pointer.x,
                     y: pointer.y,
@@ -6263,7 +6373,8 @@ pub async fn run(
             || help_active_frame
             || story_active_frame
             || preview_was_active
-            || hall_was_active;
+            || hall_was_active
+            || gift_active_frame;
         if let Some(exit) = help_exit {
             match exit {
                 HelpExit::Continue => pending_actions.push(Action::Continue),
@@ -6389,6 +6500,21 @@ pub async fn run(
                         Err("No stories earned for this profile yet.".into())
                     }
                 }
+                UiCommand::Gift => {
+                    ui_active = true;
+                    gift_active_frame = true;
+                    clock.clear_backlog();
+                    match ShellGiftRuntime::open(&profiles) {
+                        Ok(runtime) => {
+                            gift = Some(runtime);
+                            Ok(false)
+                        }
+                        Err(error) => {
+                            selector_ui.panel = Some(SelectorPanel::Notice);
+                            Err(error.to_string().into())
+                        }
+                    }
+                }
                 UiCommand::Quit => {
                     cli::save_profiles_checkpoint(&options, &profiles)?;
                     break;
@@ -6422,6 +6548,10 @@ pub async fn run(
                         menu_epoch = menu_epoch.wrapping_add(1);
                         menu_clock.clear_backlog();
                         chooser = None;
+                        virtual_ui = VirtualRuntime::default();
+                        virtual_pets = None;
+                        virtual_screensaver_open = false;
+                        gift = None;
                         ui_resource_error = None;
                         paused = false;
                         pending_actions.clear();
@@ -6462,6 +6592,119 @@ pub async fn run(
                 Err(error) => selector_ui.error = error.to_string(),
             }
         }
+        let mut virtual_modal_frame = virtual_pets.is_some() || virtual_screensaver_open;
+        if virtual_screensaver_open && selector_ui.panel.is_none() {
+            virtual_screensaver_open = false;
+            clock.clear_backlog();
+        }
+        let virtual_blocked = help_active_frame
+            || story_active_frame
+            || preview_was_active
+            || hall_was_active
+            || gift_active_frame;
+        if let Some(entry) = profiles.current() {
+            refresh_virtual_ui(
+                &mut virtual_ui,
+                entry,
+                focused,
+                virtual_blocked
+                    || virtual_pets.is_some()
+                    || virtual_screensaver_open
+                    || virtual_modal_frame,
+            );
+        }
+        if !virtual_ui.active() {
+            virtual_pets = None;
+            virtual_screensaver_open = false;
+        } else {
+            ui_owned_input = true;
+            if let Some(picker) = virtual_pets.as_mut() {
+                let frame = picker.input(
+                    &profiles.current().expect("VT profile present").session,
+                    pointer,
+                    focused,
+                    virtual_blocked,
+                );
+                if !frame.actions.is_empty() {
+                    let session = &mut profiles.current_mut().expect("VT profile present").session;
+                    frontend_events.extend(session.apply_actions(&frame.actions));
+                }
+                if frame.close {
+                    virtual_pets = None;
+                }
+                virtual_modal_frame = true;
+                clock.clear_backlog();
+            } else {
+                let inputs = virtual_input_runtime::inputs(
+                    &virtual_ui,
+                    pointer,
+                    focused,
+                    virtual_blocked || virtual_screensaver_open || virtual_modal_frame,
+                );
+                for input in inputs {
+                    let Some(request) = virtual_ui.input(&input) else {
+                        continue;
+                    };
+                    if let Some(sound) = request.sound
+                        && let Some(report) =
+                            play_ui_sound(&presentation, music.as_ref(), sound.resource_id())
+                    {
+                        ui_music_reports.push(report);
+                    }
+                    match request.kind {
+                        virtual_runtime::RequestKind::Session { intent, actions } => {
+                            let _ = intent;
+                            let session =
+                                &mut profiles.current_mut().expect("VT profile present").session;
+                            let previous_phase = std::mem::discriminant(&session.phase);
+                            frontend_events.extend(session.apply_actions(&actions));
+                            frontend_transitioned |=
+                                previous_phase != std::mem::discriminant(&session.phase);
+                        }
+                        virtual_runtime::RequestKind::Navigate(navigation) => match navigation {
+                            virtual_runtime::Navigation::FishSetup
+                            | virtual_runtime::Navigation::TankSetup => {}
+                            virtual_runtime::Navigation::PetChooser => {
+                                virtual_pets = Some(virtual_input_runtime::VirtualPetPicker::new());
+                                virtual_modal_frame = true;
+                            }
+                            virtual_runtime::Navigation::ScreensaverSettings => {
+                                selector_ui.panel = Some(SelectorPanel::Screensaver);
+                                virtual_screensaver_open = true;
+                                virtual_modal_frame = true;
+                            }
+                            virtual_runtime::Navigation::CloseUnavailableDialog => {
+                                let session = &mut profiles
+                                    .current_mut()
+                                    .expect("VT profile present")
+                                    .session;
+                                let previous_phase = std::mem::discriminant(&session.phase);
+                                frontend_events.extend(session.apply_actions(&[Action::OpenMenu]));
+                                frontend_transitioned |=
+                                    previous_phase != std::mem::discriminant(&session.phase);
+                            }
+                        },
+                    }
+                    // A rejected action is read back too. Never recapture a
+                    // target or clear the pending request before dispatch.
+                    refresh_virtual_ui(
+                        &mut virtual_ui,
+                        profiles.current().expect("VT profile present"),
+                        focused,
+                        virtual_blocked
+                            || virtual_pets.is_some()
+                            || virtual_screensaver_open
+                            || virtual_modal_frame,
+                    );
+                    clock.clear_backlog();
+                    if frontend_transitioned || virtual_modal_frame || !virtual_ui.active() {
+                        pending_actions.clear();
+                        break;
+                    }
+                }
+            }
+        }
+        ui_active |= virtual_modal_frame || frontend_transitioned;
         if screensaver_preview.is_some() {
             if is_quit_requested() || wall_deadline_reached(elapsed, options.quit_after) {
                 break;
@@ -6735,7 +6978,7 @@ pub async fn run(
         } else {
             Rect::new(525.0, 3.0, 101.0, 29.0)
         };
-        if !paused && !ui_active {
+        if !paused && !ui_active && !ui_owned_input {
             let current_name = match &session.phase {
                 AdventurePhase::VirtualPurchaseConfirm { name, .. }
                 | AdventurePhase::VirtualRename { name, .. } => Some(name.clone()),
@@ -7558,9 +7801,18 @@ pub async fn run(
         let mut exit_requested = is_quit_requested()
             || (paused && !help_active_frame && !story_active_frame && is_key_pressed(KeyCode::Q))
             || wall_deadline_reached(elapsed, options.quit_after);
-        let mut events = Vec::new();
+        let mut events = frontend_events;
         let mut event_stamps = Vec::new();
-        let mut phase_transitioned = false;
+        let mut phase_transitioned = frontend_transitioned;
+        if options.test_speed > 1 {
+            stamp_events(
+                &mut event_stamps,
+                &events,
+                session.ticks,
+                get_time() - started,
+                "accepted_actions",
+            );
+        }
         if let Some(owner) = music.as_mut() {
             owner.sync_cue(
                 presentation_music_cue(session, story_browser_open, interlude.as_ref()),
@@ -7609,7 +7861,13 @@ pub async fn run(
                     pending_actions.clear();
                     break;
                 }
-                if help_active_frame || story_active_frame || hall_was_active || records.hall_open()
+                if help_active_frame
+                    || story_active_frame
+                    || hall_was_active
+                    || records.hall_open()
+                    || gift_active_frame
+                    || virtual_modal_frame
+                    || frontend_transitioned
                 {
                     // Reading screens are app-lived; even a paused Board update would
                     // advance durable ticks or modal timers.
@@ -7943,6 +8201,15 @@ pub async fn run(
             matches!(session.phase, AdventurePhase::Playing),
         );
         let mut music_reports = ui_music_reports;
+        for event in &events {
+            if let Event::VirtualPurchaseFinished { result, .. } = event
+                && let Some(sound) = virtual_ui.purchase_result(result)
+                && let Some(report) =
+                    play_ui_sound(&presentation, music.as_ref(), sound.resource_id())
+            {
+                music_reports.push(report);
+            }
+        }
         music_reports.extend(presentation.play(&events, music.as_ref()));
         if bubbles.take_ambient_sound_request() {
             music_reports.extend(play_bubble_sound(&presentation, music.as_ref()));
@@ -8014,6 +8281,15 @@ pub async fn run(
         let capture_tick = session.ticks;
         if session.phase != AdventurePhase::GameSelector
             && tank_selection_runtime::mode_for_phase(&session.phase).is_none()
+            && !matches!(
+                session.phase,
+                AdventurePhase::VirtualStore
+                    | AdventurePhase::VirtualPurchaseConfirm { .. }
+                    | AdventurePhase::VirtualSetup
+                    | AdventurePhase::VirtualRename { .. }
+                    | AdventurePhase::VirtualFishSaleConfirm { .. }
+                    | AdventurePhase::VirtualBackdropSaleConfirm
+            )
         {
             presentation.draw(
                 session,
@@ -8039,11 +8315,54 @@ pub async fn run(
         if session.phase == AdventurePhase::VirtualTank && get_time() < song_title_until {
             draw_text(&song_title, 24.0, 105.0, 20.0, YELLOW);
         }
-        if session.phase == AdventurePhase::GameSelector {
+        let draw_selector = session.phase == AdventurePhase::GameSelector;
+        if let Some(entry) = profiles.current() {
+            refresh_virtual_ui(
+                &mut virtual_ui,
+                entry,
+                focused,
+                virtual_blocked || virtual_pets.is_some() || virtual_screensaver_open,
+            );
+        }
+        if virtual_ui.page().is_some()
+            && let Some(view) = virtual_ui.view()
+        {
+            let issues = virtual_runtime::draw(
+                &presentation,
+                &view,
+                &virtual_runtime::BiographyCatalog::default(),
+            );
+            if !issues.is_empty() {
+                ui_resource_error
+                    .get_or_insert_with(|| format!("VT resources unavailable: {issues:?}"));
+            }
+        }
+        if let Some(picker) = virtual_pets.as_ref()
+            && let Some(entry) = profiles.current()
+        {
+            picker.draw(&presentation, &entry.session, pointer);
+        }
+        if virtual_screensaver_open {
+            selector_ui.draw(
+                &profiles,
+                settings.settings,
+                RuntimeSettingsBackend {
+                    audio: music.as_ref(),
+                }
+                .capabilities(),
+                screensaver_file.settings,
+                screensaver_dirty,
+                screensaver_load_error.as_deref(),
+            );
+        }
+        if draw_selector {
             if let Some(runtime) = menu.as_ref() {
                 let facts = menu_runtime::facts(
                     &profiles,
-                    selector_ui.panel.is_some() || help.view().is_some() || story_browser_open,
+                    selector_ui.panel.is_some()
+                        || help.view().is_some()
+                        || story_browser_open
+                        || gift.as_ref().is_some_and(ShellGiftRuntime::is_open),
                     menu_epoch,
                 );
                 let unavailable = runtime.draw(&facts, &presentation);
@@ -8077,6 +8396,9 @@ pub async fn run(
             );
         }
         records.draw_hall(&presentation, &profiles);
+        if let Some(runtime) = gift.as_mut() {
+            runtime.draw(&presentation, &profiles, pointer);
+        }
         if let Some(error) = ui_resource_error.as_deref() {
             draw_text(error, 10.0, 470.0, 15.0, YELLOW);
         }

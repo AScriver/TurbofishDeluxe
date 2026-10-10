@@ -772,6 +772,10 @@ pub enum VirtualPetAction {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Event {
+    VirtualPurchaseFinished {
+        tick: u64,
+        result: crate::virtual_tank::PurchaseResult,
+    },
     VirtualTankChanged {
         tick: u64,
     },

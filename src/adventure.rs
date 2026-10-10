@@ -1095,6 +1095,7 @@ impl AdventureSession {
                             board.sync_fish(&self.virtual_tank);
                         }
                         self.phase = AdventurePhase::VirtualStore;
+                        events.push(Event::VirtualPurchaseFinished { tick, result });
                         changed(events);
                     }
                     Err(virtual_tank::VirtualTankError::InsufficientShells) => {

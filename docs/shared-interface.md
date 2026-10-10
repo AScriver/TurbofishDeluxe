@@ -54,6 +54,26 @@ Fresh normal managers load preset names from the identified owned executable bef
 
 A59Frontend01 stopped at three parent compile joins: obsolete Story import, Hall sound enum without a resource method and the saver configuration call's removed Help argument. Corrected those calls and removed unused retired hit helpers.02 passed formatting, strict workspace/all-target lint and locked build/staging. **No tests ran**, no duplicate presentation cases were added and no native/game/DB process or protected save/install changed. [STATUS](../STATUS.md#current-build-verification) and [MODLOG](../MODLOG.md#2026-10-10--join-main-menu-chooser-story-and-hall) own receipts. VT/gift adapters remain separately owned until handoff. Normal Title-to-menu over retained ongoing modes, exact dialogue art/cursor capture, accessible audio, native/retail and human acceptance remain pending.
 
+## Shell gift runtime integration
+
+E114 joins `app/shell_gift_runtime.rs` through the menu's typed `give` route.
+The transient modal retains stable donor/recipient IDs, bounded strict amount
+text, pointer/keyboard focus and the displayed preview. Confirmation runs the
+existing `ShellGiftDialog::confirm` against the live Profiles manager and normal
+profile path under the already-held normal writer lease, outside a Session
+borrow. Its exact atomic transaction result returns to the dialog. Cancellation
+writes nothing; changed balances and capacity losses must be displayed before
+confirmation; write failures remain visible for retry. No wallet-difference
+success inference, second ledger or second writer was introduced.
+
+Opening and closing frames consume input and freeze the retained scene; profile
+switches drop the modal. Layout/guidance are project-authored, not recovered
+retail UserDialog geometry. The existing source-qualified transaction policy
+remains authoritative. Format/lint/build passed in the parent join; no tests or
+native/manual/input/audio/retail checks ran. [MODLOG](../MODLOG.md#2026-10-10--join-virtual-tank-and-shell-gift-frontends)
+owns receipts. This replaces E113's explicitly pending gift route; its historical
+description remains unchanged.
+
 ## Source and verification boundaries
 
 Installed PB05 remains authoritative. [BR08–11](binary-recovery.md#br08--menus-profiles-and-options) owns the primary profile/menu/options/score outline and explicit gaps. Pinned W1 `f919b3c241cfd611c547f1653fb3514f500f761b` supplies `ProfileMgr`, `OptionsDialog`, `HighScoreMgr`, `GameSelector`, `FishSongMgr`, `GameObject`, `Board` and `InterludeScreen` behavior as secondary evidence. [Provenance](provenance.md) owns licenses and adaptations. No upstream source file, proprietary asset or raw decompiler output is tracked.

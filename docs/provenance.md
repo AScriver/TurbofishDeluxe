@@ -160,6 +160,16 @@ Tool identities, invocation constraints, and the distinction between fresh check
 
 ## New work and adaptations
 
+E114 joins the existing W1-informed VT controllers (`StoreScreen.cpp`,
+`StoreButtonWidget.cpp`, `SimFishScreen.cpp`, `FishButtonWidget.cpp`,
+`SimSetupScreen.cpp`; revision and studied ranges in [VT source record](virtual-ui.md#source-and-explicit-limits))
+and source-qualified shell transaction facade through original Rust transient
+adapters. [VT integration](virtual-ui.md#runtime-integration) and [gift integration](shared-interface.md#shell-gift-runtime-integration)
+record captured-target, ordered dispatch, actual receipt, lease and modal
+adaptations. Owned assets are read at runtime; no source files, retail prose,
+pixels or dumps are incorporated. Gift layout is project-authored. No new
+reference revision, primary export or save format was introduced.
+
 E113 consumes the already studied W1 GameSelector/TankScreen/StoryScreen/HighScoreScreen behavior through original Rust transient adapters and the previously recorded owned lore/preset catalogs. It extends actual asset/font loading without bundling pixels, prose, preset names or source files. [Runtime frontend joins](shared-interface.md#runtime-frontend-joins) records the deliberate ownership/input/clock adaptations, qualified welcome-back heuristic and remaining startup/dialog/native gaps. No new reference revision or primary decompiler export was introduced.
 
 The project-specific requirements preservation, initial design, documentation ownership, environment inspection, and PowerShell workflow checker are new setup work. G1 templates informed the documents; S1 informed evidence and handoff discipline. No inherited game/runtime implementation exists. License notices are retained, and changing filenames does not change origin.
