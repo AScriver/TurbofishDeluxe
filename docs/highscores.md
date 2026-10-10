@@ -6,6 +6,8 @@ clock/RNG ownership and native acceptance remain with the primary integration.
 
 ## Design and evidence
 
+E113 adds the actual [runtime frontend join](shared-interface.md#runtime-frontend-joins) and fresh normal-startup preset admission before the existing atomic manager checkpoint. Existing ledgers/imports remain unchanged. Hall rendering/input, tab memory, copied rows and personal projection are now consumed by the app; native/retail/audio/human acceptance remains not tested. Existing preset/model checks were not repeated for this adapter join.
+
 Base checkout: `d7821846e3dc2d6d2c32157eaf326d109195720f`, initially clean.
 Pinned secondary source: W1 `f919b3c241cfd611c547f1653fb3514f500f761b`,
 `source/WinFish`. The study/license boundary is already registered in

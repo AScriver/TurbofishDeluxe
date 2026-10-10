@@ -10,7 +10,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 
 ## Start here
 
-- E111 joins [Title/loading](docs/title-screen.md#runtime-integration), [illustrated Help](docs/help.md#runtime-integration) and [full finale](docs/finale.md#runtime-integration); formatting/lint/build passed without new presentation tests. Current36/profile3/bank2 [saver continuation](docs/screensaver.md#scene-continuation) and [Board bubbles](docs/bubbles.md#runtime-integration) remain committed. Next: main menu, tank chooser, Story/Hall, VT UI and shell gifting joins. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
+- E113 joins [main menu, chooser, Story/Hall and fresh presets](docs/shared-interface.md#runtime-frontend-joins); formatting/lint/build passed with zero tests run. E111 [Title/loading](docs/title-screen.md#runtime-integration), [illustrated Help](docs/help.md#runtime-integration), [full finale](docs/finale.md#runtime-integration), current36/profile3/bank2 [saver continuation](docs/screensaver.md#scene-continuation) and [Board bubbles](docs/bubbles.md#runtime-integration) remain preserved. Next: VT UI and shell gifting joins. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
 - Agents: read [AGENTS.md](AGENTS.md), then follow its startup order.
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).

@@ -1,8 +1,8 @@
 # Tank selection controller
 
-E112 registers this model and makes the core `AdventureSession::time_trial_tank_available` the TT admission authority for selection, pet-selection validation and run start. Supported one-based tank numbers require completed Adventure or `progress.tank > tank`, matching the source's zero-based card threshold. One regression proves locked-state preservation, earned entry and crafted-continuation rejection. App renderer/input joins remain pending; [STATUS](../STATUS.md#current-build-verification) owns current checks.
+E112 makes `AdventureSession::time_trial_tank_available` the TT admission authority for selection, pet-selection validation and run start. E113 uses that same predicate in the actual four-card renderer/input join. Supported one-based tank numbers require completed Adventure or `progress.tank > tank`, matching the source's zero-based card threshold. One existing regression proves locked-state preservation, earned entry and crafted-continuation rejection; it was not repeated for the frontend join. [Runtime frontend joins](shared-interface.md#runtime-frontend-joins) owns lifecycle and checks; [STATUS](../STATUS.md#current-build-verification) owns current receipts.
 
-This chunk adds the renderer-independent four-card Time Trial/Challenge chooser in [tank_selection.rs](../src/tank_selection.rs). It is an unregistered module: the primary session owns library registration and actual app, asset, audio and session joins. No Profile, save schema, score, award or navigation authority moves into this controller. Native/render/audio/retail/human acceptance remains pending.
+The renderer-independent four-card Time Trial/Challenge chooser in [tank_selection.rs](../src/tank_selection.rs) is registered and consumed through the primary-owned app adapter. No Profile, save schema, score, award or navigation authority moves into this controller. Native/render/audio/retail/human acceptance remains pending. The original integration instructions below remain a source contract; their base line numbers and observed gaps are historical.
 
 ## Source and build identity
 

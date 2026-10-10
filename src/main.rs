@@ -3,6 +3,7 @@ use turbofish_deluxe::{
     app,
     assets::GameAssets,
     cli::{self, Options},
+    highscores::presets::{self, PresetNames},
     install,
     screensaver_bank::{NormalWriterLease, ScreensaverSceneLease},
 };
@@ -105,8 +106,22 @@ fn prepare() -> Result<(), Box<dyn Error>> {
     } else {
         None
     };
+    // An existing manager owns its ledger, even when empty. An existing
+    // adventure.json without a manager is an import, not a fresh ledger.
+    let fresh_manager = !profiles_path.exists()
+        && (options.new_game || !options.save_dir.join("adventure.json").exists());
     let mut profiles = cli::load_profiles(&options)?;
     if screensaver.is_none() {
+        if fresh_manager {
+            let executable = game_root.join(&identity.executable);
+            let names = PresetNames::load_owned(&executable).map_err(|error| {
+                format!(
+                    "Cannot create fresh profile score presets from {}: {error}",
+                    executable.display()
+                )
+            })?;
+            presets::admit_fresh(&mut profiles.global_scores, &names)?;
+        }
         if !profiles_path.exists() || options.new_game {
             // Establish profile generation before another saver can read it.
             cli::save_profiles_checkpoint(&options, &profiles)?;

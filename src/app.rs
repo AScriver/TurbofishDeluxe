@@ -23,7 +23,7 @@ use crate::{
         Action, AdventureState, CoinKind, Event, FishPose, FishSize, FoodType, PetKind, TICK_MS,
         VirtualPetAction,
     },
-    story::{StoryBrowser, StoryCatalog, StoryId},
+    story::StoryCatalog,
     timing::{InputPress, StepClock, wall_deadline_reached},
     ultra::UltraPose,
     virtual_tank::{
@@ -55,6 +55,14 @@ mod finale_runtime;
 use finale_runtime::FinaleRuntime;
 #[path = "app/help_runtime.rs"]
 mod help_runtime;
+#[path = "app/menu_runtime.rs"]
+mod menu_runtime;
+#[path = "app/records_runtime.rs"]
+mod records_runtime;
+#[path = "app/tank_selection_runtime.rs"]
+mod tank_selection_runtime;
+use menu_runtime::MenuRuntime;
+use records_runtime::RecordsRuntime;
 
 const FONT_IDS: &[&str] = &[
     "JungleFever10outline",
@@ -72,6 +80,10 @@ fn presentation_image_ids() -> Vec<&'static str> {
     ids.extend(crate::title_screen::TitleImage::ALL.map(|image| image.resource_id()));
     ids.extend(help_runtime::REQUIRED_IMAGES.map(|image| image.asset_id()));
     ids.extend_from_slice(finale_runtime::REQUIRED_IMAGE_IDS);
+    ids.extend(menu_runtime::REQUIRED_IMAGE_IDS);
+    ids.extend_from_slice(tank_selection_runtime::REQUIRED_IMAGE_IDS);
+    ids.extend(records_runtime::STORY_PORTRAITS.map(|portrait| portrait.resource_id()));
+    ids.extend(records_runtime::HALL_IMAGES.map(|image| image.resource_key()));
     ids.sort_unstable();
     ids.dedup();
     ids
@@ -81,6 +93,10 @@ fn presentation_font_ids() -> Vec<&'static str> {
     let mut ids = FONT_IDS.to_vec();
     ids.extend(help_runtime::REQUIRED_FONTS.map(help_runtime::font_file_name));
     ids.extend_from_slice(finale_runtime::REQUIRED_FONT_NAMES);
+    ids.extend(menu_runtime::REQUIRED_FONT_NAMES);
+    ids.extend(records_runtime::STORY_FONTS.map(records_runtime::story_font_file));
+    ids.extend(records_runtime::HALL_FONTS.map(records_runtime::hall_font_file));
+    ids.extend(crate::tank_selection::TankFont::ALL.map(|font| font.script_stem()));
     ids.sort_unstable();
     ids.dedup();
     ids
@@ -90,7 +106,7 @@ fn title_loading_tasks(muted: bool) -> u64 {
     (presentation_image_ids().len()
         + presentation_font_ids().len()
         + if muted { 0 } else { SOUND_IDS.len() }
-        + 2) as u64
+        + 3) as u64
 }
 
 const IMAGE_IDS: &[&str] = &[
@@ -539,6 +555,18 @@ impl Presentation {
             if let Some(loader) = title.as_deref_mut() {
                 loader.task_completed().await?;
             }
+        }
+        let talk_show = assets.load_image("images/talkshow")?;
+        let texture = Texture2D::from_rgba8(
+            u16::try_from(talk_show.width)?,
+            u16::try_from(talk_show.height)?,
+            &talk_show.pixels,
+        );
+        texture.set_filter(FilterMode::Linear);
+        images.insert("images/talkshow".into(), texture);
+        image_cells.insert("images/talkshow".into(), (1, 1));
+        if let Some(loader) = title.as_deref_mut() {
+            loader.task_completed().await?;
         }
         let mut sounds = HashMap::new();
         if !muted {
@@ -5114,6 +5142,8 @@ enum SelectorPanel {
     Options,
     Scores,
     Screensaver,
+    Notice,
+    Quit,
 }
 
 #[derive(Clone, Copy)]
@@ -5172,197 +5202,6 @@ fn ui_button(rect: Rect, label: &str) {
     draw_text(label, rect.x + 8.0, rect.y + rect.h * 0.7, 18.0, WHITE);
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum StoryInput {
-    Previous,
-    Next,
-    Close,
-}
-
-fn story_input(pointer: Vec2, scroll: &mut usize) -> Option<StoryInput> {
-    let click = is_mouse_button_pressed(MouseButton::Left);
-    if is_key_pressed(KeyCode::Escape)
-        || is_key_pressed(KeyCode::Enter)
-        || (click && Rect::new(455.0, 435.0, 160.0, 34.0).contains(pointer))
-    {
-        return Some(StoryInput::Close);
-    }
-    if is_key_pressed(KeyCode::Left)
-        || (click && Rect::new(25.0, 435.0, 115.0, 34.0).contains(pointer))
-    {
-        return Some(StoryInput::Previous);
-    }
-    if is_key_pressed(KeyCode::Right)
-        || (click && Rect::new(150.0, 435.0, 115.0, 34.0).contains(pointer))
-    {
-        return Some(StoryInput::Next);
-    }
-    let wheel = mouse_wheel().1;
-    if is_key_pressed(KeyCode::PageDown) || is_key_pressed(KeyCode::Down) || wheel < 0.0 {
-        *scroll = scroll.saturating_add(3);
-    } else if is_key_pressed(KeyCode::PageUp) || is_key_pressed(KeyCode::Up) || wheel > 0.0 {
-        *scroll = scroll.saturating_sub(3);
-    }
-    None
-}
-
-fn story_lines(text: &str) -> Vec<String> {
-    let mut lines = Vec::new();
-    for paragraph in text.lines() {
-        let mut line = String::new();
-        for word in paragraph.split_whitespace() {
-            let candidate = if line.is_empty() {
-                word.to_owned()
-            } else {
-                format!("{line} {word}")
-            };
-            if !line.is_empty() && measure_text(&candidate, None, 18, 1.0).width > 550.0 {
-                lines.push(std::mem::take(&mut line));
-                line.push_str(word);
-            } else {
-                line = candidate;
-            }
-        }
-        lines.push(line);
-    }
-    lines
-}
-
-fn clamp_story_scroll(scroll: &mut usize, story: Option<StoryId>, catalog: Option<&StoryCatalog>) {
-    *scroll = match (story, catalog) {
-        (Some(id), Some(catalog)) => {
-            (*scroll).min(story_lines(&catalog.entry(id).text).len().saturating_sub(8))
-        }
-        _ => 0,
-    };
-}
-
-fn draw_story(
-    presentation: &Presentation,
-    story: Option<StoryId>,
-    catalog: Option<&StoryCatalog>,
-    unavailable: Option<&str>,
-    scroll: usize,
-) {
-    draw_rectangle(0.0, 0.0, 640.0, 480.0, Color::new(0.03, 0.16, 0.28, 1.0));
-    draw_rectangle(0.0, 0.0, 640.0, 40.0, BLACK);
-    draw_rectangle(0.0, 430.0, 640.0, 50.0, BLACK);
-    draw_text("THE STORY OF", 220.0, 65.0, 25.0, WHITE);
-    match story {
-        None => {
-            draw_text(
-                "No stories earned for this profile yet.",
-                75.0,
-                190.0,
-                23.0,
-                WHITE,
-            );
-            draw_text(
-                "Complete a Challenge to unlock one.",
-                75.0,
-                226.0,
-                20.0,
-                WHITE,
-            );
-        }
-        Some(id) => {
-            draw_text(
-                format!("{} of 33", u16::from(id.get()) + 1),
-                285.0,
-                28.0,
-                19.0,
-                WHITE,
-            );
-            if let Some(catalog) = catalog {
-                let entry = catalog.entry(id);
-                let title_size = if entry.title.len() > 38 { 19.0 } else { 23.0 };
-                let width = measure_text(&entry.title, None, title_size as u16, 1.0).width;
-                draw_text(&entry.title, 320.0 - width / 2.0, 99.0, title_size, YELLOW);
-                let image_id = if id.is_pet() {
-                    [
-                        "IMAGE_STINKY",
-                        "IMAGE_NIKO",
-                        "IMAGE_ITCHY",
-                        "IMAGE_PREGO",
-                        "IMAGE_ZORF",
-                        "IMAGE_CLYDE",
-                        "IMAGE_VERT",
-                        "IMAGE_RUFUS",
-                        "IMAGE_MERYL",
-                        "IMAGE_WADSWORTH",
-                        "IMAGE_SEYMOUR",
-                        "IMAGE_SHRAPNEL",
-                        "IMAGE_GUMBO",
-                        "IMAGE_BLIP",
-                        "IMAGE_RHUBARB",
-                        "IMAGE_NIMBUS",
-                        "IMAGE_AMP",
-                        "IMAGE_GASH",
-                        "IMAGE_ANGIE",
-                        "IMAGE_PRESTO",
-                        "IMAGE_BRINKLEY",
-                        "IMAGE_NOSTRADAMUS",
-                        "IMAGE_STANLEY",
-                        "IMAGE_WALTER",
-                    ][usize::from(id.portrait_slot())]
-                } else {
-                    [
-                        "IMAGE_SYLV",
-                        "IMAGE_BALROG",
-                        "IMAGE_GUS",
-                        "IMAGE_DESTRUCTOR",
-                        "IMAGE_ULYSSES",
-                        "IMAGE_PSYCHOSQUID",
-                        "IMAGE_BILATERUS",
-                        "IMAGE_MINISYLV",
-                        "IMAGE_BOSS",
-                    ][usize::from(id.portrait_slot())]
-                };
-                if let (Some(texture), Some(&(cols, rows))) = (
-                    presentation.images.get(image_id),
-                    presentation.image_cells.get(image_id),
-                ) {
-                    let cell = vec2(
-                        texture.width() / cols as f32,
-                        texture.height() / rows as f32,
-                    );
-                    let scale = (130.0 / cell.x).min(130.0 / cell.y).min(1.5);
-                    let size = cell * scale;
-                    draw_texture_ex(
-                        texture,
-                        320.0 - size.x / 2.0,
-                        116.0 + (130.0 - size.y) / 2.0,
-                        WHITE,
-                        DrawTextureParams {
-                            source: Some(Rect::new(0.0, 0.0, cell.x, cell.y)),
-                            dest_size: Some(size),
-                            ..Default::default()
-                        },
-                    );
-                }
-                let lines = story_lines(&entry.text);
-                let start = scroll.min(lines.len().saturating_sub(8));
-                for (index, line) in lines.iter().skip(start).take(8).enumerate() {
-                    draw_text(line, 45.0, 273.0 + index as f32 * 19.0, 18.0, WHITE);
-                }
-                if lines.len() > 8 {
-                    draw_text("Up/Down: scroll", 475.0, 423.0, 14.0, YELLOW);
-                }
-            } else {
-                draw_text("Story catalog unavailable", 160.0, 205.0, 24.0, YELLOW);
-                if let Some(reason) = unavailable {
-                    for (index, line) in story_lines(reason).iter().take(3).enumerate() {
-                        draw_text(line, 45.0, 265.0 + index as f32 * 24.0, 18.0, WHITE);
-                    }
-                }
-            }
-        }
-    }
-    ui_button(Rect::new(25.0, 435.0, 115.0, 34.0), "Previous");
-    ui_button(Rect::new(150.0, 435.0, 115.0, 34.0), "Next");
-    ui_button(Rect::new(455.0, 435.0, 160.0, 34.0), "Back to menu");
-}
-
 fn help_input(
     presentation: &Presentation,
     help: &mut HelpController,
@@ -5418,7 +5257,6 @@ impl SelectorUi {
         settings: GameSettings,
         pointer: Vec2,
         selector_open: bool,
-        help: &mut HelpController,
     ) -> (bool, Option<UiCommand>) {
         if !selector_open {
             self.panel = None;
@@ -5502,6 +5340,15 @@ impl SelectorUi {
                         }
                     }
                     SelectorPanel::Options => {
+                        if Rect::new(95.0, 365.0, 180.0, 36.0).contains(pointer) {
+                            self.panel = None;
+                            return (true, Some(UiCommand::Stories));
+                        }
+                        if Rect::new(295.0, 365.0, 180.0, 36.0).contains(pointer) {
+                            self.panel = Some(SelectorPanel::Screensaver);
+                            self.error.clear();
+                            return (true, None);
+                        }
                         for (index, y) in [145.0, 205.0].into_iter().enumerate() {
                             if Rect::new(230.0, y, 270.0, 28.0).contains(pointer) {
                                 let value = ((pointer.x - 230.0) / 270.0).clamp(0.0, 1.0);
@@ -5588,42 +5435,18 @@ impl SelectorUi {
                             return (true, Some(UiCommand::ScreensaverPreview));
                         }
                     }
+                    SelectorPanel::Notice => {}
+                    SelectorPanel::Quit => {
+                        if Rect::new(145.0, 270.0, 145.0, 38.0).contains(pointer) {
+                            return (true, Some(UiCommand::Quit));
+                        }
+                        if Rect::new(350.0, 270.0, 145.0, 38.0).contains(pointer) {
+                            self.panel = None;
+                        }
+                    }
                 }
             }
             return (true, None);
-        }
-        if click {
-            for (index, panel) in [
-                SelectorPanel::Profiles,
-                SelectorPanel::Options,
-                SelectorPanel::Scores,
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                if Rect::new(8.0 + index as f32 * 124.0, 8.0, 118.0, 32.0).contains(pointer) {
-                    self.panel = Some(panel);
-                    self.page = 0;
-                    self.score_focus = None;
-                    self.error.clear();
-                    return (true, None);
-                }
-            }
-            if Rect::new(380.0, 8.0, 118.0, 32.0).contains(pointer) {
-                help.open_pages(HelpReturn::Selector);
-                return (true, None);
-            }
-            if Rect::new(504.0, 8.0, 118.0, 32.0).contains(pointer) {
-                return (true, Some(UiCommand::Quit));
-            }
-            if Rect::new(8.0, 44.0, 118.0, 32.0).contains(pointer) {
-                return (true, Some(UiCommand::Stories));
-            }
-            if Rect::new(132.0, 44.0, 118.0, 32.0).contains(pointer) {
-                self.panel = Some(SelectorPanel::Screensaver);
-                self.error.clear();
-                return (true, None);
-            }
         }
         (false, None)
     }
@@ -5638,20 +5461,6 @@ impl SelectorUi {
         screensaver_load_error: Option<&str>,
     ) {
         if self.panel.is_none() {
-            for (index, title) in ["Profiles", "Options", "Scores", "Help", "Quit"]
-                .into_iter()
-                .enumerate()
-            {
-                ui_button(
-                    Rect::new(8.0 + index as f32 * 124.0, 8.0, 118.0, 32.0),
-                    title,
-                );
-            }
-            ui_button(Rect::new(8.0, 44.0, 118.0, 32.0), "Stories");
-            ui_button(Rect::new(132.0, 44.0, 118.0, 32.0), "Saver");
-            if let Some(entry) = profiles.current() {
-                draw_text(format!("Player: {}", entry.name), 260.0, 67.0, 20.0, WHITE);
-            }
             return;
         }
         draw_rectangle(60.0, 63.0, 520.0, 357.0, Color::new(0.01, 0.08, 0.13, 0.97));
@@ -5688,6 +5497,8 @@ impl SelectorUi {
             }
             SelectorPanel::Options => {
                 draw_text("OPTIONS", 85.0, 100.0, 29.0, YELLOW);
+                ui_button(Rect::new(95.0, 365.0, 180.0, 36.0), "Stories");
+                ui_button(Rect::new(295.0, 365.0, 180.0, 36.0), "Saver");
                 for (label, value, enabled, y) in [
                     ("Music", settings.music_volume, caps.music_volume, 145.0),
                     (
@@ -5845,6 +5656,14 @@ impl SelectorUi {
                 );
                 ui_button(Rect::new(295.0, 365.0, 180.0, 36.0), "Preview");
             }
+            SelectorPanel::Notice => {
+                draw_text("INFORMATION", 85.0, 110.0, 27.0, YELLOW);
+            }
+            SelectorPanel::Quit => {
+                draw_text("Quit and save current profile?", 145.0, 200.0, 23.0, WHITE);
+                ui_button(Rect::new(145.0, 270.0, 145.0, 38.0), "Yes");
+                ui_button(Rect::new(350.0, 270.0, 145.0, 38.0), "No");
+            }
         }
         if !self.error.is_empty() {
             draw_text(&self.error, 85.0, 410.0, 18.0, ORANGE);
@@ -5876,6 +5695,69 @@ impl SelectorUi {
             ui_button(Rect::new(350.0, 310.0, 145.0, 38.0), "Cancel");
         }
     }
+}
+
+fn route_menu_intent(
+    intent: crate::game_selector::SelectorIntent,
+    ui: &mut SelectorUi,
+    help: &mut HelpController,
+    records: &mut RecordsRuntime,
+    actions: &mut Vec<Action>,
+) {
+    use crate::game_selector::{Destination, DialogIntent, Mode, SelectorIntent};
+    match intent {
+        SelectorIntent::Navigate(Destination::Mode(mode)) => {
+            actions.push(match mode {
+                Mode::Adventure => Action::PlayAdventure,
+                Mode::TimeTrial => Action::PlayTimeTrial,
+                Mode::Challenge => Action::PlayChallenge,
+                Mode::Sandbox => Action::OpenSandbox,
+                Mode::VirtualTank => {
+                    let now_seconds = wall_seconds();
+                    Action::PlayVirtualTank {
+                        now_seconds,
+                        day_start_seconds: now_seconds / 86_400 * 86_400,
+                    }
+                }
+            });
+        }
+        SelectorIntent::Navigate(Destination::Help) => help.open_pages(HelpReturn::Selector),
+        SelectorIntent::Navigate(Destination::HallOfFame) => {
+            records.open_hall();
+            ui.panel = Some(SelectorPanel::Scores);
+        }
+        SelectorIntent::Dialog(dialog) => {
+            ui.error.clear();
+            ui.panel = Some(match dialog {
+                DialogIntent::Options => SelectorPanel::Options,
+                DialogIntent::ChooseProfile => SelectorPanel::Profiles,
+                DialogIntent::Quit => SelectorPanel::Quit,
+                DialogIntent::LockedMode { reason, .. } => {
+                    ui.error = reason.guidance().into();
+                    SelectorPanel::Notice
+                }
+                DialogIntent::OpenGiveDialog => {
+                    ui.error = "Shell gift frontend join pending.".into();
+                    SelectorPanel::Notice
+                }
+            });
+            ui.page = 0;
+            ui.form = None;
+        }
+        SelectorIntent::Pointer(_) | SelectorIntent::Button(_) | SelectorIntent::Sound(_) => {}
+    }
+}
+
+fn play_ui_sound(
+    presentation: &Presentation,
+    music: Option<&MusicOwner>,
+    resource: &str,
+) -> Option<MusicReport> {
+    presentation
+        .sounds
+        .get(resource)
+        .zip(music)
+        .and_then(|(bytes, owner)| owner.play_effect(bytes.clone()))
 }
 
 fn presentation_music_cue(
@@ -6125,20 +6007,20 @@ pub async fn run(
     let mut selector_ui = SelectorUi::default();
     let mut help = HelpController::new();
     let mut help_restore_paused = None::<bool>;
-    let (story_catalog, story_unavailable) =
-        match StoryCatalog::load(&game_root.join(&identity.executable)) {
-            Ok(catalog) => (Some(catalog), None),
-            Err(error) => {
-                eprintln!("Story catalog unavailable: {error}");
-                (None, Some(error.to_string()))
-            }
-        };
+    let story_catalog = match StoryCatalog::load(&game_root.join(&identity.executable)) {
+        Ok(catalog) => Some(catalog),
+        Err(error) => {
+            eprintln!("Story catalog unavailable: {error}");
+            None
+        }
+    };
     let mut story_browser_open = false;
-    let mut story_browser = None::<StoryBrowser>;
-    let mut remembered_story = StoryId::new(0).ok_or("Story ID zero is invalid")?;
-    let mut story_scroll = 0_usize;
-    let mut challenge_story_scroll = 0_usize;
-    let mut last_challenge_story = None::<StoryId>;
+    let mut records = RecordsRuntime::new(options.seed ^ 0x5245_434f_5244_5346);
+    let mut menu = None::<MenuRuntime>;
+    let mut menu_clock = StepClock::new(1);
+    let mut menu_epoch = 0_u64;
+    let mut chooser = None::<crate::tank_selection::TankSelection>;
+    let mut ui_resource_error = None::<String>;
     let mut entry_code = EntryCode::default();
     let song_catalog = match SongCatalog::load_from_install(&game_root) {
         Ok(catalog) => Some(catalog),
@@ -6174,10 +6056,19 @@ pub async fn run(
         );
         let (mouse_x, mouse_y) = mouse_position();
         let pointer = (vec2(mouse_x, mouse_y) - offset) / scale;
+        let focused = focus_window.as_ref().is_none_or(OwnWindow::has_focus);
+        let mut ui_music_reports = Vec::new();
         let selector_open = profiles.current().is_none()
             || profiles
                 .current()
                 .is_some_and(|entry| entry.session.phase == AdventurePhase::GameSelector);
+        if selector_open && menu.is_none() {
+            menu = Some(MenuRuntime::new(options.seed ^ menu_epoch, &assets));
+            menu_clock.clear_backlog();
+        } else if !selector_open {
+            menu = None;
+            menu_clock.clear_backlog();
+        }
         if profiles.current().is_none() {
             selector_ui.panel = Some(SelectorPanel::Profiles);
         }
@@ -6198,50 +6089,181 @@ pub async fn run(
         };
         let story_was_active = story_browser_open;
         let preview_was_active = screensaver_preview.is_some();
-        if story_was_active {
-            match story_input(pointer, &mut story_scroll) {
-                Some(StoryInput::Close) => {
+        records.advance(
+            get_frame_time(),
+            focused && !help_was_active && !preview_was_active,
+        );
+        if story_was_active && let Some(current) = profiles.current() {
+            for intent in records.input_story_frame(
+                &presentation,
+                &current.session,
+                story_catalog.as_ref(),
+                pointer,
+                focused,
+            ) {
+                if let Some(sound) = intent.sound
+                    && let Some(report) =
+                        play_ui_sound(&presentation, music.as_ref(), sound.resource_id())
+                {
+                    ui_music_reports.push(report);
+                }
+                if intent.action == Some(crate::story_screen::StoryAction::ReturnToCaller) {
+                    records.close_story();
                     story_browser_open = false;
                     clock.clear_backlog();
                 }
-                Some(direction @ (StoryInput::Previous | StoryInput::Next)) => {
-                    if let (Some(browser), Some(current)) =
-                        (story_browser.as_mut(), profiles.current())
+            }
+        }
+        let hall_was_active = records.hall_open();
+        if hall_was_active {
+            for intent in records.input_hall_frame(&presentation, pointer, focused) {
+                if intent.sound.is_some()
+                    && let Some(report) =
+                        play_ui_sound(&presentation, music.as_ref(), "SOUND_BUTTONCLICK")
+                {
+                    ui_music_reports.push(report);
+                }
+                if intent.exit_to_menu {
+                    records.close_hall();
+                    selector_ui.panel = None;
+                    clock.clear_backlog();
+                }
+            }
+        }
+        let (mut ui_owned_input, mut ui_command) =
+            if help_was_active || story_was_active || preview_was_active || hall_was_active {
+                (true, None)
+            } else if selector_ui.panel.is_some() {
+                selector_ui.input(&profiles, settings.settings, pointer, selector_open)
+            } else {
+                (false, None)
+            };
+        if let Some(runtime) = menu.as_mut() {
+            let modal_open = selector_ui.panel.is_some()
+                || help_was_active
+                || story_was_active
+                || preview_was_active
+                || hall_was_active
+                || ui_owned_input;
+            let facts = menu_runtime::facts(&profiles, modal_open, menu_epoch);
+            let mut intents = runtime.input_frame(&facts, &presentation, pointer, focused);
+            if focused {
+                menu_clock.add_frame(get_frame_time(), false);
+                while menu_clock.step_due() {
+                    menu_clock.consume_step(false);
+                    intents.extend(runtime.tick(&facts, &presentation));
+                }
+            } else {
+                menu_clock.clear_backlog();
+            }
+            if !modal_open && focused {
+                for (pressed, key) in [
+                    (is_key_pressed(KeyCode::Up), SelectorKey::Up),
+                    (is_key_pressed(KeyCode::Down), SelectorKey::Down),
+                    (is_key_pressed(KeyCode::Left), SelectorKey::Left),
+                    (is_key_pressed(KeyCode::Right), SelectorKey::Right),
+                    (is_key_pressed(KeyCode::B), SelectorKey::B),
+                    (is_key_pressed(KeyCode::A), SelectorKey::A),
+                ] {
+                    if pressed
+                        && entry_code.push(key)
+                        && let Some(intent) = runtime.sandbox_activated(&facts)
                     {
-                        remembered_story = browser.step(
-                            &current.session.progress.stories,
-                            if direction == StoryInput::Next { 1 } else { -1 },
-                        );
-                        story_scroll = 0;
+                        intents.push(intent);
                     }
                 }
-                None => {}
-            }
-            clamp_story_scroll(
-                &mut story_scroll,
-                story_browser.map(|browser| browser.current),
-                story_catalog.as_ref(),
-            );
-        }
-        let (ui_owned_input, ui_command) =
-            if help_was_active || story_was_active || preview_was_active {
-                (true, None)
             } else {
-                selector_ui.input(
-                    &profiles,
-                    settings.settings,
-                    pointer,
-                    selector_open,
+                entry_code.reset();
+            }
+            for intent in intents {
+                if let crate::game_selector::SelectorIntent::Sound(sound) = intent
+                    && let Some(report) =
+                        play_ui_sound(&presentation, music.as_ref(), sound.resource_id())
+                {
+                    ui_music_reports.push(report);
+                }
+                route_menu_intent(
+                    intent,
+                    &mut selector_ui,
                     &mut help,
-                )
-            };
+                    &mut records,
+                    &mut pending_actions,
+                );
+            }
+            ui_owned_input = true;
+        } else {
+            entry_code.reset();
+        }
+        if let Some(current) = profiles.current() {
+            if let Some(mode) = tank_selection_runtime::mode_for_phase(&current.session.phase) {
+                let facts = tank_selection_runtime::facts(&current.session, mode);
+                if chooser
+                    .as_ref()
+                    .is_none_or(|controller| controller.mode() != mode)
+                {
+                    chooser = Some(crate::tank_selection::TankSelection::new(mode, facts));
+                }
+                let controller = chooser.as_mut().expect("chooser initialized");
+                controller.set_facts(facts);
+                let modal =
+                    help_was_active || story_was_active || preview_was_active || hall_was_active;
+                let point = crate::tank_selection::Point {
+                    x: pointer.x,
+                    y: pointer.y,
+                };
+                let mut inputs = vec![
+                    crate::tank_selection::TankInput::Focus(focused),
+                    crate::tank_selection::TankInput::Modal(modal),
+                    crate::tank_selection::TankInput::PointerMove(point),
+                ];
+                if is_mouse_button_pressed(MouseButton::Left) {
+                    inputs.push(crate::tank_selection::TankInput::PrimaryDown(point));
+                }
+                if is_mouse_button_released(MouseButton::Left) {
+                    inputs.push(crate::tank_selection::TankInput::PrimaryUp(point));
+                }
+                if is_key_pressed(KeyCode::Escape) && !modal && focused {
+                    inputs.push(crate::tank_selection::TankInput::Cancel);
+                    pending_actions.push(Action::OpenMenu);
+                }
+                for input in inputs {
+                    match tank_selection_runtime::input(controller, &presentation, input) {
+                        Ok(intents) => {
+                            for intent in intents {
+                                if let Some(report) = tank_selection_runtime::play_intent_sound(
+                                    intent,
+                                    &presentation,
+                                    music.as_ref(),
+                                ) {
+                                    ui_music_reports.push(report);
+                                }
+                                if let Some(action) =
+                                    tank_selection_runtime::action_for_intent(intent)
+                                {
+                                    pending_actions.push(action);
+                                } else if intent == crate::tank_selection::TankIntent::Stories {
+                                    ui_command = Some(UiCommand::Stories);
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            ui_resource_error.get_or_insert_with(|| error.to_string());
+                        }
+                    }
+                }
+                ui_owned_input = true;
+            } else {
+                chooser = None;
+            }
+        }
         let mut help_active_frame = help_was_active || help.view().is_some();
-        let story_active_frame = story_was_active || story_browser_open;
+        let mut story_active_frame = story_was_active || story_browser_open;
         let mut ui_active = selector_ui.panel.is_some()
             || profiles.current().is_none()
             || help_active_frame
             || story_active_frame
-            || preview_was_active;
+            || preview_was_active
+            || hall_was_active;
         if let Some(exit) = help_exit {
             match exit {
                 HelpExit::Continue => pending_actions.push(Action::Continue),
@@ -6353,20 +6375,19 @@ pub async fn run(
                     }
                 }
                 UiCommand::Stories => {
-                    story_browser = profiles.current().and_then(|entry| {
-                        entry
-                            .session
-                            .progress
-                            .stories
-                            .open_browser(remembered_story)
+                    story_browser_open = profiles.current().is_some_and(|entry| {
+                        records.open_story(&entry.session, records.remembered_story())
                     });
-                    if let Some(browser) = story_browser {
-                        remembered_story = browser.current;
+                    if !story_browser_open {
+                        selector_ui.panel = Some(SelectorPanel::Notice);
                     }
-                    story_scroll = 0;
-                    story_browser_open = true;
+                    story_active_frame = story_browser_open;
                     ui_active = true;
-                    Ok(false)
+                    if story_browser_open {
+                        Ok(false)
+                    } else {
+                        Err("No stories earned for this profile yet.".into())
+                    }
                 }
                 UiCommand::Quit => {
                     cli::save_profiles_checkpoint(&options, &profiles)?;
@@ -6395,9 +6416,13 @@ pub async fn run(
                         story_browser_open = false;
                         screensaver_preview = None;
                         _screensaver_power_guard = None;
-                        story_browser = None;
-                        story_scroll = 0;
-                        last_challenge_story = None;
+                        records =
+                            RecordsRuntime::new(options.seed ^ profiles.current_id.unwrap_or(0));
+                        menu = None;
+                        menu_epoch = menu_epoch.wrapping_add(1);
+                        menu_clock.clear_backlog();
+                        chooser = None;
+                        ui_resource_error = None;
                         paused = false;
                         pending_actions.clear();
                         clock.clear_backlog();
@@ -6539,15 +6564,6 @@ pub async fn run(
                 );
             }
             help_runtime::draw(&presentation, &help);
-            if story_browser_open {
-                draw_story(
-                    &presentation,
-                    story_browser.map(|browser| browser.current),
-                    story_catalog.as_ref(),
-                    story_unavailable.as_deref(),
-                    story_scroll,
-                );
-            }
             if settings.settings.custom_cursor {
                 draw_circle(pointer.x, pointer.y, 5.0, YELLOW);
             }
@@ -6573,39 +6589,46 @@ pub async fn run(
             held_feed_at = None;
             held_fire_at = None;
         }
+        let mut story_interlude_input = None::<Action>;
         if let AdventurePhase::ChallengeInterlude { story, .. } = session.phase {
-            if last_challenge_story != Some(story) {
-                last_challenge_story = Some(story);
-                remembered_story = story;
-                challenge_story_scroll = 0;
+            records.sync_challenge_story(session, story);
+            if !paused && !ui_active {
+                for intent in records.input_story_frame(
+                    &presentation,
+                    session,
+                    story_catalog.as_ref(),
+                    pointer,
+                    focused,
+                ) {
+                    if let Some(sound) = intent.sound
+                        && let Some(report) =
+                            play_ui_sound(&presentation, music.as_ref(), sound.resource_id())
+                    {
+                        ui_music_reports.push(report);
+                    }
+                    let action = match intent.action {
+                        Some(crate::story_screen::StoryAction::Changed { direction, .. }) => {
+                            Some(match direction {
+                                crate::story_screen::StoryDirection::Previous => {
+                                    Action::StoryPrevious
+                                }
+                                crate::story_screen::StoryDirection::Next => Action::StoryNext,
+                            })
+                        }
+                        Some(crate::story_screen::StoryAction::ReturnToCaller) => {
+                            Some(Action::OpenMenu)
+                        }
+                        None => None,
+                    };
+                    if let Some(action) = action {
+                        story_interlude_input = Some(action.clone());
+                        pending_actions.push(action);
+                    }
+                }
             }
-        } else {
-            last_challenge_story = None;
-        }
-        let story_interlude_input = if !paused
-            && !ui_active
-            && matches!(session.phase, AdventurePhase::ChallengeInterlude { .. })
-        {
-            story_input(pointer, &mut challenge_story_scroll)
-        } else {
-            None
-        };
-        if let Some(input) = story_interlude_input {
-            pending_actions.push(match input {
-                StoryInput::Previous => Action::StoryPrevious,
-                StoryInput::Next => Action::StoryNext,
-                StoryInput::Close => Action::OpenMenu,
-            });
-            if input == StoryInput::Close {
-                clock.clear_backlog();
-            }
-        }
-        if let AdventurePhase::ChallengeInterlude { story, .. } = session.phase {
-            clamp_story_scroll(
-                &mut challenge_story_scroll,
-                Some(story),
-                story_catalog.as_ref(),
-            );
+            ui_owned_input = true;
+        } else if !story_browser_open && records.current_story().is_some() {
+            records.close_story();
         }
         if session.phase == AdventurePhase::AdventureFinaleInterlude && interlude.is_none() {
             interlude = InterludeController::new(&session.finale_fallen_pets).ok();
@@ -6628,22 +6651,6 @@ pub async fn run(
                     let _ = controller.advance(has_focus);
                 }
             }
-        }
-        if session.phase == AdventurePhase::GameSelector && !ui_active {
-            for (pressed, key) in [
-                (is_key_pressed(KeyCode::Up), SelectorKey::Up),
-                (is_key_pressed(KeyCode::Down), SelectorKey::Down),
-                (is_key_pressed(KeyCode::Left), SelectorKey::Left),
-                (is_key_pressed(KeyCode::Right), SelectorKey::Right),
-                (is_key_pressed(KeyCode::B), SelectorKey::B),
-                (is_key_pressed(KeyCode::A), SelectorKey::A),
-            ] {
-                if pressed && entry_code.push(key) {
-                    pending_actions.push(Action::OpenSandbox);
-                }
-            }
-        } else {
-            entry_code.reset();
         }
         if session.phase == AdventurePhase::SandboxPlaying && !paused {
             while let Some(character) = get_char_pressed() {
@@ -7602,7 +7609,8 @@ pub async fn run(
                     pending_actions.clear();
                     break;
                 }
-                if help_active_frame || story_active_frame {
+                if help_active_frame || story_active_frame || hall_was_active || records.hall_open()
+                {
                     // Reading screens are app-lived; even a paused Board update would
                     // advance durable ticks or modal timers.
                 } else if paused || ui_active {
@@ -7934,7 +7942,8 @@ pub async fn run(
             &events,
             matches!(session.phase, AdventurePhase::Playing),
         );
-        let mut music_reports = presentation.play(&events, music.as_ref());
+        let mut music_reports = ui_music_reports;
+        music_reports.extend(presentation.play(&events, music.as_ref()));
         if bubbles.take_ambient_sound_request() {
             music_reports.extend(play_bubble_sound(&presentation, music.as_ref()));
         }
@@ -8003,50 +8012,73 @@ pub async fn run(
         ));
         set_camera(&camera);
         let capture_tick = session.ticks;
-        presentation.draw(
-            session,
-            paused,
-            pointer,
-            healing_warning_until_tick,
-            finale.as_ref().zip(interlude.as_ref()),
-        );
+        if session.phase != AdventurePhase::GameSelector
+            && tank_selection_runtime::mode_for_phase(&session.phase).is_none()
+        {
+            presentation.draw(
+                session,
+                paused,
+                pointer,
+                healing_warning_until_tick,
+                finale.as_ref().zip(interlude.as_ref()),
+            );
+        }
         if bubble_board_clock(session).is_some() {
             bubbles.draw(&presentation);
         }
         if let AdventurePhase::ChallengeInterlude { story, .. } = session.phase {
-            draw_story(
-                &presentation,
-                Some(story),
-                story_catalog.as_ref(),
-                story_unavailable.as_deref(),
-                challenge_story_scroll,
-            );
+            records.sync_challenge_story(session, story);
+            records.draw_story(&presentation, session, story_catalog.as_ref(), pointer);
+        }
+        if let Some(controller) = chooser.as_ref()
+            && tank_selection_runtime::mode_for_phase(&session.phase) == Some(controller.mode())
+            && let Err(error) = tank_selection_runtime::draw(&presentation, controller)
+        {
+            ui_resource_error.get_or_insert_with(|| error.to_string());
         }
         if session.phase == AdventurePhase::VirtualTank && get_time() < song_title_until {
             draw_text(&song_title, 24.0, 105.0, 20.0, YELLOW);
         }
         if session.phase == AdventurePhase::GameSelector {
-            selector_ui.draw(
-                &profiles,
-                settings.settings,
-                RuntimeSettingsBackend {
-                    audio: music.as_ref(),
+            if let Some(runtime) = menu.as_ref() {
+                let facts = menu_runtime::facts(
+                    &profiles,
+                    selector_ui.panel.is_some() || help.view().is_some() || story_browser_open,
+                    menu_epoch,
+                );
+                let unavailable = runtime.draw(&facts, &presentation);
+                if !unavailable.is_empty() {
+                    ui_resource_error.get_or_insert_with(|| {
+                        format!("Menu resources unavailable: {unavailable:?}")
+                    });
                 }
-                .capabilities(),
-                screensaver_file.settings,
-                screensaver_dirty,
-                screensaver_load_error.as_deref(),
-            );
+            }
+            if !records.hall_open() && !story_browser_open {
+                selector_ui.draw(
+                    &profiles,
+                    settings.settings,
+                    RuntimeSettingsBackend {
+                        audio: music.as_ref(),
+                    }
+                    .capabilities(),
+                    screensaver_file.settings,
+                    screensaver_dirty,
+                    screensaver_load_error.as_deref(),
+                );
+            }
         }
         help_runtime::draw(&presentation, &help);
-        if story_browser_open {
-            draw_story(
+        if story_browser_open && let Some(entry) = profiles.current() {
+            records.draw_story(
                 &presentation,
-                story_browser.map(|browser| browser.current),
+                &entry.session,
                 story_catalog.as_ref(),
-                story_unavailable.as_deref(),
-                story_scroll,
+                pointer,
             );
+        }
+        records.draw_hall(&presentation, &profiles);
+        if let Some(error) = ui_resource_error.as_deref() {
+            draw_text(error, 10.0, 470.0, 15.0, YELLOW);
         }
         if settings.settings.custom_cursor {
             draw_circle(pointer.x, pointer.y, 5.0, YELLOW);
@@ -8315,7 +8347,6 @@ pub async fn run_screensaver(
         panel: Some(SelectorPanel::Screensaver),
         ..SelectorUi::default()
     };
-    let mut help = HelpController::new();
     let mut dirty = false;
     let mut mouse_anchor = mouse_position();
     let started = app_started_at;
@@ -8380,7 +8411,7 @@ pub async fn run_screensaver(
                 if is_key_pressed(KeyCode::Q) {
                     break;
                 }
-                let (_, action) = ui.input(&profiles, settings.settings, pointer, true, &mut help);
+                let (_, action) = ui.input(&profiles, settings.settings, pointer, true);
                 if ui.panel.is_none() {
                     break;
                 }

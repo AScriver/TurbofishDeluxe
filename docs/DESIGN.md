@@ -29,6 +29,8 @@ The [current35 VT combat/pet checkpoint](virtual-tank.md#current35-combat-and-pe
 
 ## Transient bubble integration
 
+The remaining menu/chooser/Story/Hall joins use immutable profile snapshots and screen-local controllers, captures, UI clocks and effect streams. AdventureSession revalidates admissions and owns all mode transitions; Profiles owns scores and durable writes. Standalone Story/Hall overlays freeze retained simulation, while Challenge Story navigation returns typed actions to its existing session authority. Normal Title Start retains a saved ongoing scene: forcing GameSelector would violate the current single-session/Board contract. The actual GameSelector phase receives the new menu; an ordinary startup-menu bridge over retained modes remains explicit follow-up work.
+
 Consume the independent [BubbleMgr model](bubbles.md) through an app-owned runtime. Advance once per actual unpaused Board step before admitting typed actor events; retain particles after actor death and clear them when the transient scene is replaced. Use source caps and Bubbulator burst ticks/coordinates, replacing its earlier deterministic particle projection only after this owner is wired. Keep one private effect RNG, outside gameplay/store RNG and saves; its stream is a project projection, not proved retail replay order. Owned-image render operations restore material/tint/clip state. Source model checks remain historical; actual app/render/native fidelity stays pending until exercised.
 
 ## Help and Story integration decisions

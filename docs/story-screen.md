@@ -8,6 +8,8 @@ or finale/interlude behavior.
 
 ## Evidence and decisions
 
+E113 registers the actual [runtime frontend join](shared-interface.md#runtime-frontend-joins), including owned talk-show/portrait/WAVE resources, typed native input, scroll and separate effects. Challenge navigation retains Session authority; standalone browsing retains earned ownership without advancing simulation. Formatting/lint/build passed; no Story model cases were repeated and native/retail/audio/human acceptance remains not tested.
+
 All presentation facts below are **secondary-source-derived**, studied read-only
 at W1 revision `f919b3c241cfd611c547f1653fb3514f500f761b`. Source-informed work follows
 the existing [provenance](provenance.md#runtime-sources) boundary; no upstream

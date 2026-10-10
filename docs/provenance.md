@@ -160,6 +160,8 @@ Tool identities, invocation constraints, and the distinction between fresh check
 
 ## New work and adaptations
 
+E113 consumes the already studied W1 GameSelector/TankScreen/StoryScreen/HighScoreScreen behavior through original Rust transient adapters and the previously recorded owned lore/preset catalogs. It extends actual asset/font loading without bundling pixels, prose, preset names or source files. [Runtime frontend joins](shared-interface.md#runtime-frontend-joins) records the deliberate ownership/input/clock adaptations, qualified welcome-back heuristic and remaining startup/dialog/native gaps. No new reference revision or primary decompiler export was introduced.
+
 The project-specific requirements preservation, initial design, documentation ownership, environment inspection, and PowerShell workflow checker are new setup work. G1 templates informed the documents; S1 informed evidence and handoff discipline. No inherited game/runtime implementation exists. License notices are retained, and changing filenames does not change origin.
 
 For future source-informed changes, extend this record with exact repository/revision/path or symbol, author, license, what was studied, what was translated/reused/generated, destination files, observed compatibility, and unresolved concerns. Retain required notices before reuse. Findings go in maintained documentation; raw code dumps and analysis databases remain private.
