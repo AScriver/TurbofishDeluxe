@@ -114,6 +114,8 @@ Current study-to-project mapping: W1 `Board.cpp`, `Fish.cpp`, `Food.cpp`, `Coin.
 
 ## Local tool catalog
 
+A37's ordered-storage/current23 increment adapts the established primary duplicate-form/physical-identity rules into five typed Rust collections and their consumers; no reference implementation was copied. A38 studies the same PB05 and preregistered W1 Board/ProfileMgr/WinFishApp/BonusScreen/TankScreen paths for Time Trial. Its eight additive roots and two instruction excerpts stay private; [Time Trial](time-trial.md) owns the recovered transactions and deliberate project policies. Instruction-level review corrected omitted live blocks in the egg-purchase pseudocode. Source-informed and distribution/license limits above continue to apply.
+
 **T1 — shared agent analysis tools**, supplied by the user under the host's `.codex/tools/reverse-engineering` directory. Read `README.md`, `manifest.json`, `verification.json`, and the actual `Run-Tool.ps1` implementation on 2026-10-08. The catalog's recorded checks date to 2026-10-03. Local source-record digests, entry-point hash reconciliation, and fresh version-command outputs are retained in `.scratch/evidence/setup/analysis-tools.local.json`.
 
 Tool identities, invocation constraints, and the distinction between fresh checks and earlier recorded checks are authoritative in [analysis tools](analysis-tools.md). No tool binary, dependency, source checkout, or tool license text is copied into this repository. The catalog's download/build provenance was read; upstream distribution terms were not independently re-audited and must be checked before any future redistribution. Tool presence and matching hashes do not establish Insaniquarium compatibility or game behavior.

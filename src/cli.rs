@@ -141,7 +141,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 22;
+pub const SAVE_FORMAT_VERSION: u32 = 23;
 
 #[cfg(test)]
 mod current_twenty_one_tests {
@@ -189,8 +189,8 @@ mod current_twenty_one_tests {
             session,
         })
         .unwrap();
-        assert!(value["session"]["board"]["stinky"]["combat_id"].is_null());
-        value["session"]["board"]["stinky"]
+        assert!(value["session"]["board"]["stinky"][0]["combat_id"].is_null());
+        value["session"]["board"]["stinky"][0]
             .as_object_mut()
             .unwrap()
             .remove("combat_id");
@@ -207,6 +207,28 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     let version_number = value
         .get("format_version")
         .and_then(serde_json::Value::as_u64);
+    if let Some(board) = value
+        .pointer("/session/board")
+        .and_then(serde_json::Value::as_object)
+    {
+        let other_fields = ["stinky", "niko", "clyde", "rufus", "rhubarb"];
+        if version_number == Some(23)
+            && other_fields
+                .iter()
+                .any(|field| board.get(*field).is_none_or(|pet| !pet.is_array()))
+        {
+            return Err("Format-twenty-three OtherPet fields must be arrays".into());
+        }
+        if version_number.is_some_and(|version| version < 23)
+            && other_fields
+                .iter()
+                .any(|field| board.get(*field).is_some_and(|pet| !pet.is_array()))
+        {
+            return Err(
+                "Option-shaped OtherPet saves are unsupported by format twenty-three".into(),
+            );
+        }
+    }
     if let Some(version @ 1..=6) = version_number {
         validate_legacy_boundary(&value, version)?;
     }
@@ -303,7 +325,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=22) => {
+        Some(version @ 5..=23) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -388,11 +410,18 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                             .any(|corpse| corpse.get("revival_ticks").is_none())
                                     })
                             }))
-                        || (version >= 21
+                        || ((21..23).contains(&version)
                             && board
                                 .get("stinky")
                                 .filter(|stinky| !stinky.is_null())
                                 .is_some_and(|stinky| stinky.get("combat_id").is_none()))
+                        || (version >= 23
+                            && board
+                                .get("stinky")
+                                .and_then(serde_json::Value::as_array)
+                                .is_some_and(|pets| {
+                                    pets.iter().any(|pet| pet.get("combat_id").is_none())
+                                }))
                         || (version >= 21
                             && board
                                 .get("invasion")
@@ -571,7 +600,17 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                             .and_then(serde_json::Value::as_object)
                                             .is_some_and(|body| !body.contains_key("kind")))
                             })
-                        || (version >= 7
+                        || (version >= 23
+                            && board
+                                .get("niko")
+                                .and_then(serde_json::Value::as_array)
+                                .is_some_and(|pets| {
+                                    pets.iter().any(|pet| {
+                                        pet.get("anchor_x").is_none()
+                                            || pet.get("anchor_y").is_none()
+                                    })
+                                }))
+                        || ((7..23).contains(&version)
                             && board
                                 .get("niko")
                                 .and_then(serde_json::Value::as_object)
@@ -599,7 +638,10 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     18 => "eighteen",
                     19 => "nineteen",
                     20 => "twenty",
-                    _ => "twenty-one",
+                    21 => "twenty-one",
+                    22 => "twenty-two",
+                    23 => "twenty-three",
+                    _ => unreachable!("bounded format range"),
                 };
                 return Err(format!(
                     "Incomplete format-{label} save; required state fields are missing"

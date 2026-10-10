@@ -1657,7 +1657,7 @@ impl Presentation {
                 );
             }
         }
-        if let Some(stinky) = &state.stinky {
+        for stinky in &state.stinky {
             self.sprite(
                 "IMAGE_STINKY",
                 stinky.x as f32,
@@ -1673,7 +1673,7 @@ impl Presentation {
                 1.0,
             );
         }
-        if let Some(clyde) = &state.clyde {
+        for clyde in &state.clyde {
             self.sprite(
                 "IMAGE_CLYDE",
                 clyde.widget_x as f32,
@@ -1684,7 +1684,7 @@ impl Presentation {
                 1.0,
             );
         }
-        if let Some(rufus) = &state.rufus {
+        for rufus in &state.rufus {
             self.sprite(
                 "IMAGE_RUFUS",
                 rufus.widget_x as f32,
@@ -1700,7 +1700,7 @@ impl Presentation {
                 1.0,
             );
         }
-        if let Some(rhubarb) = &state.rhubarb {
+        for rhubarb in &state.rhubarb {
             self.sprite(
                 "IMAGE_RHUBARB",
                 rhubarb.widget_x as f32,
@@ -1716,7 +1716,7 @@ impl Presentation {
                 1.0,
             );
         }
-        if let Some(niko) = &state.niko {
+        for niko in &state.niko {
             let (column, row) = niko.frame();
             self.sprite(
                 "IMAGE_NIKO",

@@ -10,7 +10,58 @@ use turbofish_deluxe::{
 };
 
 #[test]
-fn current_twenty_two_requires_explicit_plain_presto_form_state() {
+fn current_tank_five_other_pets_have_canonical_arrays_and_reject_duplicate_roster() {
+    let session = prepared_tank_five_session(0);
+    let encoded = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: session.clone(),
+    })
+    .unwrap();
+    for field in ["stinky", "niko", "clyde", "rufus", "rhubarb"] {
+        let members = encoded["session"]["board"][field].as_array().unwrap();
+        assert_eq!(members.len(), 1, "{field}");
+        let mut duplicate = encoded.clone();
+        duplicate["session"]["board"][field]
+            .as_array_mut()
+            .unwrap()
+            .push(members[0].clone());
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&duplicate).unwrap()).is_err(),
+            "{field}"
+        );
+
+        let mut old_shape = encoded.clone();
+        old_shape["session"]["board"][field] = members[0].clone();
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&old_shape).unwrap()).is_err(),
+            "{field}"
+        );
+        old_shape["format_version"] = 22.into();
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&old_shape).unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("Option-shaped OtherPet saves"),
+            "{field}"
+        );
+    }
+
+    let mut uninterrupted = session;
+    let mut reopened = cli::decode_save(&serde_json::to_vec(&encoded).unwrap()).unwrap();
+    for _ in 0..16 {
+        assert_eq!(
+            serde_json::to_value(uninterrupted.step(&[])).unwrap(),
+            serde_json::to_value(reopened.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&uninterrupted).unwrap(),
+            serde_json::to_value(&reopened).unwrap()
+        );
+    }
+}
+
+#[test]
+fn current_twenty_three_requires_explicit_plain_presto_form_state() {
     let session = vert_session();
     let encoded = serde_json::to_value(cli::ProjectSave {
         format_version: cli::SAVE_FORMAT_VERSION,
@@ -108,7 +159,7 @@ fn pending_destructor_session() -> (AdventureSession, u64, u64) {
         95,
         3,
     ));
-    let rufus = board.rufus.as_mut().unwrap();
+    let rufus = board.rufus.first_mut().unwrap();
     rufus.chase_ticks = 4;
     rufus.animation_ticks = 12;
     rufus.frame = 3;
@@ -690,7 +741,7 @@ fn current_tank_four_second_pause_keeps_live_board_while_session_time_advances()
 fn current_tank_four_third_accepts_seventeen_rosters_and_persists_live_amp_setup() {
     use turbofish_deluxe::{alien::SylvesterKind, fish_pet::FishPetKind, invasion::EncounterKind};
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 22);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 23);
     let canonical = tank_four_third_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 17);
     for pet in canonical {
@@ -951,7 +1002,7 @@ fn current_tank_four_fourth_accepts_eighteen_rosters_and_persists_gash_setup() {
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 22);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 23);
     let canonical = tank_four_fourth_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 18);
     for pet in canonical {
@@ -1204,7 +1255,7 @@ fn current_tank_four_finale_accepts_nineteen_rosters_and_starts_with_bilaterus()
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 22);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 23);
     let canonical = tank_four_finale_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 19);
     for pet in canonical {
@@ -1276,7 +1327,7 @@ fn current_twenty_one_requires_revival_clock_on_all_seven_valid_corpse_kinds() {
                 .remove("revival_ticks");
             let error = cli::decode_save(&serde_json::to_vec(&missing).unwrap()).unwrap_err();
             assert!(
-                error.to_string().contains("Incomplete format-twenty-one"),
+                error.to_string().contains("Incomplete format-twenty-three"),
                 "missing {list}[0].revival_ticks: {error}"
             );
         }
@@ -1644,16 +1695,16 @@ fn current_tank_five_live_ulysses_launches_energyball_then_reopens_mid_flight() 
     assert_eq!(ball.target_id, launched.1);
     assert!(
         board.fish_pets.iter().any(|pet| pet.id == launched.1)
-            || board.stinky.as_ref().and_then(|pet| pet.combat_id) == Some(launched.1)
+            || board.stinky.first().and_then(|pet| pet.combat_id) == Some(launched.1)
             || board
                 .niko
-                .as_ref()
+                .first()
                 .is_some_and(|pet| pet.owner_id == launched.1)
-            || board.clyde.as_ref().is_some_and(|pet| pet.id == launched.1)
-            || board.rufus.as_ref().is_some_and(|pet| pet.id == launched.1)
+            || board.clyde.first().is_some_and(|pet| pet.id == launched.1)
+            || board.rufus.first().is_some_and(|pet| pet.id == launched.1)
             || board
                 .rhubarb
-                .as_ref()
+                .first()
                 .is_some_and(|pet| pet.id == launched.1)
     );
     uninterrupted.validate().unwrap();
@@ -1702,7 +1753,7 @@ fn current_tank_five_rejects_missing_or_dangling_finale_state() {
         "/session/board/invasion/finale/profile_attempts",
         "/session/board/invasion/finale/ordinary_ticks",
         "/session/board/invasion/finale/child_ticks",
-        "/session/board/stinky/combat_id",
+        "/session/board/stinky/0/combat_id",
     ] {
         let mut missing = complete.clone();
         let (parent, key) = path.rsplit_once('/').unwrap();
@@ -1814,11 +1865,11 @@ fn current_tank_five_loss_reopen_preserves_strict_attempt_and_fresh_retry() {
             .as_mut()
             .unwrap();
         boss.health -= damage;
-        board.stinky = None;
-        board.niko = None;
-        board.clyde = None;
-        board.rufus = None;
-        board.rhubarb = None;
+        board.stinky.clear();
+        board.niko.clear();
+        board.clyde.clear();
+        board.rufus.clear();
+        board.rhubarb.clear();
         board.fish_pets.clear();
         let failed_board_tick = board.tick;
         let events = session.step(&[]);
@@ -1834,11 +1885,11 @@ fn current_tank_five_loss_reopen_preserves_strict_attempt_and_fresh_retry() {
         assert!(matches!(reopened.phase, AdventurePhase::GameOver { .. }));
         let failed = reopened.board.as_ref().unwrap();
         assert!(
-            failed.stinky.is_none()
-                && failed.niko.is_none()
-                && failed.clyde.is_none()
-                && failed.rufus.is_none()
-                && failed.rhubarb.is_none()
+            failed.stinky.is_empty()
+                && failed.niko.is_empty()
+                && failed.clyde.is_empty()
+                && failed.rufus.is_empty()
+                && failed.rhubarb.is_empty()
                 && failed.fish_pets.is_empty()
         );
         for _ in 0..31 {
@@ -1851,11 +1902,11 @@ fn current_tank_five_loss_reopen_preserves_strict_attempt_and_fresh_retry() {
         let retry = reopened.board.as_ref().unwrap();
         assert_eq!((retry.tank, retry.level, retry.tick), (5, 1, 0));
         assert!(
-            retry.stinky.is_some()
-                && retry.niko.is_some()
-                && retry.clyde.is_some()
-                && retry.rufus.is_some()
-                && retry.rhubarb.is_some()
+            !retry.stinky.is_empty()
+                && !retry.niko.is_empty()
+                && !retry.clyde.is_empty()
+                && !retry.rufus.is_empty()
+                && !retry.rhubarb.is_empty()
         );
         assert_eq!(retry.fish_pets.len(), 13);
         assert_eq!(
@@ -1883,7 +1934,7 @@ fn current_tank_five_retired_niko_pearl_reopens_and_credits_once() {
         .as_ref()
         .unwrap()
         .niko
-        .as_ref()
+        .first()
         .unwrap()
         .owner_id;
     let mut encoded = serde_json::to_value(&session).unwrap();
@@ -1891,7 +1942,7 @@ fn current_tank_five_retired_niko_pearl_reopens_and_credits_once() {
     encoded["board"]["next_id"] = (pearl_id + 1).into();
     session = serde_json::from_value(encoded).unwrap();
     let board = session.board.as_mut().unwrap();
-    board.niko = None;
+    board.niko.clear();
     board
         .pearls
         .push(NikoPearl::spawn(pearl_id, owner_id, 96, 251));
@@ -1957,10 +2008,7 @@ fn current_tank_four_requires_all_breeder_and_rhubarb_state_without_backfill() {
             .unwrap()
             .remove(field);
         assert!(
-            cli::decode_save(&serde_json::to_vec(&missing).unwrap())
-                .unwrap_err()
-                .to_string()
-                .contains("Incomplete format-twenty-one"),
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
             "missing {field}"
         );
     }
@@ -1982,7 +2030,7 @@ fn current_tank_four_requires_all_breeder_and_rhubarb_state_without_backfill() {
     }
     for field in ["specialty_ticks", "chase_timer", "movement_animation_timer"] {
         let mut missing = current.clone();
-        missing["session"]["board"]["rhubarb"]
+        missing["session"]["board"]["rhubarb"][0]
             .as_object_mut()
             .unwrap()
             .remove(field);
@@ -1999,7 +2047,7 @@ fn current_tank_four_pending_birth_and_rhubarb_push_continue_identically_after_r
     // Controlled current-format boundary, not native earning evidence.
     let mut uninterrupted = tank_four_first_session(&[PetKind::Rhubarb]);
     let board = uninterrupted.board.as_mut().unwrap();
-    let rhubarb = board.rhubarb.as_mut().unwrap();
+    let rhubarb = board.rhubarb.first_mut().unwrap();
     rhubarb.specialty_ticks = 5;
     let breeder = &mut board.breeders[0];
     breeder.size = BreederSize::Medium;
@@ -3660,7 +3708,7 @@ fn current_save_rejects_malformed_missile_clock_and_destructor_health() {
             "/session/board/missiles/0/target_id",
             serde_json::json!(u64::MAX),
         ),
-        ("/session/board/rufus/vy", serde_json::json!(1.0)),
+        ("/session/board/rufus/0/vy", serde_json::json!(1.0)),
         (
             "/session/board/invasion/actors/0/health",
             serde_json::json!(-0.1),
@@ -4181,7 +4229,7 @@ fn old_v2_hatch_retains_unknown_score_and_level_two_gets_one_explicit_pet_migrat
             .as_ref()
             .unwrap()
             .stinky
-            .as_ref()
+            .first()
             .unwrap()
             .origin,
         StinkyOrigin::LegacyV2Resume

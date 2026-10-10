@@ -174,7 +174,7 @@ impl AdventureSession {
         if board.eggs > 3 || board.victory != (board.eggs == 3) {
             return Err(MigrationError::InconsistentEggs);
         }
-        if board.egg_price != EGG_PRICE || !board.pets.is_empty() || board.stinky.is_some() {
+        if board.egg_price != EGG_PRICE || !board.pets.is_empty() || !board.stinky.is_empty() {
             return Err(MigrationError::InvalidBoard);
         }
         board.validate().map_err(|_| MigrationError::InvalidBoard)?;
@@ -570,7 +570,7 @@ impl AdventureSession {
                     || board.egg_price != EGG_PRICE
                     || board.eggs >= 3
                     || !board.pets.is_empty()
-                    || board.stinky.is_some()
+                    || !board.stinky.is_empty()
                 {
                     return Err("rescue board disagrees with Adventure progress".into());
                 }
@@ -1653,11 +1653,11 @@ mod tests {
             .as_mut()
             .unwrap();
         boss.health -= 1001.0;
-        board.stinky = None;
-        board.niko = None;
-        board.clyde = None;
-        board.rufus = None;
-        board.rhubarb = None;
+        board.stinky.clear();
+        board.niko.clear();
+        board.clyde.clear();
+        board.rufus.clear();
+        board.rhubarb.clear();
         board.fish_pets.clear();
         let failed_tick = board.tick;
         let events = session.step(&[]);
@@ -2206,7 +2206,7 @@ mod tests {
         assert_eq!((board.tank, board.level, board.egg_price), (4, 1, 3000));
         assert_eq!(board.pets, vec![PetKind::Rhubarb]);
         assert_eq!(board.breeders.len(), 1);
-        assert!(board.rhubarb.is_some());
+        assert!(!board.rhubarb.is_empty());
         assert_eq!(session.progress.shell_balance, 1564);
         session.validate().unwrap();
     }
@@ -3008,7 +3008,7 @@ mod tests {
             board.pets,
             vec![PetKind::Niko, PetKind::Itchy, PetKind::Clyde]
         );
-        assert!(board.clyde.is_some());
+        assert!(!board.clyde.is_empty());
         assert_eq!(board.fish.len(), 2);
         assert!(board.starcatchers.is_empty());
         session.validate().unwrap();
@@ -3134,7 +3134,7 @@ mod tests {
             (2, 4, 0, 200, 7500)
         );
         assert_eq!(board.pets, vec![PetKind::Rufus]);
-        assert!(board.rufus.is_some());
+        assert!(!board.rufus.is_empty());
         assert!(board.missiles.is_empty());
         assert_eq!(
             board.invasion.as_ref().unwrap().plan.expected(),
@@ -3553,8 +3553,8 @@ mod tests {
             (board.level, board.tick, board.balance, board.egg_price),
             (5, 0, 200, 5000)
         );
-        assert!(board.stinky.is_some());
-        assert!(board.niko.is_none());
+        assert!(!board.stinky.is_empty());
+        assert!(board.niko.is_empty());
         assert_eq!(board.fish_pets.len(), 2);
         session.validate().unwrap();
     }
@@ -3598,7 +3598,7 @@ mod tests {
         session.apply_actions(&[Action::ConfirmPetSelection { accept: true }]);
         let board = session.board.as_ref().unwrap();
         assert!(board.pets.is_empty() && board.fish_pets.is_empty());
-        assert!(board.stinky.is_none() && board.niko.is_none());
+        assert!(board.stinky.is_empty() && board.niko.is_empty());
         session.validate().unwrap();
     }
 
@@ -3836,7 +3836,7 @@ mod tests {
             fade_ticks: 0,
             penta_rising: false,
         });
-        let niko = board.niko.as_mut().unwrap();
+        let niko = board.niko.first_mut().unwrap();
         niko.cycle = 1234;
         let mut pearl = crate::niko::NikoPearl::spawn(91, niko.owner_id, 96, 251);
         assert!(pearl.pick_up(niko.owner_id));
@@ -4092,7 +4092,7 @@ mod tests {
             (3, 0, 200, 2000)
         );
         assert_eq!(board.pets, vec![PetKind::Stinky, PetKind::Niko]);
-        assert!(board.niko.is_some());
+        assert!(!board.niko.is_empty());
         assert!(!board.egg_unlocked);
         session.validate().unwrap();
     }
