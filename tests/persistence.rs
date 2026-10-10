@@ -6275,9 +6275,10 @@ fn modern_missing_state_and_contradictory_completed_legacy_board_are_rejected() 
 #[test]
 fn current35_virtual_combat_preserves_owned_fish_and_reopens_active_state() {
     use turbofish_deluxe::invasion::WarningCoords;
+    use turbofish_deluxe::sim::Event;
     use turbofish_deluxe::virtual_board::VirtualCoinPose;
     use turbofish_deluxe::virtual_combat::VirtualCombatState;
-    use turbofish_deluxe::virtual_tank::VirtualCoinKind;
+    use turbofish_deluxe::virtual_tank::{VirtualCoinKind, VirtualFoodKind};
 
     // Project-owned fixture: store purchase and attractor are not an earned
     // retail profile. Combat may affect transient prey, never the fish ledger.
@@ -6308,6 +6309,7 @@ fn current35_virtual_combat_preserves_owned_fish_and_reopens_active_state() {
     let owned_id = session.virtual_tank.active_fish().next().unwrap().id;
     session.virtual_tank.alien_attractor_owned = true;
     session.virtual_tank.settings.alien_attractor_shown = true;
+    session.virtual_tank.food_upgrade_owned = true;
     let board = session.virtual_board.as_mut().unwrap();
     board.combat = VirtualCombatState::new(0);
     board.combat.wave.countdown = 1;
@@ -6319,7 +6321,6 @@ fn current35_virtual_combat_preserves_owned_fish_and_reopens_active_state() {
     });
     board.poses[0].x = 300.0;
     board.poses[0].y = 220.0;
-    assert!(board.feed(620.0, 400.0));
     board.coins.push(VirtualCoinPose {
         id: board.next_object_id,
         x: 20.0,
@@ -6329,6 +6330,19 @@ fn current35_virtual_combat_preserves_owned_fish_and_reopens_active_state() {
         age: 0,
     });
     board.next_object_id += 1;
+    let dropped = session.apply_actions(&[Action::VirtualFeed {
+        x: 620.0,
+        y: 400.0,
+        now_seconds: 100_000,
+        day_start_seconds: 86_400,
+    }]);
+    assert!(dropped.iter().any(|event| matches!(
+        event,
+        Event::VirtualFoodDropped {
+            kind: VirtualFoodKind::Upgraded,
+            ..
+        }
+    )));
     session.step(&[]);
     assert!(
         session
@@ -6344,6 +6358,34 @@ fn current35_virtual_combat_preserves_owned_fish_and_reopens_active_state() {
         owned_id
     );
     session.validate().unwrap();
+
+    let mut collected = session.clone();
+    let coin = collected.virtual_board.as_ref().unwrap().coins[0].clone();
+    let before = collected.progress.shell_balance;
+    let outcome = collected.apply_actions(&[Action::VirtualCollect {
+        x: coin.x,
+        y: coin.y,
+    }]);
+    let (amount, balance) = outcome
+        .iter()
+        .find_map(|event| match event {
+            Event::VirtualCoinCollected {
+                kind: VirtualCoinKind::Silver,
+                by_pet: false,
+                amount,
+                shell_balance,
+                ..
+            } => Some((*amount, *shell_balance)),
+            _ => None,
+        })
+        .expect("Collected physical coin emits one typed receipt");
+    assert_eq!(balance, before + amount);
+    assert_eq!(collected.progress.shell_balance, balance);
+    collected.apply_actions(&[Action::VirtualCollect {
+        x: coin.x,
+        y: coin.y,
+    }]);
+    assert_eq!(collected.progress.shell_balance, balance);
 
     let mut reopened = cli::decode_save(&current_bytes(session.clone())).unwrap();
     assert_eq!(

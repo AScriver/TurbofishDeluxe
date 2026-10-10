@@ -119,17 +119,29 @@ impl MusicCue {
             AdventurePhase::GameSelector | AdventurePhase::HelpScreen => Some(Self::PetSelection),
             AdventurePhase::AdventureFinaleInterlude
             | AdventurePhase::ChallengeInterlude { .. } => Some(Self::Interlude),
-            AdventurePhase::GameOver { .. }
-            | AdventurePhase::TimeTrialGameOver { .. }
-            | AdventurePhase::ChallengeLost
-            | AdventurePhase::VirtualTank
-            | AdventurePhase::VirtualPrestoDialog { .. }
-            | AdventurePhase::VirtualStore
+            AdventurePhase::VirtualTank | AdventurePhase::VirtualPrestoDialog { .. } => {
+                let combat = &session.virtual_board.as_ref()?.combat;
+                if combat.wave.has_live_alien() || !combat.missiles.is_empty() {
+                    Some(Self::AlienBattle)
+                } else if combat.wave.countdown == 1 {
+                    Some(Self::AlienWarning)
+                } else if (2..=275).contains(&combat.wave.countdown) {
+                    Some(Self::AlienApproach)
+                } else {
+                    // WinFish Board::StartMusic stops the tracker in a quiet
+                    // Virtual Tank, including after an encounter retires.
+                    None
+                }
+            }
+            AdventurePhase::VirtualStore
             | AdventurePhase::VirtualPurchaseConfirm { .. }
             | AdventurePhase::VirtualSetup
             | AdventurePhase::VirtualRename { .. }
             | AdventurePhase::VirtualFishSaleConfirm { .. }
-            | AdventurePhase::VirtualBackdropSaleConfirm => None,
+            | AdventurePhase::VirtualBackdropSaleConfirm => Some(Self::PetSelection),
+            AdventurePhase::GameOver { .. }
+            | AdventurePhase::TimeTrialGameOver { .. }
+            | AdventurePhase::ChallengeLost => None,
         }
     }
 }
@@ -738,6 +750,8 @@ fn run_decoder(
 mod tests {
     use super::*;
     use crate::invasion::Invasion1_2;
+    use crate::missile::ClassicMissile;
+    use crate::virtual_board::VirtualBoardState;
 
     fn owner_without_device() -> (MusicOwner, Receiver<DesiredState>) {
         let (controls, commands) = mpsc::sync_channel(MAX_COMMAND_BACKLOG);
@@ -771,6 +785,59 @@ mod tests {
         assert_eq!(MusicCue::AlienApproach.source(), ("Alien.mo3", 0));
         assert_eq!(MusicCue::AlienWarning.source(), ("Alien.mo3", 1));
         assert_eq!(MusicCue::AlienBattle.source(), ("Alien.mo3", 3));
+    }
+
+    #[test]
+    fn virtual_tank_routes_only_encounters_and_selection_screens() {
+        let mut session = AdventureSession::new(1);
+        session.virtual_board = Some(VirtualBoardState::new(&session.virtual_tank));
+        session.phase = AdventurePhase::VirtualTank;
+        let combat = &mut session.virtual_board.as_mut().unwrap().combat;
+        combat.wave.countdown = 3_000;
+        assert_eq!(MusicCue::for_session(&session), None);
+
+        session
+            .virtual_board
+            .as_mut()
+            .unwrap()
+            .combat
+            .wave
+            .countdown = 275;
+        assert_eq!(
+            MusicCue::for_session(&session),
+            Some(MusicCue::AlienApproach)
+        );
+        session
+            .virtual_board
+            .as_mut()
+            .unwrap()
+            .combat
+            .wave
+            .countdown = 1;
+        assert_eq!(
+            MusicCue::for_session(&session),
+            Some(MusicCue::AlienWarning)
+        );
+        session
+            .virtual_board
+            .as_mut()
+            .unwrap()
+            .combat
+            .missiles
+            .push(ClassicMissile::launch(1, 2, 100, 100, 0));
+        session.phase = AdventurePhase::VirtualPrestoDialog { pressed: None };
+        assert_eq!(MusicCue::for_session(&session), Some(MusicCue::AlienBattle));
+
+        session.phase = AdventurePhase::VirtualStore;
+        assert_eq!(
+            MusicCue::for_session(&session),
+            Some(MusicCue::PetSelection)
+        );
+        session.phase = AdventurePhase::VirtualSetup;
+        assert_eq!(
+            MusicCue::for_session(&session),
+            Some(MusicCue::PetSelection)
+        );
     }
 
     #[test]

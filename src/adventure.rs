@@ -534,7 +534,7 @@ impl AdventureSession {
         }
         // Project input policy: coin, interactive pet, combat, fish selection,
         // then free food. Retail overlapping widget precedence remains pending.
-        if let Some(amount) = board.collect(
+        if let Some((kind, amount)) = board.collect(
             x,
             y,
             &mut self.virtual_tank,
@@ -542,23 +542,38 @@ impl AdventureSession {
         ) {
             events.push(Event::VirtualCoinCollected {
                 tick: self.ticks,
+                kind,
+                by_pet: false,
                 amount,
                 shell_balance: self.progress.shell_balance,
             });
             return;
         }
-        if let Some(specialty) = board.click_pet(x, y) {
-            if specialty == crate::virtual_board::VirtualPetClick::AmpShock {
-                board.discharge_amp(self.virtual_tank.settings.drop_shells);
-            }
+        if let Some((pet, specialty)) = board.click_pet(x, y) {
+            use crate::sim::VirtualPetAction;
+            let action = match specialty {
+                crate::virtual_board::VirtualPetClick::WalterPunch => VirtualPetAction::WalterPunch,
+                crate::virtual_board::VirtualPetClick::AmpCharge => VirtualPetAction::AmpCharge,
+                crate::virtual_board::VirtualPetClick::AmpShock => VirtualPetAction::AmpShock {
+                    victims: board.discharge_amp(self.virtual_tank.settings.drop_shells),
+                },
+            };
+            events.push(Event::VirtualPetActed {
+                tick: self.ticks,
+                pet,
+                action,
+            });
             events.push(Event::VirtualTankChanged { tick: self.ticks });
             return;
         }
         let seed = Cell::new(self.virtual_seed);
-        let (handled, changes) =
-            board.click_combat(x, y, self.virtual_tank.settings.drop_shells, &mut |limit| {
-                virtual_roll(&seed) as u64 % limit.max(1)
-            });
+        let (handled, changes) = board.click_combat(
+            x,
+            y,
+            &self.virtual_tank,
+            self.virtual_tank.settings.drop_shells,
+            &mut |limit| virtual_roll(&seed) as u64 % limit.max(1),
+        );
         self.virtual_seed = seed.get();
         events.extend(changes);
         if handled {
@@ -571,7 +586,14 @@ impl AdventureSession {
             .map(|pose| pose.fish_id)
         {
             let _ = self.virtual_tank.select_fish(id);
-        } else if !board.feed(x, y) {
+        } else if board.feed_for_tank(&self.virtual_tank, x, y) {
+            let food = board.food.last().expect("Accepted Virtual Tank food");
+            events.push(Event::VirtualFoodDropped {
+                tick: self.ticks,
+                food_id: food.id,
+                kind: food.kind,
+            });
+        } else {
             events.push(Event::Rejected {
                 tick: self.ticks,
                 reason: Rejection::OutsideTank,
@@ -701,18 +723,22 @@ impl AdventureSession {
                     return;
                 }
                 self.virtual_saved_at_seconds = *now_seconds;
-                if self
-                    .virtual_board
-                    .as_mut()
-                    .is_some_and(|board| board.feed(*x, *y))
+                if let Some(board) = self.virtual_board.as_mut()
+                    && board.feed_for_tank(&self.virtual_tank, *x, *y)
                 {
+                    let food = board.food.last().expect("Accepted Virtual Tank food");
+                    events.push(Event::VirtualFoodDropped {
+                        tick,
+                        food_id: food.id,
+                        kind: food.kind,
+                    });
                     changed(events);
                 } else {
                     reject(events, Rejection::OutsideTank);
                 }
             }
             (AdventurePhase::VirtualTank, Action::VirtualCollect { x, y }) => {
-                if let Some(amount) = self.virtual_board.as_mut().and_then(|board| {
+                if let Some((kind, amount)) = self.virtual_board.as_mut().and_then(|board| {
                     board.collect(
                         *x,
                         *y,
@@ -722,6 +748,8 @@ impl AdventureSession {
                 }) {
                     events.push(Event::VirtualCoinCollected {
                         tick,
+                        kind,
+                        by_pet: false,
                         amount,
                         shell_balance: self.progress.shell_balance,
                     });
@@ -3259,12 +3287,12 @@ impl AdventureSession {
                 if let Some(board) = &mut self.virtual_board {
                     let day_start = self.virtual_saved_at_seconds / 86_400 * 86_400;
                     let seed = Cell::new(self.virtual_seed);
-                    board.update(
+                    events.extend(board.update(
                         &mut self.virtual_tank,
                         self.virtual_saved_at_seconds,
                         day_start,
                         &mut |limit| virtual_roll(&seed) as u64 % limit.max(1),
-                    );
+                    ));
                     events.extend(board.update_combat(&self.virtual_tank, &mut |limit| {
                         virtual_roll(&seed) as u64 % limit.max(1)
                     }));
@@ -3273,11 +3301,13 @@ impl AdventureSession {
                         &mut self.virtual_tank,
                         &mut self.progress.shell_balance,
                     );
-                    if collected > 0 {
+                    for (kind, amount, shell_balance) in collected {
                         events.push(Event::VirtualCoinCollected {
                             tick: self.ticks,
-                            amount: collected,
-                            shell_balance: self.progress.shell_balance,
+                            kind,
+                            by_pet: true,
+                            amount,
+                            shell_balance,
                         });
                     }
                 }

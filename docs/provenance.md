@@ -40,6 +40,8 @@ The bounded Tank4-3/Amp study is registered before functional inspection. It sta
 
 Amp's click-routing study additionally registers pinned W1 `source/SexyAppFramework/{WidgetManager,Widget,WidgetContainer}.{cpp,h}` for the accepted mouse rectangle, insets and event dispatch. The existing separate framework license/study boundaries apply; no framework implementation is incorporated.
 
+The subsequent VT audio/trait join additionally studies W1 `BubbleMgr.{cpp,h}` under the same pinned revision and study/license boundary, for the Bubbulator's visible effect. It reuses registered Fish/GameObject/Board/Coin/pet/resource paths. No new source project, primary export or asset reuse scope is introduced; exact audible/visual timing remains pending.
+
 ## Primary reference
 
 **G1 — AI Game Modding Guides**, by Trev and contributors, [repository](https://github.com/trevaintdead/ai-game-modding-guides), revision **`1c8df26a64f3d8604fa05ac2b3d3b65c0dde31ef`**, retrieved 2026-10-08. The checkout was clean. License: MIT for repository text, verified in its `LICENSE`; preserved in [THIRD-PARTY-NOTICES](../THIRD-PARTY-NOTICES.md).

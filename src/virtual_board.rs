@@ -4,8 +4,7 @@
 use crate::alien::{AlienFoodView, PreyView};
 use crate::invasion::InvasionEvent;
 use crate::missile::MissileKind;
-use crate::sim::Event;
-use crate::sim::PetKind;
+use crate::sim::{Event, PetKind, VirtualPetAction};
 use crate::virtual_combat::{VirtualCombatClick, VirtualCombatEvent, VirtualCombatState};
 use crate::virtual_tank::{
     FeedResult, VirtualCoinKind, VirtualFishKind, VirtualFoodKind, VirtualProduction,
@@ -110,6 +109,12 @@ fn pet_threshold(kind: PetKind) -> u32 {
 }
 
 impl VirtualBoardState {
+    /// The current Board clock projects the source's 500-update effect cycle.
+    /// A separate retail particle RNG/hidden-device clock remains unverified.
+    pub fn bubbulator_cycle(&self) -> u16 {
+        (self.tick % 500) as u16
+    }
+
     pub fn new(tank: &VirtualTankState) -> Self {
         let mut board = Self {
             tick: 0,
@@ -325,6 +330,20 @@ impl VirtualBoardState {
         self.feed_kind(x, y, VirtualFoodKind::Basic)
     }
 
+    /// The purchased food upgrade changes pellets created after checkout.
+    /// Existing pellets and food supplied by pets keep their original kind.
+    pub fn feed_for_tank(&mut self, tank: &VirtualTankState, x: f32, y: f32) -> bool {
+        self.feed_kind(
+            x,
+            y,
+            if tank.food_upgrade_owned {
+                VirtualFoodKind::Upgraded
+            } else {
+                VirtualFoodKind::Basic
+            },
+        )
+    }
+
     pub fn feed_kind(&mut self, x: f32, y: f32, kind: VirtualFoodKind) -> bool {
         if !(20.0..=620.0).contains(&x) || !(55.0..=455.0).contains(&y) || self.food.len() >= 12 {
             return false;
@@ -344,6 +363,7 @@ impl VirtualBoardState {
         &mut self,
         x: f32,
         y: f32,
+        tank: &VirtualTankState,
         drop_shells: bool,
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> (bool, Vec<Event>) {
@@ -360,11 +380,20 @@ impl VirtualBoardState {
         );
         match outcome {
             VirtualCombatClick::FeedGus { ineligible_ticks } => {
-                if self.feed(x, y) {
+                if self.feed_for_tank(tank, x, y) {
                     self.food
                         .last_mut()
                         .expect("accepted food")
                         .ineligible_ticks = ineligible_ticks;
+                    let food = self.food.last().expect("accepted food");
+                    return (
+                        true,
+                        vec![Event::VirtualFoodDropped {
+                            tick: self.tick,
+                            food_id: food.id,
+                            kind: food.kind,
+                        }],
+                    );
                 }
                 (true, Vec::new())
             }
@@ -440,19 +469,21 @@ impl VirtualBoardState {
     }
 
     /// Discharge removes temporary guppies; purchased fish never enter this list.
-    pub fn discharge_amp(&mut self, drop_shells: bool) {
+    pub fn discharge_amp(&mut self, drop_shells: bool) -> bool {
         let positions: Vec<_> = self
             .prey
             .iter()
             .filter(|prey| prey.kind == VirtualFoodKind::Guppy)
             .map(|prey| (prey.x, prey.y))
             .collect();
+        let had_victims = !positions.is_empty();
         self.prey.retain(|prey| prey.kind != VirtualFoodKind::Guppy);
         if drop_shells {
             for (x, y) in positions {
                 self.drop_coin(x, y, VirtualCoinKind::Diamond);
             }
         }
+        had_victims
     }
 
     fn settle_combat_events(
@@ -562,7 +593,7 @@ impl VirtualBoardState {
 
     /// Input admission only. Adventure owns dialogs and sound events; this
     /// Board pose owns the resulting glove and specialty clocks.
-    pub fn click_pet(&mut self, x: f32, y: f32) -> Option<VirtualPetClick> {
+    pub fn click_pet(&mut self, x: f32, y: f32) -> Option<(PetKind, VirtualPetClick)> {
         let pet = self
             .pets
             .iter_mut()
@@ -571,16 +602,16 @@ impl VirtualBoardState {
             PetKind::Walter if pet.glove.is_none() && pet.walter_action_ticks == 0 => {
                 pet.glove = Some(Glove::new(pet.vx >= 0.0));
                 pet.walter_action_ticks = 40;
-                Some(VirtualPetClick::WalterPunch)
+                Some((pet.kind, VirtualPetClick::WalterPunch))
             }
             PetKind::Amp if pet.timer >= pet.threshold => {
                 if pet.amp_charge < 2 {
                     pet.amp_charge += 1;
-                    Some(VirtualPetClick::AmpCharge)
+                    Some((pet.kind, VirtualPetClick::AmpCharge))
                 } else {
                     pet.amp_charge = 0;
                     pet.timer = 0;
-                    Some(VirtualPetClick::AmpShock)
+                    Some((pet.kind, VirtualPetClick::AmpShock))
                 }
             }
             _ => None,
@@ -626,7 +657,7 @@ impl VirtualBoardState {
         y: f32,
         tank: &mut VirtualTankState,
         shells: &mut u32,
-    ) -> Option<u32> {
+    ) -> Option<(VirtualCoinKind, u32)> {
         let index = self
             .coins
             .iter()
@@ -637,13 +668,17 @@ impl VirtualBoardState {
         {
             pet.niko_pearl_taken = true;
         }
-        Some(tank.collect_coin(shells, coin.kind, 1, false))
+        Some((coin.kind, tank.collect_coin(shells, coin.kind, 1, false)))
     }
 
     /// Coin collectors act on actual Board coin poses; Profile's wallet is
     /// still credited only through the durable tank collection transaction.
-    pub fn collect_pet_coins(&mut self, tank: &mut VirtualTankState, shells: &mut u32) -> u32 {
-        let mut earned: u32 = 0;
+    pub fn collect_pet_coins(
+        &mut self,
+        tank: &mut VirtualTankState,
+        shells: &mut u32,
+    ) -> Vec<(VirtualCoinKind, u32, u32)> {
+        let mut collected = Vec::new();
         let mut index = 0;
         while index < self.coins.len() {
             let coin = &self.coins[index];
@@ -657,12 +692,13 @@ impl VirtualBoardState {
                 });
             if reached {
                 let coin = self.coins.remove(index);
-                earned = earned.saturating_add(tank.collect_coin(shells, coin.kind, 1, false));
+                let amount = tank.collect_coin(shells, coin.kind, 1, false);
+                collected.push((coin.kind, amount, *shells));
             } else {
                 index += 1;
             }
         }
-        earned
+        collected
     }
 
     pub fn update(
@@ -671,8 +707,13 @@ impl VirtualBoardState {
         now_seconds: u64,
         day_start_seconds: u64,
         rand_range: &mut impl FnMut(u64) -> u64,
-    ) {
+    ) -> Vec<Event> {
         self.tick = self.tick.saturating_add(1);
+        let bubbulator_pulsed = tank.settings.bubbulator_shown && self.bubbulator_cycle() == 13;
+        let mut events = Vec::new();
+        if bubbulator_pulsed {
+            events.push(Event::VirtualBubbulatorPulsed { tick: self.tick });
+        }
         self.sync_fish(tank);
         self.sync_pets(tank);
         for pose in &mut self.poses {
@@ -819,10 +860,34 @@ impl VirtualBoardState {
                 if pet.timer == 1_233 {
                     pet.niko_pearl_taken = false;
                     pet_coins.push((pet.x, pet.y, VirtualCoinKind::NikoPearl, Some(pet.kind)));
+                    events.push(Event::VirtualPetActed {
+                        tick: self.tick,
+                        pet: pet.kind,
+                        action: VirtualPetAction::NikoOpen,
+                    });
                 } else if pet.timer >= 1_450 {
                     pet.timer = rand_range(50) as u32;
+                    events.push(Event::VirtualPetActed {
+                        tick: self.tick,
+                        pet: pet.kind,
+                        action: VirtualPetAction::NikoClose,
+                    });
                 }
                 continue;
+            }
+            if form == PetKind::Meryl && pet.timer == 1_300 {
+                events.push(Event::VirtualPetActed {
+                    tick: self.tick,
+                    pet: pet.kind,
+                    action: VirtualPetAction::MerylSing,
+                });
+            }
+            if form == PetKind::Amp && pet.timer == pet.threshold {
+                events.push(Event::VirtualPetActed {
+                    tick: self.tick,
+                    pet: pet.kind,
+                    action: VirtualPetAction::AmpReady,
+                });
             }
             if pet.timer < pet.threshold {
                 continue;
@@ -848,6 +913,11 @@ impl VirtualBoardState {
                 }
                 PetKind::Prego if self.prey.len() + pet_prey.len() < 10 => {
                     pet_prey.push((pet.x, pet.y));
+                    events.push(Event::VirtualPetActed {
+                        tick: self.tick,
+                        pet: pet.kind,
+                        action: VirtualPetAction::PregoBirth,
+                    });
                     pet.timer = 0;
                     pet.threshold = if self.prey.len() > 5 { 1_230 } else { 930 };
                 }
@@ -857,6 +927,11 @@ impl VirtualBoardState {
                 }
                 PetKind::Shrapnel => {
                     pet_coins.push((pet.x, pet.y, VirtualCoinKind::ShrapnelBomb, None));
+                    events.push(Event::VirtualPetActed {
+                        tick: self.tick,
+                        pet: pet.kind,
+                        action: VirtualPetAction::ShrapnelDrop,
+                    });
                     pet.timer = 0;
                 }
                 PetKind::Nostradamus => {
@@ -910,16 +985,48 @@ impl VirtualBoardState {
         let mut newborns = Vec::new();
         let mut cookie_due = Vec::new();
         for pose in &mut self.poses {
-            pose.x += pose.vx;
+            // W1 Fish::Update divides displacement by 0.3 for an idle Speedy
+            // fish and 0.8 after finding nearby food. Our pose velocity uses
+            // a normalized scale, so retain that faster-idle/slower-feeding
+            // relationship without introducing actor-specific speed state.
+            let fish = tank.active_fish().find(|fish| fish.id == pose.fish_id);
+            let speedy = fish.is_some_and(|fish| fish.properties.speedy);
+            let preferred = fish.map(|fish| fish.preferred_food());
+            let food_nearby = self.food.iter().any(|food| {
+                let edible = preferred.is_some_and(|kind| {
+                    food.kind == kind
+                        || (food.kind == VirtualFoodKind::Upgraded
+                            && kind == VirtualFoodKind::Basic)
+                        || (fish.is_some_and(|fish| fish.kind == VirtualFishKind::Guppy)
+                            && matches!(food.kind, VirtualFoodKind::Snot | VirtualFoodKind::Star))
+                });
+                edible && (food.x - pose.x).abs() < 100.0 && (food.y - pose.y).abs() < 100.0
+            }) || self.prey.iter().any(|prey| {
+                prey.age >= 40
+                    && preferred == Some(prey.kind)
+                    && (prey.x - pose.x).abs() < 100.0
+                    && (prey.y - pose.y).abs() < 100.0
+            });
+            if food_nearby
+                && fish.is_some_and(|fish| fish.properties.voracious)
+                && self.tick % 150 == u64::from(pose.fish_id) % 150
+            {
+                events.push(Event::VirtualFishVocalized {
+                    tick: self.tick,
+                    fish_id: pose.fish_id,
+                });
+            }
+            pose.x += pose.vx
+                * if speedy {
+                    if food_nearby { 1.5 } else { 3.0 }
+                } else {
+                    1.0
+                };
             if pose.x <= 24.0 || pose.x >= 616.0 {
                 pose.x = pose.x.clamp(24.0, 616.0);
                 pose.vx = -pose.vx;
             }
-            let Some(preferred) = tank
-                .active_fish()
-                .find(|fish| fish.id == pose.fish_id)
-                .map(|fish| fish.preferred_food())
-            else {
+            let Some(preferred) = preferred else {
                 continue;
             };
             if let Some(fish) = tank
@@ -930,11 +1037,7 @@ impl VirtualBoardState {
                 fish.tick_hunger(true);
             }
             let food_index = self.food.iter().position(|food| {
-                let kind = if food.kind == VirtualFoodKind::Basic && tank.food_upgrade_owned {
-                    VirtualFoodKind::Upgraded
-                } else {
-                    food.kind
-                };
+                let kind = food.kind;
                 (kind == preferred
                     || (kind == VirtualFoodKind::Upgraded && preferred == VirtualFoodKind::Basic)
                     || (matches!(kind, VirtualFoodKind::Snot | VirtualFoodKind::Star)
@@ -958,33 +1061,38 @@ impl VirtualBoardState {
                     })
                     .map(|index| (self.prey[index].kind, true, index))
             };
-            if let Some((kind, is_prey, index)) = food_kind {
-                let kind = if kind == VirtualFoodKind::Basic && tank.food_upgrade_owned {
-                    VirtualFoodKind::Upgraded
-                } else {
-                    kind
-                };
-                if let Ok(result) =
+            if let Some((kind, is_prey, index)) = food_kind
+                && let Ok(result) =
                     tank.feed_fish(pose.fish_id, kind, now_seconds, day_start_seconds)
+            {
+                if is_prey {
+                    self.prey.remove(index);
+                } else {
+                    self.food.remove(index);
+                }
+                events.push(Event::VirtualFishFed {
+                    tick: self.tick,
+                    fish_id: pose.fish_id,
+                    prey: is_prey,
+                });
+                if matches!(result, FeedResult::Grew(_)) {
+                    events.push(Event::VirtualFishGrew {
+                        tick: self.tick,
+                        fish_id: pose.fish_id,
+                    });
+                }
+                if let FeedResult::Coin(coin_kind) = result
+                    && tank.settings.drop_shells
                 {
-                    if is_prey {
-                        self.prey.remove(index);
-                    } else {
-                        self.food.remove(index);
-                    }
-                    if let FeedResult::Coin(coin_kind) = result
-                        && tank.settings.drop_shells
-                    {
-                        self.coins.push(VirtualCoinPose {
-                            id: self.next_object_id,
-                            x: pose.x,
-                            y: pose.y,
-                            kind: coin_kind,
-                            niko_owner: None,
-                            age: 0,
-                        });
-                        self.next_object_id = self.next_object_id.saturating_add(1);
-                    }
+                    self.coins.push(VirtualCoinPose {
+                        id: self.next_object_id,
+                        x: pose.x,
+                        y: pose.y,
+                        kind: coin_kind,
+                        niko_owner: None,
+                        age: 0,
+                    });
+                    self.next_object_id = self.next_object_id.saturating_add(1);
                 }
             }
             if let Some(fish) = tank
@@ -1095,5 +1203,6 @@ impl VirtualBoardState {
         }
         self.sync_fish(tank);
         self.sync_pets(tank);
+        events
     }
 }

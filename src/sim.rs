@@ -754,6 +754,20 @@ pub enum Rejection {
     MaximumUpgrade,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VirtualPetAction {
+    AmpReady,
+    AmpCharge,
+    AmpShock { victims: bool },
+    WalterPunch,
+    MerylSing,
+    NikoOpen,
+    NikoClose,
+    PregoBirth,
+    ShrapnelDrop,
+    BlipSonar,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Event {
     VirtualTankChanged {
@@ -761,8 +775,36 @@ pub enum Event {
     },
     VirtualCoinCollected {
         tick: u64,
+        kind: crate::virtual_tank::VirtualCoinKind,
+        by_pet: bool,
         amount: u32,
         shell_balance: u32,
+    },
+    VirtualFoodDropped {
+        tick: u64,
+        food_id: u64,
+        kind: crate::virtual_tank::VirtualFoodKind,
+    },
+    VirtualFishFed {
+        tick: u64,
+        fish_id: u16,
+        prey: bool,
+    },
+    VirtualFishGrew {
+        tick: u64,
+        fish_id: u16,
+    },
+    VirtualFishVocalized {
+        tick: u64,
+        fish_id: u16,
+    },
+    VirtualBubbulatorPulsed {
+        tick: u64,
+    },
+    VirtualPetActed {
+        tick: u64,
+        pet: PetKind,
+        action: VirtualPetAction,
     },
     BlipShopRevealed {
         tick: u64,

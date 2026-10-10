@@ -18,6 +18,7 @@ use crate::{
     settings::{GameSettings, SettingChange, SettingsBackend, SettingsCapabilities, SettingsSave},
     sim::{
         Action, AdventureState, CoinKind, Event, FishPose, FishSize, FoodType, PetKind, TICK_MS,
+        VirtualPetAction,
     },
     timing::{InputPress, StepClock, wall_deadline_reached},
     ultra::UltraPose,
@@ -204,6 +205,8 @@ const SOUND_IDS: &[&str] = &[
     "SOUND_EEL1",
     "SOUND_EEL2",
     "SOUND_EEL3",
+    "SOUND_PRIMALSCREAM",
+    "SOUND_BUBBLES",
 ];
 
 const ADDITIVE_VERTEX: &str = r#"#version 100
@@ -635,7 +638,25 @@ impl Presentation {
                         | CoinKind::ShellDiamondPenta,
                     ..
                 } => continue,
-                Event::CoinCredited { .. } | Event::VirtualCoinCollected { .. } => "SOUND_POINTS",
+                Event::CoinCredited { .. } => "SOUND_POINTS",
+                Event::VirtualCoinCollected {
+                    kind: VirtualCoinKind::Pearl | VirtualCoinKind::NikoPearl,
+                    ..
+                } => "SOUND_PEARL",
+                Event::VirtualCoinCollected {
+                    kind: VirtualCoinKind::Diamond,
+                    ..
+                } => "SOUND_DIAMOND",
+                Event::VirtualCoinCollected {
+                    kind: VirtualCoinKind::Treasure,
+                    ..
+                } => "SOUND_TREASURE",
+                Event::VirtualCoinCollected {
+                    kind: VirtualCoinKind::Peanut,
+                    by_pet: false,
+                    ..
+                } => "SOUND_CHOMP",
+                Event::VirtualCoinCollected { .. } => "SOUND_POINTS",
                 Event::GuppyBought { .. }
                 | Event::EggBought { .. }
                 | Event::FoodQualityBought { .. }
@@ -748,7 +769,25 @@ impl Presentation {
                 | Event::PetSelectionChanged { .. }
                 | Event::PetSelectionConfirmation { .. }
                 | Event::BonusPurchaseOffered { .. } => "SOUND_BUTTONCLICK",
-                Event::VirtualTankChanged { .. } => "SOUND_BUTTONCLICK",
+                Event::VirtualFoodDropped { .. } => "SOUND_DROPFOOD",
+                Event::VirtualFishFed { prey: true, .. } => "SOUND_CHOMP",
+                Event::VirtualFishFed { prey: false, .. } => "SOUND_SLURP",
+                Event::VirtualFishGrew { .. } => "SOUND_GROW",
+                Event::VirtualFishVocalized { .. } => "SOUND_PRIMALSCREAM",
+                Event::VirtualBubbulatorPulsed { .. } => "SOUND_BUBBLES",
+                Event::VirtualPetActed { action, .. } => match action {
+                    VirtualPetAction::AmpReady => "SOUND_EEL2",
+                    VirtualPetAction::AmpCharge => "SOUND_EEL3",
+                    VirtualPetAction::AmpShock { .. } => "SOUND_EEL1",
+                    VirtualPetAction::WalterPunch => "SOUND_SFX",
+                    VirtualPetAction::MerylSing => "SOUND_SING",
+                    VirtualPetAction::NikoOpen => "SOUND_NIKOOPEN",
+                    VirtualPetAction::NikoClose => "SOUND_NIKOCLOSE",
+                    VirtualPetAction::PregoBirth => "SOUND_BABY",
+                    VirtualPetAction::ShrapnelDrop => "SOUND_UNLEASH",
+                    VirtualPetAction::BlipSonar => "SOUND_SONAR",
+                },
+                Event::VirtualTankChanged { .. } => continue,
                 _ => continue,
             };
             for effect_id in std::iter::once(id)
@@ -767,6 +806,16 @@ impl Presentation {
                 .chain(
                     matches!(event, Event::AmpDischarged { victim_ids, .. }
                     if !victim_ids.is_empty())
+                    .then_some("SOUND_DIE"),
+                )
+                .chain(
+                    matches!(
+                        event,
+                        Event::VirtualPetActed {
+                            action: VirtualPetAction::AmpShock { victims: true },
+                            ..
+                        }
+                    )
                     .then_some("SOUND_DIE"),
                 )
                 .chain(
@@ -3468,6 +3517,63 @@ impl Presentation {
         self.main_button(Rect::new(186.0, 445.0, 264.0, height), "Main Menu");
     }
 
+    fn draw_virtual_bubbulator(
+        &self,
+        session: &AdventureSession,
+        board: &crate::virtual_board::VirtualBoardState,
+    ) {
+        if !session.virtual_tank.settings.bubbulator_shown {
+            return;
+        }
+        // W1 Board::GetBubbleSpawnCoords, adapted to the displayed backdrop.
+        let (x, y) = match session.virtual_tank.backdrop {
+            0 => (470.0, 300.0),
+            1 => (550.0, 315.0),
+            2 => (10.0, 325.0),
+            3 => (540.0, 315.0),
+            _ => (360.0, 315.0),
+        };
+        let cycle = board.bubbulator_cycle();
+        if let Some(image) = self.images.get("IMAGE_BUBBULATOR") {
+            let width = image.width() / 20.0;
+            let cel = if cycle < 60 { cycle % 20 } else { 0 };
+            self.sprite(
+                "IMAGE_BUBBULATOR",
+                x,
+                y,
+                Some(Rect::new(
+                    f32::from(cel) * width,
+                    0.0,
+                    width,
+                    image.height(),
+                )),
+                false,
+                1.0,
+                1.0,
+            );
+        }
+        if let Some(image) = self.images.get("IMAGE_BUBBLES") {
+            let width = image.width() / 4.0;
+            // Source-shaped bursts use a deterministic visual projection;
+            // the retail particle RNG/speeds are not recovered here.
+            for pulse in [13, 33, 53] {
+                if let Some(age) = cycle.checked_sub(pulse).filter(|age| *age < 120) {
+                    for index in 0..7 {
+                        let rise = f32::from(age) * (1.8 + index as f32 * 0.08);
+                        self.additive_sprite(
+                            "IMAGE_BUBBLES",
+                            x + 5.0 + index as f32 * 6.0,
+                            y - 15.0 - rise,
+                            Rect::new((index % 4) as f32 * width, 0.0, width, image.height()),
+                            false,
+                            1.0,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     fn draw_virtual_tank(&self, session: &AdventureSession) {
         let background = match session.virtual_tank.backdrop {
             0 => "IMAGE_AQUARIUM1",
@@ -3478,6 +3584,7 @@ impl Presentation {
         };
         self.sprite(background, 0.0, 0.0, None, false, 1.0, 1.0);
         if let Some(board) = &session.virtual_board {
+            self.draw_virtual_bubbulator(session, board);
             for food in &board.food {
                 let color = match food.kind {
                     crate::virtual_tank::VirtualFoodKind::Basic => ORANGE,
@@ -3526,7 +3633,7 @@ impl Presentation {
                         frame_size,
                         frame_size,
                     )),
-                    pose.vx > 0.0,
+                    (pose.vx > 0.0) ^ fish.properties.backward,
                     1.0,
                     if fish.properties.invisible { 0.35 } else { 1.0 },
                 );
