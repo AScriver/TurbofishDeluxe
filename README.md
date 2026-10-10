@@ -10,7 +10,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 
 ## Start here
 
-- Current35 adds [Virtual Tank combat/pets](docs/virtual-tank.md#current35-combat-and-pet-checkpoint) and [audio/traits](docs/virtual-tank.md#current35-audio-and-trait-checkpoint); focused checks, lint and build passed. [Sandbox](docs/sandbox.md), [shared profiles/options/scores/songs/ending](docs/shared-interface.md), [Challenge](docs/challenge.md#current32-implementation-checkpoint) and [Adventure replay](docs/adventure-replay.md) remain integrated. Next: VT gameplay sprites and remaining functional omissions. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
+- Current35 adds [Virtual Tank combat/pets](docs/virtual-tank.md#current35-combat-and-pet-checkpoint), [audio/traits](docs/virtual-tank.md#current35-audio-and-trait-checkpoint) and [gameplay sprites](docs/virtual-tank.md#current35-gameplay-sprite-checkpoint); focused checks, lint and build passed. [Sandbox](docs/sandbox.md), [shared profiles/options/scores/songs/ending](docs/shared-interface.md), [Challenge](docs/challenge.md#current32-implementation-checkpoint) and [Adventure replay](docs/adventure-replay.md) remain integrated. Next: paged Help, earned Story browsing and remaining functional omissions. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
 - Agents: read [AGENTS.md](AGENTS.md), then follow its startup order.
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).

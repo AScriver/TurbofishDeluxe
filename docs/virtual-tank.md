@@ -1,6 +1,6 @@
 # Virtual Tank and store
 
-Current33 integrates store/setup, current34 adds special diets/basic pet effects, and current35 joins combat, remaining pet interactions and audio/traits. Focused compile/lint/regressions passed; native acceptance remains not tested. Gameplay sprites are next. [STATUS](../STATUS.md) owns current verification. [BR05/06](binary-recovery.md#br05--virtual-tank-setup-and-store) owns the primary recovery outline; [provenance](provenance.md) owns source and license boundaries.
+Current33 integrates store/setup, current34 adds special diets/basic pet effects, and current35 joins combat, remaining pet interactions, audio/traits and gameplay sprites. Focused compile/lint/regressions passed; native acceptance remains not tested. [STATUS](../STATUS.md) owns current verification. [BR05/06](binary-recovery.md#br05--virtual-tank-setup-and-store) owns the primary recovery outline; [provenance](provenance.md) owns source and license boundaries.
 
 ## Ownership and integration
 
@@ -51,3 +51,9 @@ E104 joins [VT cues and typed effects](audio.md#virtual-tank-audio-join), upgrad
 Pinned W1 sources: `Fish.cpp:521–530,550–577` (Speedy and Backward), `GameObject.cpp:650–657` (Voracious animation/voice), `StoreScreen.cpp:396` and `Board.cpp:4910–4922` (food upgrade/drop), `BubbleMgr.cpp:229–290` and `Board.cpp:660–678,1658–1663,4769–4798` (Bubbulator). These are secondary-source-derived rules. Speedy divisors are scaled into current pose velocities. Voracious uses a projected150-tick fish-ID-staggered cadence near eligible food; no feeding/growth multiplier was invented. Existing pellets retain their drop-time quality.
 
 The Bubbulator uses original device/bubble sheets and source-shaped bursts. Its500-tick cycle, particle positions/rise and current backdrop placement are project projections rather than recovered retail clocks/RNG. Exact visual and audible timing remains unverified. Source-disabled VT Blip targeting remains disabled; the typed sonar effect is available without an invented idle producer. Next render change uses species/size/hunger sheets and typed food/prey/coins from existing Board state. Exact eat/turn/palette/order and native/human comparison remain deferred.
+
+## Current35 gameplay sprite checkpoint
+
+E105 replaces bought-fish store thumbnails with Guppy/Oscar/Ultra/Gekko/Penta/Grubber/Breeder/Sylvester/Ball/Bi gameplay sheets, using existing size, vitals, pose and Board tick. The durable hunger/fed-today/always-show predicate selects hungry presentation. Backward facing, invisible alpha, names, Bubbulator, pets and combat remain intact. Food/prey and each physical coin kind use their corresponding installed images. Five missing resource IDs were added; assets are loaded read-only and remain untracked.
+
+W1 sources: `GameObject.cpp:564`, `Fish.cpp:984+`, `Oscar.cpp:172+`, `Ultra.cpp:145+`, `Gekko.cpp:412+`, `Penta.cpp:360+`, `Grubber.cpp:525+`, `Breeder.cpp:1100+`, `SylvesterFish.cpp:172+`, `BallFish.cpp:154+`, `BiFish.cpp:176+`, `Food.cpp:173+`, `Coin.cpp:370+` and `Res.cpp:400,422,465,495,504`. Sheet/frame timing, exact eat/turn animations, palette/blending and draw order remain secondary-source presentation projections. No native visual comparison was performed. Formatting/lint/build passed after a field-name correction; no tests executed for this presentation-only increment. [MODLOG](../MODLOG.md#2026-10-10--render-virtual-gameplay-sprites) owns the frozen identity and failure.

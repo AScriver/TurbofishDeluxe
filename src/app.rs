@@ -22,7 +22,10 @@ use crate::{
     },
     timing::{InputPress, StepClock, wall_deadline_reached},
     ultra::UltraPose,
-    virtual_tank::{NamedFish, StoreProduct, VirtualCoinKind, VirtualFishKind},
+    virtual_tank::{
+        FishSize as VirtualFishSize, NamedFish, StoreProduct, VirtualCoinKind, VirtualFishKind,
+        VirtualFoodKind,
+    },
 };
 use macroquad::miniquad::{BlendFactor, BlendState, BlendValue, Equation};
 use macroquad::prelude::*;
@@ -51,7 +54,11 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_HUNGRYEAT",
     "IMAGE_HUNGRYTURN",
     "IMAGE_FOOD",
+    "IMAGE_PIZZA",
+    "IMAGE_ICECREAM",
+    "IMAGE_CHICKEN",
     "IMAGE_MONEY",
+    "IMAGE_PEANUT",
     "IMAGE_MISCITEMS",
     "IMAGE_SPARKS",
     "IMAGE_EXPLOSION",
@@ -72,6 +79,7 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_NIKO",
     "IMAGE_PEARL",
     "IMAGE_SYLV",
+    "IMAGE_BALLS",
     "IMAGE_GUS",
     "IMAGE_DESTRUCTOR",
     "IMAGE_PSYCHOSQUID",
@@ -3574,6 +3582,45 @@ impl Presentation {
         }
     }
 
+    fn draw_virtual_food(&self, kind: VirtualFoodKind, x: f32, y: f32, tick: u64) {
+        let frame = (tick / 3 % 10) as f32;
+        let (image, size, row) = match kind {
+            VirtualFoodKind::Basic => ("IMAGE_FOOD", 40.0, 0.0),
+            VirtualFoodKind::Upgraded => ("IMAGE_FOOD", 40.0, 1.0),
+            VirtualFoodKind::Snot => ("IMAGE_FOOD", 40.0, 4.0),
+            VirtualFoodKind::Star => ("IMAGE_MONEY", 72.0, 2.0),
+            VirtualFoodKind::Larva => ("IMAGE_MONEY", 72.0, 5.0),
+            VirtualFoodKind::Guppy => ("IMAGE_SMALLSWIM", 80.0, 0.0),
+            VirtualFoodKind::Oscar => ("IMAGE_SMALLSWIM", 80.0, 4.0),
+            VirtualFoodKind::Ultra => ("IMAGE_ULTRA", 160.0, 0.0),
+            VirtualFoodKind::Pizza => ("IMAGE_PIZZA", 0.0, 0.0),
+            VirtualFoodKind::IceCream => ("IMAGE_ICECREAM", 0.0, 0.0),
+            VirtualFoodKind::Chicken => ("IMAGE_CHICKEN", 0.0, 0.0),
+        };
+        if size == 0.0 {
+            let texture = &self.images[image];
+            self.sprite(
+                image,
+                x - texture.width() / 2.0,
+                y - texture.height() / 2.0,
+                None,
+                false,
+                1.0,
+                1.0,
+            );
+        } else {
+            self.sprite(
+                image,
+                x - size / 2.0,
+                y - size / 2.0,
+                Some(Rect::new(frame * size, row * size, size, size)),
+                false,
+                1.0,
+                1.0,
+            );
+        }
+    }
+
     fn draw_virtual_tank(&self, session: &AdventureSession) {
         let background = match session.virtual_tank.backdrop {
             0 => "IMAGE_AQUARIUM1",
@@ -3586,24 +3633,10 @@ impl Presentation {
         if let Some(board) = &session.virtual_board {
             self.draw_virtual_bubbulator(session, board);
             for food in &board.food {
-                let color = match food.kind {
-                    crate::virtual_tank::VirtualFoodKind::Basic => ORANGE,
-                    crate::virtual_tank::VirtualFoodKind::Upgraded => YELLOW,
-                    crate::virtual_tank::VirtualFoodKind::Snot => GREEN,
-                    crate::virtual_tank::VirtualFoodKind::Star => GOLD,
-                    _ => WHITE,
-                };
-                draw_circle(food.x, food.y, 6.0, color);
+                self.draw_virtual_food(food.kind, food.x, food.y, board.tick);
             }
             for prey in &board.prey {
-                draw_circle(prey.x, prey.y, 11.0, SKYBLUE);
-                draw_text(
-                    format!("{:?}", prey.kind),
-                    prey.x - 14.0,
-                    prey.y - 13.0,
-                    13.0,
-                    WHITE,
-                );
+                self.draw_virtual_food(prey.kind, prey.x, prey.y, board.tick);
             }
             for pose in &board.poses {
                 let Some(fish) = session
@@ -3613,30 +3646,91 @@ impl Presentation {
                 else {
                     continue;
                 };
-                let (image, frame_size) = match fish.kind {
-                    VirtualFishKind::Guppy => ("IMAGE_SMALLSWIM", 80.0),
-                    VirtualFishKind::Oscar => ("IMAGE_SCL_OSCAR", 40.0),
-                    VirtualFishKind::Ultra | VirtualFishKind::Bi => ("IMAGE_SCL_ULTRA", 40.0),
-                    VirtualFishKind::Gekko => ("IMAGE_SCL_GEKKO", 40.0),
-                    VirtualFishKind::Penta => ("IMAGE_SCL_STARCATCHER", 40.0),
-                    VirtualFishKind::Grubber => ("IMAGE_SCL_GRUBBER", 40.0),
-                    VirtualFishKind::Breeder => ("IMAGE_SCL_BREEDER", 40.0),
-                    VirtualFishKind::Sylvester | VirtualFishKind::Ball => ("IMAGE_SYLV", 80.0),
+                let hungry = fish.hunger < 301
+                    && (fish.fed_today < 3 || session.virtual_tank.settings.always_show_hungry);
+                let size_row = match fish.size {
+                    VirtualFishSize::Small => 0.0,
+                    VirtualFishSize::Medium => 1.0,
+                    VirtualFishSize::Large | VirtualFishSize::Star => 2.0,
+                    VirtualFishSize::Crowned => 3.0,
                 };
-                self.sprite(
-                    image,
-                    pose.x - frame_size / 2.0,
-                    pose.y - frame_size / 2.0,
-                    Some(Rect::new(
-                        (board.tick % 10) as f32 * frame_size,
-                        0.0,
-                        frame_size,
-                        frame_size,
-                    )),
-                    (pose.vx > 0.0) ^ fish.properties.backward,
-                    1.0,
-                    if fish.properties.invisible { 0.35 } else { 1.0 },
-                );
+                let (image, cell, row) = match fish.kind {
+                    VirtualFishKind::Guppy => (
+                        if hungry {
+                            "IMAGE_HUNGRYSWIM"
+                        } else {
+                            "IMAGE_SMALLSWIM"
+                        },
+                        80.0,
+                        size_row,
+                    ),
+                    VirtualFishKind::Oscar => (
+                        if hungry {
+                            "IMAGE_HUNGRYSWIM"
+                        } else {
+                            "IMAGE_SMALLSWIM"
+                        },
+                        80.0,
+                        4.0,
+                    ),
+                    VirtualFishKind::Ultra => ("IMAGE_ULTRA", 160.0, 0.0),
+                    VirtualFishKind::Gekko => ("IMAGE_GEKKO", 80.0, if hungry { 3.0 } else { 0.0 }),
+                    VirtualFishKind::Penta => {
+                        ("IMAGE_STARCATCHER", 80.0, if hungry { 1.0 } else { 0.0 })
+                    }
+                    VirtualFishKind::Grubber => {
+                        ("IMAGE_GRUBBER", 80.0, if hungry { 2.0 } else { 0.0 })
+                    }
+                    VirtualFishKind::Breeder => (
+                        if hungry {
+                            "IMAGE_HUNGRYBREEDER"
+                        } else {
+                            "IMAGE_BREEDER"
+                        },
+                        80.0,
+                        size_row * 3.0,
+                    ),
+                    VirtualFishKind::Sylvester if fish.size == VirtualFishSize::Large => {
+                        ("IMAGE_SYLV", 160.0, 0.0)
+                    }
+                    VirtualFishKind::Sylvester => ("IMAGE_MINISYLV", 80.0, 0.0),
+                    VirtualFishKind::Ball => (
+                        "IMAGE_BALLS",
+                        50.0,
+                        match fish.size {
+                            VirtualFishSize::Large => 1.0,
+                            VirtualFishSize::Medium => 2.0,
+                            _ => 0.0,
+                        },
+                    ),
+                    VirtualFishKind::Bi => ("IMAGE_BILATERUS", 80.0, 5.0),
+                };
+                let source = Rect::new((board.tick / 3 % 10) as f32 * cell, row * cell, cell, cell);
+                let alpha = if fish.properties.invisible { 0.35 } else { 1.0 };
+                let flip = (pose.vx > 0.0) ^ fish.properties.backward;
+                if fish.kind == VirtualFishKind::Ultra && hungry {
+                    draw_texture_ex(
+                        &self.images[image],
+                        pose.x - cell / 2.0,
+                        pose.y - cell / 2.0,
+                        Color::new(250.0 / 255.0, 215.0 / 255.0, 95.0 / 255.0, alpha),
+                        DrawTextureParams {
+                            source: Some(source),
+                            flip_x: flip,
+                            ..Default::default()
+                        },
+                    );
+                } else {
+                    self.sprite(
+                        image,
+                        pose.x - cell / 2.0,
+                        pose.y - cell / 2.0,
+                        Some(source),
+                        flip,
+                        1.0,
+                        alpha,
+                    );
+                }
                 if session.virtual_tank.settings.show_names {
                     self.fonts["Pix118"].text(&fish.name, pose.x - 18.0, pose.y - 26.0, WHITE);
                 }
@@ -3665,11 +3759,52 @@ impl Presentation {
                 );
             }
             for coin in &board.coins {
-                if matches!(
-                    coin.kind,
-                    VirtualCoinKind::Pearl | VirtualCoinKind::NikoPearl
-                ) {
-                    self.sprite(
+                let frame = (coin.age / 3 % 20) as f32;
+                match coin.kind {
+                    VirtualCoinKind::Silver
+                    | VirtualCoinKind::Gold
+                    | VirtualCoinKind::Diamond
+                    | VirtualCoinKind::Pearl => {
+                        let row = match coin.kind {
+                            VirtualCoinKind::Silver => 0.0,
+                            VirtualCoinKind::Gold => 1.0,
+                            VirtualCoinKind::Diamond => 2.0,
+                            _ => 3.0,
+                        };
+                        self.sprite(
+                            "IMAGE_SHELLS",
+                            coin.x - 16.0,
+                            coin.y - 16.0,
+                            Some(Rect::new(frame * 32.0, row * 32.0, 32.0, 32.0)),
+                            false,
+                            1.0,
+                            1.0,
+                        );
+                    }
+                    VirtualCoinKind::Star => self.sprite(
+                        "IMAGE_MONEY",
+                        coin.x - 36.0,
+                        coin.y - 36.0,
+                        Some(Rect::new(
+                            (coin.age / 3 % 10) as f32 * 72.0,
+                            144.0,
+                            72.0,
+                            72.0,
+                        )),
+                        false,
+                        1.0,
+                        1.0,
+                    ),
+                    VirtualCoinKind::Treasure => self.sprite(
+                        "IMAGE_MONEYBAG",
+                        coin.x - 36.0,
+                        coin.y - 36.0,
+                        None,
+                        false,
+                        1.0,
+                        1.0,
+                    ),
+                    VirtualCoinKind::NikoPearl => self.sprite(
                         "IMAGE_PEARL",
                         coin.x - 20.0,
                         coin.y - 20.0,
@@ -3677,17 +3812,25 @@ impl Presentation {
                         false,
                         1.0,
                         1.0,
-                    );
-                } else {
-                    self.sprite(
-                        "IMAGE_SHELLS",
-                        coin.x - 16.0,
-                        coin.y - 16.0,
-                        Some(Rect::new(0.0, 0.0, 32.0, 32.0)),
+                    ),
+                    VirtualCoinKind::ShrapnelBomb => self.sprite(
+                        "IMAGE_MISCITEMS",
+                        coin.x - 36.0,
+                        coin.y - 36.0,
+                        Some(Rect::new(0.0, 0.0, 72.0, 72.0)),
                         false,
                         1.0,
                         1.0,
-                    );
+                    ),
+                    VirtualCoinKind::Peanut => self.sprite(
+                        "IMAGE_PEANUT",
+                        coin.x - 20.0,
+                        coin.y - 20.0,
+                        None,
+                        false,
+                        1.0,
+                        1.0,
+                    ),
                 }
             }
             for pet in &board.pets {
