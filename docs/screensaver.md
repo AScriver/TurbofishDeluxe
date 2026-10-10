@@ -4,21 +4,67 @@ Selector previews are disposable; standalone savers can bank income and narrow V
 
 ## Preferences and preview
 
-Selector Saver opens separate project preferences stored explicitly in `screensaver.json` under the selected project save directory. Sound, owned-backdrop rotation and periodic dimming default on; money overlay and power saving default off. Missing auxiliary configuration uses these source defaults; malformed/unsupported configuration reports an error. Preferences do not backfill or change gameplay save format36. On Windows, power saving releases the saver thread's display-awake request so ordinary Windows policy may turn off the monitor. Off holds and later restores that thread's prior execution state. It cannot override another process's power request; monitor behavior is untested.
+Selector Saver opens separate project preferences stored explicitly in `screensaver.json` under the selected project save directory. Sound, owned-backdrop rotation and periodic dimming default on; money overlay and power saving default off. Missing auxiliary configuration uses these source defaults; malformed/unsupported configuration reports an error. Preferences do not backfill or change gameplay saves; their current envelope is37 per [retained modes](mode-continuation.md). On Windows, power saving releases the saver thread's display-awake request so ordinary Windows policy may turn off the monitor. Off holds and later restores that thread's prior execution state. It cannot override another process's power request; monitor behavior is untested.
 
 Preview clones the selected whole session, enters its actual owned Virtual Tank and advances only that clone on a separate28ms clock. It accepts close input rather than food, combat, profile or save actions, and renders the same owned fish/pets/threats without gameplay controls. Both normal and paused live bookkeeping stay suspended. Closing clears both clocks and restores the existing live music cue/pause state. Sound controls preview music/effects; it cannot establish audible fidelity. No preview scene is assigned or serialized back to the profile. Pet collection advances only the preview counter and discards its temporary wallet credit.
 
-Secondary-source anchors at W1`f919b3c241cfd611c547f1653fb3514f500f761b`: `WinFishApp.cpp:275–280` supplies defaults; `Board.cpp:623–638` rotates among owned alternatives every10800updates; `Board.cpp:5625–5641` dims within a3000update cycle,1320–1680 window,30update ramps and alpha200; `Board.cpp:5619–5623` supplies the optional shell overlay; `Board.cpp:2320–2324` distinguishes the screensaver credit path. Preview rotation uses private projected RNG and dim interpolation uses projected integer rounding. Exact screensaver coin-generation caps and Niko backdrop reposition remain deferred detail leads at the same Board paths. No new Ghidra export or original process supplies the simulation.
+Secondary-source anchors at W1`f919b3c241cfd611c547f1653fb3514f500f761b`: `WinFishApp.cpp:275–280` supplies defaults; `Board.cpp:623–638` rotates among owned alternatives every10800updates; `Board.cpp:5625–5641` dims within a3000update cycle,1320–1680 window,30update ramps and alpha200; `Board.cpp:5619–5623` supplies the optional shell overlay; `Board.cpp:2320–2324` distinguishes the screensaver credit path. Preview rotation uses private projected RNG and dim interpolation uses projected integer rounding. The E117 production-cap contract is below; Niko backdrop reposition and primary cap/cadence remain deferred. No new Ghidra export or original process supplies the simulation.
 
 ## Saver earnings
 
 E109 introduced graceful standalone `/s` income into project-owned `screensaver-bank.json`; E110 checkpoints it with the narrow continuation below. `/p`, `/c` and the in-app preview remain uncredited. The saver never overwrites `profiles.json` or persists its whole cloned session. An existing current profile is required for `/s`; the normal app establishes identity before opening its window. Income is independent of whether the money overlay is visible. Final saver evidence records delta, bank total, scene sequence and profile-generation key.
 
-Current profile3 requires generation, consumed cumulative watermark and scene receipt; session format stays36. Rename preserves the key; creation or explicit new-game reset receives a fresh generation. No older manager/bank or missing metadata is migrated/backfilled. Auxiliary bank2 validates bounded rows, strict keys/schema/scenes and checked credit/sequence overflow; zero credit is valid with a pending scene. Source behavior is **secondary-source-derived** from W1 `ProfileMgr.cpp:230–267,301–329,567–574`: accumulated saver credit, positive claim cap100,000 and wallet cap9,999,999. The primary BR07 reader at PB05`005148c0` supports a token/optional-delete boundary; writer/cadence and retail byte compatibility remain unknown. W1 `GameObject.cpp:243–271,1079–1090` and `Board.cpp:2649–2657` give a5,000..50,000 production threshold derived from Board updates, not a daily cap; that production limit is not yet wired to the saver scene.
+Current profile3 requires generation, consumed cumulative watermark and scene receipt; Session current37 owns retained modes separately. Rename preserves the key; creation or explicit new-game reset receives a fresh generation. No older manager/bank or missing metadata is migrated/backfilled. Auxiliary bank2 validates bounded rows, strict keys/schema/scenes and checked credit/sequence overflow; zero credit is valid with a pending scene. Source behavior is **secondary-source-derived** from W1 `ProfileMgr.cpp:230–267,301–329,567–574`: accumulated saver credit, positive claim cap100,000 and wallet cap9,999,999. The primary BR07 reader at PB05`005148c0` supports a token/optional-delete boundary; writer/cadence and retail byte compatibility remain unknown. E117 wires the source-derived production threshold into the disposable saver scene as specified below.
 
 The project deliberately replaces erase-before-profile-save with cumulative credit: normal load, profile switch and selector/store/setup entry snapshot the bank, then atomically save wallet and consumed watermark together. Capped excess is consumed too. Later bank appends remain pending; reopening or retrying a successful profile save cannot credit the same total twice. Result phases whose receipts fix the wallet defer ingestion until exit. A held `profiles.lock` rejects another cooperating normal writer; short separate `screensaver-bank.lock` operations permit saver append while normal play continues. Only bank contention retries, with at most250ms sleep; malformed records and write errors remain visible. These are project integrity policies, not proved retail concurrency behavior. Atomic replacement covers process-level transaction structure; no power-loss/fsync guarantee or actual multiprocess/native scenario is claimed. Ungraceful saver exit or failed deposit does not create a durable scene/earnings checkpoint.
 
-E110's scene guard is below. Production limits, exact cadence and native behavior remain gaps.
+E110's scene guard is below. The implemented production-cap decision follows; exact
+retail cadence and native behavior remain gaps.
+
+### Production cap
+
+E117 contract is **secondary-source-derived**, pinned W1
+`f919b3c241cfd611c547f1653fb3514f500f761b`; it has no new primary/runtime proof:
+
+- **SC1:** `Board.cpp:221,2925–2933,5596` counts collected shell value in
+  `m0x400`, separate from the wallet. `SaveGame:2307–2324` persists that value
+  through `ProfileMgr.cpp:230–253`, then clears it. The project maps this to the
+  preview's already reset per-run collection counter; bank cumulative credit is
+  separate and cannot become the production gate.
+- **SC2:** `Board.cpp:2613–2658` computes on successful saver load
+  `clamp(5000 + floor((Board updates / 36) / 172.8), 5000, 50000)`;
+  `WinFishApp.cpp:79` supplies the initial5000. Capture the source Board clock
+  at saver/preview creation, not each frame, wall/calendar time or Session ticks.
+- **SC3:** `GameObject.cpp:243–271,1079–1091` permits covered drops while
+  collected value`<=limit`. Equality permits an additional drop; collection can
+  overshoot. Do not erase pending coins, clamp wallet credit or stop simulation.
+- **SC4:** Ordinary Fish/Oscar/Ultra/Gekko/Grubber/Sylvester/Ball/Bi timer
+  production uses that context, as do Alien/Bilaterus reward, Vert, Brinkley and
+  Penta paths through `CanDropCoin`. Shrapnel bomb, Meryl note, Nimbus transform
+  and Niko pearl directly create coins in the inspected source and bypass these
+  gates (`FishTypePet.cpp:538–565,616–624,1378–1446`,
+  `OtherTypePet.cpp:618–630`, `Penta.cpp:421–435`). Preserve this distinction;
+  exact retail intent and order remain unverified.
+- **SC5:** Normal VT remains uncapped. Transient saver context travels only
+  through disposable preview steps into actual production producers; do not
+  add saved cap fields, parallel ledgers or alter live-profile credit. Later
+  saver checkpoint/reopen starts a reset counter and recalculates the source
+  threshold from the retained Board, consistent with the separate bank receipt.
+
+E117 threads an optional transient limit through actual Scene/Board fish, feeding,
+pet and combat producers. It resets only the disposable run's collection counter
+and restores original Board accounting on continuation, including a near-max
+counter. A global coin-insertion cap would incorrectly suppress source bypasses.
+One integrated regression passed collection, equality/overshoot, Niko bypass,
+wallet/source preservation, continued Board threshold on reopen and uncapped
+ordinary VT. The initial equality assertion used a nonproducing Small Guppy;
+the corrected prepared Medium fixture retains the same boundary expectations.
+Format/strict lint/locked build passed;616 unrelated cases stayed filtered.
+[MODLOG](../MODLOG.md#2026-10-10--cap-saver-production-and-observe-actual-ui-stages)
+owns checks/failure and [STATUS](../STATUS.md#current-build-verification) owns
+identity. No saved cap fields, extra ledger, getters/default matrix, unchanged
+passing-filter rerun or native/DB/game process. Actual natural income, cap/order,
+checkpoint cadence and retail fidelity remain not tested.
 
 ## Windows boundary
 
@@ -69,4 +115,4 @@ E110 uses required profile3/bank2 metadata; session36 stays unchanged and older 
 
 One saver holds `screensaver-scene.lock` from before profile loading through graceful checkpoint. Normal adoption briefly tries the same lease and defers while a saver is active; income claims remain independent. A subsequent saver resumes an unconsumed matching branch with its original baseline. Scene and income replace the bank file together, even when income is zero. Normal startup reconciles before offline cleanup in selector/VT/setup; runtime adoption happens at selector boundaries. A matching scene advances session ticks by checked nonnegative Board progress and validates against current unlocks/capacity; a conflicting VT edit consumes the scene receipt without replacing current state or discarding income. Adoption/rejection and receipt share one atomic profile save; failures preserve in-memory authority and the unconsumed receipt. Explicit new-game reset starts a fresh bank incarnation. Selector/Windows previews and configuration do not checkpoint scenes or earnings.
 
-The single E110 disk-backed handoff case passed, including successive scenes, lock deferral, failed write/retry, fish/Board/RNG continuity, unrelated state preservation, reopen no replay and stale rejection with income retained. [MODLOG](../MODLOG.md#2026-10-10--integrate-saver-scenes-and-board-bubbles) owns failures/build/package identity. Exit-only checkpoint loses unsaved scene/income on abrupt termination; actual multiprocess, power-loss, normal-speed saver/native and retail/audio/human behavior remain not tested. Exact production cap, Niko backdrop-substitution pose and installed writer scheduling remain deferred source follow-ups.
+The single E110 disk-backed handoff case passed, including successive scenes, lock deferral, failed write/retry, fish/Board/RNG continuity, unrelated state preservation, reopen no replay and stale rejection with income retained. [MODLOG](../MODLOG.md#2026-10-10--integrate-saver-scenes-and-board-bubbles) owns failures/build/package identity. Exit-only checkpoint loses unsaved scene/income on abrupt termination; actual multiprocess, power-loss, normal-speed saver/native and retail/audio/human behavior remain not tested. E117's source-derived production cap is above; primary cap details, Niko backdrop-substitution pose and installed writer scheduling remain deferred.

@@ -3397,6 +3397,20 @@ impl AdventureSession {
     /// One ordered input batch followed by one 28 ms update. Hatch updates and
     /// rescue pauses are session time; they do not advance an absent/paused board.
     pub fn step(&mut self, actions: &[Action]) -> Vec<Event> {
+        self.step_with_virtual_saver_limit(actions, None)
+    }
+
+    /// Disposable saver entry. The cap is captured at load and never saved in
+    /// the Session or applied to ordinary Virtual Tank steps.
+    pub(crate) fn step_virtual_saver(&mut self, production_limit: u32) -> Vec<Event> {
+        self.step_with_virtual_saver_limit(&[], Some(production_limit))
+    }
+
+    fn step_with_virtual_saver_limit(
+        &mut self,
+        actions: &[Action],
+        saver_production_limit: Option<u32>,
+    ) -> Vec<Event> {
         self.ticks += 1;
         let (mut events, entered_playing, entered_hatch) = self.apply_actions_inner(actions);
         match &mut self.phase {
@@ -3415,15 +3429,18 @@ impl AdventureSession {
                 if let Some(board) = &mut self.virtual_board {
                     let day_start = self.virtual_saved_at_seconds / 86_400 * 86_400;
                     let seed = Cell::new(self.virtual_seed);
-                    events.extend(board.update(
+                    events.extend(board.update_with_saver_limit(
                         &mut self.virtual_tank,
                         self.virtual_saved_at_seconds,
                         day_start,
+                        saver_production_limit,
                         &mut |limit| virtual_roll(&seed) as u64 % limit.max(1),
                     ));
-                    events.extend(board.update_combat(&self.virtual_tank, &mut |limit| {
-                        virtual_roll(&seed) as u64 % limit.max(1)
-                    }));
+                    events.extend(board.update_combat_with_saver_limit(
+                        &self.virtual_tank,
+                        saver_production_limit,
+                        &mut |limit| virtual_roll(&seed) as u64 % limit.max(1),
+                    ));
                     self.virtual_seed = seed.get();
                     let collected = board.collect_pet_coins(
                         &mut self.virtual_tank,

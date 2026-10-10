@@ -4885,6 +4885,93 @@ fn stamp_events(
     }));
 }
 
+/// Optional observations of the UI actually drawn. Session phase/ticks alone
+/// cannot identify a transient Title or selector over a retained scene.
+struct UiEvidence {
+    root: PathBuf,
+    frame: u64,
+    publication_deferred: bool,
+}
+
+impl UiEvidence {
+    fn open(root: &Path) -> Result<Self, Box<dyn Error>> {
+        fs::create_dir_all(root)?;
+        Ok(Self {
+            root: root.into(),
+            frame: 0,
+            publication_deferred: false,
+        })
+    }
+
+    fn record_draw(
+        &mut self,
+        ui_stage: &str,
+        title: Option<&crate::title_screen::TitleView>,
+        session: Option<&AdventureSession>,
+        elapsed: f64,
+    ) -> Result<(), Box<dyn Error>> {
+        self.frame += 1;
+        let process_id = std::process::id();
+        let title = title.map(|view| {
+            serde_json::json!({
+                "loading_status":format!("{:?}", view.loading.status),
+                "completed_tasks":view.loading.completed_tasks,
+                "total_tasks":view.loading.total_tasks,
+                "ready":view.ready,
+                "start_visible":view.start.visible,
+                "start_bounds":{"x":view.start.bounds.x,"y":view.start.bounds.y,
+                    "width":view.start.bounds.width,"height":view.start.bounds.height},
+                "start_hovered":view.start.hovered,"start_pressed":view.start.pressed
+            })
+        });
+        let observation = serde_json::json!({
+            "format_version":1,"process_id":process_id,"ui_frame":self.frame,
+            "wall_elapsed_seconds":elapsed,"ui_stage":ui_stage,"title":title,
+            "session_tick":session.map(|scene| scene.ticks),
+            "session_phase":session.map(|scene| &scene.phase),
+            "coordinate_space":{"width":640,"height":480}
+        });
+        match cli::write_json(&self.root.join("ui-state.local.json"), &observation) {
+            Ok(()) => self.publication_deferred = false,
+            Err(error)
+                if cfg!(windows)
+                    && error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|failure| matches!(failure.raw_os_error(), Some(5 | 32))) =>
+            {
+                if !self.publication_deferred {
+                    eprintln!("UI observation deferred by a file reader: {error}");
+                }
+                self.publication_deferred = true;
+            }
+            Err(error) => return Err(error),
+        }
+        let request = self.root.join("capture.request");
+        let local_request = self.root.join("capture-request.local.json");
+        if is_key_pressed(KeyCode::F12) || request.exists() || local_request.exists() {
+            // UI frames continue while the retained Session is frozen. Never
+            // overwrite a previous capture at the same Session tick.
+            let filename = format!("frame-ui-{process_id}-{:06}.png", self.frame);
+            let path = self.root.join(&filename);
+            get_screen_data().export_png(&path.to_string_lossy());
+            if fs::metadata(&path)?.len() == 0 {
+                return Err("UI capture produced an empty file".into());
+            }
+            cli::write_json(
+                &self.root.join("capture-result.local.json"),
+                &serde_json::json!({"frame":filename,"observation":observation}),
+            )?;
+            if request.exists() {
+                fs::remove_file(request)?;
+            }
+            if local_request.exists() {
+                fs::remove_file(local_request)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 struct Evidence {
     root: PathBuf,
     events: BufWriter<File>,
@@ -5987,6 +6074,7 @@ pub async fn run(
         app_started_at,
         options.quit_after,
     )?;
+    title.observe_in(options.evidence_dir.as_deref())?;
     let presentation =
         match Presentation::load(&game_root, &assets, options.muted, Some(&mut title)).await {
             Ok(presentation) => presentation,
@@ -6020,6 +6108,7 @@ pub async fn run(
     if target != crate::title_screen::FinishTarget::GameSelector {
         return Err("ordinary title requested an unexpected route".into());
     }
+    let mut ui_evidence = title.take_ui_evidence();
     // Selector visibility is transient. The saved scene stays owned by Session
     // until a validated atomic mode selection resumes or parks it.
     let mut startup_menu_open = true;
@@ -6831,6 +6920,14 @@ pub async fn run(
                 draw_circle(pointer.x, pointer.y, 5.0, YELLOW);
             }
             set_default_camera();
+            if let Some(observer) = ui_evidence.as_mut() {
+                observer.record_draw(
+                    "ScreensaverPreview",
+                    None,
+                    Some(preview.scene()),
+                    get_time() - started,
+                )?;
+            }
             next_frame().await;
             continue;
         }
@@ -6876,6 +6973,9 @@ pub async fn run(
                 draw_circle(pointer.x, pointer.y, 5.0, YELLOW);
             }
             set_default_camera();
+            if let Some(observer) = ui_evidence.as_mut() {
+                observer.record_draw("Menu", None, None, get_time() - started)?;
+            }
             next_frame().await;
             continue;
         }
@@ -8350,7 +8450,6 @@ pub async fn run(
             (480.0 * scale) as i32,
         ));
         set_camera(&camera);
-        let capture_tick = session.ticks;
         if !startup_menu_open
             && session.phase != AdventurePhase::GameSelector
             && tank_selection_runtime::mode_for_phase(&session.phase).is_none()
@@ -8503,14 +8602,13 @@ pub async fn run(
             );
         }
         set_default_camera();
-        if let Some(evidence) = evidence.as_ref() {
-            let request = evidence.root.join("capture.request");
-            if is_key_pressed(KeyCode::F12) || request.exists() {
-                evidence.capture(capture_tick);
-                if request.exists() {
-                    fs::remove_file(request)?;
-                }
-            }
+        if let Some(observer) = ui_evidence.as_mut() {
+            observer.record_draw(
+                if draw_selector { "Menu" } else { "Scene" },
+                None,
+                profiles.current().map(|entry| &entry.session),
+                get_time() - started,
+            )?;
         }
         profiles.record_events(&options.save_dir.join("profiles.json"), &events)?;
         if phase_transitioned

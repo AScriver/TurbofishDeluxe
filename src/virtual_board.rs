@@ -410,8 +410,21 @@ impl VirtualBoardState {
         tank: &VirtualTankState,
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> Vec<Event> {
+        self.update_combat_with_saver_limit(tank, None, rand_range)
+    }
+
+    pub(crate) fn update_combat_with_saver_limit(
+        &mut self,
+        tank: &VirtualTankState,
+        saver_production_limit: Option<u32>,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Vec<Event> {
+        let can_drop_coin = tank.can_drop_coin(
+            saver_production_limit.is_some(),
+            saver_production_limit.unwrap_or(0),
+        );
         let contact_changes = crate::virtual_pet_combat::update_contacts(self, rand_range);
-        let mut events = self.settle_combat_events(contact_changes, tank.settings.drop_shells);
+        let mut events = self.settle_combat_events(contact_changes, can_drop_coin);
         let prey: Vec<_> = self
             .prey
             .iter()
@@ -452,7 +465,7 @@ impl VirtualBoardState {
                 id
             },
         );
-        events.extend(self.settle_combat_events(changes, tank.settings.drop_shells));
+        events.extend(self.settle_combat_events(changes, can_drop_coin));
         events
     }
 
@@ -495,6 +508,9 @@ impl VirtualBoardState {
         for change in changes {
             match change {
                 VirtualCombatEvent::Invasion(event) => {
+                    if matches!(&event, InvasionEvent::DiamondDropped { .. }) && !drop_shells {
+                        continue;
+                    }
                     match &event {
                         InvasionEvent::PreyEaten { prey_id, .. }
                         | InvasionEvent::BilaterusPreyEaten { prey_id, .. } => {
@@ -708,7 +724,22 @@ impl VirtualBoardState {
         day_start_seconds: u64,
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> Vec<Event> {
+        self.update_with_saver_limit(tank, now_seconds, day_start_seconds, None, rand_range)
+    }
+
+    pub(crate) fn update_with_saver_limit(
+        &mut self,
+        tank: &mut VirtualTankState,
+        now_seconds: u64,
+        day_start_seconds: u64,
+        saver_production_limit: Option<u32>,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Vec<Event> {
         self.tick = self.tick.saturating_add(1);
+        let can_drop_coin = tank.can_drop_coin(
+            saver_production_limit.is_some(),
+            saver_production_limit.unwrap_or(0),
+        );
         let bubbulator_pulsed = tank.settings.bubbulator_shown && self.bubbulator_cycle() == 13;
         let mut events = Vec::new();
         if bubbulator_pulsed {
@@ -831,7 +862,7 @@ impl VirtualBoardState {
                         self.food.remove(index);
                         pet.brinkley_cooldown = 108;
                         pet.brinkley_meals = pet.brinkley_meals.saturating_add(1);
-                        if tank.settings.drop_shells && pet.brinkley_meals.is_multiple_of(3) {
+                        if can_drop_coin && pet.brinkley_meals.is_multiple_of(3) {
                             let kind = if pet.brinkley_meals.is_multiple_of(135) {
                                 VirtualCoinKind::Treasure
                             } else if pet.brinkley_meals.is_multiple_of(45) {
@@ -921,7 +952,7 @@ impl VirtualBoardState {
                     pet.timer = 0;
                     pet.threshold = if self.prey.len() > 5 { 1_230 } else { 930 };
                 }
-                PetKind::Vert if tank.settings.drop_shells => {
+                PetKind::Vert if can_drop_coin => {
                     pet_coins.push((pet.x, pet.y, VirtualCoinKind::Gold, None));
                     pet.timer = 0;
                 }
@@ -1082,7 +1113,7 @@ impl VirtualBoardState {
                     });
                 }
                 if let FeedResult::Coin(coin_kind) = result
-                    && tank.settings.drop_shells
+                    && can_drop_coin
                 {
                     self.coins.push(VirtualCoinPose {
                         id: self.next_object_id,
@@ -1102,8 +1133,8 @@ impl VirtualBoardState {
             {
                 match fish.tick_production(
                     tank.settings.drop_shells,
-                    false,
-                    0,
+                    saver_production_limit.is_some(),
+                    saver_production_limit.unwrap_or(0),
                     tank.board_shells,
                     meryl,
                 ) {

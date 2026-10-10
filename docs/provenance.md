@@ -1,5 +1,17 @@
 # Provenance and lineage
 
+E117 studies already registered W1 `Board.cpp:221,2307–2324,2613–2658,2925–2933,5596`,
+`GameObject.cpp:243–271,1079–1091`, `ProfileMgr.cpp:230–253`,
+`FishTypePet.cpp:538–565,616–624,1378–1446`, `OtherTypePet.cpp:618–630`,
+`Penta.cpp:421–435` and `WinFishApp.cpp:79` for the [SC1–SC5 saver cap](screensaver.md#production-cap).
+Pin`f919b3c241cfd611c547f1653fb3514f500f761b` and existing study/license
+boundaries apply. Original Rust adaptations thread transient context through
+`src/{screensaver,adventure,virtual_board}.rs`; no source bodies, game files or
+raw output are copied. Primary cap/cadence remains unknown; no new function
+attempt/decompilation or binary recovery count is claimed. App/Title UI-stage
+evidence is original project instrumentation using the existing graphics/capture
+API, with its distinct [observation contract](playtest-helpers.md#ui-stage-observation).
+
 E112 studies registered W1 `source/SexyAppFramework/{ResourceManager,Image,Graphics}.cpp` and `source/WinFish/GameSelector.cpp` for owned image timing/hidden cels, adapting only functional facts into original `src/assets.rs`, one parser regression and frontend metadata adapters. [Animation metadata](asset-animation.md) owns exact paths/line ranges and observed installed fields. The existing W1/framework study/license boundaries apply; no XML, C++, asset or pseudocode is copied into Git. The existing TT contract also supplies authoritative per-card admission; no new primary export is claimed.
 
 E111 joins the registered W1-informed Title, Help and finale models through original `src/app/{title_runtime,help_runtime,finale_runtime}.rs` and caller-owned app/resource clocks. The actual source paths/revision and behavioral limits are in [Title](title-screen.md#design-and-source-boundary), [Help](help.md) and [finale](finale.md#source-and-implementation-decision). Owned textures/fonts and116 finale text slices are loaded locally; no original pixels, prose, C++ or pseudocode is added to Git. Safe CPU crop composition replaces unavailable/forbidden internal GL access. The existing `windows-sys0.61.2` host boundary adds a read-only owned foreground comparison; it sends no input/activation. No new primary analysis/export is claimed. Native/retail/audio/human acceptance remains deferred.

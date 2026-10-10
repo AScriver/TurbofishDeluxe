@@ -53,6 +53,14 @@ scene/save/accounting conservation, not getters or presentation matrices.
 [Retained mode scenes](mode-continuation.md) owns the E115 implementation,
 current37 persistence, selector-with-no-active-scene rule and focused check limits.
 
+E117 adds optional [actual UI-stage evidence](playtest-helpers.md#ui-stage-observation)
+because retained Session ticks/phase cannot identify Title or transient Menu.
+Keep this app-owned, draw-bound and outside profile/save authority; carry a
+single observation sequence through Title and normal UI, with unique GPU
+captures for frozen scenes. The existing evidence option and request protocol
+remain the entry points. No debug progression, new product controls or general
+telemetry framework is needed. Native input/readback remains unverified.
+
 ## Virtual Tank integration decisions
 
 [Virtual Tank/store](virtual-tank.md) owns the current33 ownership, transaction and load contract. Keep Profile as the shell authority and durable fish separate from transient positions/food/coins; preserve Adventure while visiting store/setup. Cursor5 gains a real seven-pet consumer while ordinary choices remain capped4. Use pinned secondary behavior for the completion sweep; do not invent offline catch-up or claim unverified retail RNG/coin/render parity.
@@ -64,9 +72,11 @@ read identified primary pointer tables at runtime; no literal-order inference or
 bundled prose. Unsupported images retain explicit fallback. Saver configuration
 uses the [same-thread ownership guard](screensaver.md#configuration-ownership)
 through capture/poll/explicit restore, while leaving supplied windows untouched.
-Neither addition establishes native/retail behavior. The next actual saver
-production cap must follow its source counter and lifecycle, not a daily cap or
-an arbitrary cap on wallet collection.
+Neither addition establishes native/retail behavior. E117's [SC1–SC5 cap](screensaver.md#production-cap)
+follows the source's reset collection counter, captured Board threshold and
+producer/bypass distinctions through transient disposable-scene context. Normal
+VT and the persistent wallet remain independent; no saved cap fields or parallel
+ledger. A single source-grounded integrity case covers the boundary/continuation.
 
 ## Transient bubble integration
 
