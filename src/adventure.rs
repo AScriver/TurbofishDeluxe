@@ -10,17 +10,20 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 pub use crate::sim::PetKind;
-use crate::sim::{Action, AdventureState, EGG_PRICE, Event, Rejection, TICK_MS};
+use crate::sim::{
+    Action, AdventureState, BonusPurchaseOutcome, EGG_PRICE, Event, Rejection, TICK_MS,
+};
 use crate::time_trial::{self, TimeTrialResult, TimeTrialRun, TimeTrialScores};
 
 const HATCH_OPEN_CHECK: u32 = 141;
 const HATCH_READY_CHECK: u32 = 170;
-pub(crate) fn results_offer(cursor: u8) -> Option<(PetKind, u32)> {
+pub(crate) fn results_offer(cursor: u8) -> Option<(BonusPurchaseOutcome, u32)> {
     match cursor {
-        0 => Some((PetKind::Brinkley, 20_000)),
-        1 => Some((PetKind::Nostradamus, 25_000)),
-        2 => Some((PetKind::Stanley, 30_000)),
-        3 => Some((PetKind::Walter, 35_000)),
+        0 => Some((BonusPurchaseOutcome::Pet(PetKind::Brinkley), 20_000)),
+        1 => Some((BonusPurchaseOutcome::Pet(PetKind::Nostradamus), 25_000)),
+        2 => Some((BonusPurchaseOutcome::Pet(PetKind::Stanley), 30_000)),
+        3 => Some((BonusPurchaseOutcome::Pet(PetKind::Walter), 35_000)),
+        4 => Some((BonusPurchaseOutcome::CapacityAtLeast(4), 40_000)),
         _ => None,
     }
 }
@@ -74,7 +77,13 @@ impl AdventureProgress {
     }
 
     pub fn selection_capacity(&self) -> usize {
-        usize::from(self.pet_capacity).min(self.unlocked_pets.len())
+        usize::from(self.pet_capacity)
+            .min(self.unlocked_pets.len())
+            .min(4)
+    }
+
+    fn purchased_pet_count(&self) -> usize {
+        usize::from(self.purchase_cursor.min(4))
     }
 
     fn valid_selection(&self, selected: &[PetKind]) -> bool {
@@ -175,9 +184,13 @@ fn apply_purchase_action(
                         reason: Rejection::InsufficientFunds,
                     });
                 }
-                Some((pet, price)) => {
+                Some((outcome, price)) => {
                     receipt.confirming = true;
-                    events.push(Event::BonusPurchaseOffered { tick, pet, price });
+                    events.push(Event::BonusPurchaseOffered {
+                        tick,
+                        outcome,
+                        price,
+                    });
                 }
             }
             true
@@ -200,19 +213,28 @@ fn apply_purchase_action(
                 && !receipt.purchased
                 && updates >= 30
                 && progress.purchase_cursor == receipt.offered_cursor
-                && offer.is_some_and(|(pet, price)| {
-                    progress.shell_balance >= price && !progress.has_pet(pet)
+                && offer.is_some_and(|(outcome, price)| {
+                    progress.shell_balance >= price
+                        && match outcome {
+                            BonusPurchaseOutcome::Pet(pet) => !progress.has_pet(pet),
+                            BonusPurchaseOutcome::CapacityAtLeast(_) => true,
+                        }
                 })
             {
-                let (pet, price) = offer.unwrap();
+                let (outcome, price) = offer.unwrap();
                 progress.shell_balance -= price;
                 progress.purchase_cursor += 1;
-                progress.unlocked_pets.push(pet);
+                match outcome {
+                    BonusPurchaseOutcome::Pet(pet) => progress.unlocked_pets.push(pet),
+                    BonusPurchaseOutcome::CapacityAtLeast(minimum) => {
+                        progress.pet_capacity = progress.pet_capacity.max(minimum);
+                    }
+                }
                 receipt.confirming = false;
                 receipt.purchased = true;
                 events.push(Event::BonusPurchaseCommitted {
                     tick,
-                    pet,
+                    outcome,
                     price,
                     shell_balance: progress.shell_balance,
                 });
@@ -705,7 +727,7 @@ impl AdventureSession {
         if self.progress.purchase_cursor >= 4 {
             expected_unlocks.push(PetKind::Walter);
         }
-        if self.progress.purchase_cursor > 4
+        if self.progress.purchase_cursor > 5
             || self.progress.unlocked_pets != expected_unlocks
             || (!self.progress.adventure_completed
                 && (self.progress.tank, self.progress.level) == (5, 2))
@@ -716,7 +738,12 @@ impl AdventureSession {
         if self.progress.tank < 5 && self.progress.cyrax_attempts != 0 {
             return Err("Cyrax attempts precede the finale".into());
         }
-        if self.progress.pet_capacity != 3
+        let expected_capacity = if self.progress.purchase_cursor == 5 {
+            4
+        } else {
+            3
+        };
+        if self.progress.pet_capacity != expected_capacity
             || !self.progress.valid_selection(&self.progress.selected_pets)
             || (self.progress.unlocked_pets.len() < 4 && !self.progress.selected_pets.is_empty())
         {
@@ -1036,7 +1063,7 @@ impl AdventureSession {
             (AdventurePhase::TimeTrialPetSelection { tank, selected }, None, None)
                 if time_trial::limit_seconds(*tank).is_some()
                     && self.progress.unlocked_pets.len() >= 4
-                    && selected.len() <= 3
+                    && selected.len() <= self.progress.selection_capacity()
                     && selected.iter().all(|pet| {
                         time_trial::selectable_pet(*pet) && self.progress.has_pet(*pet)
                     })
@@ -1075,7 +1102,7 @@ impl AdventureSession {
                     || board.pets.get(run.initial_pets.len()..)
                         != Some(run.acquired_pets.as_slice())
                     || run.egg_purchases as usize != run.acquired_pets.len()
-                    || run.initial_pets.len() > 3
+                    || run.initial_pets.len() > self.progress.selection_capacity()
                     || (self.progress.unlocked_pets.len() >= 4
                         && self
                             .progress
@@ -1195,7 +1222,7 @@ impl AdventureSession {
                                 };
                                 events.push(Event::PetSelectionOpened {
                                     tick: self.ticks,
-                                    capacity: 3,
+                                    capacity: self.progress.selection_capacity() as u8,
                                 });
                             } else {
                                 let initial = self.progress.unlocked_pets.clone();
@@ -1225,7 +1252,7 @@ impl AdventureSession {
                         {
                             if let Some(i) = selected.iter().position(|old| old == pet) {
                                 selected.remove(i);
-                            } else if selected.len() < 3 {
+                            } else if selected.len() < self.progress.selection_capacity() {
                                 selected.push(*pet);
                             } else {
                                 events.push(Event::Rejected {
@@ -2338,10 +2365,11 @@ impl AdventureSession {
             self.progress.level = 2;
             self.progress.adventure_completed = true;
             self.progress.adventure_completions = 1;
-            self.progress.unlocked_pets.insert(
-                self.progress.unlocked_pets.len() - usize::from(self.progress.purchase_cursor),
-                PetKind::Presto,
-            );
+            let earned_slot =
+                self.progress.unlocked_pets.len() - self.progress.purchased_pet_count();
+            self.progress
+                .unlocked_pets
+                .insert(earned_slot, PetKind::Presto);
             self.progress.shell_balance = self
                 .progress
                 .shell_balance
@@ -2391,10 +2419,9 @@ impl AdventureSession {
         };
         self.progress.level = board.level + 1;
         if !self.progress.has_pet(pet) {
-            self.progress.unlocked_pets.insert(
-                self.progress.unlocked_pets.len() - usize::from(self.progress.purchase_cursor),
-                pet,
-            );
+            let earned_slot =
+                self.progress.unlocked_pets.len() - self.progress.purchased_pet_count();
+            self.progress.unlocked_pets.insert(earned_slot, pet);
         }
         self.phase = AdventurePhase::Hatch { pet, updates: 0 };
         self.hatch_held = false;
@@ -2991,6 +3018,248 @@ mod tests {
         session
     }
 
+    fn fourth_slot_offer_session(balance: u32, updates: u32) -> AdventureSession {
+        let mut session = bonus_purchase_session(balance, 0, updates);
+        session.progress.purchase_cursor = 4;
+        session.progress.unlocked_pets.extend([
+            PetKind::Brinkley,
+            PetKind::Nostradamus,
+            PetKind::Stanley,
+            PetKind::Walter,
+        ]);
+        let AdventurePhase::BonusResults { result } = &mut session.phase else {
+            unreachable!()
+        };
+        result.purchase.offered_cursor = 4;
+        session.validate().unwrap();
+        session
+    }
+
+    #[test]
+    fn fourth_slot_purchase_is_one_receipted_capacity_change_and_profile_consumes_four() {
+        let mut short = fourth_slot_offer_session(39_999, 30);
+        assert!(
+            short
+                .apply_actions(&[Action::OfferBonusPurchase])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::InsufficientFunds,
+                        ..
+                    }
+                ))
+        );
+        let mut session = fourth_slot_offer_session(40_000, 29);
+        assert!(
+            session
+                .apply_actions(&[Action::OfferBonusPurchase])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::Locked,
+                        ..
+                    }
+                ))
+        );
+        session.step(&[]);
+        let offered = session.apply_actions(&[Action::OfferBonusPurchase]);
+        assert!(offered.iter().any(|event| matches!(
+            event,
+            Event::BonusPurchaseOffered {
+                outcome: BonusPurchaseOutcome::CapacityAtLeast(4),
+                price: 40_000,
+                ..
+            }
+        )));
+        let before_pets = session.progress.unlocked_pets.clone();
+        let mut resumed: AdventureSession =
+            serde_json::from_slice(&serde_json::to_vec(&session).unwrap()).unwrap();
+        resumed.validate().unwrap();
+        assert!(
+            resumed
+                .apply_actions(&[Action::ConfirmBonusPurchase { accept: false }])
+                .iter()
+                .any(|event| matches!(event, Event::BonusPurchaseCancelled { .. }))
+        );
+        resumed.apply_actions(&[Action::OfferBonusPurchase]);
+        let committed = resumed.apply_actions(&[Action::ConfirmBonusPurchase { accept: true }]);
+        assert_eq!(
+            committed
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::BonusPurchaseCommitted {
+                        outcome: BonusPurchaseOutcome::CapacityAtLeast(4),
+                        price: 40_000,
+                        shell_balance: 0,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            (
+                resumed.progress.purchase_cursor,
+                resumed.progress.pet_capacity,
+                resumed.progress.shell_balance
+            ),
+            (5, 4, 0)
+        );
+        assert_eq!(resumed.progress.unlocked_pets, before_pets);
+        assert!(resumed.board.is_none());
+        assert!(
+            resumed
+                .apply_actions(&[
+                    Action::ConfirmBonusPurchase { accept: true },
+                    Action::OfferBonusPurchase,
+                ])
+                .iter()
+                .all(|event| !matches!(
+                    event,
+                    Event::BonusPurchaseCommitted { .. } | Event::BonusPurchaseOffered { .. }
+                ))
+        );
+        resumed.validate().unwrap();
+        resumed.apply_actions(&[Action::Continue]);
+        assert!(matches!(resumed.phase, AdventurePhase::PetSelection { .. }));
+        let choices = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+        ];
+        for pet in choices {
+            resumed.apply_actions(&[Action::TogglePet { pet }]);
+        }
+        assert!(
+            resumed
+                .apply_actions(&[Action::TogglePet { pet: PetKind::Zorf }])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::Locked,
+                        ..
+                    }
+                ))
+        );
+        resumed.apply_actions(&[Action::Continue]);
+        assert_eq!(resumed.board.as_ref().unwrap().pets, choices);
+        assert!(resumed.board.as_ref().unwrap().profile_population);
+        resumed.validate().unwrap();
+        resumed.finish_stage(&mut Vec::new());
+        let unlocks = &resumed.progress.unlocked_pets;
+        assert_eq!(&unlocks[5..7], &[PetKind::Clyde, PetKind::Brinkley]);
+        resumed.validate().unwrap();
+    }
+
+    #[test]
+    fn fourth_slot_time_trial_limits_initial_choices_but_not_egg_acquisitions() {
+        let mut before = fourth_slot_offer_session(40_000, 30);
+        before.phase = AdventurePhase::GameSelector;
+        before.apply_actions(&[
+            Action::PlayTimeTrial,
+            Action::SelectTimeTrialTank { tank: 1 },
+        ]);
+        for pet in [PetKind::Stinky, PetKind::Niko, PetKind::Itchy] {
+            before.apply_actions(&[Action::TogglePet { pet }]);
+        }
+        assert!(
+            before
+                .apply_actions(&[Action::TogglePet {
+                    pet: PetKind::Prego
+                }])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::Locked,
+                        ..
+                    }
+                ))
+        );
+
+        let mut session = fourth_slot_offer_session(40_000, 30);
+        session.apply_actions(&[
+            Action::OfferBonusPurchase,
+            Action::ConfirmBonusPurchase { accept: true },
+        ]);
+        session.phase = AdventurePhase::GameSelector;
+        session.apply_actions(&[
+            Action::PlayTimeTrial,
+            Action::SelectTimeTrialTank { tank: 1 },
+        ]);
+        let choices = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+        ];
+        for pet in choices {
+            session.apply_actions(&[Action::TogglePet { pet }]);
+        }
+        assert!(
+            session
+                .apply_actions(&[Action::TogglePet { pet: PetKind::Zorf }])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::Locked,
+                        ..
+                    }
+                ))
+        );
+        session.apply_actions(&[Action::Continue]);
+        assert_eq!(session.time_trial.as_ref().unwrap().initial_pets, choices);
+        assert_eq!(session.board.as_ref().unwrap().pets, choices);
+        session.validate().unwrap();
+        assert!(
+            session
+                .apply_actions(&[Action::BuyEgg])
+                .iter()
+                .any(|event| matches!(event, Event::TimeTrialPetAcquired { .. }))
+        );
+        assert_eq!(session.time_trial.as_ref().unwrap().acquired_pets.len(), 1);
+        assert_eq!(session.board.as_ref().unwrap().pets.len(), 5);
+        session.validate().unwrap();
+
+        // Capacity bought on a finished trial leaves its existing three-pet
+        // initial roster and retained Board intact.
+        let mut prior = fourth_slot_offer_session(40_000, 30);
+        prior.phase = AdventurePhase::GameSelector;
+        prior.apply_actions(&[
+            Action::PlayTimeTrial,
+            Action::SelectTimeTrialTank { tank: 1 },
+        ]);
+        for pet in [PetKind::Stinky, PetKind::Niko, PetKind::Itchy] {
+            prior.apply_actions(&[Action::TogglePet { pet }]);
+        }
+        prior.apply_actions(&[Action::Continue]);
+        prior.board.as_mut().unwrap().balance = 0;
+        prior.board.as_mut().unwrap().tick = 10_749;
+        prior.ticks = 10_749;
+        prior.step(&[]);
+        prior.apply_actions(&[Action::Continue]);
+        for _ in 0..30 {
+            prior.step(&[]);
+        }
+        prior.apply_actions(&[
+            Action::OfferBonusPurchase,
+            Action::ConfirmBonusPurchase { accept: true },
+        ]);
+        assert_eq!(prior.progress.pet_capacity, 4);
+        assert_eq!(
+            prior.time_trial.as_ref().unwrap().initial_pets,
+            [PetKind::Stinky, PetKind::Niko, PetKind::Itchy]
+        );
+        assert_eq!(prior.board.as_ref().unwrap().pets.len(), 3);
+        prior.validate().unwrap();
+    }
+
     #[test]
     fn bonus_purchase_update_boundary_cancel_exact_funds_and_duplicate_accept() {
         let mut session = bonus_purchase_session(20_000, 0, 29);
@@ -3033,7 +3302,7 @@ mod tests {
                 .filter(|event| matches!(
                     event,
                     Event::BonusPurchaseCommitted {
-                        pet: PetKind::Brinkley,
+                        outcome: BonusPurchaseOutcome::Pet(PetKind::Brinkley),
                         price: 20_000,
                         shell_balance: 0,
                         ..
@@ -3149,7 +3418,7 @@ mod tests {
                 .any(|event| matches!(
                     event,
                     Event::BonusPurchaseOffered {
-                        pet: PetKind::Nostradamus,
+                        outcome: BonusPurchaseOutcome::Pet(PetKind::Nostradamus),
                         price: 25_000,
                         ..
                     }
@@ -3162,7 +3431,7 @@ mod tests {
         assert!(committed.iter().any(|event| matches!(
             event,
             Event::BonusPurchaseCommitted {
-                pet: PetKind::Nostradamus,
+                outcome: BonusPurchaseOutcome::Pet(PetKind::Nostradamus),
                 price: 25_000,
                 shell_balance: 0,
                 ..
@@ -3254,7 +3523,7 @@ mod tests {
                 .any(|event| matches!(
                     event,
                     Event::BonusPurchaseOffered {
-                        pet: PetKind::Stanley,
+                        outcome: BonusPurchaseOutcome::Pet(PetKind::Stanley),
                         price: 30_000,
                         ..
                     }
@@ -3270,7 +3539,7 @@ mod tests {
                 .filter(|event| matches!(
                     event,
                     Event::BonusPurchaseCommitted {
-                        pet: PetKind::Stanley,
+                        outcome: BonusPurchaseOutcome::Pet(PetKind::Stanley),
                         price: 30_000,
                         shell_balance: 0,
                         ..
@@ -3321,7 +3590,7 @@ mod tests {
                 .any(|event| matches!(
                     event,
                     Event::BonusPurchaseOffered {
-                        pet: PetKind::Walter,
+                        outcome: BonusPurchaseOutcome::Pet(PetKind::Walter),
                         price: 35_000,
                         ..
                     }
@@ -3334,7 +3603,7 @@ mod tests {
                 .filter(|event| matches!(
                     event,
                     Event::BonusPurchaseCommitted {
-                        pet: PetKind::Walter,
+                        outcome: BonusPurchaseOutcome::Pet(PetKind::Walter),
                         price: 35_000,
                         shell_balance: 0,
                         ..

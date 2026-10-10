@@ -8,7 +8,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 
 ## Start here
 
-- Current30 integrates the first four results purchases, [Brinkley, Nostradamus, Stanley and Walter](docs/extra-pets.md), independent Food/coins/missiles, conversion/pickup, invasion postponement and input-triggered Glove/recoil transactions. [Checkpoint checks](MODLOG.md#2026-10-10--verify-walter-and-preserve-current30) passed with targeted fixture corrections. [Completed Adventure replay](docs/adventure-replay.md) preserves earned history, selected-plus-fixed Tank5 ownership and retained-Board bonus/repeat-Cyrax results. Next: usable fourth pet slot, Challenge and remaining modes. The [broad recovery](docs/binary-recovery.md) covers all remaining systems; native/manual acceptance stays deferred.
+- Current31 adds the 40,000-shell [fourth pet slot](docs/extra-pets.md#current31-implementation-checkpoint) after Brinkley, Nostradamus, Stanley and Walter. Adventure/replay and initial Time Trial selections consume four choices; acquired TT pets and Tank5's fixed roster stay separate. [Checkpoint checks](MODLOG.md#2026-10-10--verify-fourth-slot-and-preserve-current31) passed. [Completed Adventure replay](docs/adventure-replay.md) preserves earned history and retained-Board results. Next: Challenge and remaining modes. The [broad recovery](docs/binary-recovery.md) covers all remaining systems; native/manual acceptance stays deferred.
 - Agents: read [AGENTS.md](AGENTS.md), then follow its startup order.
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).

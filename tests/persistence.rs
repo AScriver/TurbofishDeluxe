@@ -4608,6 +4608,88 @@ fn current_purchase_receipt_requires_exact_credited_then_debited_wallet() {
 }
 
 #[test]
+fn current31_fourth_slot_purchase_reopens_without_pet_unlock_or_actor() {
+    let mut session = AdventureSession::new(0x3940);
+    session.progress.tank = 2;
+    session.progress.level = 1;
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Brinkley,
+        PetKind::Nostradamus,
+        PetKind::Stanley,
+        PetKind::Walter,
+    ];
+    session.progress.purchase_cursor = 4;
+    session.progress.shell_balance = 40_000;
+    session.board = None;
+    session.phase = AdventurePhase::BonusResults {
+        result: turbofish_deluxe::bonus::BonusResult {
+            origin_tank: 1,
+            origin_level: 6,
+            earned: 0,
+            previous_balance: 40_000,
+            updates: 30,
+            purchase: PurchaseReceipt::new(4),
+        },
+    };
+    session.validate().unwrap();
+    let unlocked = session.progress.unlocked_pets.clone();
+    session.apply_actions(&[Action::OfferBonusPurchase]);
+    let mut reopened = cli::decode_save(&current_bytes(session)).unwrap();
+    let events = reopened.apply_actions(&[Action::ConfirmBonusPurchase { accept: true }]);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        turbofish_deluxe::sim::Event::BonusPurchaseCommitted {
+            outcome: turbofish_deluxe::sim::BonusPurchaseOutcome::CapacityAtLeast(4),
+            price: 40_000,
+            shell_balance: 0,
+            ..
+        }
+    )));
+    assert_eq!(
+        (
+            reopened.progress.purchase_cursor,
+            reopened.progress.pet_capacity
+        ),
+        (5, 4)
+    );
+    assert_eq!(reopened.progress.unlocked_pets, unlocked);
+    assert!(reopened.board.is_none());
+    let committed = current_bytes(reopened.clone());
+    assert_eq!(
+        cli::decode_save(&committed).unwrap().progress,
+        reopened.progress
+    );
+    for (field, wrong) in [
+        ("pet_capacity", serde_json::json!(3)),
+        ("purchase_cursor", serde_json::json!(4)),
+        ("shell_balance", serde_json::json!(1)),
+    ] {
+        let mut forged: serde_json::Value = serde_json::from_slice(&committed).unwrap();
+        forged["session"]["progress"][field] = wrong;
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&forged).unwrap()).is_err(),
+            "{field}"
+        );
+    }
+    let mut missing: serde_json::Value = serde_json::from_slice(&committed).unwrap();
+    missing["session"]["progress"]
+        .as_object_mut()
+        .unwrap()
+        .remove("pet_capacity");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+    for old_version in [29, 30] {
+        let mut relabeled: serde_json::Value = serde_json::from_slice(&committed).unwrap();
+        relabeled["format_version"] = old_version.into();
+        assert!(cli::decode_save(&serde_json::to_vec(&relabeled).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn current_purchase_cursor_one_nostradamus_reopens_with_single_exact_debit() {
     let mut session = AdventureSession::new(0x3925);
     session.progress.tank = 2;

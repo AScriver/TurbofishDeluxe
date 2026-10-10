@@ -115,6 +115,14 @@ pub enum PetKind {
     Walter,
 }
 
+/// A results purchase either unlocks a pet or raises the profile's initial
+/// selection limit. The latter has no physical actor or PetKind identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BonusPurchaseOutcome {
+    Pet(PetKind),
+    CapacityAtLeast(u8),
+}
+
 /// Fresh ordinary Tank5 entry clears retail selection flags before this
 /// fixed registration order. Profile selection is a separate authority.
 pub(crate) const TANK5_PETS: [PetKind; 18] = [
@@ -707,7 +715,7 @@ pub enum Event {
     },
     BonusPurchaseOffered {
         tick: u64,
-        pet: PetKind,
+        outcome: BonusPurchaseOutcome,
         price: u32,
     },
     BonusPurchaseCancelled {
@@ -715,7 +723,7 @@ pub enum Event {
     },
     BonusPurchaseCommitted {
         tick: u64,
-        pet: PetKind,
+        outcome: BonusPurchaseOutcome,
         price: u32,
         shell_balance: u32,
     },
@@ -2091,7 +2099,7 @@ impl AdventureState {
         profile_attempts: u32,
     ) -> Result<Self, String> {
         if !matches!((tank, level), (1..=4, 1..=5) | (5, 1))
-            || pets.len() > 3
+            || pets.len() > 4
             || pets
                 .iter()
                 .any(|pet| !crate::time_trial::selectable_pet(*pet))
@@ -2254,7 +2262,7 @@ impl AdventureState {
     /// constructs its initial pets before the ordinary starter actors.
     pub fn new_time_trial(seed: u64, tank: u8, pets: &[PetKind]) -> Result<Self, String> {
         if !(1..=4).contains(&tank)
-            || pets.len() > 3
+            || pets.len() > 4
             || pets
                 .iter()
                 .any(|pet| !crate::time_trial::selectable_pet(*pet))
@@ -3467,7 +3475,7 @@ impl AdventureState {
         } else {
             (self.pets.as_slice(), &[][..])
         };
-        if selected.len() > 3
+        if selected.len() > 4
             || selected
                 .iter()
                 .any(|pet| !crate::time_trial::selectable_pet(*pet))
@@ -10660,6 +10668,48 @@ impl AdventureState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fourth_slot_profile_tank5_keeps_four_selected_before_fixed_eighteen() {
+        let selected = [
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Presto,
+        ];
+        let board = AdventureState::new_profile_stage(0x3956, 5, 1, &selected, 0).unwrap();
+        assert_eq!(&board.pets[..4], &selected);
+        assert_eq!(&board.pets[4..], TANK5_PETS.as_slice());
+        assert_eq!(board.pets.len(), 22);
+        assert_eq!(board.stinky.len(), 2);
+        assert_eq!(board.niko.len(), 2);
+        assert_eq!(
+            board
+                .fish_pets
+                .iter()
+                .filter(|pet| pet.kind == FishPetKind::Itchy)
+                .count(),
+            2
+        );
+        assert_eq!(board.presto_actor().unwrap().kind, PetKind::Presto);
+        board.validate().unwrap();
+        assert!(
+            AdventureState::new_profile_stage(
+                0x3956,
+                5,
+                1,
+                &[
+                    PetKind::Stinky,
+                    PetKind::Niko,
+                    PetKind::Itchy,
+                    PetKind::Presto,
+                    PetKind::Walter
+                ],
+                0
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn walter_requires_consumed_pointer_input_and_does_not_auto_punch() {

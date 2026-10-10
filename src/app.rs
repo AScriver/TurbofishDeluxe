@@ -2500,14 +2500,15 @@ impl Presentation {
     }
 
     fn draw_results_purchase(&self, receipt: &PurchaseReceipt, updates: u32, balance: u32) {
-        let Some((pet, price)) = results_offer(receipt.offered_cursor) else {
+        let Some((outcome, price)) = results_offer(receipt.offered_cursor) else {
             return;
         };
-        let name = match pet {
-            PetKind::Brinkley => "BRINKLEY",
-            PetKind::Nostradamus => "NOSTRADAMUS",
-            PetKind::Stanley => "STANLEY",
-            PetKind::Walter => "WALTER",
+        let name = match outcome {
+            crate::sim::BonusPurchaseOutcome::Pet(PetKind::Brinkley) => "BRINKLEY",
+            crate::sim::BonusPurchaseOutcome::Pet(PetKind::Nostradamus) => "NOSTRADAMUS",
+            crate::sim::BonusPurchaseOutcome::Pet(PetKind::Stanley) => "STANLEY",
+            crate::sim::BonusPurchaseOutcome::Pet(PetKind::Walter) => "WALTER",
+            crate::sim::BonusPurchaseOutcome::CapacityAtLeast(4) => "FOURTH PET SLOT",
             _ => unreachable!("implemented results offer"),
         };
         if receipt.purchased {

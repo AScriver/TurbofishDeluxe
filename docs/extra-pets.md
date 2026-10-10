@@ -1,6 +1,6 @@
 # Bonus pets and independent children
 
-A39 refines the completed [broad recovery pass](binary-recovery.md) for raw20–23. These are **binary-derived contracts** with current27–30 implementations. Current30 integrates raw23/cursor3; offers4–5 remain implementation gaps. [Implementation checks below](#current30-implementation-checkpoint) distinguish code evidence from pending native acceptance. Installed PB05 and the registered W1 naming crosswalk are authoritative under [provenance](provenance.md). Raw0–19 Presto work is separate in [Presto](presto.md); VirtualTank rules belong to the remaining mode contract.
+A39 refines the completed [broad recovery pass](binary-recovery.md) for raw20–23 and results acquisition. These are **binary-derived contracts** with current27–31 implementations. Current31 integrates cursor4/fourth-slot consumers; cursor5/seven-slot remains a Virtual Tank gap. [Implementation checks below](#current31-implementation-checkpoint) distinguish code evidence from pending native acceptance. Installed PB05 and the registered W1 naming crosswalk are authoritative under [provenance](provenance.md). Raw0–19 Presto work is separate in [Presto](presto.md); VirtualTank rules belong to the remaining mode contract.
 
 ## Behavior and ownership ledger
 
@@ -147,6 +147,17 @@ These static **binary-derived** transactions are ready for implementation. Resul
 
 The inspected retail mutator has no second affordability/current-offer/duplicate check. The project will enforce one atomic matching-offer/affordability transaction per results, separate from once-only reward credit. Check funds==price and price−1, cancel/stale/repeated confirmation, each offer/unlock,3→4 ordinary capacity, capacity7 ordinary cap4, save/reload, no live spawn, next-screen offer and preserved Adventure/score history. Native purchase, feedback/audio and retail repeated-entry behavior are **not tested**.
 
+## Fourth-slot integration contract
+
+These constraints apply to the cursor4/current31 increment; code checks are not yet performed. Primary acquisition/selector sources are identified above. Capacity7 remains a separate Virtual Tank dependency.
+
+| ID | Established invariant | Evidence status / scope |
+|---|---|---|
+| C1 Transaction | Cursor4 costs40000 shells and raises Profile capacity to at least4. Preserve update30 admission, confirmation/cancel, same-cursor debit, receipt once-only state and save. Advance to cursor5 without unlocking or spawning a pet, changing a retained Board or rewriting earned progression. | **Binary-derived**00516f70/005172e0, with existing atomic project write policy. Use an explicit pet-versus-capacity outcome. |
+| C2 Consumers | Profile owns capacity. Ordinary/replay/TT initial choice is min(capacity, unlocked count,4). Acquired TT eggs and Tank5's fixed18 suffix remain outside that initial-choice cap. Physical Presto/conversion actors are not selected slots. | **Binary-derived**00527820 plus established project mode ownership. Keep narrower historical stage constructors intact; change the generalized profile routes and Session admission together. |
+| C3 Reachable project state | Current31 accepts cursor0–4/capacity3 and cursor5/capacity4; cursor5 has no exposed offer until VT works. Current-required keys remain mandatory; no new defaults/migrations/backfill. | **Project policy**, not a claim retail rejects larger/imported values. New-profile3 remains W1-qualified. Primary raises a minimum rather than assigning an exact maximum. |
+| C4 Progression / continuation | Count only purchased pets when inserting later earned unlocks. Preserve canonical earned-before-bonus order after capacity purchase. Existing three-pet selections/runs remain valid after upgrading; next construction can use four. Ordinary never admits five; Tank5 permits selected4 plus fixed18 in established order. | **Project invariant** grounded in durable progression and recovered acquisition distinction. Cursor counts purchases, not pet unlocks. Source-grounded transaction/consumer/persistence regressions are required; no duplicate probe matrix. |
+
 ## Integration boundaries and meaningful checks
 
 Keep concrete actor state as the form authority. Add only the required action/counter/child state; preserve ordinary constructors and category order. Do not use a producer-presence check to delete independent children or overwrite converted duplicates. Reuse existing target identity and atomic persistence guards, extending them only from recovered capabilities.
@@ -159,6 +170,12 @@ Direct installed-resource observation identifies `IMAGE_BRINKLEY` as `images/bri
 - Walter: fifth-punch/countdown360, mode5 exception, Glove disposal on morph,19↔23 continuity; remaining26/25/21/20/13/12 and both sides/strict contact; flagged return to raw19.
 
 Native input/render/audio, retail comparison and human judgment are **not tested**. Implementation follows completed Adventure replay; no missing user input currently blocks that work.
+
+## Current31 implementation checkpoint
+
+Cursor4 now offers a 40,000-shell capacity transaction with an explicit non-pet outcome. Confirmation debits once, advances the purchase cursor to5 and raises Profile capacity to4; it preserves unlocked pets, retained Board and earned history. Ordinary/replay and initial TT selectors derive their limit from Profile, unlocked count and the ordinary maximum4. Generalized Board constructors consume four selected pets; narrower historical stage constructors remain intact. TT egg acquisitions and Tank5's fixed18 suffix are outside the initial-choice cap. Earned unlock insertion counts purchased pets rather than the capacity receipt. Cursor5 remains unavailable until VT exists.
+
+Current31 validates the project's reachable cursor/capacity states and rejects fourth-slot state in prior-format envelopes. Static review found that the initial guard rejected only label30, allowing a complete current31 envelope relabeled29; the existing persistence regression now covers both labels after correction. Four contract-level regressions cover the receipt/continuation, TT acquisition distinction, selected-plus-fixed Tank5 and save admission. [E99/MODLOG](../MODLOG.md#2026-10-10--verify-fourth-slot-and-preserve-current31) owns the one complete checkpoint gate, byte preservation and frozen build. No extra probe matrix, native execution or new migration/default/backfill was added. Native input/render/audio, retail comparison and human judgment remain pending. Continue Challenge and remaining requirements automatically.
 
 ## Current30 implementation checkpoint
 
