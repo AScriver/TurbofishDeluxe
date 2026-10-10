@@ -4473,6 +4473,203 @@ fn temporary_root(name: &str) -> PathBuf {
 }
 
 #[test]
+fn screensaver_scene_handoff_is_atomic_resumable_and_rejects_changed_vt() {
+    use turbofish_deluxe::{
+        profiles::Profiles,
+        screensaver::{ScreensaverPreview, ScreensaverSettings},
+        screensaver_bank::{ScreensaverBank, ScreensaverSceneLease},
+    };
+
+    let root = temporary_root("saver-scene");
+    let path = root.join("profiles.json");
+    let mut profiles = Profiles::new("Owner", 42).unwrap();
+    let session = &mut profiles.current_mut().unwrap().session;
+    session.progress.shell_balance = 100;
+    // Prepared selector with retained Adventure progress, not an earned run.
+    session.phase = AdventurePhase::GameSelector;
+    session.board = None;
+    session.apply_actions(&[
+        Action::PlayVirtualTank {
+            now_seconds: 100_000,
+            day_start_seconds: 86_400,
+        },
+        Action::OpenVirtualStore {
+            now_seconds: 100_000,
+            day_start_seconds: 86_400,
+        },
+        Action::VirtualStoreOffer { slot: 0 },
+        Action::VirtualSetPurchaseName {
+            name: "Atlas".into(),
+        },
+        Action::VirtualConfirmPurchase {
+            accept: true,
+            now_seconds: 100_000,
+            day_start_seconds: 86_400,
+        },
+        Action::Continue,
+        Action::OpenMenu,
+    ]);
+    assert_eq!(session.phase, AdventurePhase::GameSelector);
+    assert_eq!(session.virtual_tank.active_fish().count(), 1);
+    profiles.save(&path).unwrap();
+    let source = profiles.current().unwrap().session.clone();
+    let key = profiles.current().unwrap().screensaver_key();
+    let baseline = source.virtual_baseline_digest().unwrap();
+    let bank = ScreensaverBank::new(&root);
+    let saver_lease = ScreensaverSceneLease::try_acquire(&root).unwrap().unwrap();
+    let mut preview =
+        ScreensaverPreview::start(&source, ScreensaverSettings::default(), 100_000).unwrap();
+    for _ in 0..20 {
+        preview.advance(100_001);
+    }
+    let first = bank
+        .checkpoint(&key, 0, &baseline, preview.continuation())
+        .unwrap();
+    assert_eq!(first.cumulative, 0);
+    assert_eq!(first.pending_scene.as_ref().unwrap().sequence, 1);
+    assert!(!profiles.adopt_screensaver_scene(&root).unwrap());
+    drop(saver_lease);
+
+    // Successive savers evolve the matching pending branch rather than replay
+    // the unchanged normal profile. Credits are fixture transaction input.
+    let pending = bank.read_snapshot(&key).unwrap().pending_scene.unwrap();
+    let mut next_source = source.clone();
+    next_source
+        .apply_virtual_continuation(&pending.continuation)
+        .unwrap();
+    let mut preview =
+        ScreensaverPreview::start(&next_source, ScreensaverSettings::default(), 100_001).unwrap();
+    preview.advance(100_002);
+    let expected = preview.continuation();
+    bank.checkpoint(&key, 17, &baseline, expected.clone())
+        .unwrap();
+    let before = fs::read(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    assert!(profiles.adopt_screensaver_scene(&root).is_err());
+    assert_eq!(profiles.current().unwrap().screensaver_scene_consumed, 0);
+    assert_eq!(
+        profiles
+            .current()
+            .unwrap()
+            .session
+            .virtual_baseline_digest()
+            .unwrap(),
+        baseline
+    );
+    fs::remove_dir(&path).unwrap();
+    fs::write(&path, before).unwrap();
+    assert!(profiles.adopt_screensaver_scene(&root).unwrap());
+    assert_eq!(profiles.claim_screensaver(&root).unwrap(), 17);
+    let mut reopened = Profiles::decode(&fs::read(&path).unwrap()).unwrap();
+    let entry = reopened.current().unwrap();
+    assert_eq!(entry.screensaver_scene_consumed, 2);
+    assert_eq!(
+        entry.session.virtual_baseline_digest().unwrap(),
+        expected.baseline_digest().unwrap()
+    );
+    assert_ne!(entry.session.virtual_baseline_digest().unwrap(), baseline);
+    assert_eq!(entry.session.phase, source.phase);
+    assert_eq!(entry.session.mode, source.mode);
+    let mut expected_progress = source.progress.clone();
+    expected_progress.shell_balance += 17;
+    assert_eq!(
+        serde_json::to_value(&entry.session.progress).unwrap(),
+        serde_json::to_value(expected_progress).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&entry.session).unwrap()["next_seed"],
+        serde_json::to_value(&source).unwrap()["next_seed"]
+    );
+    assert_eq!(entry.session.ticks, source.ticks + 21);
+    assert_eq!(entry.session.virtual_tank.stock, source.virtual_tank.stock);
+    assert_eq!(
+        entry.session.progress.shell_balance,
+        source.progress.shell_balance + 17
+    );
+    let saved = fs::read(&path).unwrap();
+    assert!(!reopened.adopt_screensaver_scene(&root).unwrap());
+    assert_eq!(reopened.claim_screensaver(&root).unwrap(), 0);
+    assert_eq!(fs::read(&path).unwrap(), saved);
+
+    // Store and Board share the exported RNG. One subsequent VT update must
+    // reproduce the saver branch, despite preserving the normal profile owner.
+    let mut reference = preview.scene().clone();
+    reference.step(&[]);
+    reopened
+        .current_mut()
+        .unwrap()
+        .session
+        .apply_actions(&[Action::PlayVirtualTank {
+            now_seconds: 100_002,
+            day_start_seconds: 86_400,
+        }]);
+    reopened.current_mut().unwrap().session.step(&[]);
+    assert_eq!(
+        reopened
+            .current()
+            .unwrap()
+            .session
+            .virtual_baseline_digest()
+            .unwrap(),
+        reference.virtual_baseline_digest().unwrap()
+    );
+    reopened
+        .current_mut()
+        .unwrap()
+        .session
+        .apply_actions(&[Action::OpenMenu]);
+
+    let baseline = reopened
+        .current()
+        .unwrap()
+        .session
+        .virtual_baseline_digest()
+        .unwrap();
+    let mut preview = ScreensaverPreview::start(
+        &reopened.current().unwrap().session,
+        ScreensaverSettings::default(),
+        100_002,
+    )
+    .unwrap();
+    preview.advance(100_003);
+    bank.checkpoint(&key, 9, &baseline, preview.continuation())
+        .unwrap();
+    // A concurrent normal VT edit invalidates the whole scene, keeping income.
+    reopened
+        .current_mut()
+        .unwrap()
+        .session
+        .virtual_tank
+        .settings
+        .show_names = false;
+    let authoritative = reopened
+        .current()
+        .unwrap()
+        .session
+        .virtual_baseline_digest()
+        .unwrap();
+    assert!(!reopened.adopt_screensaver_scene(&root).unwrap());
+    assert_eq!(reopened.current().unwrap().screensaver_scene_consumed, 3);
+    assert_eq!(
+        reopened
+            .current()
+            .unwrap()
+            .session
+            .virtual_baseline_digest()
+            .unwrap(),
+        authoritative
+    );
+    assert_eq!(reopened.claim_screensaver(&root).unwrap(), 9);
+    let entry = reopened.current_mut().unwrap();
+    entry.reset_session(43);
+    assert_ne!(entry.screensaver_key(), key);
+    assert!(!reopened.adopt_screensaver_scene(&root).unwrap());
+    assert_eq!(reopened.claim_screensaver(&root).unwrap(), 0);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn screensaver_credit_claim_is_capped_atomic_and_once_only_after_reopen() {
     use turbofish_deluxe::{
         bonus::MAX_SHELL_BALANCE,

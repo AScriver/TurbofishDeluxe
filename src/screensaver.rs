@@ -4,7 +4,7 @@
 //! reference to its source. OS screensaver registration is outside this module.
 
 use crate::{
-    adventure::{AdventurePhase, AdventureSession, GameMode},
+    adventure::{AdventurePhase, AdventureSession, GameMode, VirtualContinuation},
     sim::{Action, Event},
     virtual_tank::BACKDROP_COUNT,
 };
@@ -100,6 +100,7 @@ pub struct ScreensaverPreview {
     scene: AdventureSession,
     settings: ScreensaverSettings,
     initial_board_shells: u32,
+    original_backdrop: u8,
     rotation_rng: u64,
 }
 
@@ -132,11 +133,13 @@ impl ScreensaverPreview {
         }
         scene.virtual_saved_at_seconds = now_seconds;
         let initial_board_shells = scene.virtual_tank.board_shells;
+        let original_backdrop = scene.virtual_tank.backdrop;
         let rotation_rng = source.ticks ^ now_seconds.rotate_left(17) ^ 0x9e37_79b9_7f4a_7c15;
         Ok(Self {
             scene,
             settings,
             initial_board_shells,
+            original_backdrop,
             rotation_rng,
         })
     }
@@ -161,6 +164,15 @@ impl ScreensaverPreview {
             .virtual_tank
             .board_shells
             .saturating_sub(self.initial_board_shells)
+    }
+
+    /// Standalone saver checkpoints progressed actors/RNG, restoring temporary
+    /// backdrop rotation and Board accounting. Shell income uses the bank only.
+    pub fn continuation(&self) -> VirtualContinuation {
+        let mut continuation = self.scene.virtual_continuation();
+        continuation.tank.backdrop = self.original_backdrop;
+        continuation.tank.board_shells = self.initial_board_shells;
+        continuation
     }
 
     /// Step only the cloned VT scene. Pet coin collection may run in the normal

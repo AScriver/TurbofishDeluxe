@@ -1483,7 +1483,7 @@ pub fn load_profiles(options: &Options) -> Result<Profiles, Box<dyn Error>> {
         let mut profiles = Profiles::decode(&std::fs::read(&profiles_path)?)?;
         if options.new_game {
             if let Some(current) = profiles.current_mut() {
-                current.session = AdventureSession::new(options.seed);
+                current.reset_session(options.seed);
             } else {
                 return Ok(Profiles::new("Player", options.seed)?);
             }
