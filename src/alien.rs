@@ -1,16 +1,18 @@
-//! Ordinary Sylvester actor for Adventure 1-2 and 1-3.
+//! Common alien actor, including the Tank 5-1 boss and Mini Sylvester.
 //!
 //! The board owns spawn timing, its random stream, ordered prey membership,
 //! coin creation and removal. This actor owns only its live motion, contact,
 //! shooting and animation state. Constructor and update rules are secondary
 //! source-derived from WinFish f919b3c (`Alien.cpp`). The installed PB05
-//! payload confirms the class and weak/strong HP and divisor (PB17), and
-//! shot damage via Board weapon (PB13); update order remains source-derived.
+//! payload confirms weak/strong HP and divisor (PB17), shot damage via Board
+//! weapon (PB13), and the A36-03–05 boss/Mini rules; general update order
+//! remains source-derived.
 //! No original-game run or retail parity measurement has been made.
 
 use serde::{Deserialize, Serialize};
 
 pub const WEAK_SYLVESTER_SIZE: i32 = 160;
+pub const MINI_SYLVESTER_SIZE: i32 = 80;
 const WEAK_SPEED_DIVISOR: f64 = 2.0;
 const WEAK_STARTING_HEALTH: f64 = 50.0;
 
@@ -24,6 +26,8 @@ pub enum SylvesterKind {
     Destructor,
     Psychosquid,
     Ulysses,
+    Cyrax,
+    MiniSylvester,
 }
 
 impl SylvesterKind {
@@ -36,6 +40,9 @@ impl SylvesterKind {
             Self::Destructor => 1.2,
             Self::Psychosquid => 0.5,
             Self::Ulysses => 3.5,
+            Self::Cyrax => 2.0,
+            // Mini's divisor is selected by a separate constructor draw.
+            Self::MiniSylvester => 0.8,
         }
     }
 
@@ -48,6 +55,9 @@ impl SylvesterKind {
             Self::Destructor => 150.0,
             Self::Psychosquid => 260.0,
             Self::Ulysses => 220.0,
+            // Cyrax's initial HP also depends on the profile attempt count.
+            Self::Cyrax => 5000.0,
+            Self::MiniSylvester => 1.0,
         }
     }
 }
@@ -205,8 +215,16 @@ impl WeakSylvester {
             previous_vx: if left { -1.0 } else { 1.0 },
             health: kind.starting_health(),
             spawn_ticks: 15,
-            chase_ticks: 100,
-            hit_ticks: 0,
+            chase_ticks: if kind == SylvesterKind::MiniSylvester {
+                40
+            } else {
+                100
+            },
+            hit_ticks: if kind == SylvesterKind::MiniSylvester {
+                30
+            } else {
+                0
+            },
             movement_state: (movement_draw % 10) as u8,
             movement_change_ticks: 20,
             swim_ticks: 0,
@@ -233,6 +251,58 @@ impl WeakSylvester {
             healing: false,
             ever_healed: false,
             movement_divisor: kind.speed_divisor(),
+        }
+    }
+
+    /// Raw21's profile difficulty is read at construction; the encounter
+    /// owner supplies the two common constructor draws in their original order.
+    pub fn spawn_cyrax(
+        id: u64,
+        widget_x: i32,
+        widget_y: i32,
+        profile_attempts: u32,
+        direction_draw: u32,
+        movement_draw: u32,
+    ) -> Self {
+        let mut actor = Self::spawn_kind(
+            SylvesterKind::Cyrax,
+            id,
+            widget_x,
+            widget_y,
+            direction_draw,
+            movement_draw,
+        );
+        actor.health = f64::from(5000 - 125 * profile_attempts.saturating_sub(1).min(20));
+        actor
+    }
+
+    /// Raw20 consumes direction, divisor, then movement-state draws. The
+    /// caller owns that RNG sequence; no random state lives in the actor.
+    pub fn spawn_mini(
+        id: u64,
+        widget_x: i32,
+        widget_y: i32,
+        direction_draw: u32,
+        divisor_draw: u32,
+        movement_draw: u32,
+    ) -> Self {
+        let mut actor = Self::spawn_kind(
+            SylvesterKind::MiniSylvester,
+            id,
+            widget_x,
+            widget_y,
+            direction_draw,
+            movement_draw,
+        );
+        actor.movement_divisor = 0.8 + f64::from(divisor_draw % 5) / 10.0;
+        actor
+    }
+
+    pub fn sprite_size(&self) -> i32 {
+        if self.kind == SylvesterKind::MiniSylvester {
+            MINI_SYLVESTER_SIZE
+        } else {
+            WEAK_SYLVESTER_SIZE
         }
     }
 
@@ -296,10 +366,10 @@ impl WeakSylvester {
             }
         } else if matches!(
             self.kind,
-            SylvesterKind::Destructor | SylvesterKind::Ulysses
+            SylvesterKind::Destructor | SylvesterKind::Ulysses | SylvesterKind::Cyrax
         ) || self.healing
         {
-            // AlienUnk01 never chases for either projectile species.
+            // AlienUnk01 returns false for the projectile species and Cyrax.
             self.wander(&mut || runtime(AlienRuntimeRequest::Random));
         } else if let Some(target) = self.nearest_eligible(prey) {
             self.chase(target);
@@ -336,8 +406,13 @@ impl WeakSylvester {
                 self.vx = self.vx.clamp(-0.1, 0.1);
             }
         }
-        self.x = self.x.clamp(-10.0, 490.0) + self.vx / self.movement_divisor + emergence_dx;
-        self.y = self.y.clamp(85.0, 290.0) + self.vy / self.movement_divisor;
+        let (right_bound, top_bound, bottom_bound) = if self.kind == SylvesterKind::MiniSylvester {
+            (540.0, 95.0, 370.0)
+        } else {
+            (490.0, 85.0, 290.0)
+        };
+        self.x = self.x.clamp(-10.0, right_bound) + self.vx / self.movement_divisor + emergence_dx;
+        self.y = self.y.clamp(top_bound, bottom_bound) + self.vy / self.movement_divisor;
         self.hit_ticks = self.hit_ticks.saturating_sub(1);
         self.chase_ticks = self.chase_ticks.saturating_sub(1);
 
@@ -443,6 +518,20 @@ impl WeakSylvester {
         shot_x: i32,
         shot_y: i32,
         weapon: u8,
+        next_random: impl FnMut() -> u32,
+    ) -> ShotResult {
+        self.shot_with_weapon_and_random_under_boss(shot_x, shot_y, weapon, false, next_random)
+    }
+
+    /// The Board supplies whether its separate Cyrax pointer is still live.
+    /// PB05 `004fa6f0` suppresses raw7 healing while that pointer is present,
+    /// but still accepts the shot, applies push and starts the hit clock.
+    pub fn shot_with_weapon_and_random_under_boss(
+        &mut self,
+        shot_x: i32,
+        shot_y: i32,
+        weapon: u8,
+        boss_present: bool,
         mut next_random: impl FnMut() -> u32,
     ) -> ShotResult {
         let sx = f64::from(shot_x);
@@ -458,7 +547,9 @@ impl WeakSylvester {
         }
 
         if self.kind == SylvesterKind::Psychosquid && self.healing {
-            self.health += f64::from(weapon) * 3.0;
+            if !boss_present {
+                self.health += f64::from(weapon) * 3.0;
+            }
         } else {
             self.health -= if matches!(
                 self.kind,
@@ -544,8 +635,18 @@ impl WeakSylvester {
         ]
         .into_iter()
         .all(f64::is_finite)
-            || !(-32.0..=512.0).contains(&self.x)
-            || !(64.0..=312.0).contains(&self.y)
+            || !(if self.kind == SylvesterKind::MiniSylvester {
+                -32.0..=565.0
+            } else {
+                -32.0..=512.0
+            })
+            .contains(&self.x)
+            || !(if self.kind == SylvesterKind::MiniSylvester {
+                64.0..=395.0
+            } else {
+                64.0..=312.0
+            })
+            .contains(&self.y)
             || self.vx.abs()
                 > (if self.kind == SylvesterKind::Ulysses {
                     12.0
@@ -558,10 +659,15 @@ impl WeakSylvester {
         {
             return Err("invalid weak Sylvester motion".into());
         }
+        let (widget_right, widget_bottom) = if self.kind == SylvesterKind::MiniSylvester {
+            (565, 395)
+        } else {
+            (512, 312)
+        };
         if self.widget_x < -32
-            || self.widget_x > 512
+            || self.widget_x > widget_right
             || self.widget_y < 64
-            || self.widget_y > 312
+            || self.widget_y > widget_bottom
             || !self.health.is_finite()
             || (self.kind != SylvesterKind::Psychosquid && self.health > self.kind.starting_health())
             || (self.health * 4.0).fract() != 0.0
@@ -573,12 +679,15 @@ impl WeakSylvester {
                     * (match self.kind {
                         SylvesterKind::Destructor => 0.5,
                         SylvesterKind::Gus => 0.75,
+                        // Itchy, Rufus and Gash can each strike the one-HP
+                        // Mini before its emergence reaches an active update.
+                        SylvesterKind::MiniSylvester => 6.0,
                         _ => 3.0,
                     })
             || !self.alive && self.health > 0.0
             || self.spawn_ticks > 15
-            || self.chase_ticks > 100
-            || self.hit_ticks > 10
+            || self.chase_ticks > (if self.kind == SylvesterKind::MiniSylvester { 40 } else { 100 })
+            || self.hit_ticks > (if self.kind == SylvesterKind::MiniSylvester { 30 } else { 10 })
             || self.movement_state > 9
             || self.movement_change_ticks > 20
             || self.swim_ticks > (if self.kind == SylvesterKind::Ulysses { 79 } else { 50 })
@@ -597,9 +706,12 @@ impl WeakSylvester {
                 || self.phase_ticks >= 400 || self.special_ticks > 10
                 || (self.movement_divisor != 0.5 && self.movement_divisor != 2.0)
                 || (!self.ever_healed && self.healing)))
+            || (self.kind == SylvesterKind::MiniSylvester
+                && !(0..5).any(|draw| self.movement_divisor == 0.8 + f64::from(draw) / 10.0))
             || (self.kind != SylvesterKind::Psychosquid && (self.phase_ticks != 0
                 || self.phase_threshold != 0 || self.healing || self.ever_healed
-                || self.movement_divisor != self.kind.speed_divisor()))
+                || (self.kind != SylvesterKind::MiniSylvester
+                    && self.movement_divisor != self.kind.speed_divisor())))
         {
             return Err("invalid weak Sylvester counters".into());
         }
@@ -646,8 +758,9 @@ impl WeakSylvester {
     /// Source target selection uses old integer widget centers; equal
     /// distances retain the first item in the board's ordered view.
     fn nearest_eligible<'a>(&self, prey: &'a [PreyView]) -> Option<&'a PreyView> {
-        let center_x = i64::from(self.widget_x) + 80;
-        let center_y = i64::from(self.widget_y) + 80;
+        let own_half = i64::from(self.sprite_size() / 2);
+        let center_x = i64::from(self.widget_x) + own_half;
+        let center_y = i64::from(self.widget_y) + own_half;
         let mut nearest = None;
         let mut nearest_distance = 100_000_000_i64;
         for candidate in prey.iter().filter(|view| view.eligible) {
@@ -666,14 +779,20 @@ impl WeakSylvester {
     /// nearest target selected for steering. It uses the previous widget
     /// position because the alien moves later in the update.
     fn first_contact(&self, prey: &[PreyView]) -> Option<u64> {
-        let center_x = i64::from(self.widget_x) + 80;
-        let center_y = i64::from(self.widget_y) + 80;
+        let own_half = i64::from(self.sprite_size() / 2);
+        let center_x = i64::from(self.widget_x) + own_half;
+        let center_y = i64::from(self.widget_y) + own_half;
+        let (horizontal, vertical) = if self.kind == SylvesterKind::MiniSylvester {
+            (30, 30)
+        } else {
+            (45, 65)
+        };
         prey.iter()
             .filter(|view| view.eligible)
             .find_map(|candidate| {
                 let dx = center_x - i64::from(candidate.widget_x + candidate.width / 2);
                 let dy = center_y - i64::from(candidate.widget_y + candidate.height / 2);
-                (dx.abs() < 45 && dy.abs() < 65).then_some(candidate.id)
+                (dx.abs() < horizontal && dy.abs() < vertical).then_some(candidate.id)
             })
     }
 
@@ -750,8 +869,9 @@ impl WeakSylvester {
     }
 
     fn chase(&mut self, target: &PreyView) {
-        let center_x = self.x + 80.0;
-        let center_y = self.y + 80.0;
+        let own_half = f64::from(self.sprite_size() / 2);
+        let center_x = self.x + own_half;
+        let center_y = self.y + own_half;
         let target_x = f64::from(target.widget_x + 40);
         let target_y = f64::from(target.widget_y + 40);
         if center_x < target_x && self.vx < 1.8 {
@@ -978,6 +1098,218 @@ mod tests {
     }
 
     #[test]
+    fn cyrax_constructor_clamps_attempt_difficulty_and_keeps_common_draw_order() {
+        // A36-03: installed raw21 constructor reads profile+54 and clamps
+        // (attempts-1) to 0..20 before subtracting 125 HP per attempt.
+        for (attempts, health) in [
+            (0, 5000.0),
+            (1, 5000.0),
+            (2, 4875.0),
+            (21, 2500.0),
+            (u32::MAX, 2500.0),
+        ] {
+            let actor = WeakSylvester::spawn_cyrax(90, 100, 120, attempts, 2, 29);
+            assert_eq!(actor.health, health);
+            assert_eq!(actor.movement_divisor, 2.0);
+            assert_eq!((actor.vx, actor.movement_state), (-3.0, 9));
+            assert_eq!(actor.sprite_size(), 160);
+            actor.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn mini_constructor_uses_direction_divisor_movement_draws_and_initial_immunity() {
+        // A36-04: the divisor draw falls between common direction and
+        // movement-state draws; all five discrete divisors are reachable.
+        for draw in 0..5 {
+            let actor = WeakSylvester::spawn_mini(91, 100, 120, 2, draw, 29);
+            assert_eq!(actor.kind, SylvesterKind::MiniSylvester);
+            assert_eq!(actor.health, 1.0);
+            assert_eq!(actor.movement_divisor, 0.8 + f64::from(draw) / 10.0);
+            assert_eq!((actor.vx, actor.movement_state), (-3.0, 9));
+            assert_eq!((actor.chase_ticks, actor.hit_ticks), (40, 30));
+            assert_eq!(actor.sprite_size(), 80);
+            actor.validate().unwrap();
+            let resumed: WeakSylvester =
+                serde_json::from_str(&serde_json::to_string(&actor).unwrap()).unwrap();
+            resumed.validate().unwrap();
+            assert_eq!(resumed.movement_divisor, actor.movement_divisor);
+        }
+        let actor = WeakSylvester::spawn_mini(91, 100, 120, 1, 9, 21);
+        assert_eq!(
+            (actor.vx, actor.movement_divisor, actor.movement_state),
+            (3.0, 0.8 + 0.4, 1)
+        );
+    }
+
+    #[test]
+    fn cyrax_wanders_past_prey_and_mini_uses_strict_thirty_contact() {
+        let prey = [PreyView {
+            id: 5,
+            widget_x: 100,
+            widget_y: 120,
+            width: 80,
+            height: 80,
+            eligible: true,
+        }];
+        let mut boss = WeakSylvester::spawn_cyrax(92, 100, 120, 1, 2, 9);
+        boss.spawn_ticks = 0;
+        boss.chase_ticks = 0;
+        boss.movement_change_ticks = 0;
+        assert_eq!(
+            boss.update(&prey, || panic!("no movement draw")),
+            AlienUpdate::default()
+        );
+        assert_eq!(boss.vx, -2.9);
+
+        let mut mini = WeakSylvester::spawn_mini(93, 100, 120, 1, 0, 9);
+        mini.spawn_ticks = 0;
+        mini.chase_ticks = 0;
+        mini.vx = 0.0;
+        mini.vy = 0.0;
+        // The mini's old integer center is 140,160, including for nearest
+        // selection. Equal distances retain the first board-ordered target.
+        let ordered = [
+            PreyView {
+                id: 6,
+                widget_x: 130,
+                widget_y: 120,
+                ..prey[0]
+            },
+            PreyView {
+                id: 7,
+                widget_x: 70,
+                widget_y: 120,
+                ..prey[0]
+            },
+        ];
+        assert_eq!(mini.nearest_eligible(&ordered).unwrap().id, 6);
+        let centers_diverge = [
+            PreyView {
+                id: 8,
+                widget_x: 180,
+                ..prey[0]
+            },
+            PreyView {
+                id: 9,
+                widget_x: 100,
+                ..prey[0]
+            },
+        ];
+        assert_eq!(mini.nearest_eligible(&centers_diverge).unwrap().id, 9);
+        assert_eq!(mini.first_contact(&ordered), None); // exactly 30px
+        let inner = [PreyView {
+            widget_x: 129,
+            ..ordered[0]
+        }];
+        assert_eq!(mini.first_contact(&inner), Some(6));
+        let vertical_edge = [PreyView {
+            widget_x: 100,
+            widget_y: 150,
+            ..prey[0]
+        }];
+        assert_eq!(mini.first_contact(&vertical_edge), None);
+        let vertical_inner = [PreyView {
+            widget_y: 149,
+            ..vertical_edge[0]
+        }];
+        assert_eq!(mini.first_contact(&vertical_inner), Some(5));
+        mini.update(
+            &[PreyView {
+                widget_x: 90,
+                width: 120,
+                ..prey[0]
+            }],
+            || panic!("chase needs no RNG"),
+        );
+        assert_eq!(mini.vx, -0.1); // target center uses existing +40 rule
+    }
+
+    #[test]
+    fn mini_shot_uses_shared_160_rectangle_after_thirty_active_updates() {
+        let mut mini = WeakSylvester::spawn_mini(94, 100, 120, 1, 0, 9);
+        assert_eq!(mini.shot_with_weapon(200, 220, 2), ShotResult::Miss);
+        for _ in 0..6 {
+            mini.update(&[], || panic!("hidden emergence consumes no RNG"));
+        }
+        assert_eq!(mini.hit_ticks, 30);
+        for _ in 0..30 {
+            mini.update(&[], || 1);
+        }
+        assert_eq!(mini.hit_ticks, 0);
+        mini.x = 100.0;
+        mini.y = 120.0;
+        let (x, y) = (100, 120);
+        assert_eq!(mini.shot_with_weapon(x, y + 100, 2), ShotResult::Miss);
+        assert_eq!(mini.shot_with_weapon(x + 160, y + 100, 2), ShotResult::Miss);
+        assert!(matches!(
+            mini.shot_with_weapon(x + 100, y + 100, 2),
+            ShotResult::Defeated { .. }
+        ));
+        assert!(!mini.alive); // accepted lethal shot removes immediately
+    }
+
+    #[test]
+    fn mini_clamps_to_its_80px_lane_and_validation_rejects_unreachable_state() {
+        let mut mini = WeakSylvester::spawn_mini(95, 100, 120, 1, 0, 9);
+        mini.spawn_ticks = 0;
+        mini.movement_change_ticks = 0;
+        mini.x = 600.0;
+        mini.y = 400.0;
+        mini.vx = 0.0;
+        mini.vy = 0.0;
+        mini.update(&[], || panic!("no movement draw"));
+        assert_eq!((mini.widget_x, mini.widget_y), (540, 370));
+        mini.validate().unwrap();
+        mini.x = -20.0;
+        mini.y = 80.0;
+        mini.update(&[], || panic!("no movement draw"));
+        assert_eq!((mini.widget_x, mini.widget_y), (-10, 95));
+        mini.validate().unwrap();
+
+        mini.movement_divisor = 1.25;
+        assert!(mini.validate().is_err());
+        mini.movement_divisor = 0.8;
+        mini.hit_ticks = 31;
+        assert!(mini.validate().is_err());
+        mini.hit_ticks = 30;
+        mini.x = 566.0;
+        assert!(mini.validate().is_err());
+    }
+
+    #[test]
+    fn boss_surviving_shot_has_ten_tick_clock_and_pet_lethal_waits_for_update() {
+        let mut boss = WeakSylvester::spawn_cyrax(96, 100, 120, 21, 1, 9);
+        assert_eq!(
+            boss.shot_with_weapon(180, 200, 2),
+            ShotResult::Hit { health: 2494.0 }
+        );
+        assert_eq!(boss.hit_ticks, 10);
+        assert_eq!(boss.shot_with_weapon(180, 200, 2), ShotResult::Miss);
+        let mut mini = WeakSylvester::spawn_mini(97, 100, 120, 1, 0, 9);
+        assert_eq!(mini.itchy_hit(), Some(0.0));
+        assert!(mini.alive);
+        mini.spawn_ticks = 0;
+        assert!(mini.update(&[], || 1).defeated);
+        assert!(!mini.alive);
+
+        let mut emerging = WeakSylvester::spawn_mini(98, 100, 120, 1, 0, 9);
+        emerging.update(&[], || panic!("hidden emergence consumes no RNG"));
+        assert_eq!(emerging.itchy_hit(), Some(0.0));
+        assert_eq!(emerging.rufus_hit(), Some(-2.0));
+        assert_eq!(emerging.gash_hit(), Some(-5.0));
+        emerging.validate().unwrap();
+        for _ in 0..5 {
+            assert!(
+                !emerging
+                    .update(&[], || panic!("hidden emergence consumes no RNG"))
+                    .defeated
+            );
+        }
+        assert!(emerging.update(&[], || 1).defeated);
+    }
+
+    #[test]
     fn psychosquid_timed_and_forced_healing_preserve_distinct_speed_writes() {
         let mut timed = WeakSylvester::spawn_kind(SylvesterKind::Psychosquid, 90, 100, 120, 1, 1);
         timed.spawn_ticks = 0;
@@ -1038,6 +1370,39 @@ mod tests {
             ShotResult::Hit { health: 295.0 }
         ));
         assert_eq!(actor.shot_with_weapon(110, 130, 12), ShotResult::Miss);
+        actor.validate().unwrap();
+    }
+
+    #[test]
+    fn psychosquid_healing_shot_waits_for_boss_removal_but_keeps_push_and_clock() {
+        let mut actor = WeakSylvester::spawn_kind(SylvesterKind::Psychosquid, 93, 100, 120, 1, 1);
+        actor.spawn_ticks = 0;
+        actor.healing = true;
+        actor.ever_healed = true;
+        actor.health = 259.0;
+        actor.vx = 0.0;
+        actor.vy = 0.0;
+
+        assert_eq!(
+            actor.shot_with_weapon_and_random_under_boss(110, 130, 12, true, || {
+                panic!("healing shot consumes no random draw")
+            }),
+            ShotResult::Hit { health: 259.0 }
+        );
+        assert_eq!((actor.vx, actor.vy, actor.hit_ticks), (1.75, 1.75, 10));
+        assert_eq!(
+            actor.shot_with_weapon_and_random_under_boss(110, 130, 12, true, || 0),
+            ShotResult::Miss
+        );
+
+        actor.hit_ticks = 0;
+        assert_eq!(
+            actor.shot_with_weapon_and_random_under_boss(110, 130, 12, false, || {
+                panic!("healing shot consumes no random draw")
+            }),
+            ShotResult::Hit { health: 295.0 }
+        );
+        assert_eq!(actor.hit_ticks, 10);
         actor.validate().unwrap();
     }
 

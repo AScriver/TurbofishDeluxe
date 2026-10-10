@@ -67,6 +67,15 @@ impl RufusState {
         }
     }
 
+    pub fn spawn_tank5(id: u64, rand_range: &mut impl FnMut(u64) -> u64) -> Self {
+        Self::spawn_tank2(id, rand_range)
+    }
+
+    /// PB05 004f2e80 bypasses ChaseEnemyBehavior for raw ID 7 in Tank 5.
+    pub fn tick_tank5(&mut self, rand_range: &mut impl FnMut(u64) -> u64) -> RufusUpdate {
+        self.tick(&[], rand_range)
+    }
+
     fn nearest<'a>(&self, aliens: &'a [RufusAlienView]) -> Option<&'a RufusAlienView> {
         let mut best = 100_000_000_i64;
         let mut chosen = None;
@@ -238,6 +247,18 @@ impl RufusState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tank5_rufus_uses_wander_without_combat_request() {
+        let mut draws = Vec::new();
+        let mut rufus = RufusState::spawn_tank5(1, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(draws, [265, 520, 10, 250]);
+        assert_eq!(rufus.tick_tank5(&mut |_| 1), RufusUpdate::default());
+        assert!(rufus.validate().is_ok());
+    }
 
     #[test]
     fn corrected_nearest_metric_and_separate_steering_center() {

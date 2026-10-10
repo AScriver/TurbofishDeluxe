@@ -70,6 +70,20 @@ impl RhubarbState {
         }
     }
 
+    pub fn spawn_tank5(
+        id: u64,
+        x: i32,
+        discarded_y: i32,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
+        Self::spawn_tank4(id, x, discarded_y, rand_range)
+    }
+
+    /// Raw ID 14 bypasses both prey chase and specialty in PB05 004f2e80.
+    pub fn begin_tick_tank5(&mut self) -> RhubarbContact {
+        RhubarbContact::default()
+    }
+
     pub fn sprite_row(&self) -> u8 {
         u8::from(self.specialty_ticks != 0)
     }
@@ -161,23 +175,33 @@ impl RhubarbState {
     /// Board applies each reported push with its own `%2` draw before this
     /// phase consumes movement-state RNG or decrements the specialty clock.
     pub fn finish_tick(&mut self, rand_range: &mut impl FnMut(u64) -> u64) {
-        self.target_vx = match self.movement_state {
-            0 => 0.0,
-            1 => -0.5,
-            2 => 0.5,
-            3 => -1.0,
-            4 => 1.0,
-            5 => 1.5,
-            6 => -1.5,
-            7 => -2.5,
-            8 => 2.5,
-            _ => self.target_vx,
-        };
-        if self.target_vx < self.vx {
-            self.vx -= 0.1;
-        }
-        if self.target_vx > self.vx {
-            self.vx += 0.1;
+        self.finish_tick_inner(false, rand_range);
+    }
+
+    pub fn finish_tick_tank5(&mut self, rand_range: &mut impl FnMut(u64) -> u64) {
+        self.finish_tick_inner(true, rand_range);
+    }
+
+    fn finish_tick_inner(&mut self, tank5: bool, rand_range: &mut impl FnMut(u64) -> u64) {
+        if !tank5 {
+            self.target_vx = match self.movement_state {
+                0 => 0.0,
+                1 => -0.5,
+                2 => 0.5,
+                3 => -1.0,
+                4 => 1.0,
+                5 => 1.5,
+                6 => -1.5,
+                7 => -2.5,
+                8 => 2.5,
+                _ => self.target_vx,
+            };
+            if self.target_vx < self.vx {
+                self.vx -= 0.1;
+            }
+            if self.target_vx > self.vx {
+                self.vx += 0.1;
+            }
         }
         self.movement_timer += 1;
         self.chase_timer = self.chase_timer.saturating_add(1);
@@ -228,6 +252,24 @@ impl RhubarbState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tank5_rhubarb_keeps_common_counters_without_chase_or_push() {
+        let mut draws = Vec::new();
+        let mut rhubarb = RhubarbState::spawn_tank5(1, 200, 500, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(draws, [10, 250]);
+        assert_eq!(rhubarb.widget_y, 355);
+        rhubarb.movement_state = 8;
+        assert_eq!(rhubarb.begin_tick_tank5(), RhubarbContact::default());
+        rhubarb.finish_tick_tank5(&mut |_| 1);
+        assert_eq!(rhubarb.target_vx, 0.0);
+        assert_eq!(rhubarb.vx, 0.0);
+        assert_eq!(rhubarb.movement_timer, 1);
+        assert!(rhubarb.validate().is_ok());
+    }
 
     #[test]
     fn nearest_selection_does_not_limit_multi_target_push() {

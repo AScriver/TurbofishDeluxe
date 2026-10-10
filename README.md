@@ -8,7 +8,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 
 ## Start here
 
-- Current code checkpoint: [Tank4-5/Angie](docs/adventure-4-5.md), current20,477 checks; native/manual acceptance deferred. The [broad binary recovery](docs/binary-recovery.md) first pass outlines all remaining systems. Verify/commit its checkpoint, then continue Tank5-1/Cyrax and the remaining runtime automatically.
+- [Tank5-1/Cyrax](docs/adventure-5-1.md), current21, passed516 checks and has a frozen code checkpoint. Next: Presto and completed-Adventure replay/results. The committed [broad binary recovery](docs/binary-recovery.md) first pass outlines all remaining systems; continue the full runtime automatically. Native/manual acceptance remains deferred.
 - Agents: read [AGENTS.md](AGENTS.md), then follow its startup order.
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).

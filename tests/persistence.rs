@@ -338,6 +338,49 @@ fn current_bytes(session: AdventureSession) -> Vec<u8> {
     .unwrap()
 }
 
+fn prepared_tank_five_session(attempts: u32) -> AdventureSession {
+    // Prepared unit fixture at the post-4-5 boundary; it is not earned
+    // progression or native-game evidence.
+    let mut session = tank_four_finale_session(&[PetKind::Angie]);
+    session.progress.tank = 5;
+    session.progress.level = 1;
+    session.progress.cyrax_attempts = attempts;
+    session.board = Some(AdventureState::new_tank5_1(42, attempts));
+    session.validate().unwrap();
+    session
+}
+
+fn prepared_tank_five_boss_session(attempts: u32) -> AdventureSession {
+    use turbofish_deluxe::invasion::WarningCoords;
+
+    let mut session = prepared_tank_five_session(attempts);
+    let wave = session.board.as_mut().unwrap().invasion.as_mut().unwrap();
+    wave.countdown = 1;
+    wave.warning = Some(WarningCoords {
+        first_x: 100,
+        first_y: 120,
+        second_x: 140,
+        second_y: 150,
+    });
+    session.step(&[]);
+    assert!(
+        session
+            .board
+            .as_ref()
+            .unwrap()
+            .invasion
+            .as_ref()
+            .unwrap()
+            .finale
+            .as_ref()
+            .unwrap()
+            .boss
+            .is_some()
+    );
+    session.validate().unwrap();
+    session
+}
+
 fn pending_tank_four_second_session() -> AdventureSession {
     use turbofish_deluxe::{
         bilaterus::BilaterusState,
@@ -605,7 +648,7 @@ fn current_tank_four_second_pause_keeps_live_board_while_session_time_advances()
 fn current_tank_four_third_accepts_seventeen_rosters_and_persists_live_amp_setup() {
     use turbofish_deluxe::{alien::SylvesterKind, fish_pet::FishPetKind, invasion::EncounterKind};
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 20);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 21);
     let canonical = tank_four_third_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 17);
     for pet in canonical {
@@ -866,7 +909,7 @@ fn current_tank_four_fourth_accepts_eighteen_rosters_and_persists_gash_setup() {
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 20);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 21);
     let canonical = tank_four_fourth_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 18);
     for pet in canonical {
@@ -1119,7 +1162,7 @@ fn current_tank_four_finale_accepts_nineteen_rosters_and_starts_with_bilaterus()
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 20);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 21);
     let canonical = tank_four_finale_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 19);
     for pet in canonical {
@@ -1159,7 +1202,7 @@ fn current_tank_four_finale_accepts_nineteen_rosters_and_starts_with_bilaterus()
 }
 
 #[test]
-fn current_twenty_requires_revival_clock_on_all_seven_valid_corpse_kinds() {
+fn current_twenty_one_requires_revival_clock_on_all_seven_valid_corpse_kinds() {
     // Each complete source state first decodes on its own valid stage. The
     // seven negative probes then remove only one required clock at a time.
     for (session, lists) in [
@@ -1191,7 +1234,7 @@ fn current_twenty_requires_revival_clock_on_all_seven_valid_corpse_kinds() {
                 .remove("revival_ticks");
             let error = cli::decode_save(&serde_json::to_vec(&missing).unwrap()).unwrap_err();
             assert!(
-                error.to_string().contains("Incomplete format-twenty"),
+                error.to_string().contains("Incomplete format-twenty-one"),
                 "missing {list}[0].revival_ticks: {error}"
             );
         }
@@ -1346,8 +1389,8 @@ fn current_tank_four_finale_pending_balrog_bilaterus_keeps_order_and_counter() {
 }
 
 #[test]
-fn current_tank_four_finale_special_hatch_reload_keeps_nineteen_pets_and_lock() {
-    use turbofish_deluxe::sim::{Event, Rejection};
+fn current_tank_four_finale_special_hatch_reload_enters_fixed_tank_five_roster() {
+    use turbofish_deluxe::sim::Event;
 
     // Controlled shop fixture: three actual BuyEgg actions exercise the
     // special phase transaction, without claiming earned native progress.
@@ -1420,18 +1463,279 @@ fn current_tank_four_finale_special_hatch_reload_keeps_nineteen_pets_and_lock() 
         AdventurePhase::TankFourFinaleHatch { updates: 171 }
     ));
     let mut reopened = cli::decode_save(&current_bytes(reopened)).unwrap();
-    reopened.apply_actions(&[Action::Continue]);
-    assert!(matches!(
-        reopened.phase,
-        AdventurePhase::PetSelection { .. }
-    ));
-    reopened.apply_actions(&[Action::TogglePet {
-        pet: PetKind::Angie,
-    }]);
-    let before = serde_json::to_value(&reopened).unwrap();
+    let entered = reopened.apply_actions(&[Action::Continue]);
+    assert!(entered.iter().any(|event| matches!(
+        event,
+        Event::StageStarted {
+            tank: 5,
+            level: 1,
+            ..
+        }
+    )));
+    assert!(
+        !entered
+            .iter()
+            .any(|event| matches!(event, Event::PetSelectionOpened { .. }))
+    );
+    assert_eq!(reopened.phase, AdventurePhase::Playing);
+    let board = reopened.board.as_ref().unwrap();
+    assert_eq!(
+        (
+            board.tank,
+            board.level,
+            board.balance,
+            board.eggs,
+            board.egg_price
+        ),
+        (5, 1, 200, 2, 0)
+    );
+    assert_eq!(board.pets.len(), 18);
+    assert!(!board.pets.contains(&PetKind::Angie));
+    assert!(board.fish.is_empty());
+    assert_eq!(reopened.progress.selected_pets, vec![PetKind::Angie]);
+    let final_reload = cli::decode_save(&current_bytes(reopened.clone())).unwrap();
+    assert_eq!(
+        serde_json::to_value(final_reload).unwrap(),
+        serde_json::to_value(reopened).unwrap()
+    );
+}
+
+#[test]
+fn current_tank_five_live_boss_child_and_pause_reopen_continues_identically() {
+    use turbofish_deluxe::alien::WeakSylvester;
+
+    let mut uninterrupted = prepared_tank_five_boss_session(2);
+    let mut encoded = serde_json::to_value(&uninterrupted).unwrap();
+    let child_id = encoded["board"]["next_id"].as_u64().unwrap();
+    encoded["board"]["next_id"] = (child_id + 1).into();
+    uninterrupted = serde_json::from_value(encoded).unwrap();
+    uninterrupted
+        .board
+        .as_mut()
+        .unwrap()
+        .invasion
+        .as_mut()
+        .unwrap()
+        .finale
+        .as_mut()
+        .unwrap()
+        .children
+        .push(WeakSylvester::spawn_mini(child_id, 300, 230, 1, 3, 7));
+    uninterrupted.validate().unwrap();
+    let mut reopened = cli::decode_save(&current_bytes(uninterrupted.clone())).unwrap();
+    assert_eq!(
+        serde_json::to_value(&reopened).unwrap(),
+        serde_json::to_value(&uninterrupted).unwrap()
+    );
+    let board_before = serde_json::to_value(reopened.board.as_ref().unwrap()).unwrap();
+    let time_before = reopened.ticks;
+    for _ in 0..6 {
+        reopened.paused_step();
+        uninterrupted.paused_step();
+    }
+    assert_eq!(reopened.ticks, time_before + 6);
+    assert_eq!(
+        serde_json::to_value(reopened.board.as_ref().unwrap()).unwrap(),
+        board_before
+    );
+    reopened = cli::decode_save(&current_bytes(reopened)).unwrap();
+    for _ in 0..8 {
+        assert_eq!(
+            serde_json::to_value(reopened.step(&[])).unwrap(),
+            serde_json::to_value(uninterrupted.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&reopened).unwrap(),
+            serde_json::to_value(&uninterrupted).unwrap()
+        );
+        reopened.validate().unwrap();
+    }
+}
+
+#[test]
+fn current_tank_five_live_ulysses_launches_energyball_then_reopens_mid_flight() {
+    use turbofish_deluxe::{
+        alien::{SylvesterKind, WeakSylvester},
+        missile::MissileKind,
+        sim::Event,
+    };
+
+    let mut uninterrupted = prepared_tank_five_boss_session(0);
+    let mut encoded = serde_json::to_value(&uninterrupted).unwrap();
+    let alien_id = encoded["board"]["next_id"].as_u64().unwrap();
+    encoded["board"]["next_id"] = (alien_id + 1).into();
+    uninterrupted = serde_json::from_value(encoded).unwrap();
+    let wave = uninterrupted
+        .board
+        .as_mut()
+        .unwrap()
+        .invasion
+        .as_mut()
+        .unwrap();
+    let mut ulysses = WeakSylvester::spawn_kind(SylvesterKind::Ulysses, alien_id, 100, 120, 1, 1);
+    ulysses.spawn_ticks = 0;
+    ulysses.launch_ticks = ulysses.reload_ticks;
+    wave.actors.push(ulysses);
+    uninterrupted.validate().unwrap();
+
+    // The production actor update chooses a live pet and allocates the ball.
+    let events = uninterrupted.step(&[]);
+    let launched = events
+        .iter()
+        .find_map(|event| match event {
+            Event::EnergyBallLaunched {
+                missile_id,
+                target_id,
+                ..
+            } => Some((*missile_id, *target_id)),
+            _ => None,
+        })
+        .expect("live Ulysses should launch toward a Tank 5 pet");
+    let board = uninterrupted.board.as_ref().unwrap();
+    assert!(board.fish.is_empty());
+    let ball = board
+        .missiles
+        .iter()
+        .find(|ball| ball.id == launched.0)
+        .unwrap();
+    assert_eq!(ball.kind, MissileKind::EnergyBall);
+    assert_eq!(ball.target_id, launched.1);
+    assert!(
+        board.fish_pets.iter().any(|pet| pet.id == launched.1)
+            || board.stinky.as_ref().and_then(|pet| pet.combat_id) == Some(launched.1)
+            || board
+                .niko
+                .as_ref()
+                .is_some_and(|pet| pet.owner_id == launched.1)
+            || board.clyde.as_ref().is_some_and(|pet| pet.id == launched.1)
+            || board.rufus.as_ref().is_some_and(|pet| pet.id == launched.1)
+            || board
+                .rhubarb
+                .as_ref()
+                .is_some_and(|pet| pet.id == launched.1)
+    );
+    uninterrupted.validate().unwrap();
+
+    let mut reopened = cli::decode_save(&current_bytes(uninterrupted.clone())).unwrap();
+    let board_before = serde_json::to_value(reopened.board.as_ref().unwrap()).unwrap();
+    for _ in 0..4 {
+        reopened.paused_step();
+        uninterrupted.paused_step();
+    }
+    assert_eq!(
+        serde_json::to_value(reopened.board.as_ref().unwrap()).unwrap(),
+        board_before
+    );
+    reopened = cli::decode_save(&current_bytes(reopened)).unwrap();
+    for _ in 0..12 {
+        assert_eq!(
+            serde_json::to_value(reopened.step(&[])).unwrap(),
+            serde_json::to_value(uninterrupted.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&reopened).unwrap(),
+            serde_json::to_value(&uninterrupted).unwrap()
+        );
+        reopened.validate().unwrap();
+    }
+}
+
+#[test]
+fn current_tank_five_rejects_missing_or_dangling_finale_state() {
+    use turbofish_deluxe::alien::WeakSylvester;
+
+    let session = prepared_tank_five_boss_session(2);
+    let complete = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    cli::decode_save(&serde_json::to_vec(&complete).unwrap()).unwrap();
+    for path in [
+        "/session/progress/cyrax_attempts",
+        "/session/progress/adventure_completed",
+        "/session/board/invasion/finale",
+        "/session/board/invasion/finale/boss_defeated",
+        "/session/board/invasion/finale/children",
+        "/session/board/invasion/finale/profile_attempts",
+        "/session/board/invasion/finale/ordinary_ticks",
+        "/session/board/invasion/finale/child_ticks",
+        "/session/board/stinky/combat_id",
+    ] {
+        let mut missing = complete.clone();
+        let (parent, key) = path.rsplit_once('/').unwrap();
+        missing
+            .pointer_mut(parent)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(key);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "accepted absent {path}"
+        );
+    }
+    let mut disagreement = complete.clone();
+    disagreement["session"]["progress"]["cyrax_attempts"] = 1.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&disagreement).unwrap()).is_err());
+    let mut duplicate = complete.clone();
+    let boss_id = duplicate["session"]["board"]["invasion"]["finale"]["boss"]["id"]
+        .as_u64()
+        .unwrap();
+    duplicate["session"]["board"]["invasion"]["finale"]["children"] =
+        serde_json::json!([WeakSylvester::spawn_mini(boss_id, 300, 230, 1, 3, 7)]);
+    assert!(cli::decode_save(&serde_json::to_vec(&duplicate).unwrap()).is_err());
+    let mut wrong_shape = complete;
+    wrong_shape["session"]["board"]["invasion"]["finale"]["children"] = serde_json::json!({});
+    assert!(cli::decode_save(&serde_json::to_vec(&wrong_shape).unwrap()).is_err());
+}
+
+#[test]
+fn current_tank_five_boss_death_latch_reopens_before_next_shop_refresh() {
+    use turbofish_deluxe::sim::{Event, Rejection};
+
+    // Prepared state immediately after boss removal, before Board refresh.
+    let mut session = prepared_tank_five_boss_session(0);
+    let board = session.board.as_mut().unwrap();
+    let finale = board.invasion.as_mut().unwrap().finale.as_mut().unwrap();
+    finale.boss = None;
+    finale.boss_defeated = true;
+    board.invasion.as_mut().unwrap().battle_active = false;
+    assert!(!board.egg_unlocked);
+    session.validate().unwrap();
+    let mut reopened = cli::decode_save(&current_bytes(session)).unwrap();
+    let rejected = reopened.apply_actions(&[Action::BuyEgg]);
+    assert!(rejected.iter().any(|event| matches!(
+        event,
+        Event::Rejected {
+            reason: Rejection::Locked,
+            ..
+        }
+    )));
+    assert_eq!(reopened.board.as_ref().unwrap().eggs, 2);
+    reopened.step(&[]);
+    assert!(reopened.board.as_ref().unwrap().egg_unlocked);
+    let mut reopened = cli::decode_save(&current_bytes(reopened)).unwrap();
+    let bought = reopened.apply_actions(&[Action::BuyEgg]);
+    assert_eq!(
+        bought
+            .iter()
+            .filter(|event| matches!(event, Event::EggBought { .. }))
+            .count(),
+        1
+    );
+    assert_eq!((reopened.progress.tank, reopened.progress.level), (5, 2));
+    assert!(reopened.progress.adventure_completed);
+    assert_eq!(
+        reopened.progress.unlocked_pets.last(),
+        Some(&PetKind::Presto)
+    );
+    let awarded = reopened.progress.shell_balance;
+    let mut reopened = cli::decode_save(&current_bytes(reopened)).unwrap();
+    assert_eq!(reopened.progress.shell_balance, awarded);
     assert!(
         reopened
-            .apply_actions(&[Action::Continue])
+            .apply_actions(&[Action::BuyEgg])
             .iter()
             .any(|event| matches!(
                 event,
@@ -1441,12 +1745,140 @@ fn current_tank_four_finale_special_hatch_reload_keeps_nineteen_pets_and_lock() 
                 }
             ))
     );
-    assert_eq!(serde_json::to_value(&reopened).unwrap(), before);
-    let final_reload = cli::decode_save(&current_bytes(reopened.clone())).unwrap();
+    for _ in 0..171 {
+        reopened.step(&[]);
+    }
+    reopened.apply_actions(&[Action::Continue]);
+    assert_eq!(reopened.phase, AdventurePhase::AdventureFinaleInterlude);
+    assert!(reopened.board.is_none());
+    cli::decode_save(&current_bytes(reopened)).unwrap();
+}
+
+#[test]
+fn current_tank_five_loss_reopen_preserves_strict_attempt_and_fresh_retry() {
+    use turbofish_deluxe::sim::Event;
+
+    for damage in [1000.0, 1001.0] {
+        let mut session = prepared_tank_five_boss_session(0);
+        let board = session.board.as_mut().unwrap();
+        let boss = board
+            .invasion
+            .as_mut()
+            .unwrap()
+            .finale
+            .as_mut()
+            .unwrap()
+            .boss
+            .as_mut()
+            .unwrap();
+        boss.health -= damage;
+        board.stinky = None;
+        board.niko = None;
+        board.clyde = None;
+        board.rufus = None;
+        board.rhubarb = None;
+        board.fish_pets.clear();
+        let failed_board_tick = board.tick;
+        let events = session.step(&[]);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::GameOverStarted { .. }))
+        );
+        assert!(matches!(session.phase, AdventurePhase::GameOver { .. }));
+        assert_eq!(session.board.as_ref().unwrap().tick, failed_board_tick + 1);
+        assert_eq!(session.progress.cyrax_attempts, u32::from(damage > 1000.0));
+        let mut reopened = cli::decode_save(&current_bytes(session)).unwrap();
+        assert!(matches!(reopened.phase, AdventurePhase::GameOver { .. }));
+        let failed = reopened.board.as_ref().unwrap();
+        assert!(
+            failed.stinky.is_none()
+                && failed.niko.is_none()
+                && failed.clyde.is_none()
+                && failed.rufus.is_none()
+                && failed.rhubarb.is_none()
+                && failed.fish_pets.is_empty()
+        );
+        for _ in 0..31 {
+            reopened.step(&[]);
+        }
+        reopened.apply_actions(&[Action::Continue]);
+        assert_eq!(reopened.phase, AdventurePhase::GameSelector);
+        reopened.apply_actions(&[Action::PlayAdventure]);
+        reopened.apply_actions(&[Action::Continue]);
+        let retry = reopened.board.as_ref().unwrap();
+        assert_eq!((retry.tank, retry.level, retry.tick), (5, 1, 0));
+        assert!(
+            retry.stinky.is_some()
+                && retry.niko.is_some()
+                && retry.clyde.is_some()
+                && retry.rufus.is_some()
+                && retry.rhubarb.is_some()
+        );
+        assert_eq!(retry.fish_pets.len(), 13);
+        assert_eq!(
+            retry
+                .invasion
+                .as_ref()
+                .unwrap()
+                .finale
+                .as_ref()
+                .unwrap()
+                .profile_attempts,
+            u32::from(damage > 1000.0)
+        );
+        cli::decode_save(&current_bytes(reopened)).unwrap();
+    }
+}
+
+#[test]
+fn current_tank_five_retired_niko_pearl_reopens_and_credits_once() {
+    use turbofish_deluxe::{niko::NikoPearl, sim::Event};
+
+    let mut session = prepared_tank_five_session(0);
+    let owner_id = session
+        .board
+        .as_ref()
+        .unwrap()
+        .niko
+        .as_ref()
+        .unwrap()
+        .owner_id;
+    let mut encoded = serde_json::to_value(&session).unwrap();
+    let pearl_id = encoded["board"]["next_id"].as_u64().unwrap();
+    encoded["board"]["next_id"] = (pearl_id + 1).into();
+    session = serde_json::from_value(encoded).unwrap();
+    let board = session.board.as_mut().unwrap();
+    board.niko = None;
+    board
+        .pearls
+        .push(NikoPearl::spawn(pearl_id, owner_id, 96, 251));
+    session.validate().unwrap();
+    let mut reopened = cli::decode_save(&current_bytes(session)).unwrap();
+    let balance_before = reopened.board.as_ref().unwrap().balance;
+    let clicked = reopened.apply_actions(&[Action::Click { x: 100.0, y: 255.0 }]);
+    assert!(clicked.iter().any(|event| matches!(event,
+        Event::PearlCollectionStarted { pearl_id: id, .. } if *id == pearl_id)));
+    reopened = cli::decode_save(&current_bytes(reopened)).unwrap();
+    let mut credits = 0;
+    for _ in 0..50 {
+        credits += reopened
+            .step(&[])
+            .iter()
+            .filter(|event| {
+                matches!(event,
+            Event::PearlCredited { pearl_id: id, owner_id: owner, amount: 250, .. }
+                if *id == pearl_id && *owner == owner_id)
+            })
+            .count();
+    }
+    assert_eq!(credits, 1);
     assert_eq!(
-        serde_json::to_value(final_reload).unwrap(),
-        serde_json::to_value(reopened).unwrap()
+        reopened.board.as_ref().unwrap().balance,
+        balance_before + 250
     );
+    assert!(reopened.board.as_ref().unwrap().pearls.is_empty());
+    cli::decode_save(&current_bytes(reopened)).unwrap();
 }
 
 #[test]
@@ -1486,7 +1918,7 @@ fn current_tank_four_requires_all_breeder_and_rhubarb_state_without_backfill() {
             cli::decode_save(&serde_json::to_vec(&missing).unwrap())
                 .unwrap_err()
                 .to_string()
-                .contains("Incomplete format-twenty"),
+                .contains("Incomplete format-twenty-one"),
             "missing {field}"
         );
     }

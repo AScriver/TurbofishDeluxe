@@ -60,6 +60,7 @@ pub enum EncounterKind {
 pub enum WavePlan {
     Fixed(SylvesterKind),
     FixedBilaterus,
+    Tank5Finale,
     CyclingTank1Finale {
         next: EncounterKind,
     },
@@ -89,6 +90,7 @@ impl WavePlan {
         match self {
             Self::Fixed(kind) => EncounterKind::Single(kind),
             Self::FixedBilaterus => EncounterKind::Bilaterus,
+            Self::Tank5Finale => EncounterKind::Single(SylvesterKind::Cyrax),
             Self::CyclingTank1Finale { next }
             | Self::CyclingTank2Finale { next }
             | Self::CyclingTank4Third { next }
@@ -110,6 +112,22 @@ pub enum InvasionEvent {
         id: u64,
         x: i32,
         y: i32,
+    },
+    BossSpawned {
+        id: u64,
+        x: i32,
+        y: i32,
+    },
+    MiniSpawned {
+        id: u64,
+        x: i32,
+        y: i32,
+    },
+    BossDefeated {
+        id: u64,
+    },
+    MiniDefeated {
+        id: u64,
     },
     BilaterusSpawned {
         id: u64,
@@ -236,6 +254,20 @@ pub struct DeadAlienEffect {
     pub remaining_ticks: u8,
 }
 
+/// Raw21 is Board+110, while raw20 children are Board+bc. Neither belongs
+/// to the ordinary Alien list or its diamond/death-body transaction.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FinaleBattle {
+    pub boss: Option<WeakSylvester>,
+    pub children: Vec<WeakSylvester>,
+    pub boss_defeated: bool,
+    pub profile_attempts: u32,
+    pub ordinary_ticks: u16,
+    pub child_ticks: u16,
+    /// Board's second warning coordinate remains available to raw9's factory.
+    pub secondary_coords: Option<(i32, i32)>,
+}
+
 /// `board_update` must precede `objects_update` for a normal game update.
 /// Pausing a modal means neither is called until `acknowledge_modal`.
 #[allow(non_camel_case_types)] // The public name identifies Adventure tank 1, stage 2.
@@ -250,6 +282,7 @@ pub struct Invasion1_2 {
     pub pending_modal: Option<InvasionTip>,
     pub warning: Option<WarningCoords>,
     pub actors: Vec<WeakSylvester>,
+    pub finale: Option<FinaleBattle>,
     /// Bilaterus is a separate registered combat identity, never an Alien.
     pub bilaterus: Vec<BilaterusState>,
     /// Targetless visual effects do not hold the battle or wave countdown.
@@ -365,6 +398,22 @@ impl Invasion1_2 {
         wave
     }
 
+    pub fn new_tank5_finale(profile_attempts: u32) -> Self {
+        let mut wave = Self::new_balrog();
+        wave.plan = WavePlan::Tank5Finale;
+        wave.countdown = 300;
+        wave.finale = Some(FinaleBattle {
+            boss: None,
+            children: Vec::new(),
+            boss_defeated: false,
+            profile_attempts,
+            ordinary_ticks: 0,
+            child_ticks: 0,
+            secondary_coords: None,
+        });
+        wave
+    }
+
     pub fn legacy_v5_balrog_resume() -> Self {
         Self::with_origin(InvasionOrigin::LegacyV5Resume, SylvesterKind::Balrog)
     }
@@ -392,6 +441,7 @@ impl Invasion1_2 {
             pending_modal: None,
             warning: None,
             actors: Vec::new(),
+            finale: None,
             bilaterus: Vec::new(),
             fragments: Vec::new(),
             battle_active: false,
@@ -409,7 +459,44 @@ impl Invasion1_2 {
     }
 
     pub fn has_live_alien(&self) -> bool {
-        !self.actors.is_empty() || !self.bilaterus.is_empty()
+        !self.actors.is_empty()
+            || !self.bilaterus.is_empty()
+            || self
+                .finale
+                .as_ref()
+                .is_some_and(|finale| finale.boss.is_some() || !finale.children.is_empty())
+    }
+
+    pub fn finale_actor_by_id(&self, id: u64) -> Option<&WeakSylvester> {
+        let finale = self.finale.as_ref()?;
+        finale
+            .boss
+            .as_ref()
+            .filter(|boss| boss.id == id)
+            .or_else(|| finale.children.iter().find(|child| child.id == id))
+    }
+
+    pub fn finale_actor_by_id_mut(&mut self, id: u64) -> Option<&mut WeakSylvester> {
+        let finale = self.finale.as_mut()?;
+        if finale.boss.as_ref().is_some_and(|boss| boss.id == id) {
+            finale.boss.as_mut()
+        } else {
+            finale.children.iter_mut().find(|child| child.id == id)
+        }
+    }
+
+    pub fn finale_actor_ids(&self) -> Vec<u64> {
+        self.finale
+            .as_ref()
+            .map(|finale| {
+                finale
+                    .boss
+                    .iter()
+                    .chain(&finale.children)
+                    .map(|actor| actor.id)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub fn has_live_bilaterus(&self) -> bool {
@@ -535,11 +622,19 @@ impl Invasion1_2 {
             } => {
                 self.bilaterus.retain(|group| group.id != id);
                 events.push(InvasionEvent::BilaterusDefeated { id });
-                events.push(InvasionEvent::DiamondDropped {
-                    alien_id: id,
-                    x: diamond_at.0,
-                    y: diamond_at.1,
-                });
+                // PB05 004dbfb0, like ordinary 004f9c70, reaches the coin
+                // factory only while Board+110's boss pointer is null.
+                if self
+                    .finale
+                    .as_ref()
+                    .is_none_or(|finale| finale.boss.is_none())
+                {
+                    events.push(InvasionEvent::DiamondDropped {
+                        alien_id: id,
+                        x: diamond_at.0,
+                        y: diamond_at.1,
+                    });
+                }
                 fragments.to_vec()
             }
         };
@@ -573,15 +668,41 @@ impl Invasion1_2 {
     /// Reflected raw1 projectile damage bypasses the ordinary click/weapon
     /// branch, but transfers defeated membership through the same reward path.
     pub fn reflected_energy_hit(&mut self, id: u64) -> Option<(f64, Vec<InvasionEvent>)> {
-        let actor = self.actor_by_id_mut(id)?;
+        let actor = if self.actor_by_id(id).is_some() {
+            self.actor_by_id_mut(id)?
+        } else {
+            self.finale
+                .as_mut()?
+                .boss
+                .as_mut()
+                .filter(|boss| boss.id == id)?
+        };
         actor.health -= 30.0;
         actor.hit_ticks = 10;
         let health = actor.health;
+        let kind = actor.kind;
         let events = if health <= 0.0 {
-            self.remove_registered_alien(id)
+            match kind {
+                SylvesterKind::Cyrax => self.remove_finale_boss(),
+                _ => self.remove_registered_alien(id),
+            }
         } else {
             Vec::new()
         };
+        Some((health, events))
+    }
+
+    pub fn reflected_energy_hit_bilaterus(
+        &mut self,
+        id: u64,
+        next_random: impl FnMut() -> u32,
+        next_id: impl FnMut() -> u64,
+    ) -> Option<(f64, Vec<InvasionEvent>)> {
+        let (health, transition) = self.bilaterus_by_id_mut(id)?.reflected_energy_hit();
+        let mut events = vec![InvasionEvent::BilaterusHeadHit { id, health }];
+        if let Some(outcome) = transition {
+            events.extend(self.commit_bilaterus_transition(id, outcome, next_random, next_id));
+        }
         Some((health, events))
     }
 
@@ -675,7 +796,14 @@ impl Invasion1_2 {
             return Vec::new();
         }
         self.post_spawn_flash_ticks = self.post_spawn_flash_ticks.saturating_sub(1);
-        if self.has_live_alien() || missiles_present {
+        if self.has_live_alien()
+            || missiles_present
+            || self.plan == WavePlan::Tank5Finale
+                && self
+                    .finale
+                    .as_ref()
+                    .is_some_and(|finale| finale.boss_defeated)
+        {
             return Vec::new();
         }
         if self.countdown <= 0 {
@@ -735,6 +863,26 @@ impl Invasion1_2 {
                         &mut next_random,
                         &mut next_id,
                     )),
+                    EncounterKind::Single(_) if self.plan == WavePlan::Tank5Finale => {
+                        let id = next_id();
+                        let attempts = self.finale.as_ref().expect("finale state").profile_attempts;
+                        let boss = WeakSylvester::spawn_cyrax(
+                            id,
+                            coords.first_x,
+                            coords.first_y,
+                            attempts,
+                            next_random(),
+                            next_random(),
+                        );
+                        self.finale.as_mut().expect("finale state").boss = Some(boss);
+                        self.finale.as_mut().expect("finale state").secondary_coords =
+                            Some((coords.second_x, coords.second_y));
+                        events.push(InvasionEvent::BossSpawned {
+                            id,
+                            x: coords.first_x,
+                            y: coords.first_y,
+                        });
+                    }
                     EncounterKind::Single(kind) => events.push(self.spawn_ordinary(
                         kind,
                         coords.first_x,
@@ -794,6 +942,7 @@ impl Invasion1_2 {
                 self.plan = match self.plan {
                     WavePlan::Fixed(kind) => WavePlan::Fixed(kind),
                     WavePlan::FixedBilaterus => WavePlan::FixedBilaterus,
+                    WavePlan::Tank5Finale => WavePlan::Tank5Finale,
                     WavePlan::CyclingTank1Finale { .. } => WavePlan::CyclingTank1Finale {
                         next: if !next_random().is_multiple_of(2) {
                             EncounterKind::Single(SylvesterKind::Balrog)
@@ -977,6 +1126,182 @@ impl Invasion1_2 {
         events
     }
 
+    /// Called at raw21's place in Board object order. Its two independent
+    /// clocks run before the boss's ordinary wander and end-of-update death.
+    /// The caller commits returned contact before the next actor snapshot.
+    pub fn update_finale_boss(
+        &mut self,
+        prey: &[PreyView],
+        mut next_random: impl FnMut() -> u32,
+        mut next_id: impl FnMut() -> u64,
+    ) -> Vec<InvasionEvent> {
+        if self.pending_modal.is_some() {
+            return Vec::new();
+        }
+        let Some(finale) = self.finale.as_ref() else {
+            return Vec::new();
+        };
+        let Some(boss) = finale.boss.as_ref() else {
+            return Vec::new();
+        };
+        // The first six emergence updates return before the controller.
+        let active = boss.spawn_ticks <= 9;
+        let child_position = (boss.widget_x + 40, boss.widget_y + 40);
+        let mut subsidiary_due = false;
+        let mut child_due = false;
+        if active {
+            let finale = self.finale.as_mut().expect("registered finale");
+            if self.actors.is_empty() && self.bilaterus.is_empty() {
+                finale.ordinary_ticks += 1;
+                if finale.ordinary_ticks >= 300 {
+                    finale.ordinary_ticks = 0;
+                    subsidiary_due = true;
+                }
+            }
+            finale.child_ticks += 1;
+            if finale.child_ticks >= 75 {
+                finale.child_ticks = 0;
+                child_due = true;
+            }
+        }
+
+        let mut events = Vec::new();
+        if subsidiary_due {
+            let raw = next_random() % 6 + 4;
+            // 005475b0 draws these before 00545620 constructs the actor.
+            let x = (next_random() % 450) as i32 + 20;
+            let y = (next_random() % 195) as i32 + 105;
+            match raw {
+                4..=7 => {
+                    let kind = match raw {
+                        4 => SylvesterKind::Gus,
+                        5 => SylvesterKind::Destructor,
+                        6 => SylvesterKind::Ulysses,
+                        _ => SylvesterKind::Psychosquid,
+                    };
+                    events.push(self.spawn_ordinary(kind, x, y, &mut next_random, &mut next_id));
+                }
+                8 => events.push(self.spawn_bilaterus(x, y, &mut next_random, &mut next_id)),
+                9 => {
+                    events.push(self.spawn_ordinary(
+                        SylvesterKind::Weak,
+                        x,
+                        y,
+                        &mut next_random,
+                        &mut next_id,
+                    ));
+                    let second = self
+                        .finale
+                        .as_ref()
+                        .and_then(|finale| finale.secondary_coords)
+                        .expect("spawned finale retained second warning coordinates");
+                    events.push(self.spawn_ordinary(
+                        SylvesterKind::Balrog,
+                        second.0,
+                        second.1,
+                        &mut next_random,
+                        &mut next_id,
+                    ));
+                }
+                _ => unreachable!(),
+            }
+        }
+        if child_due {
+            let id = next_id();
+            let child = WeakSylvester::spawn_mini(
+                id,
+                child_position.0,
+                child_position.1,
+                next_random(),
+                next_random(),
+                next_random(),
+            );
+            self.finale
+                .as_mut()
+                .expect("registered finale")
+                .children
+                .push(child);
+            events.push(InvasionEvent::MiniSpawned {
+                id,
+                x: child_position.0,
+                y: child_position.1,
+            });
+        }
+        let update = self
+            .finale
+            .as_mut()
+            .and_then(|finale| finale.boss.as_mut())
+            .expect("registered finale boss")
+            .update(prey, &mut next_random);
+        if let Some(prey_id) = update.prey_eaten {
+            let id = self.finale.as_ref().unwrap().boss.as_ref().unwrap().id;
+            events.push(InvasionEvent::PreyEaten {
+                alien_id: id,
+                prey_id,
+            });
+        }
+        if update.defeated {
+            events.extend(self.remove_finale_boss());
+        }
+        events
+    }
+
+    pub fn update_finale_child(
+        &mut self,
+        id: u64,
+        prey: &[PreyView],
+        mut next_random: impl FnMut() -> u32,
+    ) -> Vec<InvasionEvent> {
+        if self.pending_modal.is_some() {
+            return Vec::new();
+        }
+        let Some(child) = self
+            .finale
+            .as_mut()
+            .and_then(|finale| finale.children.iter_mut().find(|child| child.id == id))
+        else {
+            return Vec::new();
+        };
+        let update = child.update(prey, &mut next_random);
+        let mut events = Vec::new();
+        if let Some(prey_id) = update.prey_eaten {
+            events.push(InvasionEvent::PreyEaten {
+                alien_id: id,
+                prey_id,
+            });
+        }
+        if update.defeated {
+            events.extend(self.remove_finale_child(id));
+        }
+        events
+    }
+
+    fn remove_finale_child(&mut self, id: u64) -> Vec<InvasionEvent> {
+        let Some(finale) = self.finale.as_mut() else {
+            return Vec::new();
+        };
+        let Some(index) = finale.children.iter().position(|child| child.id == id) else {
+            return Vec::new();
+        };
+        finale.children.remove(index);
+        vec![InvasionEvent::MiniDefeated { id }]
+    }
+
+    fn remove_finale_boss(&mut self) -> Vec<InvasionEvent> {
+        let Some(finale) = self.finale.as_mut() else {
+            return Vec::new();
+        };
+        let Some(boss) = finale.boss.take() else {
+            return Vec::new();
+        };
+        finale.boss_defeated = true;
+        finale.children.clear();
+        self.actors.clear();
+        self.battle_active = !self.bilaterus.is_empty();
+        // 004f9950 leaves the separate Bilaterus list; Board owns missiles.
+        vec![InvasionEvent::BossDefeated { id: boss.id }]
+    }
+
     pub fn update_effects(&mut self) -> Vec<InvasionEvent> {
         if self.pending_modal.is_some() {
             return Vec::new();
@@ -1077,6 +1402,9 @@ impl Invasion1_2 {
         if !self.has_live_alien() {
             return result;
         }
+        if self.plan == WavePlan::Tank5Finale {
+            result.events.extend(self.shoot_finale(x, y, weapon));
+        }
         let group_ids: Vec<u64> = self.bilaterus.iter().map(|group| group.id).collect();
         let mut group_hit = false;
         for id in group_ids {
@@ -1088,11 +1416,20 @@ impl Invasion1_2 {
             }
         }
         let ordinary_count = if group_hit { 0 } else { self.actors.len() };
+        let boss_present = self
+            .finale
+            .as_ref()
+            .is_some_and(|finale| finale.boss.is_some());
         for index in 0..ordinary_count {
             let alien_id = self.actors[index].id;
             let was_healing = self.actors[index].healing;
-            let shot_result =
-                self.actors[index].shot_with_weapon_and_random(x, y, weapon, &mut next_random);
+            let shot_result = self.actors[index].shot_with_weapon_and_random_under_boss(
+                x,
+                y,
+                weapon,
+                boss_present,
+                &mut next_random,
+            );
             match shot_result {
                 ShotResult::Miss => continue,
                 ShotResult::Hit { health } => {
@@ -1137,6 +1474,46 @@ impl Invasion1_2 {
         result
     }
 
+    /// 00543920 tries at most one raw20 child, then Board+110's boss even if
+    /// the child was hit. Accepted lethal shots remove immediately; ordinary
+    /// death rewards do not apply to either finale identity.
+    pub fn shoot_finale(&mut self, x: i32, y: i32, weapon: u8) -> Vec<InvasionEvent> {
+        let Some(finale) = self.finale.as_mut() else {
+            return Vec::new();
+        };
+        let mut events = Vec::new();
+        for index in 0..finale.children.len() {
+            let id = finale.children[index].id;
+            match finale.children[index].shot_with_weapon(x, y, weapon) {
+                ShotResult::Miss => {}
+                ShotResult::Hit { health } => {
+                    events.push(InvasionEvent::AlienHit { id, health });
+                    break;
+                }
+                ShotResult::Defeated { .. } => {
+                    let health = finale.children[index].health;
+                    events.push(InvasionEvent::AlienHit { id, health });
+                    events.extend(self.remove_finale_child(id));
+                    break;
+                }
+            }
+        }
+        let Some(boss) = self.finale.as_mut().and_then(|finale| finale.boss.as_mut()) else {
+            return events;
+        };
+        let id = boss.id;
+        match boss.shot_with_weapon(x, y, weapon) {
+            ShotResult::Miss => {}
+            ShotResult::Hit { health } => events.push(InvasionEvent::AlienHit { id, health }),
+            ShotResult::Defeated { .. } => {
+                let health = boss.health;
+                events.push(InvasionEvent::AlienHit { id, health });
+                events.extend(self.remove_finale_boss());
+            }
+        }
+        events
+    }
+
     /// Both a player shot and a completed alien update transfer ownership
     /// through this one removal path. The registered list is cleared before
     /// any subsequent pet contact, wave check, or click can reward it again.
@@ -1164,19 +1541,29 @@ impl Invasion1_2 {
                 remaining_ticks: 125,
             });
         }
-        vec![
-            InvasionEvent::AlienDefeated { id: dead.id },
-            InvasionEvent::DiamondDropped {
+        let mut events = vec![InvasionEvent::AlienDefeated { id: dead.id }];
+        // PB05 004f9c70 reaches the ordinary coin factory only with a null
+        // Board+110 boss pointer. Subsidiary actors still leave combat here.
+        if self
+            .finale
+            .as_ref()
+            .is_none_or(|finale| finale.boss.is_none())
+        {
+            events.push(InvasionEvent::DiamondDropped {
                 alien_id: dead.id,
                 x: dead.widget_x + 25,
                 y: dead.widget_y + 25,
-            },
-        ]
+            });
+        }
+        events
     }
 
     /// The board calls this after alien and missile transactions. Peaceful
     /// empty waves do not synthesize another end event.
     pub fn finish_if_no_threats(&mut self, missiles_present: bool) -> Vec<InvasionEvent> {
+        if self.plan == WavePlan::Tank5Finale {
+            return Vec::new();
+        }
         if self.battle_active && !self.has_live_alien() && !missiles_present {
             self.battle_active = false;
             self.food_delay = 36;
@@ -1205,6 +1592,55 @@ impl Invasion1_2 {
                     && self.dead_aliens.is_empty()
                     && self.bilaterus.len() <= 1
                     && self.fragments.len() <= 8
+            }
+            WavePlan::Tank5Finale => {
+                let Some(finale) = self.finale.as_ref() else {
+                    return Err("Tank 5 finale state missing".into());
+                };
+                (finale.ordinary_ticks < 300
+                    && finale.child_ticks < 75
+                    && finale.boss.as_ref().is_none_or(|boss| {
+                        boss.kind == SylvesterKind::Cyrax
+                            && boss.alive
+                            && boss.health
+                                <= 5000.0
+                                    - 125.0
+                                        * f64::from(
+                                            finale.profile_attempts.saturating_sub(1).min(20),
+                                        )
+                    })
+                    && finale
+                        .children
+                        .iter()
+                        .all(|child| child.kind == SylvesterKind::MiniSylvester && child.alive))
+                    && (!finale.boss_defeated
+                        || finale.boss.is_none()
+                            && finale.children.is_empty()
+                            && self.actors.is_empty())
+                    && self.bilaterus.len() <= 1
+                    && self.fragments.len() <= 8
+                    && (self.bilaterus.is_empty() || self.actors.is_empty())
+                    && matches!(
+                        self.actors.as_slice(),
+                        [] | [WeakSylvester {
+                            kind: SylvesterKind::Gus
+                                | SylvesterKind::Destructor
+                                | SylvesterKind::Ulysses
+                                | SylvesterKind::Psychosquid
+                                | SylvesterKind::Weak
+                                | SylvesterKind::Balrog,
+                            ..
+                        }] | [
+                            WeakSylvester {
+                                kind: SylvesterKind::Weak,
+                                ..
+                            },
+                            WeakSylvester {
+                                kind: SylvesterKind::Balrog,
+                                ..
+                            }
+                        ]
+                    )
             }
             WavePlan::CyclingTank1Finale { next } => {
                 self.bilaterus.is_empty()
@@ -1390,6 +1826,15 @@ impl Invasion1_2 {
             }
         };
         if !(0..=3000).contains(&self.countdown)
+            || self.plan != WavePlan::Tank5Finale && self.finale.is_some()
+            || self.plan == WavePlan::Tank5Finale
+                && self.finale.as_ref().is_some_and(|finale| {
+                    let spawned = finale.boss.is_some() || finale.boss_defeated;
+                    spawned != (self.countdown == 3000)
+                        || spawned != finale.secondary_coords.is_some()
+                        || !spawned && !finale.children.is_empty()
+                        || !spawned && (finale.ordinary_ticks != 0 || finale.child_ticks != 0)
+                })
             || self.food_delay > 36
             || self.post_spawn_flash_ticks > 35
             || self.pending_modal == Some(InvasionTip::Danger) && !self.danger_shown
@@ -1401,6 +1846,10 @@ impl Invasion1_2 {
             || self.warning.is_some() && !(1..=275).contains(&self.countdown)
             || !self.actors.is_empty() && self.countdown != 3000
             || !self.actors.is_empty() && !self.battle_active
+            || self
+                .finale
+                .as_ref()
+                .is_some_and(|finale| finale.boss.is_some() && !self.battle_active)
             || !self.bilaterus.is_empty() && self.countdown != 3000
             || !self.bilaterus.is_empty() && !self.battle_active
             || self.actors.iter().any(|actor| !actor.alive)
@@ -1420,6 +1869,10 @@ impl Invasion1_2 {
             || self.dead_aliens.len() > 2
             || self.dead_aliens.iter().any(|body| {
                 body.kind == SylvesterKind::Gus
+                    || matches!(
+                        body.kind,
+                        SylvesterKind::Cyrax | SylvesterKind::MiniSylvester
+                    )
                     || fixed.is_some_and(|kind| body.kind != kind)
                     || body.remaining_ticks > 125
                     || body.frame > 9
@@ -1441,6 +1894,27 @@ impl Invasion1_2 {
         }
         for actor in &self.actors {
             actor.validate()?;
+        }
+        if let Some(finale) = &self.finale {
+            if let Some(boss) = &finale.boss {
+                boss.validate()?;
+            }
+            for child in &finale.children {
+                child.validate()?;
+            }
+            let mut ids: Vec<u64> = self
+                .actors
+                .iter()
+                .map(|actor| actor.id)
+                .chain(self.bilaterus.iter().map(|group| group.id))
+                .chain(self.fragments.iter().map(|fragment| fragment.id))
+                .chain(finale.boss.iter().map(|boss| boss.id))
+                .chain(finale.children.iter().map(|child| child.id))
+                .collect();
+            ids.sort_unstable();
+            if ids.windows(2).any(|pair| pair[0] == pair[1]) {
+                return Err("duplicate Tank 5 combat identity".into());
+            }
         }
         for group in &self.bilaterus {
             group.validate()?;
@@ -2769,5 +3243,302 @@ mod tests {
             [InvasionEvent::BattleEnded]
         );
         assert!(wave.finish_if_no_threats(false).is_empty());
+    }
+
+    fn spawned_tank5_finale() -> Invasion1_2 {
+        let mut wave = Invasion1_2::new_tank5_finale(1);
+        wave.countdown = 1;
+        wave.warning = Some(WarningCoords {
+            first_x: 100,
+            first_y: 120,
+            second_x: 300,
+            second_y: 200,
+        });
+        assert_eq!(
+            wave.board_update(|| 1, || 50),
+            [InvasionEvent::BossSpawned {
+                id: 50,
+                x: 100,
+                y: 120,
+            }]
+        );
+        wave
+    }
+
+    #[test]
+    fn tank5_save_health_cannot_exceed_attempt_scaled_constructor_maximum() {
+        for attempts in [2, 21] {
+            let mut wave = spawned_tank5_finale();
+            let finale = wave.finale.as_mut().unwrap();
+            finale.profile_attempts = attempts;
+            let max_hp = 5000.0 - 125.0 * f64::from(attempts - 1);
+            finale.boss.as_mut().unwrap().health = max_hp;
+            wave.validate().unwrap();
+            wave.finale.as_mut().unwrap().boss.as_mut().unwrap().health += 0.5;
+            assert!(wave.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn tank5_constructor_warning_and_boss_registration_use_ordered_draws() {
+        let mut wave = Invasion1_2::new_tank5_finale(2);
+        assert_eq!(wave.countdown, 300);
+        assert!(wave.finale.as_ref().unwrap().boss.is_none());
+        wave.countdown = 276;
+        let mut draws = [0_u32, 0, 1, 1].into_iter();
+        assert_eq!(
+            wave.board_update(|| draws.next().unwrap(), || panic!("warning has no ID")),
+            [InvasionEvent::WarningStarted(WarningCoords {
+                first_x: 20,
+                first_y: 105,
+                second_x: 21,
+                second_y: 106,
+            })]
+        );
+        assert_eq!(draws.next(), None);
+        wave.countdown = 1;
+        let mut constructor_draws = [2_u32, 29].into_iter();
+        let events = wave.board_update(|| constructor_draws.next().unwrap(), || 51);
+        assert_eq!(constructor_draws.next(), None);
+        assert_eq!(
+            events,
+            [InvasionEvent::BossSpawned {
+                id: 51,
+                x: 20,
+                y: 105
+            }]
+        );
+        assert_eq!(
+            wave.finale.as_ref().unwrap().boss.as_ref().unwrap().health,
+            4875.0
+        );
+        assert_eq!(
+            wave.finale.as_ref().unwrap().secondary_coords,
+            Some((21, 106))
+        );
+        wave.validate().unwrap();
+    }
+
+    #[test]
+    fn tank5_child_clock_runs_while_subsidiary_clock_waits_for_ordinary_actor() {
+        let mut wave = spawned_tank5_finale();
+        let finale = wave.finale.as_mut().unwrap();
+        finale.boss.as_mut().unwrap().spawn_ticks = 0;
+        finale.ordinary_ticks = 299;
+        finale.child_ticks = 74;
+        wave.actors.push(WeakSylvester::spawn_kind(
+            SylvesterKind::Gus,
+            52,
+            200,
+            180,
+            1,
+            1,
+        ));
+        let mut draws = [1_u32, 4, 3].into_iter();
+        let events = wave.update_finale_boss(&[], || draws.next().unwrap_or(1), || 53);
+        assert_eq!(
+            events,
+            [InvasionEvent::MiniSpawned {
+                id: 53,
+                x: 140,
+                y: 160
+            }]
+        );
+        assert_eq!(wave.finale.as_ref().unwrap().ordinary_ticks, 299);
+        assert_eq!(wave.finale.as_ref().unwrap().child_ticks, 0);
+        assert!((wave.finale.as_ref().unwrap().children[0].movement_divisor - 1.2).abs() < 1e-12);
+        wave.validate().unwrap();
+    }
+
+    #[test]
+    fn tank5_subsidiary_factory_draws_kind_then_coords_then_pair_constructors() {
+        let mut wave = spawned_tank5_finale();
+        let finale = wave.finale.as_mut().unwrap();
+        finale.boss.as_mut().unwrap().spawn_ticks = 0;
+        finale.boss.as_mut().unwrap().movement_change_ticks = 0;
+        finale.ordinary_ticks = 299;
+        let mut draws = [5_u32, 0, 0, 1, 1, 1, 1].into_iter();
+        let mut ids = [51_u64, 52].into_iter();
+        let events = wave.update_finale_boss(
+            &[],
+            || draws.next().expect("no extra factory draw"),
+            || ids.next().expect("exactly two actors"),
+        );
+        assert_eq!(draws.next(), None);
+        assert_eq!(ids.next(), None);
+        assert_eq!(
+            events,
+            [
+                InvasionEvent::AlienSpawned {
+                    id: 51,
+                    x: 20,
+                    y: 105
+                },
+                InvasionEvent::AlienSpawned {
+                    id: 52,
+                    x: 300,
+                    y: 200
+                },
+            ]
+        );
+        assert_eq!(
+            wave.actors
+                .iter()
+                .map(|actor| actor.kind)
+                .collect::<Vec<_>>(),
+            [SylvesterKind::Weak, SylvesterKind::Balrog]
+        );
+        assert_eq!(wave.finale.as_ref().unwrap().ordinary_ticks, 0);
+        wave.validate().unwrap();
+    }
+
+    #[test]
+    fn tank5_boss_shot_immediately_latches_and_clears_typed_lists_without_diamond() {
+        let mut wave = spawned_tank5_finale();
+        wave.finale.as_mut().unwrap().boss.as_mut().unwrap().health = 3.0;
+        wave.finale
+            .as_mut()
+            .unwrap()
+            .boss
+            .as_mut()
+            .unwrap()
+            .spawn_ticks = 0;
+        wave.finale
+            .as_mut()
+            .unwrap()
+            .children
+            .push(WeakSylvester::spawn_mini(54, 300, 300, 1, 0, 1));
+        wave.actors.push(WeakSylvester::spawn_kind(
+            SylvesterKind::Gus,
+            55,
+            300,
+            300,
+            1,
+            1,
+        ));
+        let group = BilaterusState::spawn(56, 400, 250, &mut || 1);
+        wave.bilaterus.push(group);
+        let events = wave.shoot_finale(180, 200, 10);
+        assert_eq!(
+            events,
+            [
+                InvasionEvent::AlienHit {
+                    id: 50,
+                    health: -27.0
+                },
+                InvasionEvent::BossDefeated { id: 50 },
+            ]
+        );
+        assert!(wave.actors.is_empty());
+        assert!(wave.finale.as_ref().unwrap().children.is_empty());
+        assert!(wave.finale.as_ref().unwrap().boss.is_none());
+        assert!(wave.finale.as_ref().unwrap().boss_defeated);
+        assert_eq!(wave.bilaterus.len(), 1);
+        assert!(wave.shoot_finale(180, 200, 10).is_empty());
+        assert!(wave.finish_if_no_threats(false).is_empty());
+        wave.validate().unwrap();
+    }
+
+    #[test]
+    fn tank5_subsidiary_shot_removes_actor_without_diamond_while_boss_is_live() {
+        let mut wave = spawned_tank5_finale();
+        let mut gus = WeakSylvester::spawn_kind(SylvesterKind::Gus, 57, 300, 180, 1, 1);
+        gus.spawn_ticks = 0;
+        gus.health = 3.0;
+        wave.actors.push(gus);
+        let click = wave.click_with_weapon(380, 260, 10);
+        assert!(click.suppress_food);
+        assert!(
+            click
+                .events
+                .contains(&InvasionEvent::AlienDefeated { id: 57 })
+        );
+        assert!(
+            !click
+                .events
+                .iter()
+                .any(|event| matches!(event, InvasionEvent::DiamondDropped { alien_id: 57, .. }))
+        );
+        assert_eq!(wave.finale.as_ref().unwrap().boss.as_ref().unwrap().id, 50);
+        assert!(wave.actors.is_empty());
+        wave.validate().unwrap();
+    }
+
+    #[test]
+    fn tank5_bilaterus_reward_requires_boss_pointer_to_be_clear() {
+        fn final_group() -> (BilaterusState, BilaterusTransition) {
+            let mut group = BilaterusState::spawn(60, 300, 200, &mut || 1);
+            group.first_head_lost = true;
+            group.heads[0] = None;
+            group.active_head = 1;
+            group.emergence_ticks = 0;
+            group.heads[1].as_mut().unwrap().health = 0.0;
+            let transition = group.finish_update().unwrap();
+            (group, transition)
+        }
+
+        let mut live = spawned_tank5_finale();
+        let (group, transition) = final_group();
+        live.bilaterus.push(group);
+        let mut fragment_id = 60;
+        let events = live.commit_bilaterus_transition(
+            60,
+            transition,
+            || 1,
+            || {
+                fragment_id += 1;
+                fragment_id
+            },
+        );
+        assert!(events.contains(&InvasionEvent::BilaterusDefeated { id: 60 }));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, InvasionEvent::DiamondDropped { .. }))
+        );
+        live.validate().unwrap();
+
+        let mut defeated = spawned_tank5_finale();
+        let (group, transition) = final_group();
+        defeated.bilaterus.push(group);
+        defeated.remove_finale_boss();
+        assert_eq!(defeated.bilaterus.len(), 1);
+        let mut fragment_id = 60;
+        let events = defeated.commit_bilaterus_transition(
+            60,
+            transition,
+            || 1,
+            || {
+                fragment_id += 1;
+                fragment_id
+            },
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, InvasionEvent::DiamondDropped { alien_id: 60, .. }))
+                .count(),
+            1
+        );
+        defeated.validate().unwrap();
+    }
+
+    #[test]
+    fn tank5_state_rejects_missing_boss_and_duplicate_ids_but_retains_death_latch() {
+        let mut wave = spawned_tank5_finale();
+        wave.finale.as_mut().unwrap().boss = None;
+        assert!(wave.validate().is_err());
+        let mut wave = spawned_tank5_finale();
+        wave.finale
+            .as_mut()
+            .unwrap()
+            .children
+            .push(WeakSylvester::spawn_mini(50, 300, 300, 1, 0, 1));
+        assert!(wave.validate().is_err());
+        wave.finale.as_mut().unwrap().children.clear();
+        wave.remove_finale_boss();
+        let resumed: Invasion1_2 =
+            serde_json::from_str(&serde_json::to_string(&wave).unwrap()).unwrap();
+        resumed.validate().unwrap();
     }
 }

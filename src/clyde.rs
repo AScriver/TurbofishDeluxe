@@ -61,6 +61,17 @@ impl ClydeState {
         }
     }
 
+    /// The Tank-5 factory retains Clyde's four common constructor draws.
+    pub fn spawn_tank5(id: u64, rand_range: &mut impl FnMut(u64) -> u64) -> Self {
+        Self::spawn_tank2(id, rand_range)
+    }
+
+    /// PB05 004f2e80 takes Clyde's wander branch in Tank 5 regardless of
+    /// collectible presence. No Board coin request is produced.
+    pub fn tick_tank5(&mut self, rand_range: &mut impl FnMut(u64) -> u64) -> ClydeUpdate {
+        self.tick(&[], false, rand_range)
+    }
+
     /// `coin_list_nonempty` describes the whole Board list, including coins
     /// whose views are ineligible. Such a list suppresses fallback wandering.
     /// Views retain birth order so first-tie targeting and contact stay stable.
@@ -210,6 +221,19 @@ impl ClydeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tank5_clyde_retains_draws_and_wanders_without_coins() {
+        let mut draws = Vec::new();
+        let mut clyde = ClydeState::spawn_tank5(1, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(draws, [265, 520, 10, 250]);
+        assert_eq!(clyde.tick_tank5(&mut |_| 1), ClydeUpdate::default());
+        assert_eq!(clyde.animation_timer, 1);
+        assert!(clyde.validate().is_ok());
+    }
 
     fn clyde() -> ClydeState {
         ClydeState::spawn_tank2(1, &mut |_| 0)

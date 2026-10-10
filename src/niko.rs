@@ -14,6 +14,9 @@ pub const NIKO_TANK3_Y: i32 = 260;
 /// W1 `OtherTypePet::UpdateNikoPosition`, background 5 (ordinary Tank 4).
 pub const NIKO_TANK4_X: i32 = 67;
 pub const NIKO_TANK4_Y: i32 = 185;
+/// W1 OtherTypePet.cpp background-6 default; primary anchor is not closed.
+pub const NIKO_TANK5_X: i32 = 160;
+pub const NIKO_TANK5_Y: i32 = 176;
 const fn tank1_x() -> i32 {
     NIKO_X
 }
@@ -66,6 +69,10 @@ impl NikoState {
         Self::spawn_at(owner_id, NIKO_TANK4_X, NIKO_TANK4_Y, rand_range)
     }
 
+    pub fn spawn_tank5(owner_id: u64, rand_range: &mut impl FnMut(u64) -> u64) -> Self {
+        Self::spawn_at(owner_id, NIKO_TANK5_X, NIKO_TANK5_Y, rand_range)
+    }
+
     fn spawn_at(
         owner_id: u64,
         anchor_x: i32,
@@ -88,17 +95,30 @@ impl NikoState {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_for_tank(false)
+    }
+
+    pub fn validate_tank5(&self) -> Result<(), String> {
+        self.validate_for_tank(true)
+    }
+
+    fn validate_for_tank(&self, tank5: bool) -> Result<(), String> {
         if self.owner_id == 0
             || self.cycle >= 1450
             || self.movement_animation_timer >= 19
             || self.movement_change_timer > 20
-            || !matches!(
-                (self.anchor_x, self.anchor_y),
-                (NIKO_X, NIKO_Y)
-                    | (NIKO_TANK2_X, NIKO_TANK2_Y)
-                    | (NIKO_TANK3_X, NIKO_TANK3_Y)
-                    | (NIKO_TANK4_X, NIKO_TANK4_Y)
-            )
+            || (tank5 && (self.cycle != 0 || self.pearl_taken))
+            || !(if tank5 {
+                (self.anchor_x, self.anchor_y) == (NIKO_TANK5_X, NIKO_TANK5_Y)
+            } else {
+                matches!(
+                    (self.anchor_x, self.anchor_y),
+                    (NIKO_X, NIKO_Y)
+                        | (NIKO_TANK2_X, NIKO_TANK2_Y)
+                        | (NIKO_TANK3_X, NIKO_TANK3_Y)
+                        | (NIKO_TANK4_X, NIKO_TANK4_Y)
+                )
+            })
         {
             return Err("invalid ordinary Niko save state".into());
         }
@@ -108,13 +128,7 @@ impl NikoState {
     /// One unpaused object update. The caller owns board RNG and processes the
     /// returned one-shot events in its object-update order.
     pub fn tick(&mut self, rand_range: &mut impl FnMut(u64) -> u64) -> Vec<NikoEvent> {
-        self.movement_change_timer += 1;
-        if self.movement_change_timer > 20 {
-            self.movement_change_timer = 0;
-            if rand_range(10) == 0 {
-                let _movement_state = rand_range(3);
-            }
-        }
+        self.tick_movement(rand_range);
 
         self.cycle += 1;
         let events = match self.cycle {
@@ -146,6 +160,24 @@ impl NikoState {
         };
         self.movement_animation_timer = (self.movement_animation_timer + 1) % 19;
         events
+    }
+
+    /// W1 OtherTypePet.cpp:618-634 suppresses Niko's pearl specialty in
+    /// Tank 5; its common counters and idle animation still advance.
+    pub fn tick_tank5(&mut self, rand_range: &mut impl FnMut(u64) -> u64) -> Vec<NikoEvent> {
+        self.tick_movement(rand_range);
+        self.movement_animation_timer = (self.movement_animation_timer + 1) % 19;
+        Vec::new()
+    }
+
+    fn tick_movement(&mut self, rand_range: &mut impl FnMut(u64) -> u64) {
+        self.movement_change_timer += 1;
+        if self.movement_change_timer > 20 {
+            self.movement_change_timer = 0;
+            if rand_range(10) == 0 {
+                let _movement_state = rand_range(3);
+            }
+        }
     }
 
     /// Sheet cell, column then row. The open-shell sheet carries the waiting
@@ -312,6 +344,25 @@ impl NikoPearl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tank5_anchor_draws_and_pearl_suppression() {
+        let mut draws = Vec::new();
+        let mut niko = NikoState::spawn_tank5(1, &mut |upper| {
+            draws.push(upper);
+            0
+        });
+        assert_eq!(draws, [265, 520, 10, 250]);
+        assert_eq!((niko.anchor_x, niko.anchor_y), (160, 176));
+        assert!(niko.validate_tank5().is_ok());
+        assert!(niko.validate().is_err());
+        for _ in 0..1500 {
+            assert!(niko.tick_tank5(&mut |_| 1).is_empty());
+        }
+        assert_eq!(niko.cycle, 0);
+        assert!(!niko.pearl_taken);
+        assert!(niko.validate_tank5().is_ok());
+    }
     use std::cell::RefCell;
 
     #[test]

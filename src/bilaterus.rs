@@ -692,6 +692,15 @@ impl BilaterusState {
         (health, transition)
     }
 
+    /// PB05 004fc070 damages the active head by30, ignores shot cooldown
+    /// and calls its death route immediately, including during emergence.
+    pub fn reflected_energy_hit(&mut self) -> (f64, Option<BilaterusTransition>) {
+        let health = self.pet_damage(30.0);
+        self.active_mut().hit_ticks = 10;
+        let transition = (health <= 0.0).then(|| self.transition());
+        (health, transition)
+    }
+
     pub fn shoot(&mut self, x: i32, y: i32, weapon: u8) -> BilaterusShot {
         let head = self.active_mut();
         if head.hit_ticks > 0

@@ -1,16 +1,22 @@
 # Current handoff
 
-Updated: 2026-10-09, America/Phoenix. **Active: broad remaining-runtime binary recovery.** Finish and preserve the coherent A35 code checkpoint, then inspect every remaining subsystem before refining individual mechanics or resuming implementation. The user deferred native/manual acceptance; A32 is safely stopped at its earned checkpoint. Continue automatically toward the full [requirements](docs/requirements.md), retaining unperformed acceptance explicitly pending.
+Updated: 2026-10-09, America/Phoenix. **Active: A37 Presto and completed-Adventure contracts after the A36 code checkpoint.** The broad remaining-runtime first pass is committed in `b0d722f8a2936aeef24ee41b44b6c339fbe1e460`; its12-family semantic and documentation gates passed. The user deferred native/manual acceptance; A32 is safely stopped at its earned checkpoint. Continue automatically toward the full [requirements](docs/requirements.md), retaining unperformed acceptance explicitly pending.
 
 ## Current increment
 
-[A35: Tank4-5, Angie and final-Tank4 completion](docs/adventure-4-5.md) is committed in `246515aeb5f718401cd0aadb01dd17c72f30b5d5` from PB73–75. The complete477-check code gate passed and its executable/DLLs/notices are frozen privately; native behavior remains unverified. The [broad recovery map](docs/binary-recovery.md) now has inspected outlines/evidence/gaps for all12 remaining families; targeted adversarial review and documentation checks passed. Commit this checkpoint, then resume A36 implementation. No user blocker is known. [A34](docs/adventure-4-4.md)'s453-check and [A33](docs/adventure-4-3.md)'s433-check checkpoints remain historical.
+[A36: Tank5-1/Cyrax](docs/adventure-5-1.md) passed the516-check complete code gate with current21 saves, pet-only combat/survival, separate boss/mini control, loss/retry accounting and first completion/Hatch/interlude. Its identified executable/DLLs/notices are frozen. Independent reviews closed Tank5 EnergyBall admission, reflected boss/Bilaterus/pet coverage and saved-boss HP bounds; primary registration instructions corrected the unsupported reflected-mini assumption. E89 owns verification scope. No native/manual acceptance or A36 playable claim is made.
+
+A37 recovery is inspecting Presto's timer/same-form guard, factory ownership and dialog callback/result mapping, separately from completed-profile replay/results. Seven additive primary roots were exported successfully; inspected bodies and unresolved destination semantics are counted separately. A collector serializes the shared DB; an Investigator reviews callbacks and an Architect maps project actor/identity/save boundaries. Selectable Presto remains pending.
+
+[A35: Tank4-5, Angie and final-Tank4 completion](docs/adventure-4-5.md) is committed in `246515aeb5f718401cd0aadb01dd17c72f30b5d5` from PB73–75. The complete477-check code gate passed and its executable/DLLs/notices are frozen privately; native behavior remains unverified. The committed [broad recovery map](docs/binary-recovery.md) preserves all12 remaining-family outlines/evidence/gaps. [A34](docs/adventure-4-4.md)'s453-check and [A33](docs/adventure-4-3.md)'s433-check checkpoints remain historical.
 
 [A32: Tank4-2, live Nimbus, Bilaterus and Ultravore](docs/adventure-4-2.md) is implemented at source checkpoint`4b2d53fd6c6711ad615d083b11f9d41f745ad22f`/format17. E80 preserves its executable/source identity; the [partial native report](docs/playtests/2026-10-09-adventure-4-2-native-a32-01.md) owns observed entry/conversions/combat/Ultra/save-pause/two paid eggs and deferred outcomes.
 
 [A31: Tank 4-1](docs/adventure-4-1.md) is the latest native-accepted stage, committed `38c65be9ad439a727b2e7e1b1401db928b8e55f6` (E76/E78). Its frozen bundle, reports and genuine earned saves remain preserved.
 
 ## Current build verification
+
+**E89 — observed A36 code gate, native deferred:** Current21 passed516 maintained checks, formatting/strict lint/locked build/staging. [MODLOG](MODLOG.md#2026-10-09--implement-cyrax-and-preserve-the-tank5-code-checkpoint) owns failures and full identities. EXE SHA`65977F38133219D34688468799FE761AAC02684AE9CA37BDF5503EB5874D1D70`; launcher-source/artifact readback passed65/65, frozen readback69/69 and14 transferred files matched. Primary readback matched21/21 exports and6/6 preserved wrapper/payload/A35/E80/earned-save inputs. No native game process was launched; two owned-music checks skipped. Retail/audio/human fidelity remains pending.
 
 **E88 — binary-derived broad first pass and checkpoint checks complete:**595 functions attempted/594 decompiled/one retained timeout; all594 export hashes match. Inspection logs reconcile290 indexed addresses (188 full/9 partial/93 unspecified scope) plus four historical addresses, separately from export success. Twelve usable subsystem outlines and exact gaps are in the [recovery map](docs/binary-recovery.md), which owns source/index/readback identities and challenged corrections. Documentation/private-ignore/whitespace and preserved A35/E80/earned-save checks passed; [MODLOG](MODLOG.md#2026-10-09--recover-every-remaining-runtime-subsystem-in-a-broad-first-pass) owns results. No runtime code or native acceptance changed. Relax activation, Walter register mapping, offline ageing, profile deletion, detailed navigation/score/audio behavior remain explicit follow-ups.
 
@@ -88,10 +94,10 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 
 Current next action:
 
-1. Preserve the committed A35 checkpoint and its frozen477-check bundle; native playability remains unverified.
-2. Commit the verified [broad remaining-runtime recovery](docs/binary-recovery.md), then begin the bounded A36 contract. All12 outlines passed final targeted coverage review; export and inspection counts are separate in E88. Retain the Ghidra auto-save incident, metadata/identity limits, failed interpretations and unclosed exact follow-ups.
+1. Preserve the516-check A36 bundle and coherent local code commit, together with earlier checkpoints; native playability remains unverified.
+2. Close A37 Presto choice/result and actor-identity/timer/save contracts from the indexed primary roots. Record a bounded design, implement the next coherent outcome, run affected checks and the full gate, and commit verified progress. Completed replay/results remains a distinct transaction/destination contract.
 3. Preserve E80 and the genuine current17 earning06 save for later testing. Do not synthesize Amp's earned selector or alter the retail installation. Defer native/manual acceptance unless a material reversing/implementation discrepancy requires it or the user requests it.
-4. After verifying/committing this first-pass checkpoint, resume A36 Tank5-1/Cyrax and ordinary finale transitions automatically from BR01, closing only materially blocking initialization/actor details before coding. Continue other modes/VT/menus/profiles/audio/effects in coherent increments afterward. Build/unit results do not establish playable behavior, retail fidelity, audible output or human feel.
+4. After the A36 code checkpoint, continue automatically with Presto and completed-Adventure replay/results, then other modes/VT/menus/profiles/audio/effects. A bounded Presto investigator is already inspecting the indexed primary roots without opening the shared DB. Build/unit results do not establish playable behavior, retail fidelity, audible output or human feel.
 
 ## Environment and reference build
 

@@ -34,6 +34,12 @@ pub struct AdventureProgress {
     pub first_stage_best_seconds: Option<u64>,
     #[serde(default)]
     pub later_stage_best_seconds: Vec<StageBestTime>,
+    /// Retail profile+54, incremented only by a qualifying failed finale.
+    #[serde(default)]
+    pub cyrax_attempts: u32,
+    /// Guards the ordinary first-completion award across saves and re-entry.
+    #[serde(default)]
+    pub adventure_completed: bool,
 }
 
 fn default_pet_capacity() -> u8 {
@@ -107,6 +113,7 @@ pub enum AdventurePhase {
     HelpScreen,
     Hatch { pet: PetKind, updates: u32 },
     TankFourFinaleHatch { updates: u32 },
+    AdventureFinaleInterlude,
     PetSelection { selected: Vec<PetKind> },
     PetSelectionConfirmation { selected: Vec<PetKind> },
     Bonus { state: BonusState },
@@ -147,6 +154,8 @@ impl AdventureSession {
                 shell_balance: 0,
                 first_stage_best_seconds: None,
                 later_stage_best_seconds: Vec::new(),
+                cyrax_attempts: 0,
+                adventure_completed: false,
             },
             board: Some(board),
             phase: AdventurePhase::Playing,
@@ -186,6 +195,8 @@ impl AdventureSession {
                     shell_balance: 0,
                     first_stage_best_seconds: Some(seconds),
                     later_stage_best_seconds: Vec::new(),
+                    cyrax_attempts: 0,
+                    adventure_completed: false,
                 },
                 board: None,
                 phase: AdventurePhase::Hatch {
@@ -211,6 +222,8 @@ impl AdventureSession {
                 shell_balance: 0,
                 first_stage_best_seconds: None,
                 later_stage_best_seconds: Vec::new(),
+                cyrax_attempts: 0,
+                adventure_completed: false,
             },
             board: Some(board),
             phase: AdventurePhase::Playing,
@@ -228,7 +241,7 @@ impl AdventureSession {
     pub fn validate(&self) -> Result<(), String> {
         if !matches!(
             (self.progress.tank, self.progress.level),
-            (1, 1..=6) | (2, 1..=6) | (3, 1..=6) | (4, 1..=5) | (5, 1)
+            (1, 1..=6) | (2, 1..=6) | (3, 1..=6) | (4, 1..=5) | (5, 1..=2)
         ) || self.progress.shell_balance > MAX_SHELL_BALANCE
         {
             return Err("unsupported Adventure progress".into());
@@ -454,10 +467,38 @@ impl AdventureSession {
                 PetKind::Gash,
                 PetKind::Angie,
             ],
+            (5, 2) => &[
+                PetKind::Stinky,
+                PetKind::Niko,
+                PetKind::Itchy,
+                PetKind::Prego,
+                PetKind::Zorf,
+                PetKind::Clyde,
+                PetKind::Vert,
+                PetKind::Rufus,
+                PetKind::Meryl,
+                PetKind::Wadsworth,
+                PetKind::Seymour,
+                PetKind::Shrapnel,
+                PetKind::Gumbo,
+                PetKind::Blip,
+                PetKind::Rhubarb,
+                PetKind::Nimbus,
+                PetKind::Amp,
+                PetKind::Gash,
+                PetKind::Angie,
+                PetKind::Presto,
+            ],
             _ => unreachable!("progress checked above"),
         };
-        if self.progress.unlocked_pets != expected_pets {
+        if self.progress.unlocked_pets != expected_pets
+            || self.progress.adventure_completed
+                != ((self.progress.tank, self.progress.level) == (5, 2))
+        {
             return Err("Adventure pet unlocks disagree with completed stages".into());
+        }
+        if self.progress.tank < 5 && self.progress.cyrax_attempts != 0 {
+            return Err("Cyrax attempts precede the finale".into());
         }
         if self.progress.pet_capacity != 3
             || !self.progress.valid_selection(&self.progress.selected_pets)
@@ -467,15 +508,34 @@ impl AdventureSession {
         }
         if let Some(board) = &self.board
             && self.progress.unlocked_pets.len() >= 4
+            && (self.progress.tank, self.progress.level) != (5, 1)
             && board.pets != self.progress.selected_pets
         {
             return Err("active pet roster disagrees with committed selection".into());
+        }
+        if let Some(board) = &self.board
+            && (board.tank, board.level) == (5, 1)
+        {
+            let finale = board
+                .invasion
+                .as_ref()
+                .and_then(|wave| wave.finale.as_ref())
+                .ok_or("Tank 5 board is missing finale state")?;
+            let earned_on_loss = matches!(self.phase, AdventurePhase::GameOver { .. })
+                && qualifies_cyrax_attempt(board);
+            if self.progress.cyrax_attempts
+                != finale
+                    .profile_attempts
+                    .saturating_add(u32::from(earned_on_loss))
+            {
+                return Err("Cyrax attempt count disagrees with the active board".into());
+            }
         }
         let mut recorded_stages = Vec::new();
         for result in &self.progress.later_stage_best_seconds {
             if !matches!(
                 (result.tank, result.level),
-                (1, 2..=5) | (2, 1..=5) | (3, 1..=5) | (4, 1..=5)
+                (1, 2..=5) | (2, 1..=5) | (3, 1..=5) | (4, 1..=5) | (5, 1)
             ) || (self.progress.tank, self.progress.level) <= (result.tank, result.level)
                 || recorded_stages.contains(&(result.tank, result.level))
             {
@@ -528,9 +588,14 @@ impl AdventureSession {
                 board.validate()
             }
             (AdventurePhase::GameOver { .. }, Some(board)) => {
+                let survivors = if (board.tank, board.level) == (5, 1) {
+                    board.has_live_pets()
+                } else {
+                    board.has_live_fish()
+                };
                 if (board.tank, board.level) == (1, 1)
                     || (board.tank, board.level) != (self.progress.tank, self.progress.level)
-                    || board.has_live_fish()
+                    || survivors
                     || board.victory
                     || board.eggs >= 3
                     || board.tick > self.ticks
@@ -559,12 +624,18 @@ impl AdventureSession {
                         | (4, 3, PetKind::Amp)
                         | (4, 4, PetKind::Gash)
                         | (4, 5, PetKind::Angie)
+                        | (5, 2, PetKind::Presto)
                 ) =>
             {
                 Ok(())
             }
             (AdventurePhase::TankFourFinaleHatch { .. }, None)
                 if (self.progress.tank, self.progress.level) == (5, 1) =>
+            {
+                Ok(())
+            }
+            (AdventurePhase::AdventureFinaleInterlude, None)
+                if (self.progress.tank, self.progress.level) == (5, 2) =>
             {
                 Ok(())
             }
@@ -602,6 +673,7 @@ impl AdventureSession {
             (AdventurePhase::PetSelection { selected }, None)
                 if self.progress.unlocked_pets.len() >= 4
                     && self.progress.level != 6
+                    && self.progress.tank != 5
                     && self.progress.valid_selection(selected) =>
             {
                 Ok(())
@@ -609,6 +681,7 @@ impl AdventureSession {
             (AdventurePhase::PetSelectionConfirmation { selected }, None)
                 if self.progress.unlocked_pets.len() >= 4
                     && self.progress.level != 6
+                    && self.progress.tank != 5
                     && self.progress.valid_selection(selected)
                     && selected.len() < self.progress.selection_capacity()
                     && *selected == self.progress.selected_pets =>
@@ -708,7 +781,7 @@ impl AdventureSession {
                         tick: self.ticks,
                         action: action.clone(),
                     });
-                    if *action == Action::PlayAdventure {
+                    if *action == Action::PlayAdventure && !self.progress.adventure_completed {
                         self.phase = AdventurePhase::HelpScreen;
                     } else {
                         events.push(Event::Rejected {
@@ -722,7 +795,7 @@ impl AdventureSession {
                         tick: self.ticks,
                         action: action.clone(),
                     });
-                    if *action == Action::Continue {
+                    if *action == Action::Continue && !self.progress.adventure_completed {
                         entered_playing = self.start_current_stage(&mut events);
                     } else {
                         events.push(Event::Rejected {
@@ -744,7 +817,11 @@ impl AdventureSession {
                     } else if let Action::HatchHold { down } = action {
                         self.hatch_held = *down;
                     } else if *action == Action::Continue && updates > HATCH_READY_CHECK {
-                        entered_playing = self.start_current_stage(&mut events);
+                        if self.progress.adventure_completed {
+                            self.phase = AdventurePhase::AdventureFinaleInterlude;
+                        } else {
+                            entered_playing = self.start_current_stage(&mut events);
+                        }
                         self.hatch_held = false;
                     } else {
                         events.push(Event::Rejected {
@@ -873,6 +950,21 @@ impl AdventureSession {
                         }),
                     }
                 }
+                AdventurePhase::AdventureFinaleInterlude => {
+                    events.push(Event::Action {
+                        tick: self.ticks,
+                        action: action.clone(),
+                    });
+                    if *action == Action::OpenMenu {
+                        self.phase = AdventurePhase::GameSelector;
+                        events.push(Event::GameSelectorOpened { tick: self.ticks });
+                    } else {
+                        events.push(Event::Rejected {
+                            tick: self.ticks,
+                            reason: Rejection::Locked,
+                        });
+                    }
+                }
             }
         }
         (events, entered_playing, entered_hatch)
@@ -887,7 +979,12 @@ impl AdventureSession {
             AdventurePhase::Playing if !entered_playing => {
                 if let Some(board) = &mut self.board {
                     events.extend(board.begin_tick());
-                    if !board.has_live_fish() {
+                    let no_survivors = if (board.tank, board.level) == (5, 1) {
+                        !board.has_live_pets()
+                    } else {
+                        !board.has_live_fish()
+                    };
+                    if no_survivors {
                         // Board::Update increments the active clock before it
                         // discovers the empty live list and pauses the widgets.
                         if (board.tank, board.level) == (1, 1) {
@@ -895,6 +992,10 @@ impl AdventureSession {
                             events.push(Event::FirstTankRescueStarted { tick: self.ticks });
                         } else {
                             settle_collecting_coins(board);
+                            if qualifies_cyrax_attempt(board) {
+                                self.progress.cyrax_attempts =
+                                    self.progress.cyrax_attempts.saturating_add(1);
+                            }
                             self.phase = AdventurePhase::GameOver { updates: 0 };
                             events.push(Event::GameOverStarted { tick: self.ticks });
                         }
@@ -994,7 +1095,8 @@ impl AdventureSession {
             | AdventurePhase::TankFourFinaleHatch { .. }
             | AdventurePhase::Bonus { .. }
             | AdventurePhase::PetSelection { .. }
-            | AdventurePhase::PetSelectionConfirmation { .. } => {}
+            | AdventurePhase::PetSelectionConfirmation { .. }
+            | AdventurePhase::AdventureFinaleInterlude => {}
         }
         if matches!(
             self.phase,
@@ -1038,6 +1140,10 @@ impl AdventureSession {
                 tank: self.progress.tank,
                 level: 6,
             });
+            return true;
+        }
+        if (self.progress.tank, self.progress.level) == (5, 1) {
+            self.start_board(events);
             return true;
         }
         if self.progress.unlocked_pets.len() >= 4 {
@@ -1124,6 +1230,7 @@ impl AdventureSession {
                 AdventureState::new_tank4_finale(self.next_seed, &self.progress.selected_pets)
                     .expect("session selection is validated before starting a board")
             }
+            (5, 1) => AdventureState::new_tank5_1(self.next_seed, self.progress.cyrax_attempts),
             _ => unreachable!("supported progress validated at load"),
         };
         self.next_seed = board.transition_seed();
@@ -1160,6 +1267,37 @@ impl AdventureSession {
             self.phase = AdventurePhase::TankFourFinaleHatch { updates: 0 };
             self.hatch_held = false;
             events.push(Event::TankFourFinaleHatchStarted { tick: self.ticks });
+            return;
+        }
+        if (board.tank, board.level) == (5, 1) {
+            debug_assert!(!self.progress.adventure_completed);
+            self.progress.tank = 5;
+            self.progress.level = 2;
+            self.progress.adventure_completed = true;
+            self.progress.unlocked_pets.push(PetKind::Presto);
+            self.progress.shell_balance = self
+                .progress
+                .shell_balance
+                .saturating_add(5000)
+                .min(MAX_SHELL_BALANCE);
+            self.phase = AdventurePhase::Hatch {
+                pet: PetKind::Presto,
+                updates: 0,
+            };
+            self.hatch_held = false;
+            events.push(Event::AdventureCompleted {
+                tick: self.ticks,
+                shells_awarded: 5000,
+                shell_balance: self.progress.shell_balance,
+            });
+            events.push(Event::PetUnlocked {
+                tick: self.ticks,
+                pet: PetKind::Presto,
+            });
+            events.push(Event::HatchStarted {
+                tick: self.ticks,
+                pet: PetKind::Presto,
+            });
             return;
         }
         let pet = match (board.tank, board.level) {
@@ -1199,6 +1337,28 @@ impl AdventureSession {
             pet,
         });
     }
+}
+
+/// PB05 005497a0 checks the living raw21 pointer and strict damage threshold
+/// before incrementing profile+54 on loss. This is called only on entry.
+fn qualifies_cyrax_attempt(board: &AdventureState) -> bool {
+    if (board.tank, board.level) != (5, 1) {
+        return false;
+    }
+    board
+        .invasion
+        .as_ref()
+        .and_then(|wave| wave.finale.as_ref())
+        .and_then(|finale| {
+            finale
+                .boss
+                .as_ref()
+                .map(|boss| (finale.profile_attempts, boss))
+        })
+        .is_some_and(|(attempts, boss)| {
+            let max_health = 5000.0 - 125.0 * f64::from(attempts.saturating_sub(1).min(20));
+            boss.alive && max_health - boss.health > 1000.0
+        })
 }
 
 fn elapsed_seconds(board: &AdventureState) -> u64 {
@@ -1374,6 +1534,261 @@ mod tests {
             AdventureState::new_tank4_first_stage(42, &session.progress.selected_pets).unwrap(),
         );
         session
+    }
+
+    fn tank_five_session(attempts: u32) -> AdventureSession {
+        let mut session = tank_four_first_session();
+        session.progress.tank = 5;
+        session.progress.level = 1;
+        session.progress.unlocked_pets.extend([
+            PetKind::Nimbus,
+            PetKind::Amp,
+            PetKind::Gash,
+            PetKind::Angie,
+        ]);
+        session.progress.selected_pets = vec![PetKind::Angie];
+        session.progress.cyrax_attempts = attempts;
+        session.board = Some(AdventureState::new_tank5_1(42, attempts));
+        session
+    }
+
+    #[test]
+    fn tank_five_entry_bypasses_selection_without_changing_profile_choices() {
+        let mut session = tank_five_session(0);
+        session.board = None;
+        session.phase = AdventurePhase::HelpScreen;
+        let entered = session.apply_actions(&[Action::Continue]);
+        assert!(entered.iter().any(|event| matches!(
+            event,
+            Event::StageStarted {
+                tank: 5,
+                level: 1,
+                ..
+            }
+        )));
+        assert!(
+            !entered
+                .iter()
+                .any(|event| matches!(event, Event::PetSelectionOpened { .. }))
+        );
+        let board = session.board.as_ref().unwrap();
+        assert_eq!(board.pets.as_slice(), crate::sim::TANK5_PETS.as_slice());
+        assert!(board.fish.is_empty());
+        assert_eq!((board.eggs, board.egg_price), (2, 0));
+        assert_eq!(session.progress.selected_pets, vec![PetKind::Angie]);
+        session.validate().unwrap();
+    }
+
+    #[test]
+    fn cyrax_attempt_requires_living_boss_and_strictly_more_than_one_thousand_damage() {
+        let mut session = tank_five_session(2);
+        let board = session.board.as_mut().unwrap();
+        assert!(!qualifies_cyrax_attempt(board));
+        let finale = board.invasion.as_mut().unwrap().finale.as_mut().unwrap();
+        let mut boss = crate::alien::WeakSylvester::spawn_cyrax(1000, 100, 120, 2, 2, 29);
+        let max_health = boss.health;
+        boss.health = max_health - 1000.0;
+        finale.boss = Some(boss);
+        assert!(!qualifies_cyrax_attempt(board));
+        board
+            .invasion
+            .as_mut()
+            .unwrap()
+            .finale
+            .as_mut()
+            .unwrap()
+            .boss
+            .as_mut()
+            .unwrap()
+            .health -= 1.0;
+        assert!(qualifies_cyrax_attempt(board));
+        board
+            .invasion
+            .as_mut()
+            .unwrap()
+            .finale
+            .as_mut()
+            .unwrap()
+            .boss
+            .as_mut()
+            .unwrap()
+            .alive = false;
+        assert!(!qualifies_cyrax_attempt(board));
+    }
+
+    #[test]
+    fn tank_five_save_rejects_profile_attempt_disagreement_and_live_game_over() {
+        let session = tank_five_session(2);
+        session.validate().unwrap();
+        let mut mismatch = session.clone();
+        mismatch.progress.cyrax_attempts = 1;
+        assert!(mismatch.validate().is_err());
+        let mut live_game_over = session;
+        live_game_over.phase = AdventurePhase::GameOver { updates: 0 };
+        assert!(live_game_over.validate().is_err());
+    }
+
+    #[test]
+    fn pet_only_loss_persists_failed_board_and_retries_fresh_with_earned_attempt() {
+        let mut session = tank_five_session(0);
+        let board = session.board.as_mut().unwrap();
+        let wave = board.invasion.as_mut().unwrap();
+        wave.countdown = 1;
+        wave.warning = Some(crate::invasion::WarningCoords {
+            first_x: 100,
+            first_y: 120,
+            second_x: 140,
+            second_y: 150,
+        });
+        session.step(&[]);
+        let board = session.board.as_mut().unwrap();
+        let boss = board
+            .invasion
+            .as_mut()
+            .unwrap()
+            .finale
+            .as_mut()
+            .unwrap()
+            .boss
+            .as_mut()
+            .unwrap();
+        boss.health -= 1001.0;
+        board.stinky = None;
+        board.niko = None;
+        board.clyde = None;
+        board.rufus = None;
+        board.rhubarb = None;
+        board.fish_pets.clear();
+        let failed_tick = board.tick;
+        let events = session.step(&[]);
+        assert_eq!(session.phase, AdventurePhase::GameOver { updates: 0 });
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::GameOverStarted { .. }))
+        );
+        assert_eq!(session.progress.cyrax_attempts, 1);
+        assert_eq!(session.board.as_ref().unwrap().tick, failed_tick + 1);
+        session.validate().unwrap();
+        let saved = serde_json::to_vec(&session).unwrap();
+        let mut reopened: AdventureSession = serde_json::from_slice(&saved).unwrap();
+        reopened.validate().unwrap();
+        for _ in 0..31 {
+            reopened.step(&[]);
+        }
+        assert_eq!(reopened.progress.cyrax_attempts, 1);
+        reopened.apply_actions(&[Action::Continue]);
+        assert_eq!(reopened.phase, AdventurePhase::GameSelector);
+        reopened.apply_actions(&[Action::PlayAdventure]);
+        reopened.apply_actions(&[Action::Continue]);
+        let retry = reopened.board.as_ref().unwrap();
+        assert_eq!((retry.tank, retry.level, retry.tick), (5, 1, 0));
+        assert_eq!(
+            retry
+                .invasion
+                .as_ref()
+                .unwrap()
+                .finale
+                .as_ref()
+                .unwrap()
+                .profile_attempts,
+            1
+        );
+        assert!(retry.has_live_pets());
+        reopened.validate().unwrap();
+    }
+
+    #[test]
+    fn first_finale_completion_awards_once_and_hatch_enters_interlude() {
+        // The Board's separately tested final action has committed victory.
+        let mut session = tank_five_session(0);
+        session.progress.shell_balance = 700;
+        let board = session.board.as_mut().unwrap();
+        board.eggs = 3;
+        board.victory = true;
+        let mut events = Vec::new();
+        session.finish_stage(&mut events);
+        assert_eq!((session.progress.tank, session.progress.level), (5, 2));
+        assert!(session.progress.adventure_completed);
+        assert_eq!(session.progress.shell_balance, 5700);
+        assert_eq!(
+            session.progress.unlocked_pets.last(),
+            Some(&PetKind::Presto)
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::AdventureCompleted {
+                        shells_awarded: 5000,
+                        shell_balance: 5700,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::PetUnlocked {
+                        pet: PetKind::Presto,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        session.validate().unwrap();
+        let saved = serde_json::to_vec(&session).unwrap();
+        let mut reopened: AdventureSession = serde_json::from_slice(&saved).unwrap();
+        reopened.validate().unwrap();
+        let before = reopened.progress.clone();
+        assert!(
+            reopened
+                .apply_actions(&[Action::BuyEgg])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::Locked,
+                        ..
+                    }
+                ))
+        );
+        for _ in 0..171 {
+            reopened.step(&[]);
+        }
+        reopened.apply_actions(&[Action::Continue]);
+        assert_eq!(reopened.phase, AdventurePhase::AdventureFinaleInterlude);
+        assert!(reopened.board.is_none());
+        assert_eq!(reopened.progress, before);
+        reopened.validate().unwrap();
+        let interlude_save = serde_json::to_vec(&reopened).unwrap();
+        let mut interlude: AdventureSession = serde_json::from_slice(&interlude_save).unwrap();
+        assert!(
+            interlude
+                .apply_actions(&[Action::OpenMenu])
+                .iter()
+                .any(|event| matches!(event, Event::GameSelectorOpened { .. }))
+        );
+        assert!(
+            interlude
+                .apply_actions(&[Action::PlayAdventure])
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        reason: Rejection::Locked,
+                        ..
+                    }
+                ))
+        );
+        assert_eq!(interlude.progress, before);
+        interlude.validate().unwrap();
     }
 
     fn add_fixture_larva(session: &mut AdventureSession, picked: bool) -> u64 {
@@ -2415,19 +2830,27 @@ mod tests {
             restored
                 .apply_actions(&[Action::Continue])
                 .iter()
-                .any(|event| matches!(event, Event::PetSelectionOpened { capacity: 3, .. }))
+                .any(|event| matches!(
+                    event,
+                    Event::StageStarted {
+                        tank: 5,
+                        level: 1,
+                        ..
+                    }
+                ))
         );
-        assert!(matches!(
-            restored.phase,
-            AdventurePhase::PetSelection { .. }
-        ));
-        restored.apply_actions(&[Action::TogglePet {
-            pet: PetKind::Angie,
-        }]);
+        assert_eq!(restored.phase, AdventurePhase::Playing);
+        let board = restored.board.as_ref().unwrap();
+        assert_eq!(board.pets.as_slice(), crate::sim::TANK5_PETS.as_slice());
+        assert!(board.fish.is_empty());
+        assert_eq!(board.eggs, 2);
+        assert_eq!(restored.progress.selected_pets, vec![PetKind::Angie]);
         let before = serde_json::to_value(&restored).unwrap();
         assert!(
             restored
-                .apply_actions(&[Action::Continue])
+                .apply_actions(&[Action::TogglePet {
+                    pet: PetKind::Angie
+                }])
                 .iter()
                 .any(|event| matches!(
                     event,

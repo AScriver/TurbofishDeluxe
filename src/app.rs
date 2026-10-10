@@ -31,6 +31,7 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_AQUARIUM2",
     "IMAGE_AQUARIUM4",
     "IMAGE_AQUARIUM5",
+    "IMAGE_AQUARIUM6",
     "IMAGE_MENUBAR",
     "IMAGE_SMALLSWIM",
     "IMAGE_SMALLEAT",
@@ -122,6 +123,9 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_SCL_ANGIE",
     "IMAGE_HALO",
     "IMAGE_BOSS",
+    "IMAGE_MINISYLV",
+    "IMAGE_PRESTO",
+    "IMAGE_SCL_PRESTO",
     "IMAGE_ULTRA",
     "IMAGE_SCL_ULTRA",
     "IMAGE_BILATERUS",
@@ -232,7 +236,7 @@ fn pet_at_pointer(unlocked_pets: &[PetKind], pointer: Vec2) -> Option<PetKind> {
     unlocked_pets
         .iter()
         .enumerate()
-        .find(|(index, _)| pet_card_rect(*index).contains(pointer))
+        .find(|(index, pet)| **pet != PetKind::Presto && pet_card_rect(*index).contains(pointer))
         .map(|(_, pet)| *pet)
 }
 
@@ -614,7 +618,7 @@ impl Presentation {
                 Event::RufusHit { sound: true, .. } => "SOUND_PUNCH",
                 Event::MissileLaunched { .. } => "SOUND_MISSLE",
                 Event::MissileRemoved { .. } => "SOUND_EXPLODE",
-                Event::MissileImpacted { .. } => "SOUND_DIE",
+                Event::MissileImpacted { .. } | Event::PetRemoved { .. } => "SOUND_DIE",
                 Event::EnergyBallLaunched { first: true, .. } => "SOUND_UNLEASH",
                 Event::EnergyBallLaunched { first: false, .. }
                 | Event::EnergyBallShot { .. }
@@ -634,6 +638,8 @@ impl Presentation {
                     InvasionEvent::AlienSpawned { .. } => "SOUND_ROAR",
                     InvasionEvent::AlienHit { .. } => "SOUND_HIT",
                     InvasionEvent::AlienDefeated { .. } => "SOUND_EXPLOSION1",
+                    InvasionEvent::BossDefeated { .. } => "SOUND_EXPLODE",
+                    InvasionEvent::MiniDefeated { .. } => "SOUND_EXPLOSION4",
                     InvasionEvent::LaserFired { .. } => "SOUND_ZAP",
                     InvasionEvent::PsychosquidPhaseChanged {
                         healing: false,
@@ -667,6 +673,16 @@ impl Presentation {
             };
             for effect_id in std::iter::once(id)
                 .chain(matches!(event, Event::EnergyBallRemoved { .. }).then_some("SOUND_EXPLODE"))
+                .chain(
+                    matches!(
+                        event,
+                        Event::Invasion {
+                            event: InvasionEvent::BossDefeated { .. },
+                            ..
+                        }
+                    )
+                    .then_some("SOUND_EXPLOSION1"),
+                )
                 .chain(matches!(event, Event::UltraBought { .. }).then_some("SOUND_SPLASHBIG"))
                 .chain(
                     matches!(event, Event::AmpDischarged { victim_ids, .. }
@@ -701,6 +717,7 @@ impl Presentation {
                 2 => "IMAGE_AQUARIUM2",
                 3 => "IMAGE_AQUARIUM4",
                 4 => "IMAGE_AQUARIUM5",
+                5 => "IMAGE_AQUARIUM6",
                 _ => "IMAGE_AQUARIUM1",
             },
             0.0,
@@ -1304,6 +1321,8 @@ impl Presentation {
                         SylvesterKind::Destructor => "IMAGE_DESTRUCTOR",
                         SylvesterKind::Ulysses => "IMAGE_ULYSSES",
                         SylvesterKind::Psychosquid => "IMAGE_PSYCHOSQUID",
+                        SylvesterKind::Cyrax => "IMAGE_BOSS",
+                        SylvesterKind::MiniSylvester => "IMAGE_MINISYLV",
                         SylvesterKind::Weak | SylvesterKind::Strong => "IMAGE_SYLV",
                     };
                     // Gus's eating row uses the velocity facing even when a
@@ -1374,6 +1393,74 @@ impl Presentation {
                             1.0,
                             1.0,
                         );
+                    }
+                }
+            }
+            if let Some(finale) = &wave.finale {
+                for alien in finale.boss.iter().chain(&finale.children) {
+                    if alien.spawn_ticks > 9 {
+                        continue;
+                    }
+                    let size = alien.sprite_size() as f32;
+                    let inset = f32::from(alien.spawn_ticks) / 10.0 * size;
+                    let source = Rect::new(
+                        f32::from(alien.sprite_frame()) * size,
+                        f32::from(alien.sprite_row()) * size,
+                        size,
+                        size,
+                    );
+                    let x = alien.widget_x as f32 + inset / 2.0;
+                    let y = alien.widget_y as f32 + inset / 2.0;
+                    let image = if alien.kind == SylvesterKind::Cyrax {
+                        "IMAGE_BOSS"
+                    } else {
+                        "IMAGE_MINISYLV"
+                    };
+                    let facing_right = alien.facing_right();
+                    self.sprite(
+                        image,
+                        x,
+                        y,
+                        Some(source),
+                        facing_right,
+                        (size - inset) / size,
+                        1.0,
+                    );
+                    if alien.kind == SylvesterKind::Cyrax
+                        && alien.hit_flash()
+                        && !alien.healing
+                        && alien.spawn_ticks == 0
+                    {
+                        self.additive_sprite(
+                            image,
+                            x,
+                            y,
+                            source,
+                            facing_right,
+                            (f32::from(alien.hit_ticks) * 25.0 / 255.0).min(1.0),
+                        );
+                    }
+                    if alien.kind == SylvesterKind::Cyrax && alien.spawn_ticks == 0 {
+                        let bar = &self.images["IMAGE_HEALTHBAR"];
+                        let starting_health = f64::from(
+                            5000 - 125 * finale.profile_attempts.saturating_sub(1).min(20),
+                        );
+                        let width =
+                            health_bar_visible_width(alien.health, starting_health, bar.width());
+                        let bar_x = alien.widget_x as f32 + 10.0;
+                        let bar_y = alien.widget_y as f32 + size - 3.0;
+                        if width > 0.0 {
+                            self.sprite(
+                                "IMAGE_HEALTHBAR",
+                                bar_x,
+                                bar_y,
+                                Some(Rect::new(0.0, 0.0, width, bar.height())),
+                                false,
+                                1.0,
+                                1.0,
+                            );
+                        }
+                        self.sprite("IMAGE_HEALTHBARTUBE", bar_x, bar_y, None, false, 1.0, 1.0);
                     }
                 }
             }
@@ -1554,6 +1641,8 @@ impl Presentation {
                         SylvesterKind::Destructor => "IMAGE_DESTRUCTOR",
                         SylvesterKind::Ulysses => "IMAGE_ULYSSES",
                         SylvesterKind::Psychosquid => "IMAGE_PSYCHOSQUID",
+                        SylvesterKind::Cyrax => "IMAGE_BOSS",
+                        SylvesterKind::MiniSylvester => "IMAGE_MINISYLV",
                         SylvesterKind::Weak | SylvesterKind::Strong | SylvesterKind::Gus => {
                             "IMAGE_SYLV"
                         }
@@ -2445,6 +2534,7 @@ impl Presentation {
                 PetKind::Amp => ("IMAGE_AMP", 100.0, updates % 20 / 2),
                 PetKind::Gash => ("IMAGE_GASH", 90.0, updates % 20 / 2),
                 PetKind::Angie => ("IMAGE_ANGIE", 90.0, updates % 20 / 2),
+                PetKind::Presto => ("IMAGE_PRESTO", 90.0, updates % 20 / 2),
             };
             let (preview_x, preview_width, preview_height) = if pet == PetKind::Amp {
                 (236.0, 160.0, 60.0)
@@ -2494,6 +2584,7 @@ impl Presentation {
                     PetKind::Amp => "AMP the Electric Eel",
                     PetKind::Gash => "GASH the Shark",
                     PetKind::Angie => "ANGIE the Angelfish",
+                    PetKind::Presto => "PRESTO",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -2589,6 +2680,7 @@ impl Presentation {
                     "while the tank is peaceful.",
                 ],
                 PetKind::Angie => ["ANGIE can resurrect", "dead fish.", ""],
+                PetKind::Presto => ["PRESTO has joined", "your pet collection.", ""],
             };
             for (index, line) in description.iter().enumerate() {
                 self.centered_text(
@@ -2640,6 +2732,11 @@ impl Presentation {
         );
         let mut hovered = None;
         for (index, pet) in session.progress.unlocked_pets.iter().enumerate() {
+            // Presto is earned at the finale, but its transformation actor is
+            // not yet implemented. Keep the collection unlock non-selectable.
+            if *pet == PetKind::Presto {
+                continue;
+            }
             let card = pet_card_rect(index);
             if card.contains(pointer) {
                 hovered = Some(*pet);
@@ -2680,6 +2777,7 @@ impl Presentation {
                 PetKind::Amp => "IMAGE_SCL_AMP",
                 PetKind::Gash => "IMAGE_SCL_GASH",
                 PetKind::Angie => "IMAGE_SCL_ANGIE",
+                PetKind::Presto => "IMAGE_SCL_PRESTO",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
@@ -2902,6 +3000,12 @@ impl Presentation {
                     ["ANGIE can resurrect", "dead fish.", ""],
                     90.0,
                 ),
+                PetKind::Presto => (
+                    "IMAGE_PRESTO",
+                    "PRESTO",
+                    ["PRESTO has joined", "your pet collection.", ""],
+                    90.0,
+                ),
             };
             let column = if matches!(pet, PetKind::Niko | PetKind::Vert) {
                 let phase = session.ticks % 18;
@@ -3045,6 +3149,23 @@ impl Presentation {
         self.main_button(Rect::new(525.0, 4.0, 80.0, height), "Menu");
     }
 
+    fn draw_adventure_finale_interlude(&self) {
+        // The installed binary routes the post-Hatch state to InterludeScreen.
+        // Its detailed layout remains unrecovered; this projects the committed
+        // progression without recreating a Board or implying another stage.
+        self.sprite("IMAGE_SCREENBACK", 0.0, 0.0, None, false, 1.0, 1.0);
+        self.centered_text("JungleFever17outline", "Adventure Complete", 120.0, YELLOW);
+        self.centered_text(
+            "JungleFever15outline",
+            "PRESTO has joined your pets",
+            206.0,
+            WHITE,
+        );
+        self.centered_text("JungleFever15outline", "5,000 shells awarded", 250.0, WHITE);
+        let height = self.images["IMAGE_MAINBUTTON"].height();
+        self.main_button(Rect::new(186.0, 445.0, 264.0, height), "Main Menu");
+    }
+
     fn draw(
         &self,
         session: &AdventureSession,
@@ -3055,6 +3176,7 @@ impl Presentation {
         match session.phase {
             AdventurePhase::Hatch { pet, updates } => self.draw_hatch(pet, updates),
             AdventurePhase::TankFourFinaleHatch { updates } => self.draw_finale_hatch(updates),
+            AdventurePhase::AdventureFinaleInterlude => self.draw_adventure_finale_interlude(),
             AdventurePhase::Bonus { ref state } => self.draw_bonus(state),
             AdventurePhase::BonusResults { ref result } => self.draw_bonus_results(result),
             AdventurePhase::PetSelection { ref selected }
@@ -3636,6 +3758,11 @@ pub async fn run(
                     {
                         Action::Continue
                     }
+                    AdventurePhase::AdventureFinaleInterlude
+                        if Rect::new(186.0, 445.0, 264.0, button_height).contains(pointer) =>
+                    {
+                        Action::OpenMenu
+                    }
                     AdventurePhase::PetSelection { .. } => {
                         if let Some(pet) = pet_at_pointer(&session.progress.unlocked_pets, pointer)
                         {
@@ -3876,6 +4003,12 @@ pub async fn run(
             || matches!(session.phase, AdventurePhase::BonusResults { ref result } if result.updates >= 30);
         if !paused && is_key_pressed(KeyCode::Enter) && enter_continues {
             pending_actions.push(Action::Continue);
+        }
+        if !paused
+            && session.phase == AdventurePhase::AdventureFinaleInterlude
+            && is_key_pressed(KeyCode::Enter)
+        {
+            pending_actions.push(Action::OpenMenu);
         }
         if !paused
             && matches!(
@@ -4167,6 +4300,16 @@ pub async fn run(
 #[cfg(test)]
 mod feed_input_tests {
     use super::*;
+
+    #[test]
+    fn earned_presto_cannot_be_selected_before_its_actor_exists() {
+        let unlocked = [PetKind::Stinky, PetKind::Presto];
+        assert_eq!(
+            pet_at_pointer(&unlocked, vec2(50.0, 80.0)),
+            Some(PetKind::Stinky)
+        );
+        assert_eq!(pet_at_pointer(&unlocked, vec2(50.0, 165.0)), None);
+    }
 
     #[test]
     fn earned_eighth_pet_accepts_the_observed_native_click() {

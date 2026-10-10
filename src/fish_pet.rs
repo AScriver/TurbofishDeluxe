@@ -149,6 +149,7 @@ struct NimbusViews<'a> {
 /// Only one pet subtype supplies an extra target list per update.
 enum PetTargetViews<'a> {
     None,
+    Tank5,
     Nimbus(NimbusViews<'a>),
     Gash(&'a [GashFishView]),
     Angie(&'a [AngieCorpseView]),
@@ -227,6 +228,25 @@ impl FishPetState {
         kind: FishPetKind,
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> Self {
+        Self::spawn(id, kind, false, rand_range)
+    }
+
+    /// Tank 5 keeps the common FishTypePet construction and draw order, but
+    /// its specialty clocks use the Tank-5 constructor values (PB05 004ef420).
+    pub fn spawn_tank5(
+        id: u64,
+        kind: FishPetKind,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
+        Self::spawn(id, kind, true, rand_range)
+    }
+
+    fn spawn(
+        id: u64,
+        kind: FishPetKind,
+        tank5: bool,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> Self {
         let widget_x = rand_range(265) as i32 + 105;
         let widget_y = rand_range(520) as i32 + 20;
         let left = rand_range(2) != 0;
@@ -239,6 +259,12 @@ impl FishPetState {
         let _unused_growth = rand_range(3);
         let movement_state = rand_range(10) as u8;
         let _unused_coin_threshold = rand_range(200);
+        // PB05 004ef420 uses one extra constructor draw for Tank-5 Vert.
+        let _tank5_vert_interval = if tank5 && kind == FishPetKind::Vert {
+            Some(rand_range(200))
+        } else {
+            None
+        };
         Self {
             id,
             kind,
@@ -257,10 +283,18 @@ impl FishPetState {
             amp_timer: if kind == FishPetKind::Amp { 300 } else { 0 },
             amp_threshold: if kind == FishPetKind::Amp { 3000 } else { 0 },
             amp_charge: 0,
-            gash_timer: if kind == FishPetKind::Gash { -1550 } else { 0 },
+            gash_timer: if kind == FishPetKind::Gash {
+                if tank5 { 0 } else { -1550 }
+            } else {
+                0
+            },
             gash_eating_ticks: 0,
             bomb_threshold: if kind == FishPetKind::Shrapnel {
-                rand_range(20) as u16 + 633
+                if tank5 {
+                    rand_range(200) as u16 + 1080
+                } else {
+                    rand_range(20) as u16 + 633
+                }
             } else {
                 0
             },
@@ -290,6 +324,14 @@ impl FishPetState {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_for_tank(false)
+    }
+
+    pub fn validate_tank5(&self) -> Result<(), String> {
+        self.validate_for_tank(true)
+    }
+
+    fn validate_for_tank(&self, tank5: bool) -> Result<(), String> {
         if self.id == 0
             || ![
                 self.x,
@@ -342,7 +384,7 @@ impl FishPetState {
             || (self.kind == FishPetKind::Vert && self.coin_timer >= 216)
             || (self.kind == FishPetKind::Meryl && self.coin_timer >= 1400)
             || (self.kind == FishPetKind::Shrapnel
-                && (!(633..=652).contains(&self.bomb_threshold)
+                && (!(if tank5 { 1080..=1279 } else { 633..=652 }).contains(&self.bomb_threshold)
                     || self.coin_timer >= self.bomb_threshold
                     || !(-1.0..1.0).contains(&self.glint_phase)))
             || (self.kind == FishPetKind::Amp && self.amp_charge > 2)
@@ -712,6 +754,13 @@ impl FishPetState {
         ward
     }
 
+    /// PB05 FishTypePet slot-22 still advances common motion in Tank 5,
+    /// while slot-81 returns before any subtype action. Board should use this
+    /// for every Tank-5 fish-shaped pet, including Amp, Gash and Angie.
+    pub fn tick_tank5(&mut self, rand_range: &mut impl FnMut(u64) -> u64) -> FishPetUpdate {
+        self.tick_inner(&[], 0, &[], PetTargetViews::Tank5, false, rand_range)
+    }
+
     fn tick_inner(
         &mut self,
         aliens: &[PetAlienView],
@@ -722,6 +771,7 @@ impl FishPetState {
         rand_range: &mut impl FnMut(u64) -> u64,
     ) -> FishPetUpdate {
         let mut update = FishPetUpdate::default();
+        let tank5 = matches!(targets, PetTargetViews::Tank5);
         let hunting = self.kind == FishPetKind::Itchy && !aliens.is_empty();
         match targets {
             PetTargetViews::Nimbus(views) => {
@@ -743,7 +793,7 @@ impl FishPetState {
                 self.hunt_gumbo(aliens);
             }
             PetTargetViews::None if hunting => self.hunt(aliens, &mut update),
-            PetTargetViews::None => self.wander(),
+            PetTargetViews::None | PetTargetViews::Tank5 => self.wander(),
         }
         self.special_timer = self.special_timer.saturating_add(1);
         self.movement_timer += 1;
@@ -753,7 +803,7 @@ impl FishPetState {
                 self.movement_state = rand_range(9) as u8 + 1;
             }
         }
-        if self.kind == FishPetKind::Prego && aliens.is_empty() {
+        if !tank5 && self.kind == FishPetKind::Prego && aliens.is_empty() {
             self.birth_timer += 1;
             if self.birth_timer >= self.birth_threshold {
                 self.birth_timer = 0;
@@ -767,7 +817,7 @@ impl FishPetState {
                 };
             }
         }
-        if self.kind == FishPetKind::Zorf && aliens.is_empty() {
+        if !tank5 && self.kind == FishPetKind::Zorf && aliens.is_empty() {
             self.food_timer = self.food_timer.saturating_add(1);
             if self.food_timer >= 65
                 && hungry
@@ -784,14 +834,14 @@ impl FishPetState {
         }
         // FishTypePet::Update skips DropCoin while any alien is registered.
         // The DropCoin helper owns both the counter and its threshold reset.
-        if self.kind == FishPetKind::Vert && aliens.is_empty() {
+        if !tank5 && self.kind == FishPetKind::Vert && aliens.is_empty() {
             self.coin_timer += 1;
             if self.coin_timer >= 216 {
                 self.coin_timer = 0;
                 update.gold_at = Some((self.widget_x + 15, self.widget_y + 10));
             }
         }
-        if self.kind == FishPetKind::Meryl && aliens.is_empty() {
+        if !tank5 && self.kind == FishPetKind::Meryl && aliens.is_empty() {
             self.coin_timer += 1;
             if self.coin_timer == 1300 {
                 update.note_at = Some((self.widget_x + 15, self.widget_y - 5));
@@ -799,7 +849,7 @@ impl FishPetState {
                 self.coin_timer = 0;
             }
         }
-        if self.kind == FishPetKind::Shrapnel && aliens.is_empty() {
+        if !tank5 && self.kind == FishPetKind::Shrapnel && aliens.is_empty() {
             self.coin_timer += 1;
             if self.coin_timer >= self.bomb_threshold {
                 self.coin_timer = 0;
@@ -1404,6 +1454,100 @@ impl FishPetState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tank5_constructor_draws_and_specialty_clocks_follow_primary_ctor() {
+        let mut vert_draws = Vec::new();
+        let vert = FishPetState::spawn_tank5(1, FishPetKind::Vert, &mut |upper| {
+            vert_draws.push(upper);
+            0
+        });
+        assert_eq!(vert_draws, [265, 520, 2, 3, 200, 3, 10, 200, 200]);
+        assert_eq!(vert.coin_timer, 0);
+        assert!(vert.validate_tank5().is_ok());
+
+        let mut shrapnel_draws = Vec::new();
+        let shrapnel = FishPetState::spawn_tank5(2, FishPetKind::Shrapnel, &mut |upper| {
+            shrapnel_draws.push(upper);
+            0
+        });
+        assert_eq!(shrapnel_draws, vert_draws);
+        assert_eq!(shrapnel.bomb_threshold, 1080);
+        assert!(shrapnel.validate_tank5().is_ok());
+        assert!(shrapnel.validate().is_err());
+
+        let gash = FishPetState::spawn_tank5(3, FishPetKind::Gash, &mut |_| 0);
+        assert_eq!(gash.gash_timer, 0);
+    }
+
+    #[test]
+    fn tank5_fish_motion_keeps_all_specialty_requests_suppressed() {
+        let kinds = [
+            FishPetKind::Itchy,
+            FishPetKind::Prego,
+            FishPetKind::Zorf,
+            FishPetKind::Vert,
+            FishPetKind::Meryl,
+            FishPetKind::Wadsworth,
+            FishPetKind::Seymour,
+            FishPetKind::Shrapnel,
+            FishPetKind::Gumbo,
+            FishPetKind::Blip,
+            FishPetKind::Nimbus,
+            FishPetKind::Amp,
+            FishPetKind::Gash,
+            FishPetKind::Angie,
+        ];
+        for (index, kind) in kinds.into_iter().enumerate() {
+            let mut pet = FishPetState::spawn_tank5(index as u64 + 1, kind, &mut |_| 0);
+            if kind == FishPetKind::Prego {
+                pet.birth_timer = 929;
+            }
+            if kind == FishPetKind::Zorf {
+                pet.food_timer = 64;
+            }
+            if kind == FishPetKind::Vert {
+                pet.coin_timer = 215;
+            }
+            if kind == FishPetKind::Meryl {
+                pet.coin_timer = 1299;
+            }
+            if kind == FishPetKind::Shrapnel {
+                pet.coin_timer = pet.bomb_threshold - 1;
+            }
+            if kind == FishPetKind::Amp {
+                pet.amp_timer = pet.amp_threshold - 1;
+            }
+            let prior = (
+                pet.birth_timer,
+                pet.food_timer,
+                pet.coin_timer,
+                pet.amp_timer,
+                pet.gash_timer,
+                pet.ward_timer,
+            );
+            let before_y = pet.y;
+            assert_eq!(
+                pet.tick_tank5(&mut |_| 1),
+                FishPetUpdate::default(),
+                "{kind:?}"
+            );
+            assert_eq!(
+                (
+                    pet.birth_timer,
+                    pet.food_timer,
+                    pet.coin_timer,
+                    pet.amp_timer,
+                    pet.gash_timer,
+                    pet.ward_timer
+                ),
+                prior,
+                "{kind:?}"
+            );
+            assert_ne!(pet.y, before_y, "{kind:?} motion must advance");
+            assert!(pet.validate_tank5().is_ok(), "{kind:?}");
+        }
+    }
 
     fn angie_at(x: i32, y: i32) -> FishPetState {
         let mut pet = actor(FishPetKind::Angie);

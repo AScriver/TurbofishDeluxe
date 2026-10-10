@@ -141,7 +141,62 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 20;
+pub const SAVE_FORMAT_VERSION: u32 = 21;
+
+#[cfg(test)]
+mod current_twenty_one_tests {
+    use super::*;
+
+    #[test]
+    fn current_save_requires_profile_fields_without_rewriting_older_format() {
+        let session = AdventureSession::new(42);
+        let mut value = serde_json::to_value(ProjectSave {
+            format_version: SAVE_FORMAT_VERSION,
+            session,
+        })
+        .unwrap();
+        for field in ["cyrax_attempts", "adventure_completed"] {
+            let mut incomplete = value.clone();
+            incomplete["session"]["progress"]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            assert!(decode_save(&serde_json::to_vec(&incomplete).unwrap()).is_err());
+        }
+        value["format_version"] = serde_json::json!(20);
+        value["session"]["progress"]
+            .as_object_mut()
+            .unwrap()
+            .remove("cyrax_attempts");
+        value["session"]["progress"]
+            .as_object_mut()
+            .unwrap()
+            .remove("adventure_completed");
+        assert!(decode_save(&serde_json::to_vec(&value).unwrap()).is_ok());
+    }
+
+    #[test]
+    fn current_save_requires_present_stinky_combat_identity_field() {
+        let mut session = AdventureSession::new(42);
+        session.board = Some(AdventureState::new_second_stage(42));
+        session.progress.level = 2;
+        session
+            .progress
+            .unlocked_pets
+            .push(crate::sim::PetKind::Stinky);
+        let mut value = serde_json::to_value(ProjectSave {
+            format_version: SAVE_FORMAT_VERSION,
+            session,
+        })
+        .unwrap();
+        assert!(value["session"]["board"]["stinky"]["combat_id"].is_null());
+        value["session"]["board"]["stinky"]
+            .as_object_mut()
+            .unwrap()
+            .remove("combat_id");
+        assert!(decode_save(&serde_json::to_vec(&value).unwrap()).is_err());
+    }
+}
 
 pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
     Ok(decode_save_with_migration(bytes)?.0)
@@ -248,7 +303,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=20) => {
+        Some(version @ 5..=21) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -261,6 +316,10 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                 .iter()
                                 .all(|field| progress.contains_key(*field)))
                         && (version < 7 || progress.contains_key("shell_balance"))
+                        && (version < 21
+                            || ["cyrax_attempts", "adventure_completed"]
+                                .iter()
+                                .all(|field| progress.contains_key(*field)))
                 });
             let incomplete_board = value
                 .pointer("/session/board")
@@ -329,6 +388,34 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                             .any(|corpse| corpse.get("revival_ticks").is_none())
                                     })
                             }))
+                        || (version >= 21
+                            && board
+                                .get("stinky")
+                                .filter(|stinky| !stinky.is_null())
+                                .is_some_and(|stinky| stinky.get("combat_id").is_none()))
+                        || (version >= 21
+                            && board
+                                .get("invasion")
+                                .filter(|wave| !wave.is_null())
+                                .is_some_and(|wave| {
+                                    wave.get("finale").is_none()
+                                        || wave
+                                            .get("finale")
+                                            .filter(|finale| !finale.is_null())
+                                            .is_some_and(|finale| {
+                                                [
+                                                    "boss",
+                                                    "children",
+                                                    "boss_defeated",
+                                                    "profile_attempts",
+                                                    "ordinary_ticks",
+                                                    "child_ticks",
+                                                    "secondary_coords",
+                                                ]
+                                                .iter()
+                                                .any(|field| finale.get(*field).is_none())
+                                            })
+                                }))
                         || (version >= 15
                             && board
                                 .get("missiles")
@@ -510,7 +597,8 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     17 => "seventeen",
                     18 => "eighteen",
                     19 => "nineteen",
-                    _ => "twenty",
+                    20 => "twenty",
+                    _ => "twenty-one",
                 };
                 return Err(format!(
                     "Incomplete format-{label} save; required state fields are missing"

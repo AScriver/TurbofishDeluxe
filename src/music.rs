@@ -93,6 +93,7 @@ impl MusicCue {
                 }
             }
             AdventurePhase::GameSelector | AdventurePhase::HelpScreen => Some(Self::PetSelection),
+            AdventurePhase::AdventureFinaleInterlude => Some(Self::Interlude),
             AdventurePhase::GameOver { .. } => None,
         }
     }
