@@ -5,6 +5,7 @@ use std::{
 };
 use turbofish_deluxe::{
     adventure::{AdventurePhase, AdventureSession, PetKind},
+    bonus::PurchaseReceipt,
     cli,
     sim::{Action, AdventureState, StinkyOrigin},
 };
@@ -978,7 +979,7 @@ fn current_tank_four_second_pause_keeps_live_board_while_session_time_advances()
 fn current_tank_four_third_accepts_seventeen_rosters_and_persists_live_amp_setup() {
     use turbofish_deluxe::{alien::SylvesterKind, fish_pet::FishPetKind, invasion::EncounterKind};
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 26);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 27);
     let canonical = tank_four_third_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 17);
     for pet in canonical {
@@ -1239,7 +1240,7 @@ fn current_tank_four_fourth_accepts_eighteen_rosters_and_persists_gash_setup() {
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 26);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 27);
     let canonical = tank_four_fourth_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 18);
     for pet in canonical {
@@ -1492,7 +1493,7 @@ fn current_tank_four_finale_accepts_nineteen_rosters_and_starts_with_bilaterus()
         invasion::{EncounterKind, WavePlan},
     };
 
-    assert_eq!(cli::SAVE_FORMAT_VERSION, 26);
+    assert_eq!(cli::SAVE_FORMAT_VERSION, 27);
     let canonical = tank_four_finale_session(&[]).progress.unlocked_pets;
     assert_eq!(canonical.len(), 19);
     for pet in canonical {
@@ -1564,7 +1565,7 @@ fn current_twenty_one_requires_revival_clock_on_all_seven_valid_corpse_kinds() {
                 .remove("revival_ticks");
             let error = cli::decode_save(&serde_json::to_vec(&missing).unwrap()).unwrap_err();
             assert!(
-                error.to_string().contains("Incomplete format-twenty-six"),
+                error.to_string().contains("Incomplete format-twenty-seven"),
                 "missing {list}[0].revival_ticks: {error}"
             );
         }
@@ -2726,6 +2727,7 @@ fn current_tank_three_bonus_flight_and_immutable_results_survive_reload() {
             earned: 217,
             previous_balance: 1347,
             updates: 8,
+            purchase: PurchaseReceipt::new(0),
         },
     };
     let results = serde_json::to_value(cli::ProjectSave {
@@ -2816,6 +2818,7 @@ fn completed_profile_save_requires_replay_board_for_ordinary_bonus_phases() {
             earned: 0,
             previous_balance: 0,
             updates: 0,
+            purchase: PurchaseReceipt::new(0),
         },
     };
     assert!(cli::decode_save(&current_bytes(first)).is_ok());
@@ -2844,6 +2847,7 @@ fn completed_profile_save_requires_replay_board_for_ordinary_bonus_phases() {
             earned: 0,
             previous_balance: 0,
             updates: 0,
+            purchase: PurchaseReceipt::new(0),
         },
     };
     assert!(cli::decode_save(&current_bytes(completed.clone())).is_err());
@@ -2858,6 +2862,7 @@ fn completed_profile_save_requires_replay_board_for_ordinary_bonus_phases() {
             earned: 5000,
             previous_balance: 0,
             updates: 0,
+            purchase: PurchaseReceipt::new(0),
         },
     };
     assert!(cli::decode_save(&current_bytes(completed)).is_ok());
@@ -3965,6 +3970,7 @@ fn current_tank_two_bonus_origin_and_results_credit_survive_reload() {
             earned: 217,
             previous_balance: 100,
             updates: 8,
+            purchase: PurchaseReceipt::new(0),
         },
     };
     let results = serde_json::to_value(cli::ProjectSave {
@@ -4493,6 +4499,7 @@ fn bonus_results_reload_does_not_repeat_profile_credit() {
             earned: 217,
             previous_balance: 100,
             updates: 8,
+            purchase: PurchaseReceipt::new(0),
         },
     };
     let modern = serde_json::to_value(cli::ProjectSave {
@@ -4516,6 +4523,220 @@ fn bonus_results_reload_does_not_repeat_profile_credit() {
     let mut legacy = modern;
     legacy["format_version"] = 6.into();
     assert!(cli::decode_save(&serde_json::to_vec(&legacy).unwrap()).is_err());
+}
+
+#[test]
+fn current_purchase_receipt_requires_exact_credited_then_debited_wallet() {
+    let mut session = AdventureSession::new(0x3922);
+    session.progress.tank = 2;
+    session.progress.level = 1;
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+    ];
+    session.progress.shell_balance = 20_000;
+    session.board = None;
+    session.phase = AdventurePhase::BonusResults {
+        result: turbofish_deluxe::bonus::BonusResult {
+            origin_tank: 1,
+            origin_level: 6,
+            earned: 0,
+            previous_balance: 20_000,
+            updates: 30,
+            purchase: PurchaseReceipt::new(0),
+        },
+    };
+    session.validate().unwrap();
+    let base = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: session.clone(),
+    })
+    .unwrap();
+    for pointer in [
+        "/session/progress/purchase_cursor",
+        "/session/phase/BonusResults/result/purchase/offered_cursor",
+        "/session/phase/BonusResults/result/purchase/confirming",
+        "/session/phase/BonusResults/result/purchase/purchased",
+    ] {
+        let mut missing = base.clone();
+        let (parent, field) = pointer.rsplit_once('/').unwrap();
+        missing
+            .pointer_mut(parent)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "{pointer}"
+        );
+    }
+    session.apply_actions(&[Action::OfferBonusPurchase]);
+    let mut reopened = cli::decode_save(&current_bytes(session)).unwrap();
+    reopened.apply_actions(&[Action::ConfirmBonusPurchase { accept: true }]);
+    assert_eq!(reopened.progress.shell_balance, 0);
+    assert_eq!(reopened.progress.purchase_cursor, 1);
+    assert!(reopened.board.is_none());
+    let committed = current_bytes(reopened.clone());
+    assert_eq!(
+        cli::decode_save(&committed).unwrap().progress,
+        reopened.progress
+    );
+    let mut forged: serde_json::Value = serde_json::from_slice(&committed).unwrap();
+    forged["session"]["progress"]["shell_balance"] = 1.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&forged).unwrap()).is_err());
+    forged["session"]["progress"]["shell_balance"] = 0.into();
+    forged["session"]["phase"]["BonusResults"]["result"]["earned"] = 1.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&forged).unwrap()).is_err());
+    forged = serde_json::from_slice(&committed).unwrap();
+    forged["session"]["phase"]["BonusResults"]["result"]["updates"] = 29.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&forged).unwrap()).is_err());
+    forged = serde_json::from_slice(&committed).unwrap();
+    forged["session"]["phase"]["BonusResults"]["result"]["purchase"]["offered_cursor"] = 255.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&forged).unwrap()).is_err());
+}
+
+#[test]
+fn current_brinkley_initial_time_trial_actor_roundtrips_without_egg_candidate() {
+    let mut session = AdventureSession::new(0x3923);
+    session.progress.tank = 2;
+    session.progress.level = 1;
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Brinkley,
+    ];
+    session.progress.purchase_cursor = 1;
+    session.board = None;
+    session.phase = AdventurePhase::GameSelector;
+    session.apply_actions(&[
+        Action::PlayTimeTrial,
+        Action::SelectTimeTrialTank { tank: 1 },
+        Action::TogglePet {
+            pet: PetKind::Brinkley,
+        },
+        Action::Continue,
+    ]);
+    session.validate().unwrap();
+    let board = session.board.as_ref().unwrap();
+    assert_eq!(board.pets, [PetKind::Brinkley]);
+    assert_eq!(board.fish_pets.len(), 1);
+    let serialized = current_bytes(session.clone());
+    let mut reopened = cli::decode_save(&serialized).unwrap();
+    let mut egg_check = reopened.clone();
+    let purchased = egg_check.apply_actions(&[Action::BuyEgg]);
+    assert!(purchased.iter().any(|event| matches!(
+        event,
+        turbofish_deluxe::sim::Event::TimeTrialPetAcquired { .. }
+    )));
+    assert!(!purchased.iter().any(|event| matches!(
+        event,
+        turbofish_deluxe::sim::Event::TimeTrialPetAcquired {
+            pet: PetKind::Brinkley,
+            ..
+        }
+    )));
+    for _ in 0..12 {
+        assert_eq!(
+            serde_json::to_value(session.step(&[])).unwrap(),
+            serde_json::to_value(reopened.step(&[])).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&session).unwrap(),
+            serde_json::to_value(&reopened).unwrap()
+        );
+    }
+    let mut missing: serde_json::Value = serde_json::from_slice(&serialized).unwrap();
+    missing["session"]["board"]["fish_pets"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("brinkley_meals");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+    missing = serde_json::from_slice(&serialized).unwrap();
+    missing["session"]["board"]["fish_pets"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("brinkley_cooldown");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+    missing = serde_json::from_slice(&serialized).unwrap();
+    missing["session"]["board"]["fish_pets"][0]["brinkley_cooldown"] = 109.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+}
+
+#[test]
+fn current_purchase_time_trial_result_requires_clock_and_receipt() {
+    let mut session = AdventureSession::new(0x3924);
+    session.progress.tank = 2;
+    session.progress.level = 1;
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+    ];
+    session.board = None;
+    session.phase = AdventurePhase::GameSelector;
+    session.apply_actions(&[
+        Action::PlayTimeTrial,
+        Action::SelectTimeTrialTank { tank: 1 },
+        Action::TogglePet {
+            pet: PetKind::Stinky,
+        },
+        Action::Continue,
+    ]);
+    session.board.as_mut().unwrap().tick = 10_749;
+    session.ticks = 10_749;
+    session.step(&[]);
+    assert_eq!(session.phase, AdventurePhase::TimeTrialTimesUp);
+    session.apply_actions(&[Action::Continue]);
+    assert_eq!(session.phase, AdventurePhase::TimeTrialResults);
+    session.validate().unwrap();
+    let current = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session,
+    })
+    .unwrap();
+    for pointer in [
+        "/session/time_trial/result/updates",
+        "/session/time_trial/result/purchase",
+        "/session/time_trial/result/purchase/confirming",
+    ] {
+        let mut missing = current.clone();
+        let (parent, field) = pointer.rsplit_once('/').unwrap();
+        missing
+            .pointer_mut(parent)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err(),
+            "{pointer}"
+        );
+    }
+    let mut reopened = cli::decode_save(&serde_json::to_vec(&current).unwrap()).unwrap();
+    for _ in 0..30 {
+        reopened.step(&[]);
+    }
+    assert_eq!(
+        reopened
+            .time_trial
+            .as_ref()
+            .unwrap()
+            .result
+            .as_ref()
+            .unwrap()
+            .updates,
+        30
+    );
+    reopened.validate().unwrap();
 }
 
 #[test]

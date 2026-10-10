@@ -8,9 +8,9 @@ use crate::{
     breeder::{BreederFoodView, BreederSize, BreederState, DeadBreeder},
     clyde::{ClydeCoinView, ClydeState},
     fish_pet::{
-        AmpTap, AngieCorpseView, FishPetKind, FishPetState, GashFishView, NimbusCoinView,
-        NimbusFoodView, PetAlienView, PrestoChangeEligibility, PrestoForm, WardFishView,
-        ZorfHungryView,
+        AmpTap, AngieCorpseView, BrinkleyFoodView, FishPetKind, FishPetState, GashFishView,
+        NimbusCoinView, NimbusFoodView, PetAlienView, PrestoChangeEligibility, PrestoForm,
+        WardFishView, ZorfHungryView,
     },
     gekko::{DeadGekko, GekkoPrey, GekkoPreyKind, GekkoState},
     grubber::{DeadGrubber, GrubberPrey, GrubberState},
@@ -109,6 +109,7 @@ pub enum PetKind {
     Gash,
     Angie,
     Presto,
+    Brinkley,
 }
 
 /// Fresh ordinary Tank5 entry clears retail selection flags before this
@@ -593,6 +594,8 @@ pub enum Action {
     HoldFire { x: f32, y: f32, elapsed_ms: u32 },
     TogglePet { pet: PetKind },
     ConfirmPetSelection { accept: bool },
+    OfferBonusPurchase,
+    ConfirmBonusPurchase { accept: bool },
     OpenMenu,
     PlayAdventure,
     PlayTimeTrial,
@@ -683,6 +686,32 @@ pub enum Event {
     Rejected {
         tick: u64,
         reason: Rejection,
+    },
+    BonusPurchaseOffered {
+        tick: u64,
+        pet: PetKind,
+        price: u32,
+    },
+    BonusPurchaseCancelled {
+        tick: u64,
+    },
+    BonusPurchaseCommitted {
+        tick: u64,
+        pet: PetKind,
+        price: u32,
+        shell_balance: u32,
+    },
+    BrinkleyFoodEaten {
+        tick: u64,
+        pet_id: u64,
+        food_id: u64,
+        meals: u32,
+    },
+    BrinkleyCoinDropped {
+        tick: u64,
+        pet_id: u64,
+        coin_id: u64,
+        kind: CoinKind,
     },
     FoodDropped {
         tick: u64,
@@ -1461,7 +1490,8 @@ impl AdventureState {
                 | PetKind::Amp
                 | PetKind::Gash
                 | PetKind::Angie
-                | PetKind::Presto => {
+                | PetKind::Presto
+                | PetKind::Brinkley => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1523,7 +1553,8 @@ impl AdventureState {
                 | PetKind::Amp
                 | PetKind::Gash
                 | PetKind::Angie
-                | PetKind::Presto => {
+                | PetKind::Presto
+                | PetKind::Brinkley => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1591,7 +1622,8 @@ impl AdventureState {
                 | PetKind::Amp
                 | PetKind::Gash
                 | PetKind::Angie
-                | PetKind::Presto => {
+                | PetKind::Presto
+                | PetKind::Brinkley => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1660,7 +1692,8 @@ impl AdventureState {
                 | PetKind::Amp
                 | PetKind::Gash
                 | PetKind::Angie
-                | PetKind::Presto => {
+                | PetKind::Presto
+                | PetKind::Brinkley => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1737,7 +1770,8 @@ impl AdventureState {
                 | PetKind::Amp
                 | PetKind::Gash
                 | PetKind::Angie
-                | PetKind::Presto => {
+                | PetKind::Presto
+                | PetKind::Brinkley => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -1822,7 +1856,8 @@ impl AdventureState {
                 | PetKind::Amp
                 | PetKind::Gash
                 | PetKind::Angie
-                | PetKind::Presto => {
+                | PetKind::Presto
+                | PetKind::Brinkley => {
                     unreachable!("roster checked before construction")
                 }
             }
@@ -2281,6 +2316,7 @@ impl AdventureState {
             FishPetKind::Gash => PetKind::Gash,
             FishPetKind::Angie => PetKind::Angie,
             FishPetKind::Presto => PetKind::Presto,
+            FishPetKind::Brinkley => PetKind::Brinkley,
         }
     }
 
@@ -2301,6 +2337,7 @@ impl AdventureState {
             PetKind::Gash => Some(FishPetKind::Gash),
             PetKind::Angie => Some(FishPetKind::Angie),
             PetKind::Presto => Some(FishPetKind::Presto),
+            PetKind::Brinkley => Some(FishPetKind::Brinkley),
             _ => None,
         }
     }
@@ -2408,6 +2445,7 @@ impl AdventureState {
                         | (PetKind::Amp, FishPetKind::Amp)
                         | (PetKind::Gash, FishPetKind::Gash)
                         | (PetKind::Angie, FishPetKind::Angie)
+                        | (PetKind::Brinkley, FishPetKind::Brinkley)
                 )
             }),
         }
@@ -2482,6 +2520,7 @@ impl AdventureState {
                     PetKind::Amp => FishPetKind::Amp,
                     PetKind::Gash => FishPetKind::Gash,
                     PetKind::Angie => FishPetKind::Angie,
+                    PetKind::Brinkley => FishPetKind::Brinkley,
                     _ => return Err("unsupported Time Trial pet".into()),
                 };
                 self.spawn_fish_pet(fish_kind);
@@ -2633,7 +2672,9 @@ impl AdventureState {
                 PetKind::Amp => self.spawn_fish_pet(FishPetKind::Amp),
                 PetKind::Gash => self.spawn_fish_pet(FishPetKind::Gash),
                 PetKind::Angie => self.spawn_fish_pet(FishPetKind::Angie),
-                PetKind::Presto => unreachable!("Presto is not in the Tank4 or fixed Tank5 roster"),
+                PetKind::Presto | PetKind::Brinkley => {
+                    unreachable!("extra pets are not in the fixed Tank4 or Tank5 roster")
+                }
             }
         }
     }
@@ -2721,7 +2762,8 @@ impl AdventureState {
                 | PetKind::Amp
                 | PetKind::Gash
                 | PetKind::Angie
-                | PetKind::Presto => {
+                | PetKind::Presto
+                | PetKind::Brinkley => {
                     unreachable!("pet unlock follows stage 3-5")
                 }
             }
@@ -3500,7 +3542,10 @@ impl AdventureState {
                     || (coin.kind.is_shell()
                         && !(self.pets.contains(&PetKind::Nimbus)
                             || self.pets.contains(&PetKind::Presto)))
-                    || (coin.kind == CoinKind::Treasure && self.tank != 4)
+                    || (coin.kind == CoinKind::Treasure
+                        && self.tank != 4
+                        && !(self.pets.contains(&PetKind::Brinkley)
+                            || self.pets.contains(&PetKind::Presto)))
                     || (coin.kind == CoinKind::DiamondPenta && self.tank != 2)
             })
             || self.invasion.as_ref().is_none_or(
@@ -3561,6 +3606,7 @@ impl AdventureState {
                 FishPetKind::Gash => PetKind::Gash,
                 FishPetKind::Angie => PetKind::Angie,
                 FishPetKind::Presto => PetKind::Presto,
+                FishPetKind::Brinkley => PetKind::Brinkley,
             };
             if pet.presto_form.is_some() {
                 flagged += 1;
@@ -3734,7 +3780,8 @@ impl AdventureState {
                             && !(self.tank == 3 && (2..=5).contains(&self.level))
                             && !(self.profile_population
                                 && (self.pets.contains(&PetKind::Niko)
-                                    || self.pets.contains(&PetKind::Presto))))
+                                    || self.pets.contains(&PetKind::Presto)
+                                    || self.pets.contains(&PetKind::Brinkley))))
                         || (coin.kind == CoinKind::ShrapnelBomb
                             && (!self.profile_population
                                 && !matches!((self.tank, self.level), (3, 3..=5) | (4, 1..=5))
@@ -3750,7 +3797,9 @@ impl AdventureState {
                             && !(self.pets.contains(&PetKind::Nimbus)
                                 || self.pets.contains(&PetKind::Presto)))
                         || (coin.kind == CoinKind::Treasure
-                            && !matches!((self.tank, self.level), (4, 2..=5)))
+                            && !matches!((self.tank, self.level), (4, 2..=5))
+                            && !(self.pets.contains(&PetKind::Brinkley)
+                                || self.pets.contains(&PetKind::Presto)))
                         || (coin.kind == CoinKind::DiamondPenta
                             && !(self.tank == 2 && (2..=5).contains(&self.level)))
                 })
@@ -5710,6 +5759,8 @@ impl AdventureState {
             Action::OpenMenu
             | Action::PlayAdventure
             | Action::PlayTimeTrial
+            | Action::OfferBonusPurchase
+            | Action::ConfirmBonusPurchase { .. }
             | Action::SelectTimeTrialTank { .. }
             | Action::RightClick { .. }
             | Action::PrestoPress { .. }
@@ -8396,7 +8447,77 @@ impl AdventureState {
             let guppy_count = self.fish.iter().filter(|fish| fish.alive).count();
             let pet_id = self.fish_pets[index].id;
             let mut rng_state = self.rng_state;
-            let update = if self.fish_pets[index].kind == FishPetKind::Amp {
+            let update = if self.fish_pets[index].kind == FishPetKind::Brinkley {
+                let threats_empty = self
+                    .invasion
+                    .as_ref()
+                    .is_none_or(|wave| wave.actors.is_empty() && wave.bilaterus.is_empty());
+                let foods = self
+                    .food
+                    .iter()
+                    .map(|food| BrinkleyFoodView {
+                        id: food.id,
+                        widget_x: food.x as i32,
+                        widget_y: food.y as i32,
+                    })
+                    .collect::<Vec<_>>();
+                let action = self.fish_pets[index].begin_brinkley(threats_empty, &foods);
+                // Slot 86 scans independently of the selected target and
+                // commits removal/payout before common motion and its RNG.
+                if action.target_id.is_some() {
+                    let center_x = self.fish_pets[index].x + 40.0;
+                    let center_y = self.fish_pets[index].y + 40.0;
+                    if let Some(position) = foods.iter().position(|food| {
+                        let x = f64::from(food.widget_x);
+                        let y = f64::from(food.widget_y);
+                        x + 5.0 < center_x
+                            && center_x < x + 35.0
+                            && y < center_y
+                            && center_y < y + 35.0
+                    }) {
+                        let food_id = self.food.remove(position).id;
+                        let payout = self.fish_pets[index].commit_brinkley_meal(false);
+                        events.push(Event::BrinkleyFoodEaten {
+                            tick: self.tick,
+                            pet_id,
+                            food_id,
+                            meals: self.fish_pets[index].brinkley_meals,
+                        });
+                        if let Some(raw) = payout {
+                            let kind = match raw {
+                                10 => CoinKind::Star,
+                                11 => CoinKind::Diamond,
+                                13 => CoinKind::Pearl,
+                                14 => CoinKind::Treasure,
+                                _ => unreachable!("Brinkley payout kind"),
+                            };
+                            let coin_id = self.id();
+                            self.coins.push(Coin {
+                                id: coin_id,
+                                x: f64::from(self.fish_pets[index].widget_x + 5),
+                                y: f64::from(self.fish_pets[index].widget_y - 10),
+                                kind,
+                                frame: 0,
+                                animation_ticks: 0,
+                                hazard_age_ticks: 0,
+                                collecting: false,
+                                bottom_ticks: 0,
+                                fade_ticks: 0,
+                                penta_rising: false,
+                            });
+                            events.push(Event::BrinkleyCoinDropped {
+                                tick: self.tick,
+                                pet_id,
+                                coin_id,
+                                kind,
+                            });
+                        }
+                    }
+                }
+                self.fish_pets[index].finish_brinkley(action.admitted, &mut |upper| {
+                    Self::advance_rng(&mut rng_state) % upper
+                })
+            } else if self.fish_pets[index].kind == FishPetKind::Amp {
                 // The installed charge predicate excludes registered aliens
                 // and Bilaterus, independently of missile-only mouse blocking.
                 self.fish_pets[index].tick_amp(self.tank != 5 && aliens.is_empty(), &mut |upper| {
@@ -15277,5 +15398,174 @@ mod tests {
             .unwrap()
             .fade_ticks = 1;
         assert!(invalid.validate().is_err());
+    }
+
+    fn brinkley_food(board: &mut AdventureState, x: f32, y: f32) -> u64 {
+        let id = board.id();
+        board.food.push(Food {
+            id,
+            x,
+            y,
+            frame: 0,
+            ineligible_ticks: 0,
+            removal_ticks: 0,
+            quality: 0,
+            direction: 0,
+            vx: 0.0,
+            vy: 0.0,
+            animation_period: 3,
+            free_from_zorf: false,
+            nimbus_rising: false,
+        });
+        id
+    }
+
+    #[test]
+    fn brinkley_first_food_vector_strict_contact_and_registered_threat_gates() {
+        let mut board = AdventureState::new_time_trial(0x3920, 1, &[PetKind::Brinkley]).unwrap();
+        let pet = &mut board.fish_pets[0];
+        pet.x = 100.0;
+        pet.y = 100.0;
+        pet.widget_x = 100;
+        pet.widget_y = 100;
+        let first = brinkley_food(&mut board, 105.0, 110.0); // x+35 == center: excluded
+        let second = brinkley_food(&mut board, 106.0, 110.0);
+        board.invasion.as_mut().unwrap().battle_active = true; // latch alone cannot block
+        let mut events = Vec::new();
+        board.update_fish_pets(&mut events);
+        assert_eq!(
+            board.food.iter().map(|food| food.id).collect::<Vec<_>>(),
+            vec![first]
+        );
+        assert!(events.iter().any(|event| matches!(event,
+            Event::BrinkleyFoodEaten { food_id, meals: 1, .. } if *food_id == second
+        )));
+        assert_eq!(board.fish_pets[0].brinkley_cooldown, 45);
+        board.fish_pets[0].brinkley_cooldown = 1;
+        let alien_id = board.id();
+        board
+            .invasion
+            .as_mut()
+            .unwrap()
+            .actors
+            .push(crate::alien::WeakSylvester::spawn(alien_id, 400, 300, 1, 1));
+        let third = brinkley_food(&mut board, 106.0, 110.0);
+        board.update_fish_pets(&mut Vec::new());
+        assert!(board.food.iter().any(|food| food.id == third));
+        assert_eq!(board.fish_pets[0].brinkley_meals, 1);
+    }
+
+    #[test]
+    fn brinkley_third_meal_coin_is_board_owned_after_presto_morph() {
+        let mut board = AdventureState::new_time_trial(0x3921, 1, &[PetKind::Presto]).unwrap();
+        let first = board.presto_actor().unwrap();
+        board
+            .change_presto_form(first.id, PetKind::Brinkley, &mut Vec::new())
+            .unwrap();
+        let pet = board
+            .fish_pets
+            .iter_mut()
+            .find(|pet| pet.presto_form.is_some())
+            .unwrap();
+        pet.x = 100.0;
+        pet.y = 100.0;
+        pet.widget_x = 100;
+        pet.widget_y = 100;
+        pet.brinkley_meals = 134;
+        pet.brinkley_cooldown = 1;
+        brinkley_food(&mut board, 106.0, 110.0);
+        board.update_fish_pets(&mut Vec::new());
+        assert_eq!(board.coins.len(), 1);
+        assert_eq!(board.coins[0].kind, CoinKind::Treasure);
+        assert_eq!((board.coins[0].x, board.coins[0].y), (105.0, 90.0));
+        let coin_id = board.coins[0].id;
+        let old = board.presto_actor().unwrap();
+        board
+            .fish_pets
+            .iter_mut()
+            .find(|pet| pet.id == old.id)
+            .unwrap()
+            .presto_form
+            .as_mut()
+            .unwrap()
+            .remaining_ticks = 0;
+        board
+            .change_presto_form(old.id, PetKind::Niko, &mut Vec::new())
+            .unwrap();
+        assert!(board.coins.iter().any(|coin| coin.id == coin_id));
+        board.validate().unwrap();
+        let restored: AdventureState =
+            serde_json::from_slice(&serde_json::to_vec(&board).unwrap()).unwrap();
+        restored.validate().unwrap();
+        assert!(restored.coins.iter().any(|coin| coin.id == coin_id));
+    }
+
+    #[test]
+    fn brinkley_target_differs_from_first_widget_overlap_and_pays_before_motion() {
+        let mut board = AdventureState::new_time_trial(0x3922, 1, &[PetKind::Brinkley]).unwrap();
+        board.upgrades.quantity_unlocked = true;
+        board.upgrades.quantity = 2;
+        let pet = &mut board.fish_pets[0];
+        pet.x = 100.75;
+        pet.y = 100.25;
+        pet.widget_x = 100;
+        pet.widget_y = 100;
+        pet.brinkley_meals = 2;
+        pet.published_x = 100;
+        pet.published_y = 100;
+        let first_overlap = brinkley_food(&mut board, 106.9, 110.9);
+        // This is the nearest target, but slot86 removes the first overlap.
+        let selected = brinkley_food(&mut board, 120.9, 120.9);
+        board.validate().unwrap();
+        let old_rng = board.rng_state;
+        let mut events = Vec::new();
+        board.update_fish_pets(&mut events);
+        assert_eq!(
+            board.food.iter().map(|food| food.id).collect::<Vec<_>>(),
+            vec![selected]
+        );
+        assert!(events.iter().any(|event| matches!(event,
+            Event::BrinkleyFoodEaten { food_id, meals: 3, .. } if *food_id == first_overlap
+        )));
+        assert_eq!(
+            (board.coins[0].x, board.coins[0].y, board.coins[0].kind),
+            (105.0, 90.0, CoinKind::Star)
+        );
+        assert_ne!(board.fish_pets[0].x, 100.75); // Common tail ran after payout.
+        assert_eq!(board.fish_pets[0].brinkley_cooldown, 45);
+        // The payout is an independent Board child, valid across a save/reopen.
+        let restored: AdventureState =
+            serde_json::from_slice(&serde_json::to_vec(&board).unwrap()).unwrap();
+        restored.validate().unwrap();
+        assert_eq!(restored.coins[0].id, board.coins[0].id);
+        assert_eq!(restored.rng_state, board.rng_state);
+        assert_eq!(board.rng_state, old_rng); // No movement-state draw was due.
+
+        let mut fractional =
+            AdventureState::new_time_trial(0x3923, 1, &[PetKind::Brinkley]).unwrap();
+        fractional.upgrades.quantity_unlocked = true;
+        fractional.upgrades.quantity = 2;
+        let pet = &mut fractional.fish_pets[0];
+        pet.x = 100.75;
+        pet.y = 100.25;
+        pet.widget_x = 100;
+        pet.widget_y = 100;
+        pet.published_x = 100;
+        pet.published_y = 100;
+        // Continuous Food X would admit this entry, but its widget X does not.
+        let outside = brinkley_food(&mut fractional, 105.9, 110.9);
+        brinkley_food(&mut fractional, 106.9, 110.9);
+        fractional.validate().unwrap();
+        fractional.update_fish_pets(&mut Vec::new());
+        assert_eq!(
+            fractional
+                .food
+                .iter()
+                .map(|food| food.id)
+                .collect::<Vec<_>>(),
+            vec![outside]
+        );
+        assert_eq!(fractional.fish_pets[0].brinkley_meals, 1);
+        fractional.validate().unwrap();
     }
 }

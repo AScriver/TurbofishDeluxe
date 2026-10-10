@@ -1,5 +1,6 @@
 //! Durable project Time Trial bookkeeping. Board actors remain owned by AdventureState.
 
+use crate::bonus::PurchaseReceipt;
 use crate::sim::PetKind;
 use serde::{Deserialize, Serialize};
 
@@ -37,10 +38,10 @@ pub const SUPPORTED_PETS: [PetKind; 19] = [
     PetKind::Angie,
 ];
 
-/// Raw 19 is a committed initial choice after the finale, but never a pet egg
-/// candidate. Forms 20..23 remain unsupported by the current actor model.
+/// Initial choices and Presto forms include purchased raw20. Pet eggs retain
+/// the separate ordinary raw0..18 candidate set above.
 pub fn selectable_pet(pet: PetKind) -> bool {
-    SUPPORTED_PETS.contains(&pet) || pet == PetKind::Presto
+    SUPPORTED_PETS.contains(&pet) || matches!(pet, PetKind::Presto | PetKind::Brinkley)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -117,6 +118,8 @@ pub struct TimeTrialResult {
     pub shell_balance_before: u32,
     pub credited_shells: u32,
     pub credited: bool,
+    pub updates: u32,
+    pub purchase: PurchaseReceipt,
 }
 
 #[cfg(test)]

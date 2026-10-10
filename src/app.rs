@@ -2,7 +2,7 @@ use crate::{
     adventure::{AdventurePhase, AdventureSession},
     alien::SylvesterKind,
     assets::{GameAssets, SoundData},
-    bonus::{BonusResult, BonusState, ShellKind, ShellState},
+    bonus::{BonusResult, BonusState, PurchaseReceipt, ShellKind, ShellState},
     cli::{self, Options},
     fish_pet::FishPetKind,
     font::BitmapFont,
@@ -126,6 +126,8 @@ const IMAGE_IDS: &[&str] = &[
     "IMAGE_MINISYLV",
     "IMAGE_PRESTO",
     "IMAGE_SCL_PRESTO",
+    "IMAGE_BRINKLEY",
+    "IMAGE_SCL_BRINKLEY",
     "IMAGE_ULTRA",
     "IMAGE_SCL_ULTRA",
     "IMAGE_BILATERUS",
@@ -243,10 +245,30 @@ fn pet_at_pointer(unlocked_pets: &[PetKind], pointer: Vec2) -> Option<PetKind> {
 fn presto_choice_rect(index: usize) -> Rect {
     Rect::new(
         24.0 + (index % 5) as f32 * 120.0,
-        86.0 + (index / 5) as f32 * 78.0,
+        86.0 + (index / 5) as f32 * 70.0,
         112.0,
-        62.0,
+        54.0,
     )
+}
+
+fn results_offer_rect() -> Rect {
+    Rect::new(186.0, 389.0, 264.0, 38.0)
+}
+
+fn results_continue_rect(height: f32) -> Rect {
+    Rect::new(186.0, 445.0, 264.0, height)
+}
+
+fn results_confirm_rect(accept: bool) -> Rect {
+    Rect::new(if accept { 160.0 } else { 335.0 }, 306.0, 145.0, 38.0)
+}
+
+fn bonus_results_display_balance(result: &BonusResult, wallet: u32) -> u32 {
+    if result.purchase.purchased {
+        wallet
+    } else {
+        result.presented_balance()
+    }
 }
 
 fn presto_choice_at_pointer(unlocked_pets: &[PetKind], pointer: Vec2) -> Option<PetKind> {
@@ -524,6 +546,7 @@ impl Presentation {
                 Event::FoodDropped { potion: false, .. } => "SOUND_DROPFOOD",
                 Event::PotionExploded { .. } => "SOUND_EXPLOSION1",
                 Event::FoodEaten { .. }
+                | Event::BrinkleyFoodEaten { .. }
                 | Event::BreederAteFood { .. }
                 | Event::Invasion {
                     event: InvasionEvent::GusAteFood { .. },
@@ -588,7 +611,8 @@ impl Presentation {
                 | Event::FoodQuantityBought { .. }
                 | Event::PotionBought { .. }
                 | Event::StarcatcherAteStar { .. }
-                | Event::WeaponBought { .. } => "SOUND_BUY",
+                | Event::WeaponBought { .. }
+                | Event::BonusPurchaseCommitted { .. } => "SOUND_BUY",
                 Event::OscarBought { .. }
                 | Event::StarcatcherBought { .. }
                 | Event::GrubberBought { .. }
@@ -687,7 +711,8 @@ impl Presentation {
                 | Event::TimeTrialShellsCredited { .. }
                 | Event::RescueGuppyGranted { .. }
                 | Event::PetSelectionChanged { .. }
-                | Event::PetSelectionConfirmation { .. } => "SOUND_BUTTONCLICK",
+                | Event::PetSelectionConfirmation { .. }
+                | Event::BonusPurchaseOffered { .. } => "SOUND_BUTTONCLICK",
                 _ => continue,
             };
             for effect_id in std::iter::once(id)
@@ -1085,6 +1110,7 @@ impl Presentation {
                 FishPetKind::Gash => "IMAGE_GASH",
                 FishPetKind::Angie => "IMAGE_ANGIE",
                 FishPetKind::Presto => "IMAGE_PRESTO",
+                FishPetKind::Brinkley => "IMAGE_BRINKLEY",
             };
             let (cell_width, cell_height) = if pet.kind == FishPetKind::Amp {
                 (160.0, 60.0)
@@ -2432,7 +2458,33 @@ impl Presentation {
         );
     }
 
-    fn draw_bonus_results(&self, result: &BonusResult) {
+    fn draw_results_purchase(&self, receipt: &PurchaseReceipt, updates: u32, balance: u32) {
+        if receipt.purchased {
+            self.centered_text("JungleFever10outline", "BRINKLEY purchased", 412.0, YELLOW);
+        } else if receipt.offered_cursor == 0 && updates >= 30 {
+            self.main_button(results_offer_rect(), "BRINKLEY - 20,000 shells");
+        }
+        if receipt.confirming {
+            draw_rectangle(
+                95.0,
+                220.0,
+                450.0,
+                150.0,
+                Color::new(0.02, 0.08, 0.15, 0.96),
+            );
+            self.centered_text("JungleFever15outline", "Buy BRINKLEY?", 258.0, YELLOW);
+            self.centered_text(
+                "JungleFever10outline",
+                &format!("20,000 shells - available {balance}"),
+                284.0,
+                WHITE,
+            );
+            self.main_button(results_confirm_rect(true), "Buy");
+            self.main_button(results_confirm_rect(false), "Cancel");
+        }
+    }
+
+    fn draw_bonus_results(&self, result: &BonusResult, balance: u32) {
         self.sprite("IMAGE_HATCHSCREEN", 0.0, 0.0, None, false, 1.0, 1.0);
         let title = &self.images["IMAGE_SCREENTITLE"];
         self.image_box(
@@ -2471,7 +2523,7 @@ impl Presentation {
         );
         self.fonts["JungleFever10outline"].text("New Balance", 205.0, 364.0, WHITE);
         self.fonts["JungleFever10outline"].text(
-            &result.presented_balance().to_string(),
+            &bonus_results_display_balance(result, balance).to_string(),
             398.0,
             364.0,
             YELLOW,
@@ -2479,13 +2531,14 @@ impl Presentation {
         self.sprite("IMAGE_HATCHREFLECTION", 240.0, 60.0, None, false, 1.0, 1.0);
         let height = self.images["IMAGE_MAINBUTTON"].height();
         self.main_button(
-            Rect::new(186.0, 445.0, 264.0, height),
+            results_continue_rect(height),
             if result.updates >= 30 {
                 "Click Here To Continue"
             } else {
                 "Please Wait..."
             },
         );
+        self.draw_results_purchase(&result.purchase, result.updates, balance);
     }
 
     fn draw_hatch(&self, pet: PetKind, updates: u32) {
@@ -2560,6 +2613,7 @@ impl Presentation {
                 PetKind::Gash => ("IMAGE_GASH", 90.0, updates % 20 / 2),
                 PetKind::Angie => ("IMAGE_ANGIE", 90.0, updates % 20 / 2),
                 PetKind::Presto => ("IMAGE_PRESTO", 90.0, updates % 20 / 2),
+                PetKind::Brinkley => ("IMAGE_BRINKLEY", 90.0, updates % 20 / 2),
             };
             let (preview_x, preview_width, preview_height) = if pet == PetKind::Amp {
                 (236.0, 160.0, 60.0)
@@ -2610,6 +2664,7 @@ impl Presentation {
                     PetKind::Gash => "GASH the Shark",
                     PetKind::Angie => "ANGIE the Angelfish",
                     PetKind::Presto => "PRESTO",
+                    PetKind::Brinkley => "BRINKLEY",
                 },
                 260.0,
                 Color::from_rgba(255, 200, 0, 255),
@@ -2706,6 +2761,7 @@ impl Presentation {
                 ],
                 PetKind::Angie => ["ANGIE can resurrect", "dead fish.", ""],
                 PetKind::Presto => ["PRESTO has joined", "your pet collection.", ""],
+                PetKind::Brinkley => ["BRINKLEY eats food", "and drops coins.", ""],
             };
             for (index, line) in description.iter().enumerate() {
                 self.centered_text(
@@ -2798,6 +2854,7 @@ impl Presentation {
                 PetKind::Gash => "IMAGE_SCL_GASH",
                 PetKind::Angie => "IMAGE_SCL_ANGIE",
                 PetKind::Presto => "IMAGE_SCL_PRESTO",
+                PetKind::Brinkley => "IMAGE_SCL_BRINKLEY",
             };
             let image = &self.images[icon];
             let column = if matches!(*pet, PetKind::Niko | PetKind::Vert) {
@@ -3026,6 +3083,12 @@ impl Presentation {
                     ["PRESTO has joined", "your pet collection.", ""],
                     90.0,
                 ),
+                PetKind::Brinkley => (
+                    "IMAGE_BRINKLEY",
+                    "BRINKLEY",
+                    ["BRINKLEY eats food", "and drops coins.", ""],
+                    90.0,
+                ),
             };
             let column = if matches!(pet, PetKind::Niko | PetKind::Vert) {
                 let phase = session.ticks % 18;
@@ -3202,7 +3265,9 @@ impl Presentation {
             AdventurePhase::TankFourFinaleHatch { updates } => self.draw_finale_hatch(updates),
             AdventurePhase::AdventureFinaleInterlude => self.draw_adventure_finale_interlude(),
             AdventurePhase::Bonus { ref state } => self.draw_bonus(state),
-            AdventurePhase::BonusResults { ref result } => self.draw_bonus_results(result),
+            AdventurePhase::BonusResults { ref result } => {
+                self.draw_bonus_results(result, session.progress.shell_balance)
+            }
             AdventurePhase::PetSelection { ref selected }
             | AdventurePhase::PetSelectionConfirmation { ref selected }
             | AdventurePhase::TimeTrialPetSelection { ref selected, .. } => {
@@ -3495,14 +3560,14 @@ impl Presentation {
                     235.0,
                     WHITE,
                 );
+                self.draw_results_purchase(
+                    &result.purchase,
+                    result.updates,
+                    session.progress.shell_balance,
+                );
             }
             self.main_button(
-                Rect::new(
-                    186.0,
-                    310.0,
-                    264.0,
-                    self.images["IMAGE_MAINBUTTON"].height(),
-                ),
+                results_continue_rect(self.images["IMAGE_MAINBUTTON"].height()),
                 "Continue",
             );
         }
@@ -3894,6 +3959,17 @@ pub async fn run(
             ) && !paused
             {
                 pending_actions.push(Action::PrestoCancel);
+            } else if matches!(
+                session.phase,
+                AdventurePhase::BonusResults { ref result } if result.purchase.confirming
+            ) || (session.phase == AdventurePhase::TimeTrialResults
+                && session
+                    .time_trial
+                    .as_ref()
+                    .and_then(|run| run.result.as_ref())
+                    .is_some_and(|result| result.purchase.confirming))
+            {
+                pending_actions.push(Action::ConfirmBonusPurchase { accept: false });
             } else {
                 paused = !paused;
             }
@@ -3958,10 +4034,64 @@ pub async fn run(
             } else if !paused {
                 let action = match session.phase {
                     AdventurePhase::BonusResults { ref result }
+                        if result.purchase.confirming
+                            && results_confirm_rect(true).contains(pointer) =>
+                    {
+                        Action::ConfirmBonusPurchase { accept: true }
+                    }
+                    AdventurePhase::BonusResults { ref result }
+                        if result.purchase.confirming
+                            && results_confirm_rect(false).contains(pointer) =>
+                    {
+                        Action::ConfirmBonusPurchase { accept: false }
+                    }
+                    AdventurePhase::BonusResults { ref result }
+                        if !result.purchase.confirming
+                            && result.purchase.offered_cursor == 0
+                            && result.updates >= 30
+                            && results_offer_rect().contains(pointer) =>
+                    {
+                        Action::OfferBonusPurchase
+                    }
+                    AdventurePhase::BonusResults { ref result }
                         if result.updates >= 30
-                            && Rect::new(186.0, 445.0, 264.0, button_height).contains(pointer) =>
+                            && results_continue_rect(button_height).contains(pointer) =>
                     {
                         Action::Continue
+                    }
+                    AdventurePhase::TimeTrialResults
+                        if session
+                            .time_trial
+                            .as_ref()
+                            .and_then(|run| run.result.as_ref())
+                            .is_some_and(|result| result.purchase.confirming)
+                            && results_confirm_rect(true).contains(pointer) =>
+                    {
+                        Action::ConfirmBonusPurchase { accept: true }
+                    }
+                    AdventurePhase::TimeTrialResults
+                        if session
+                            .time_trial
+                            .as_ref()
+                            .and_then(|run| run.result.as_ref())
+                            .is_some_and(|result| result.purchase.confirming)
+                            && results_confirm_rect(false).contains(pointer) =>
+                    {
+                        Action::ConfirmBonusPurchase { accept: false }
+                    }
+                    AdventurePhase::TimeTrialResults
+                        if session
+                            .time_trial
+                            .as_ref()
+                            .and_then(|run| run.result.as_ref())
+                            .is_some_and(|result| {
+                                !result.purchase.confirming
+                                    && result.purchase.offered_cursor == 0
+                                    && result.updates >= 30
+                            })
+                            && results_offer_rect().contains(pointer) =>
+                    {
+                        Action::OfferBonusPurchase
                     }
                     AdventurePhase::AdventureFinaleInterlude
                         if Rect::new(186.0, 445.0, 264.0, button_height).contains(pointer) =>
@@ -4019,8 +4149,13 @@ pub async fn run(
                             |tank| Action::SelectTimeTrialTank { tank },
                         )
                     }
-                    AdventurePhase::TimeTrialTimesUp | AdventurePhase::TimeTrialResults
+                    AdventurePhase::TimeTrialTimesUp
                         if Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
+                    {
+                        Action::Continue
+                    }
+                    AdventurePhase::TimeTrialResults
+                        if results_continue_rect(button_height).contains(pointer) =>
                     {
                         Action::Continue
                     }
@@ -4499,6 +4634,9 @@ pub async fn run(
                         | Event::StageStarted { .. }
                         | Event::RescueGuppyGranted { .. }
                         | Event::BonusResultsCommitted { .. }
+                        | Event::BonusPurchaseOffered { .. }
+                        | Event::BonusPurchaseCancelled { .. }
+                        | Event::BonusPurchaseCommitted { .. }
                         | Event::Bonus {
                             event: crate::bonus::BonusEvent::Started { .. }
                                 | crate::bonus::BonusEvent::Claimed { .. }
@@ -4600,6 +4738,22 @@ pub async fn run(
 #[cfg(test)]
 mod feed_input_tests {
     use super::*;
+
+    #[test]
+    fn bonus_purchase_display_uses_debited_wallet_after_immutable_award_countup() {
+        let mut result = BonusResult {
+            origin_tank: 1,
+            origin_level: 6,
+            earned: 5_000,
+            previous_balance: 20_000,
+            updates: 130,
+            purchase: PurchaseReceipt::new(0),
+        };
+        assert_eq!(bonus_results_display_balance(&result, 25_000), 25_000);
+        result.purchase.purchased = true;
+        assert_eq!(bonus_results_display_balance(&result, 5_000), 5_000);
+        assert_eq!((result.previous_balance, result.earned), (20_000, 5_000));
+    }
 
     #[test]
     fn earned_presto_card_can_be_selected_for_completed_adventure_replay() {

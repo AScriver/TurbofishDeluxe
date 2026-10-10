@@ -121,6 +121,33 @@ pub struct BonusUpdate {
 /// The profile award is committed by the Adventure session on results entry.
 /// This record only drives the count-up shown after that commit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PurchaseReceipt {
+    pub offered_cursor: u8,
+    pub confirming: bool,
+    pub purchased: bool,
+}
+
+impl PurchaseReceipt {
+    pub fn new(offered_cursor: u8) -> Self {
+        Self {
+            offered_cursor,
+            confirming: false,
+            purchased: false,
+        }
+    }
+
+    pub fn validate(&self, updates: u32) -> Result<(), String> {
+        if self.offered_cursor > 1
+            || (self.confirming && (self.purchased || self.offered_cursor != 0 || updates < 30))
+            || (self.purchased && (self.offered_cursor != 0 || updates < 30))
+        {
+            return Err("invalid results purchase receipt".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BonusResult {
     /// Completed bonus identity, retained after the profile advances.
     pub origin_tank: u8,
@@ -128,6 +155,7 @@ pub struct BonusResult {
     pub earned: u32,
     pub previous_balance: u32,
     pub updates: u32,
+    pub purchase: PurchaseReceipt,
 }
 
 impl BonusResult {
@@ -159,7 +187,7 @@ impl BonusResult {
         {
             return Err("invalid bonus result balance or award".into());
         }
-        Ok(())
+        self.purchase.validate(self.updates)
     }
 }
 
@@ -988,6 +1016,7 @@ mod tests {
             earned: 125,
             previous_balance: 9_999_900,
             updates: 30,
+            purchase: PurchaseReceipt::new(0),
         };
         assert_eq!(result.presented_balance(), 9_999_900);
         result.updates = 31;
@@ -1063,6 +1092,7 @@ mod tests {
             earned: 808,
             previous_balance: 1347,
             updates: 30,
+            purchase: PurchaseReceipt::new(0),
         };
         result.validate().unwrap();
         assert_eq!(result.origin_tank, 3);

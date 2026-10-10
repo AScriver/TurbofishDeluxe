@@ -25,6 +25,7 @@ pub enum FishPetKind {
     Gash,
     Angie,
     Presto,
+    Brinkley,
 }
 
 /// Constructor-owned flag and recharge clock for a Presto-origin pet:
@@ -167,9 +168,23 @@ struct NimbusViews<'a> {
 enum PetTargetViews<'a> {
     None,
     Tank5,
+    BrinkleyAdmitted,
     Nimbus(NimbusViews<'a>),
     Gash(&'a [GashFishView]),
     Angie(&'a [AngieCorpseView]),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BrinkleyFoodView {
+    pub id: u64,
+    pub widget_x: i32,
+    pub widget_y: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BrinkleyAction {
+    pub admitted: bool,
+    pub target_id: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -223,6 +238,8 @@ pub struct FishPetState {
     /// Independent of the protection clock: active with clock zero is legal.
     pub ward_active: bool,
     pub ward_timer: u16,
+    pub brinkley_meals: u32,
+    pub brinkley_cooldown: u16,
     /// The actor owns the source +238 cooldown and transformed-form flag.
     #[serde(default)]
     pub presto_form: Option<PrestoForm>,
@@ -235,6 +252,7 @@ pub struct FishPetState {
     movement_timer: u8,
     special_timer: u32,
     x_direction: i8,
+    /// Source +0x1bc capped steering counter (may retain values above five).
     vx_abs: u8,
     swim_counter: u8,
 }
@@ -374,6 +392,8 @@ impl FishPetState {
             meryl_blink: true,
             ward_active: false,
             ward_timer: 0,
+            brinkley_meals: 0,
+            brinkley_cooldown: 0,
             presto_form: (kind == FishPetKind::Presto).then_some(PrestoForm { remaining_ticks: 0 }),
             published_x: widget_x,
             published_y: widget_y,
@@ -489,6 +509,9 @@ impl FishPetState {
                     || self.published_x != self.widget_x
                     || self.published_y != self.widget_y))
             || (self.kind == FishPetKind::Presto && self.presto_form.is_none())
+            || (self.kind == FishPetKind::Brinkley && self.brinkley_cooldown > 108)
+            || (self.kind != FishPetKind::Brinkley
+                && (self.brinkley_meals != 0 || self.brinkley_cooldown != 0))
             || self
                 .presto_form
                 .is_some_and(|form| form.remaining_ticks > 360)
@@ -573,7 +596,7 @@ impl FishPetState {
                 }
             }
             FishPetKind::Angie => u8::from(self.turn_ticks != 0),
-            FishPetKind::Presto => u8::from(self.turn_ticks != 0),
+            FishPetKind::Presto | FishPetKind::Brinkley => u8::from(self.turn_ticks != 0),
         }
     }
 
@@ -743,8 +766,9 @@ impl FishPetState {
                     | FishPetKind::Amp
                     | FishPetKind::Gash
                     | FishPetKind::Angie
+                    | FishPetKind::Brinkley
             ),
-            "Zorf, Nimbus, Amp, Gash and Angie need their subtype updates"
+            "Zorf, Nimbus, Amp, Gash, Angie and Brinkley need their subtype updates"
         );
         self.tick_inner(
             aliens,
@@ -754,6 +778,127 @@ impl FishPetState {
             false,
             rand_range,
         )
+    }
+
+    /// Slot 82 calls target selection and steering before Board-owned contact.
+    /// A successful eligibility gate suppresses ordinary wander even if the
+    /// target score leaves the selection empty.
+    pub fn begin_brinkley(
+        &mut self,
+        threats_empty: bool,
+        foods: &[BrinkleyFoodView],
+    ) -> BrinkleyAction {
+        assert_eq!(self.kind, FishPetKind::Brinkley);
+        self.brinkley_cooldown = self.brinkley_cooldown.saturating_sub(1);
+        let admitted = threats_empty && !foods.is_empty() && self.brinkley_cooldown == 0;
+        if !admitted {
+            return BrinkleyAction {
+                admitted: false,
+                target_id: None,
+            };
+        }
+        let center_x = self.x + 40.0;
+        let center_y = self.y + 40.0;
+        let mut best_score = 10_000;
+        let mut target = None;
+        for food in foods {
+            let dx = (f64::from(food.widget_x) + 20.0 - center_x) as i32;
+            let dy = (f64::from(food.widget_y) + 20.0 - center_y) as i32;
+            // PB05 stores the squared sum and then the root as 32-bit floats
+            // before the integer conversion; preserve both rounding points.
+            let squared = (dx as f32) * (dx as f32) + (dy as f32) * (dy as f32);
+            let score = squared.sqrt() as i32;
+            if score < best_score {
+                best_score = score;
+                target = Some(*food);
+            }
+        }
+        if let Some(food) = target
+            && self.special_timer >= 5
+        {
+            self.special_timer = 0;
+            let relative_x = center_x - f64::from(food.widget_x);
+            if relative_x < 12.0 {
+                if self.vx < 3.0 {
+                    self.vx += 1.0;
+                }
+            } else if relative_x < 16.0 {
+                if self.vx < 3.0 {
+                    self.vx += 0.1;
+                }
+            } else if relative_x < 20.0 {
+                if self.vx < 3.0 {
+                    self.vx += 0.05;
+                }
+            } else if relative_x > 20.0 && self.vx > -3.0 {
+                self.vx -= if relative_x <= 24.0 {
+                    0.05
+                } else if relative_x <= 28.0 {
+                    0.1
+                } else {
+                    1.0
+                };
+            }
+            let relative_y = center_y - f64::from(food.widget_y);
+            if relative_y < 14.0 {
+                if self.vy < 3.0 {
+                    self.vy += 1.0;
+                }
+            } else if relative_y < 20.0 {
+                if self.vy < 3.0 {
+                    self.vy += 0.5;
+                }
+            } else if relative_y > 20.0 && self.vy > -2.0 {
+                self.vy -= if relative_y <= 26.0 { 0.3 } else { 0.6 };
+            }
+            if self.vx_abs < 5 {
+                self.vx_abs += 1;
+            }
+        }
+        BrinkleyAction {
+            admitted: true,
+            target_id: target.map(|food| food.id),
+        }
+    }
+
+    /// Common tail runs once, after Board contact and any payout constructor.
+    pub fn finish_brinkley(
+        &mut self,
+        admitted: bool,
+        rand_range: &mut impl FnMut(u64) -> u64,
+    ) -> FishPetUpdate {
+        assert_eq!(self.kind, FishPetKind::Brinkley);
+        self.tick_inner(
+            &[],
+            0,
+            &[],
+            if admitted {
+                PetTargetViews::BrinkleyAdmitted
+            } else {
+                PetTargetViews::None
+            },
+            false,
+            rand_range,
+        )
+    }
+
+    /// Board removes the first matching Food before committing this counter.
+    pub fn commit_brinkley_meal(&mut self, virtual_tank: bool) -> Option<u8> {
+        assert_eq!(self.kind, FishPetKind::Brinkley);
+        self.brinkley_meals = self.brinkley_meals.saturating_add(1);
+        self.brinkley_cooldown = if virtual_tank { 108 } else { 45 };
+        if !self.brinkley_meals.is_multiple_of(3) {
+            return None;
+        }
+        Some(if self.brinkley_meals.is_multiple_of(135) {
+            14
+        } else if self.brinkley_meals.is_multiple_of(45) {
+            13
+        } else if self.brinkley_meals.is_multiple_of(15) {
+            11
+        } else {
+            10
+        })
     }
 
     pub fn tick_zorf(
@@ -836,6 +981,9 @@ impl FishPetState {
     /// while slot-81 returns before any subtype action. Board should use this
     /// for every Tank-5 fish-shaped pet, including Amp, Gash and Angie.
     pub fn tick_tank5(&mut self, rand_range: &mut impl FnMut(u64) -> u64) -> FishPetUpdate {
+        if self.kind == FishPetKind::Brinkley {
+            self.brinkley_cooldown = self.brinkley_cooldown.saturating_sub(1);
+        }
         self.tick_inner(&[], 0, &[], PetTargetViews::Tank5, false, rand_range)
     }
 
@@ -872,6 +1020,7 @@ impl FishPetState {
             }
             PetTargetViews::None if hunting => self.hunt(aliens, &mut update),
             PetTargetViews::None | PetTargetViews::Tank5 => self.wander(),
+            PetTargetViews::BrinkleyAdmitted => {}
         }
         self.special_timer = self.special_timer.saturating_add(1);
         self.movement_timer += 1;
@@ -2949,5 +3098,176 @@ mod tests {
         assert_eq!((pet.vx, pet.vy), (-9.5, -9.5)); // guard precedes ±2 step
         assert!(pet.gumbo_light_alpha() > 0);
         pet.validate().unwrap();
+    }
+
+    #[test]
+    fn brinkley_cooldown_reaches_zero_before_food_eligibility_and_persists() {
+        let mut pet = FishPetState::spawn_tank1(4, FishPetKind::Brinkley, &mut |_| 0);
+        assert_eq!((pet.brinkley_meals, pet.brinkley_cooldown), (0, 0));
+        pet.brinkley_cooldown = 1;
+        let food = [BrinkleyFoodView {
+            id: 7,
+            widget_x: 100,
+            widget_y: 100,
+        }];
+        assert!(pet.begin_brinkley(true, &food).admitted);
+        pet.finish_brinkley(true, &mut |_| 0);
+        assert_eq!(pet.brinkley_cooldown, 0);
+        assert!(!pet.begin_brinkley(false, &food).admitted);
+        pet.finish_brinkley(false, &mut |_| 0);
+        assert!(!pet.begin_brinkley(true, &[]).admitted);
+        pet.finish_brinkley(false, &mut |_| 0);
+        pet.commit_brinkley_meal(false);
+        let saved = serde_json::to_vec(&pet).unwrap();
+        let restored: FishPetState = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(
+            (restored.brinkley_meals, restored.brinkley_cooldown),
+            (1, 45)
+        );
+        let mut flagged = FishPetState::spawn_presto_form_at(
+            5,
+            FishPetKind::Brinkley,
+            100,
+            200,
+            false,
+            &mut |_| 0,
+        );
+        assert_eq!(flagged.presto_form.unwrap().remaining_ticks, 360);
+        flagged.begin_brinkley(true, &[]);
+        flagged.finish_brinkley(false, &mut |_| 0);
+        assert_eq!(flagged.presto_form.unwrap().remaining_ticks, 359);
+        flagged.commit_brinkley_meal(true);
+        assert_eq!(flagged.brinkley_cooldown, 108);
+    }
+
+    #[test]
+    fn brinkley_third_meal_payout_uses_nested_fifteen_forty_five_and_135_divisors() {
+        let mut pet = FishPetState::spawn_tank1(4, FishPetKind::Brinkley, &mut |_| 0);
+        let mut payouts = Vec::new();
+        for meal in 1..=135 {
+            if let Some(raw) = pet.commit_brinkley_meal(false) {
+                payouts.push((meal, raw));
+            }
+        }
+        assert_eq!(payouts[0], (3, 10));
+        assert_eq!(payouts[4], (15, 11));
+        assert_eq!(payouts[14], (45, 13));
+        assert_eq!(payouts[44], (135, 14));
+        pet.validate().unwrap();
+    }
+
+    fn brinkley_at(x: f64, y: f64) -> FishPetState {
+        let mut pet = FishPetState::spawn_tank1(4, FishPetKind::Brinkley, &mut |_| 0);
+        pet.x = x;
+        pet.y = y;
+        pet.widget_x = x as i32;
+        pet.widget_y = y as i32;
+        pet.published_x = pet.widget_x;
+        pet.published_y = pet.widget_y;
+        pet.vx = 0.0;
+        pet.vy = 0.0;
+        pet
+    }
+
+    #[test]
+    fn brinkley_target_uses_ordered_integer_scores_first_tie_and_strict_limit() {
+        let mut pet = brinkley_at(100.0, 100.0);
+        pet.special_timer = 4;
+        let foods = [
+            BrinkleyFoodView {
+                id: 11,
+                widget_x: 110,
+                widget_y: 120,
+            },
+            BrinkleyFoodView {
+                id: 12,
+                widget_x: 130,
+                widget_y: 120,
+            },
+        ];
+        assert_eq!(pet.begin_brinkley(true, &foods).target_id, Some(11));
+        assert_eq!(pet.special_timer, 4); // Selection does not require cadence.
+        let far = [BrinkleyFoodView {
+            id: 13,
+            widget_x: 10120,
+            widget_y: 120,
+        }];
+        assert_eq!(
+            pet.begin_brinkley(true, &far),
+            BrinkleyAction {
+                admitted: true,
+                target_id: None
+            }
+        );
+        pet.special_timer = 40;
+        pet.finish_brinkley(true, &mut |_| 0);
+        assert_eq!(pet.vy, 0.0); // Null target still suppresses wander.
+        assert_eq!(pet.special_timer, 41);
+    }
+
+    #[test]
+    fn brinkley_steers_at_five_but_can_bite_at_four_and_preserves_counter_above_five() {
+        let target = [BrinkleyFoodView {
+            id: 7,
+            widget_x: 130,
+            widget_y: 130,
+        }];
+        let mut pet = brinkley_at(100.0, 100.0);
+        pet.special_timer = 4;
+        assert_eq!(pet.begin_brinkley(true, &target).target_id, Some(7));
+        assert_eq!((pet.vx, pet.vy, pet.vx_abs), (0.0, 0.0, 0));
+        pet.finish_brinkley(true, &mut |_| 0);
+        assert_eq!(pet.special_timer, 5);
+
+        let mut pet = brinkley_at(100.0, 100.0);
+        pet.special_timer = 5;
+        pet.vx_abs = 7;
+        pet.begin_brinkley(true, &target);
+        assert_eq!(
+            (pet.vx, pet.vy, pet.vx_abs, pet.special_timer),
+            (1.0, 1.0, 7, 0)
+        );
+        pet.finish_brinkley(true, &mut |_| 0);
+        assert_eq!(pet.special_timer, 1);
+        let restored: FishPetState =
+            serde_json::from_slice(&serde_json::to_vec(&pet).unwrap()).unwrap();
+        assert_eq!(restored.vx_abs, 7);
+    }
+
+    #[test]
+    fn brinkley_steering_exact_twenty_holes_neighbors_and_conditional_caps() {
+        let food = [BrinkleyFoodView {
+            id: 7,
+            widget_x: 120,
+            widget_y: 120,
+        }];
+        let mut exact = brinkley_at(100.0, 100.0);
+        exact.special_timer = 5;
+        exact.begin_brinkley(true, &food);
+        assert_eq!((exact.vx, exact.vy, exact.vx_abs), (0.0, 0.0, 1));
+
+        let mut left = brinkley_at(99.75, 99.75);
+        left.special_timer = 5;
+        left.begin_brinkley(true, &food);
+        assert!((left.vx - 0.05).abs() < 1e-9);
+        assert!((left.vy - 0.5).abs() < 1e-9);
+        let mut right = brinkley_at(100.25, 100.25);
+        right.special_timer = 5;
+        right.begin_brinkley(true, &food);
+        assert!((right.vx + 0.05).abs() < 1e-9);
+        assert!((right.vy + 0.3).abs() < 1e-9);
+
+        let mut capped = brinkley_at(90.0, 90.0);
+        capped.special_timer = 5;
+        capped.vx = 3.0;
+        capped.vy = 3.0;
+        capped.begin_brinkley(true, &food);
+        assert_eq!((capped.vx, capped.vy), (3.0, 3.0));
+        let mut negative_cap = brinkley_at(110.0, 110.0);
+        negative_cap.special_timer = 5;
+        negative_cap.vx = -3.0;
+        negative_cap.vy = -2.0;
+        negative_cap.begin_brinkley(true, &food);
+        assert_eq!((negative_cap.vx, negative_cap.vy), (-3.0, -2.0));
     }
 }
