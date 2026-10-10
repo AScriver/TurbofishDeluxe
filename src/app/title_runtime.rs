@@ -35,6 +35,7 @@ pub(super) struct TitleRuntime {
     pending_finish: Option<FinishTarget>,
     app_started_at: f64,
     quit_after: Option<f64>,
+    ui_evidence: Option<super::UiEvidence>,
 }
 
 impl TitleRuntime {
@@ -113,7 +114,33 @@ impl TitleRuntime {
             pending_finish: None,
             app_started_at,
             quit_after,
+            ui_evidence: None,
         })
+    }
+
+    pub(super) fn observe_in(
+        &mut self,
+        root: Option<&std::path::Path>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.ui_evidence = root.map(super::UiEvidence::open).transpose()?;
+        Ok(())
+    }
+
+    pub(super) fn take_ui_evidence(&mut self) -> Option<super::UiEvidence> {
+        self.ui_evidence.take()
+    }
+
+    fn draw_and_observe(&mut self) -> Result<(), Box<dyn Error>> {
+        self.draw();
+        if let Some(observer) = self.ui_evidence.as_mut() {
+            observer.record_draw(
+                "Title",
+                Some(&self.title.view()),
+                None,
+                get_time() - self.app_started_at,
+            )?;
+        }
+        Ok(())
     }
 
     /// Clone GPU handle and real atlas dimensions into Presentation; no second
@@ -184,7 +211,7 @@ impl TitleRuntime {
                 self.pending_finish = Some(target);
             }
         }
-        self.draw();
+        self.draw_and_observe()?;
         next_frame().await;
         self.check_deadline()
     }
@@ -242,7 +269,7 @@ impl TitleRuntime {
                     return Ok(target);
                 }
             }
-            self.draw();
+            self.draw_and_observe()?;
             next_frame().await;
         }
     }

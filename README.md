@@ -10,7 +10,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 
 ## Start here
 
-- E116 joins [owned biography text](docs/virtual-ui.md#owned-biography-pointer-table-recovery) and [configuration ownership](docs/screensaver.md#configuration-ownership), with static pointer mapping and format/lint/build; zero tests. E115 [retained modes/startup Menu](docs/mode-continuation.md), E114 VT/gift and earlier menu/chooser/Story/Hall remain preserved. Next: actual saver-production-cap gap and remaining completion-sweep work. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
+- E117 joins the source-qualified [saver production cap](docs/screensaver.md#production-cap) and actual [Title/Menu UI evidence](docs/playtest-helpers.md#ui-stage-observation); one focused accounting regression plus format/lint/build passed. E116 biographies/configuration ownership, E115 [retained modes](docs/mode-continuation.md) and earlier joins remain preserved. Next: frozen supporting build/prepared fixtures and two exact native-driver handoffs. Native/manual acceptance remains pending under the [completion sweep](docs/DESIGN.md#completion-sweep).
 - Agents: read [AGENTS.md](AGENTS.md), then follow its startup order.
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).
@@ -103,7 +103,7 @@ $buildIdentityPath = Read-Host 'Associated host build receipt path'
 .\scripts\New-ScreensaverPackage.ps1 -BuildIdentityPath $buildIdentityPath
 ```
 
-The package command was exercised: it verifies associated build artifacts and places a byte-identical `.scr`, DLLs/notices and host license under ignored `target/screensaver/<build-id>`. It does not register or activate Windows settings. `/s` requires an existing current project profile and banks income on graceful exit; normal profile entry claims it once. Previews do not earn persistent shells. Profile manager format2 rejects older managers/missing metadata without backfill; session format stays36. `/p <HWND>` supports a supplied preview parent; actual embedding/focus/dismissal/monitor/audio acceptance is pending. [Screensaver](docs/screensaver.md) owns limitations; fish-state continuation remains pending.
+The package command verifies associated build artifacts and places a byte-identical `.scr`, DLLs/notices and host license under ignored `target/screensaver/<build-id>`. It does not register or activate Windows settings. `/s` requires an existing current project profile and banks income plus narrow VT continuation on graceful exit; normal profile entry claims/adopts receipts once. Previews do not earn persistent shells. Current37/profile3/bank2 rejects older or incomplete records without migration/backfill. `/p <HWND>` supports a supplied preview parent and `/c <HWND>` uses project-window ownership; actual embedding/ownership/continuation/focus/dismissal/monitor/audio acceptance remains pending. [Screensaver](docs/screensaver.md) owns limitations.
 
 After changing a PowerShell script, run the host validator first; its `-ArgumentList` forwards focused options:
 

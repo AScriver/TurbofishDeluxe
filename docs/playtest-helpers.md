@@ -54,6 +54,44 @@ The host wrapper requires the already installed PSScriptAnalyzer. Validate the e
 | `Assert-TurbofishPausedState` | Requires two paused snapshots with advancing session time and an explicit non-null `-SelectState`. Compares only the selected frozen simulation state, strictly. |
 | `Stop-TurbofishPlaytest` | Close retained owned process, wait, kill only that process handle if needed, confirm exit and write a receipt. Idempotent; a forced exit is reported and fails the maintained smoke. Evidence is preserved. |
 
+## UI-stage observation
+
+The normal app's existing `--evidence-dir` enables `ui-state.local.json`
+before loading yields its first Title frame. E117 adds this sideband because
+the actual startup/tank Menu is transient over a retained Session: a saved
+`Playing` phase or frozen Session tick cannot identify the visible screen.
+Only actual draw paths publish it; input-only closing/exit frames do not.
+
+Format1 fields are `process_id`, increasing `ui_frame`,
+`wall_elapsed_seconds`, `ui_stage`, `title`, nullable `session_tick` and
+`session_phase`, and `coordinate_space` (`width=640,height=480`). Stages are
+`Title`, `Menu`, `Scene` and the in-app `ScreensaverPreview`; overlays are not
+separately enumerated. UI frames continue across Title/selector/scene without
+stepping the retained Session. Atomic replacement retries ordinary Windows
+reader-sharing errors on the next draw. Require the owned process ID and a
+newer UI frame; successful parsing of an old sideband is not current evidence.
+
+On Title, `title` contains the actual view's `loading_status`
+(`Running`, `Succeeded` or `Failed`), `completed_tasks`, `total_tasks`, `ready`,
+`start_visible`, `start_bounds` (`x,y,width,height`), `start_hovered` and
+`start_pressed`. Title has null Session fields. Wait for succeeded loading,
+ready and visible Start, then send captured mouse press/release inside the
+reported logical bounds. Observe a fresh `Menu` frame to establish Title exit.
+An underlying `Playing` snapshot or Enter alone does not establish this route.
+Older frozen executables retain their own APIs; historical smoke reports remain
+valid only for their identified builds.
+
+F12 or the existing `capture.request` / `capture-request.local.json` requests
+capture after drawing. Normal-app images are unique
+`frame-ui-<process_id>-<ui_frame:06>.png`, including paused/Title/Menu frames;
+they no longer overwrite a prior capture at the same Session tick. The app
+exports GPU readback, requires a nonempty PNG, writes `capture-result.local.json`
+as `{ "frame": "filename", "observation": <same-draw sideband> }`, then removes
+the request. `Request-TurbofishCapture` already accepts this `frame-*.png`
+contract; shared helpers are unchanged. Native `/s` and `/p` retain their
+existing capture API. This instrumentation has compile evidence only; actual
+input, rendering, readback and retail fidelity remain not tested.
+
 ## Scenario rules
 
 Always put owned process cleanup in `finally`. Use `Wait-TurbofishState -AfterSessionTick $before.session_tick` for an action's response; successful parsing alone does not prove fresh publication. Use a descriptive expectation and required properties under strict mode. Unit phases are strings, while payload phases are tagged objects; a Bonus Board is null and its simulation is `phase.Bonus.state`.
