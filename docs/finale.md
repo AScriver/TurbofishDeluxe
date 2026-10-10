@@ -63,3 +63,9 @@ Runtime input SHA-256: `src/interlude.rs`=`E3F7D32FC92660DF2490B5ECC51B59AC8F14C
 Nine distinct focused cases passed; no full gameplay suite or native game launched. Native input/render/audio, exact retail Stanley visibility/fades, source button-font geometry and human judgment remain deferred. No playability claim is made. Local commit/push reconciliation is reported in the final handoff; central records remain the primary chat's responsibility. Actionables was not updated because no workItemId was supplied.
 
 Cleanup: no service/port/database/game-process allocation, no real save or install mutation. Test binaries exited; ignored target/logs/numeric probe remain in the owned worktree for reproducibility.
+
+## Main reconciliation
+
+Feature commit `a76fbd6a179d8335d4fbd2e6de85db4f6945ccf8` contains only the three reserved files. Merge `56d3760e8dcdc53cac0c0f762f97870d2052dec7` cleanly incorporates fetched main `c2b4bfb61122ad51cea88dbba3ee10e5e9b3bbf8`, including the other chats' screensaver host/bank, bubble and title work. No primary checkout or unrelated source was edited. The two finale runtime hashes above remain identical; their focused evidence remains applicable. The initial whole-build identity is historical after this merge.
+
+Post-merge `cargo fmt --all -- --check`, strict locked/offline workspace/all-target lint and locked/offline workspace build all passed; only affected compilation/build checks reran. Receipt `.scratch/finale/checks-20261010T213605036Z/results.local.json`. Merged `Cargo.lock` SHA-256 `1643FD7BE00AF38DB3DA764BE8E0C03CFC427EE368DCAAB7EF17A49B187F153F`; debug EXE SHA-256 `39F0D0B81D5ADCF7C319B6DE696DD27A2B8BE23609E7985314D19AC52EFB3C35`. The primary's app still calls the catalog-free compatibility method; complete rendered finale content requires the integration steps above.
