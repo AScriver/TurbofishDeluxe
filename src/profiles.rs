@@ -9,7 +9,7 @@ use crate::{
     bonus::MAX_SHELL_BALANCE,
     cli::{self, SAVE_FORMAT_VERSION},
     highscores::{GlobalScores, ScoreEntry, ScoreKind as GlobalScoreKind},
-    screensaver_bank::{BankKey, ScreensaverBank},
+    screensaver_bank::{BankKey, ScreensaverBank, ScreensaverSceneLease},
     sim::Event,
 };
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub const PROFILE_FORMAT_VERSION: u32 = 2;
+pub const PROFILE_FORMAT_VERSION: u32 = 3;
 const MAX_SAVER_CLAIM: u64 = 100_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -34,6 +34,8 @@ pub struct ProfileEntry {
     pub screensaver_generation: String,
     /// Persisted with the wallet; the bank keeps its cumulative total unchanged.
     pub screensaver_claimed: u64,
+    /// Saved with scene adoption or rejection so a pending scene cannot replay.
+    pub screensaver_scene_consumed: u64,
 }
 
 impl ProfileEntry {
@@ -42,6 +44,14 @@ impl ProfileEntry {
             profile_id: self.id,
             generation: self.screensaver_generation.clone(),
         }
+    }
+
+    /// Explicit new-game reset creates a fresh bank/scene incarnation.
+    pub fn reset_session(&mut self, seed: u64) {
+        self.session = AdventureSession::new(seed);
+        self.screensaver_generation = new_profile_generation();
+        self.screensaver_claimed = 0;
+        self.screensaver_scene_consumed = 0;
     }
 }
 
@@ -104,6 +114,7 @@ impl Profiles {
                 session,
                 screensaver_generation: new_profile_generation(),
                 screensaver_claimed: 0,
+                screensaver_scene_consumed: 0,
             }],
             global_scores: GlobalScores::default(),
         })
@@ -253,6 +264,45 @@ impl Profiles {
         Ok(credited)
     }
 
+    /// Safe startup/selector boundaries only. An active saver holds this lease,
+    /// so defer without blocking it or changing normal ownership. Rejection
+    /// consumes only the scene receipt; earned credit remains independently due.
+    pub fn adopt_screensaver_scene(&mut self, save_dir: &Path) -> Result<bool, Box<dyn Error>> {
+        let Some(current) = self.current() else {
+            return Ok(false);
+        };
+        if !matches!(
+            current.session.phase,
+            AdventurePhase::GameSelector
+                | AdventurePhase::VirtualTank
+                | AdventurePhase::VirtualSetup
+        ) {
+            return Ok(false);
+        }
+        let Some(_scene_lease) = ScreensaverSceneLease::try_acquire(save_dir)? else {
+            return Ok(false);
+        };
+        let snapshot = ScreensaverBank::new(save_dir).read_snapshot(&current.screensaver_key())?;
+        let Some(scene) = snapshot.pending_scene else {
+            return Ok(false);
+        };
+        if scene.sequence <= current.screensaver_scene_consumed {
+            return Ok(false);
+        }
+        let matches = current.session.virtual_baseline_digest()? == scene.baseline_digest;
+        self.transact(&save_dir.join("profiles.json"), |draft| {
+            let entry = draft.current_mut().ok_or("current profile missing")?;
+            if matches {
+                entry
+                    .session
+                    .apply_virtual_continuation(&scene.continuation)?;
+            }
+            entry.screensaver_scene_consumed = scene.sequence;
+            Ok(())
+        })?;
+        Ok(matches)
+    }
+
     /// Commit profile metadata and its sessions together. A failed validation
     /// or disk write leaves the in-memory manager unchanged.
     pub fn transact<T>(
@@ -281,6 +331,7 @@ impl Profiles {
                 session: AdventureSession::new(seed),
                 screensaver_generation: new_profile_generation(),
                 screensaver_claimed: 0,
+                screensaver_scene_consumed: 0,
             });
             draft.current_id = Some(id);
             Ok(id)
@@ -490,6 +541,7 @@ mod tests {
             session: AdventureSession::new(8),
             screensaver_generation: new_profile_generation(),
             screensaver_claimed: 0,
+            screensaver_scene_consumed: 0,
         });
         profiles.next_id = 3;
         assert!(profiles.validate().is_err());
