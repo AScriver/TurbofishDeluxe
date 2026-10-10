@@ -5186,6 +5186,7 @@ enum ProfileForm {
 }
 
 enum UiCommand {
+    Mode(crate::adventure::GameMode),
     Create(String),
     Select(u64),
     Rename(u64, String),
@@ -5735,24 +5736,17 @@ fn route_menu_intent(
     ui: &mut SelectorUi,
     help: &mut HelpController,
     records: &mut RecordsRuntime,
-    actions: &mut Vec<Action>,
 ) -> Option<UiCommand> {
     use crate::game_selector::{Destination, DialogIntent, Mode, SelectorIntent};
     match intent {
         SelectorIntent::Navigate(Destination::Mode(mode)) => {
-            actions.push(match mode {
-                Mode::Adventure => Action::PlayAdventure,
-                Mode::TimeTrial => Action::PlayTimeTrial,
-                Mode::Challenge => Action::PlayChallenge,
-                Mode::Sandbox => Action::OpenSandbox,
-                Mode::VirtualTank => {
-                    let now_seconds = wall_seconds();
-                    Action::PlayVirtualTank {
-                        now_seconds,
-                        day_start_seconds: now_seconds / 86_400 * 86_400,
-                    }
-                }
-            });
+            return Some(UiCommand::Mode(match mode {
+                Mode::Adventure => crate::adventure::GameMode::Adventure,
+                Mode::TimeTrial => crate::adventure::GameMode::TimeTrial,
+                Mode::Challenge => crate::adventure::GameMode::Challenge,
+                Mode::Sandbox => crate::adventure::GameMode::Sandbox,
+                Mode::VirtualTank => crate::adventure::GameMode::VirtualTank,
+            }));
         }
         SelectorIntent::Navigate(Destination::Help) => help.open_pages(HelpReturn::Selector),
         SelectorIntent::Navigate(Destination::HallOfFame) => {
@@ -5823,9 +5817,12 @@ fn presentation_music_cue(
     session: &AdventureSession,
     story_browser_open: bool,
     interlude: Option<&InterludeController>,
+    menu_open: bool,
 ) -> Option<MusicCue> {
     if story_browser_open {
         Some(MusicCue::Interlude)
+    } else if menu_open || session.phase == AdventurePhase::GameSelector {
+        Some(MusicCue::Menu)
     } else if session.phase == AdventurePhase::AdventureFinaleInterlude {
         Some(match interlude.map(InterludeController::music_stage) {
             Some(MusicStage::Lullaby) => MusicCue::Lullaby,
@@ -6021,8 +6018,9 @@ pub async fn run(
     if target != crate::title_screen::FinishTarget::GameSelector {
         return Err("ordinary title requested an unexpected route".into());
     }
-    // Preserve the selected saved scene until the transient selector adapter
-    // owns routing; title presentation never replaces progression or a Board.
+    // Selector visibility is transient. The saved scene stays owned by Session
+    // until a validated atomic mode selection resumes or parks it.
+    let mut startup_menu_open = true;
     let mut evidence = options
         .evidence_dir
         .as_ref()
@@ -6124,7 +6122,9 @@ pub async fn run(
         let mut frontend_events = Vec::new();
         let mut frontend_transitioned = false;
         let gift_was_active = gift.as_ref().is_some_and(ShellGiftRuntime::is_open);
-        let selector_open = profiles.current().is_none()
+        let mut startup_menu_frame = startup_menu_open;
+        let selector_open = startup_menu_open
+            || profiles.current().is_none()
             || profiles
                 .current()
                 .is_some_and(|entry| entry.session.phase == AdventurePhase::GameSelector);
@@ -6138,9 +6138,10 @@ pub async fn run(
         if profiles.current().is_none() {
             selector_ui.panel = Some(SelectorPanel::Profiles);
         }
-        if profiles
-            .current()
-            .is_some_and(|entry| entry.session.phase == AdventurePhase::HelpScreen)
+        if !startup_menu_open
+            && profiles
+                .current()
+                .is_some_and(|entry| entry.session.phase == AdventurePhase::HelpScreen)
             && help.view().is_none()
             && !pending_actions.contains(&Action::Continue)
         {
@@ -6287,13 +6288,9 @@ pub async fn run(
                 {
                     ui_music_reports.push(report);
                 }
-                if let Some(command) = route_menu_intent(
-                    intent,
-                    &mut selector_ui,
-                    &mut help,
-                    &mut records,
-                    &mut pending_actions,
-                ) {
+                if let Some(command) =
+                    route_menu_intent(intent, &mut selector_ui, &mut help, &mut records)
+                {
                     ui_command = Some(command);
                 }
             }
@@ -6301,7 +6298,7 @@ pub async fn run(
         } else {
             entry_code.reset();
         }
-        if let Some(current) = profiles.current() {
+        if !startup_menu_open && let Some(current) = profiles.current() {
             if let Some(mode) = tank_selection_runtime::mode_for_phase(&current.session.phase) {
                 let facts = tank_selection_runtime::facts(&current.session, mode);
                 if chooser
@@ -6369,6 +6366,7 @@ pub async fn run(
         let mut help_active_frame = help_was_active || help.view().is_some();
         let mut story_active_frame = story_was_active || story_browser_open;
         let mut ui_active = selector_ui.panel.is_some()
+            || startup_menu_open
             || profiles.current().is_none()
             || help_active_frame
             || story_active_frame
@@ -6389,6 +6387,40 @@ pub async fn run(
         if let Some(command) = ui_command {
             let profiles_path = options.save_dir.join("profiles.json");
             let result = match command {
+                UiCommand::Mode(destination) => {
+                    let now_seconds = wall_seconds();
+                    let result = profiles.transact(&profiles_path, |draft| {
+                        draft
+                            .current_mut()
+                            .ok_or("Choose a current profile first.")?
+                            .session
+                            .select_mode(destination, now_seconds, now_seconds / 86_400 * 86_400)
+                    });
+                    match result {
+                        Ok(events) => {
+                            frontend_events.extend(events);
+                            frontend_transitioned = true;
+                            startup_menu_open = false;
+                            startup_menu_frame = true;
+                            selector_ui.panel = None;
+                            chooser = None;
+                            virtual_pets = None;
+                            virtual_screensaver_open = false;
+                            paused = false;
+                            pending_actions.clear();
+                            feed_press_at = None;
+                            held_feed_at = None;
+                            held_fire_at = None;
+                            clock.clear_backlog();
+                            ui_active = true;
+                            Ok(false)
+                        }
+                        Err(error) => {
+                            selector_ui.panel = Some(SelectorPanel::Notice);
+                            Err(error)
+                        }
+                    }
+                }
                 UiCommand::Create(name) => {
                     if profiles.current().is_some() {
                         cli::save_profiles_checkpoint(&options, &profiles)?;
@@ -6504,7 +6536,17 @@ pub async fn run(
                     ui_active = true;
                     gift_active_frame = true;
                     clock.clear_backlog();
-                    match ShellGiftRuntime::open(&profiles) {
+                    let result = if profiles
+                        .current()
+                        .is_some_and(|entry| entry.session.menu_transactions_blocked())
+                    {
+                        Err(crate::shell_gift::ShellGiftError::TransactionFailed(
+                            "Finish the pending reward or transaction before giving shells.".into(),
+                        ))
+                    } else {
+                        ShellGiftRuntime::open(&profiles)
+                    };
+                    match result {
                         Ok(runtime) => {
                             gift = Some(runtime);
                             Ok(false)
@@ -6545,6 +6587,8 @@ pub async fn run(
                         records =
                             RecordsRuntime::new(options.seed ^ profiles.current_id.unwrap_or(0));
                         menu = None;
+                        startup_menu_open = true;
+                        startup_menu_frame = true;
                         menu_epoch = menu_epoch.wrapping_add(1);
                         menu_clock.clear_backlog();
                         chooser = None;
@@ -6598,6 +6642,7 @@ pub async fn run(
             clock.clear_backlog();
         }
         let virtual_blocked = help_active_frame
+            || startup_menu_frame
             || story_active_frame
             || preview_was_active
             || hall_was_active
@@ -6723,8 +6768,9 @@ pub async fn run(
                             &entry.session,
                             story_browser_open,
                             interlude.as_ref(),
+                            startup_menu_open,
                         ),
-                        paused,
+                        paused && !startup_menu_open,
                     );
                 }
                 next_frame().await;
@@ -7023,7 +7069,7 @@ pub async fn run(
                 {
                     pending_actions.push(Action::PrestoPress { pet });
                 }
-            } else if menu_rect.contains(pointer)
+            } else if (menu_rect.contains(pointer)
                 && matches!(
                     session.phase,
                     AdventurePhase::Playing
@@ -7038,24 +7084,16 @@ pub async fn run(
                         | AdventurePhase::Hatch { .. }
                         | AdventurePhase::TankFourFinaleHatch { .. }
                         | AdventurePhase::PetSelection { .. }
-                )
+                ))
+                || (session.phase == AdventurePhase::VirtualTank
+                    && Rect::new(514.0, 4.0, 110.0, 32.0).contains(pointer))
             {
-                if matches!(
-                    session.phase,
-                    AdventurePhase::Hatch { .. }
-                        | AdventurePhase::TankFourFinaleHatch { .. }
-                        | AdventurePhase::PetSelection { .. }
-                        | AdventurePhase::TimeTrialTankSelection
-                        | AdventurePhase::TimeTrialPetSelection { .. }
-                        | AdventurePhase::ChallengeTankSelection
-                        | AdventurePhase::ChallengePetSelection { .. }
-                        | AdventurePhase::ChallengePetSelectionConfirmation { .. }
-                ) {
-                    pending_actions.push(Action::OpenMenu);
-                } else {
-                    paused = !paused;
-                    clock.clear_backlog();
-                }
+                startup_menu_open = true;
+                startup_menu_frame = true;
+                menu_epoch = menu_epoch.wrapping_add(1);
+                menu = Some(MenuRuntime::new(options.seed ^ menu_epoch, &assets));
+                ui_active = true;
+                clock.clear_backlog();
                 feed_press_at = None;
                 held_feed_at = None;
                 held_fire_at = None;
@@ -7070,8 +7108,6 @@ pub async fn run(
                             }
                         } else if Rect::new(140.0, 4.0, 110.0, 32.0).contains(pointer) {
                             Action::OpenVirtualSetup
-                        } else if Rect::new(514.0, 4.0, 110.0, 32.0).contains(pointer) {
-                            Action::OpenMenu
                         } else {
                             Action::VirtualTankClick {
                                 x: pointer.x,
@@ -7815,8 +7851,13 @@ pub async fn run(
         }
         if let Some(owner) = music.as_mut() {
             owner.sync_cue(
-                presentation_music_cue(session, story_browser_open, interlude.as_ref()),
-                paused,
+                presentation_music_cue(
+                    session,
+                    story_browser_open,
+                    interlude.as_ref(),
+                    startup_menu_open,
+                ),
+                paused && !startup_menu_open,
             );
         }
         if save_requested || exit_requested {
@@ -7868,6 +7909,7 @@ pub async fn run(
                     || gift_active_frame
                     || virtual_modal_frame
                     || frontend_transitioned
+                    || startup_menu_frame
                 {
                     // Reading screens are app-lived; even a paused Board update would
                     // advance durable ticks or modal timers.
@@ -8064,8 +8106,13 @@ pub async fn run(
                     }
                     if let Some(owner) = music.as_mut() {
                         owner.sync_cue(
-                            presentation_music_cue(session, story_browser_open, interlude.as_ref()),
-                            paused,
+                            presentation_music_cue(
+                                session,
+                                story_browser_open,
+                                interlude.as_ref(),
+                                startup_menu_open,
+                            ),
+                            paused && !startup_menu_open,
                         );
                     }
                     phase_transitioned |= previous_phase != std::mem::discriminant(&session.phase);
@@ -8125,6 +8172,7 @@ pub async fn run(
         // recording this frame, including when the board is paused.
         let observed_connector_change = !exit_requested
             && !help_active_frame
+            && !startup_menu_open
             && matches!(
                 session.phase,
                 AdventurePhase::Playing
@@ -8235,8 +8283,13 @@ pub async fn run(
         }
         if let Some(owner) = music.as_mut() {
             owner.sync_cue(
-                presentation_music_cue(session, story_browser_open, interlude.as_ref()),
-                paused,
+                presentation_music_cue(
+                    session,
+                    story_browser_open,
+                    interlude.as_ref(),
+                    startup_menu_open,
+                ),
+                paused && !startup_menu_open,
             );
             music_reports.extend(owner.drain_reports());
             if let Some(reason) = owner.unavailable() {
@@ -8279,7 +8332,8 @@ pub async fn run(
         ));
         set_camera(&camera);
         let capture_tick = session.ticks;
-        if session.phase != AdventurePhase::GameSelector
+        if !startup_menu_open
+            && session.phase != AdventurePhase::GameSelector
             && tank_selection_runtime::mode_for_phase(&session.phase).is_none()
             && !matches!(
                 session.phase,
@@ -8315,7 +8369,7 @@ pub async fn run(
         if session.phase == AdventurePhase::VirtualTank && get_time() < song_title_until {
             draw_text(&song_title, 24.0, 105.0, 20.0, YELLOW);
         }
-        let draw_selector = session.phase == AdventurePhase::GameSelector;
+        let draw_selector = startup_menu_open || session.phase == AdventurePhase::GameSelector;
         if let Some(entry) = profiles.current() {
             refresh_virtual_ui(
                 &mut virtual_ui,
@@ -8324,7 +8378,8 @@ pub async fn run(
                 virtual_blocked || virtual_pets.is_some() || virtual_screensaver_open,
             );
         }
-        if virtual_ui.page().is_some()
+        if !startup_menu_open
+            && virtual_ui.page().is_some()
             && let Some(view) = virtual_ui.view()
         {
             let issues = virtual_runtime::draw(
@@ -8337,7 +8392,8 @@ pub async fn run(
                     .get_or_insert_with(|| format!("VT resources unavailable: {issues:?}"));
             }
         }
-        if let Some(picker) = virtual_pets.as_ref()
+        if !startup_menu_open
+            && let Some(picker) = virtual_pets.as_ref()
             && let Some(entry) = profiles.current()
         {
             picker.draw(&presentation, &entry.session, pointer);

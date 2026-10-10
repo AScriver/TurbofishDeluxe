@@ -69,6 +69,33 @@ own receipts. Biography text still uses explicit numeric/unavailable labels;
 the owned catalog is a follow-up. Species preview palette/offsets, date wording,
 native visuals/input/audio, retail comparison and human judgment remain pending.
 
+### Owned biography catalog follow-up
+
+Bounded read-only inspection after E114 found W1 `SimFishScreen.cpp:18,396,405`
+tables and`:1026–1055,1197+` ID consumers:375 hometowns (0–374), six special
+hometowns and331 likes (0–330), **secondary-source-derived**. Exact PB05 image
+SHA`312021E970ABD8AFE417D24E99FF75AC8379EF2A93BC1E04D52D4F3D7F070BB1`
+contains table anchors in `.rdata` at file offsets`0x19ab08`, `0x19aaf8`
+and`0x19bd50`. These are string locations, not table addresses or proof of count,
+ID ordering or complete mapping. No prose/table was copied, and no DB/export or
+runtime ran. The existing identity-gated owned `StoryCatalog` loader is the
+implementation precedent; first recover the ID-to-pointer initialization/table
+references, then resolve the same numeric fields at runtime. Until then, the
+explicit unavailable catalog remains truthful and does not block other joins.
+
+Two literal-scan approaches failed. Forward scanning from first rows yielded
+349 hometown/15 like strings before invalid UTF-8 at PB05 file offset`0x19bdcc`.
+Scanning from W1's last row and reversing recovered full counts but **incorrect
+ID order**: hometown range`0x1991f0..0x19ab6c` mismatched IDs0–360, while361–374
+matched; likes`0x19ab80..0x19bd88` mismatched0–312, while313–330 matched. Both
+owned wrapper copies agreed after offset`+0x1877a2`. Six special hometowns had
+two matching anchors (`0x199450`, `0x19ab18`), with only the latter yielding
+matching IDs. Four-byte alignment/zero padding did not resolve these mismatches.
+These are selective byte/source comparisons, not a recovered primary table.
+Do not retry the same scan or adopt a count-only decoder; next required evidence
+is exact pointer-table/initializer cross-references and ID mapping. No prose,
+catalog, decoder or tests were added; other integration continues unblocked.
+
 ## Direct integration
 
 Register `pub mod virtual_ui;` in the caller-owned library, then keep one

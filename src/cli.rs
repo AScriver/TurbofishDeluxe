@@ -180,7 +180,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 36;
+pub const SAVE_FORMAT_VERSION: u32 = 37;
 
 #[cfg(test)]
 mod current_twenty_one_tests {
@@ -250,11 +250,16 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     // project envelopes. Retain historical constructors without exposing a
     // zero-story backfill through the current decoder.
     if version_number.is_some_and(|version| version < u64::from(SAVE_FORMAT_VERSION)) {
-        return Err("Project saves before format thirty-six lack earned Story state".into());
+        return Err("Project saves before format thirty-seven lack retained mode scenes".into());
     }
-    if let Some(board) = value
-        .pointer("/session/board")
-        .and_then(serde_json::Value::as_object)
+    for board in [
+        "/session/board",
+        "/session/retained_adventure/board",
+        "/session/retained_time_trial/board",
+        "/session/retained_challenge/board",
+    ]
+    .iter()
+    .filter_map(|path| value.pointer(path).and_then(serde_json::Value::as_object))
     {
         let other_fields = ["stinky", "niko", "clyde", "rufus", "rhubarb"];
         if version_number.is_some_and(|version| version >= 23)
@@ -274,7 +279,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             );
         }
     }
-    if version_number.is_some_and(|version| (24..=36).contains(&version)) {
+    if version_number.is_some_and(|version| (24..=37).contains(&version)) {
         let session = value
             .get("session")
             .and_then(serde_json::Value::as_object)
@@ -282,15 +287,20 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
         if ["mode", "time_trial_scores", "time_trial"]
             .iter()
             .any(|field| !session.contains_key(*field))
-            || value
-                .pointer("/session/board")
-                .filter(|board| !board.is_null())
-                .is_some_and(|board| {
-                    board
-                        .get("time_trial")
-                        .and_then(serde_json::Value::as_bool)
-                        .is_none()
-                })
+            || [
+                "/session/board",
+                "/session/retained_adventure/board",
+                "/session/retained_time_trial/board",
+                "/session/retained_challenge/board",
+            ]
+            .iter()
+            .filter_map(|path| value.pointer(path).filter(|board| !board.is_null()))
+            .any(|board| {
+                board
+                    .get("time_trial")
+                    .and_then(serde_json::Value::as_bool)
+                    .is_none()
+            })
         {
             return Err("Incomplete format-twenty-six mode or Time Trial state".into());
         }
@@ -314,7 +324,16 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Incomplete format-twenty-six replay state".into());
     }
-    if version_number.is_some_and(|version| (27..=35).contains(&version)) {
+    let mode_boards: Vec<_> = [
+        "/session/board",
+        "/session/retained_adventure/board",
+        "/session/retained_time_trial/board",
+        "/session/retained_challenge/board",
+    ]
+    .iter()
+    .filter_map(|path| value.pointer(path).filter(|board| !board.is_null()))
+    .collect();
+    if version_number.is_some_and(|version| (27..=37).contains(&version)) {
         let purchase = |result: &serde_json::Value| {
             result.get("purchase").is_some_and(|receipt| {
                 ["offered_cursor", "confirming", "purchased"]
@@ -326,110 +345,116 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             || value
                 .pointer("/session/phase/BonusResults/result")
                 .is_some_and(|result| !purchase(result))
-            || value
-                .pointer("/session/time_trial/result")
-                .filter(|result| !result.is_null())
-                .is_some_and(|result| result.get("updates").is_none() || !purchase(result))
-            || value
-                .pointer("/session/board/fish_pets")
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|pets| {
-                    pets.iter().any(|pet| {
-                        pet.get("brinkley_meals").is_none()
-                            || pet.get("brinkley_cooldown").is_none()
+            || [
+                "/session/time_trial/result",
+                "/session/retained_time_trial/time_trial/result",
+            ]
+            .iter()
+            .filter_map(|path| value.pointer(path).filter(|result| !result.is_null()))
+            .any(|result| result.get("updates").is_none() || !purchase(result))
+            || mode_boards.iter().any(|board| {
+                board
+                    .get("fish_pets")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|pets| {
+                        pets.iter().any(|pet| {
+                            pet.get("brinkley_meals").is_none()
+                                || pet.get("brinkley_cooldown").is_none()
+                        })
                     })
-                })
+            })
         {
             return Err("Incomplete format-twenty-seven purchase or Brinkley state".into());
         }
     }
-    if version_number.is_some_and(|version| (28..=35).contains(&version))
-        && (value
-            .pointer("/session/board/fish_pets")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|pets| {
-                pets.iter().any(|pet| {
-                    ["nostra_elapsed", "nostra_threshold", "nostra_converted"]
-                        .iter()
-                        .any(|field| pet.get(*field).is_none())
-                })
-            })
-            || value
-                .pointer("/session/board/food")
+    if version_number.is_some_and(|version| (28..=37).contains(&version))
+        && mode_boards.iter().any(|board| {
+            board
+                .get("fish_pets")
                 .and_then(serde_json::Value::as_array)
-                .is_some_and(|food| {
-                    food.iter().any(|item| {
-                        ["food_type", "picked_up"]
+                .is_some_and(|pets| {
+                    pets.iter().any(|pet| {
+                        ["nostra_elapsed", "nostra_threshold", "nostra_converted"]
                             .iter()
-                            .any(|field| item.get(*field).is_none())
+                            .any(|field| pet.get(*field).is_none())
                     })
                 })
-            || value
-                .pointer("/session/board/invasion")
-                .filter(|wave| !wave.is_null())
-                .is_some_and(|wave| wave.get("sneeze_shake_ticks").is_none()))
+                || board
+                    .get("food")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|food| {
+                        food.iter().any(|item| {
+                            ["food_type", "picked_up"]
+                                .iter()
+                                .any(|field| item.get(*field).is_none())
+                        })
+                    })
+                || board
+                    .get("invasion")
+                    .filter(|wave| !wave.is_null())
+                    .is_some_and(|wave| wave.get("sneeze_shake_ticks").is_none())
+        })
     {
         return Err("Incomplete format-twenty-eight Nostradamus state".into());
     }
-    if version_number.is_some_and(|version| (29..=35).contains(&version))
-        && (value
-            .pointer("/session/board/fish_pets")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|pets| {
-                pets.iter().any(|pet| {
-                    pet.get("stanley_action_ticks").is_none()
-                        || pet.get("stanley_diversion_cooldown").is_none()
-                })
-            })
-            || value
-                .pointer("/session/board/missiles")
+    if version_number.is_some_and(|version| (29..=37).contains(&version))
+        && mode_boards.iter().any(|board| {
+            board
+                .get("fish_pets")
                 .and_then(serde_json::Value::as_array)
-                .is_some_and(|missiles| {
-                    missiles.iter().any(|missile| {
-                        [
-                            "target_id",
-                            "stanley_hit",
-                            "diversion_clock",
-                            "diversion_limit",
-                            "diversion_x",
-                            "diversion_y",
-                            "movement_divisor",
-                        ]
-                        .iter()
-                        .any(|field| missile.get(*field).is_none())
+                .is_some_and(|pets| {
+                    pets.iter().any(|pet| {
+                        pet.get("stanley_action_ticks").is_none()
+                            || pet.get("stanley_diversion_cooldown").is_none()
                     })
-                }))
+                })
+                || board
+                    .get("missiles")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|missiles| {
+                        missiles.iter().any(|missile| {
+                            [
+                                "target_id",
+                                "stanley_hit",
+                                "diversion_clock",
+                                "diversion_limit",
+                                "diversion_x",
+                                "diversion_y",
+                                "movement_divisor",
+                            ]
+                            .iter()
+                            .any(|field| missile.get(*field).is_none())
+                        })
+                    })
+        })
     {
         return Err("Incomplete format-twenty-nine Stanley state".into());
     }
-    if version_number.is_some_and(|version| (30..=35).contains(&version))
-        && value
-            .pointer("/session/board")
-            .filter(|board| !board.is_null())
-            .is_some_and(|board| {
-                ["fish", "oscars", "ultras", "gekkos", "fish_pets"]
-                    .iter()
-                    .any(|kind| {
-                        board
-                            .get(*kind)
-                            .and_then(serde_json::Value::as_array)
-                            .is_none_or(|actors| {
-                                actors.iter().any(|actor| {
-                                    actor.get("walter").is_none()
-                                        || (*kind == "fish_pets"
-                                            && [
-                                                "age",
-                                                "walter_action",
-                                                "walter_punches",
-                                                "walter_cooldown",
-                                                "glove",
-                                            ]
-                                            .iter()
-                                            .any(|field| actor.get(*field).is_none()))
-                                })
+    if version_number.is_some_and(|version| (30..=37).contains(&version))
+        && mode_boards.iter().any(|board| {
+            ["fish", "oscars", "ultras", "gekkos", "fish_pets"]
+                .iter()
+                .any(|kind| {
+                    board
+                        .get(*kind)
+                        .and_then(serde_json::Value::as_array)
+                        .is_none_or(|actors| {
+                            actors.iter().any(|actor| {
+                                actor.get("walter").is_none()
+                                    || (*kind == "fish_pets"
+                                        && [
+                                            "age",
+                                            "walter_action",
+                                            "walter_punches",
+                                            "walter_cooldown",
+                                            "glove",
+                                        ]
+                                        .iter()
+                                        .any(|field| actor.get(*field).is_none()))
                             })
-                    })
-            })
+                        })
+                })
+        })
     {
         return Err("Incomplete format-thirty Walter state".into());
     }
@@ -460,20 +485,28 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     if version_number.is_some_and(|version| version >= 32)
         && (value.pointer("/session/challenge").is_none()
             || value.pointer("/session/challenge_scores").is_none()
-            || value
-                .pointer("/session/challenge")
-                .filter(|run| !run.is_null())
-                .is_some_and(|run| run.get("result").is_none())
+            || [
+                "/session/challenge",
+                "/session/retained_challenge/challenge",
+            ]
+            .iter()
+            .filter_map(|path| value.pointer(path).filter(|run| !run.is_null()))
+            .any(|run| run.get("result").is_none())
             || value
                 .pointer("/session/progress/challenge_completed")
                 .and_then(serde_json::Value::as_array)
                 .is_none_or(|flags| {
                     flags.len() != 4 || flags.iter().any(|flag| !flag.is_boolean())
                 })
-            || value
-                .pointer("/session/board")
-                .filter(|board| !board.is_null())
-                .is_some_and(|board| board.get("challenge_shop").is_none()))
+            || [
+                "/session/board",
+                "/session/retained_adventure/board",
+                "/session/retained_time_trial/board",
+                "/session/retained_challenge/board",
+            ]
+            .iter()
+            .filter_map(|path| value.pointer(path).filter(|board| !board.is_null()))
+            .any(|board| board.get("challenge_shop").is_none()))
     {
         return Err("Incomplete format-thirty-two Challenge state".into());
     }
@@ -745,6 +778,34 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Incomplete format-thirty-six Story state".into());
     }
+    if version_number == Some(37)
+        && [
+            "retained_adventure",
+            "retained_time_trial",
+            "retained_challenge",
+        ]
+        .iter()
+        .any(|slot| {
+            value
+                .pointer("/session")
+                .and_then(|session| session.get(*slot))
+                .is_none_or(|scene| {
+                    !scene.is_null()
+                        && [
+                            "phase",
+                            "board",
+                            "next_seed",
+                            "time_trial",
+                            "challenge",
+                            "selected_pets",
+                        ]
+                        .iter()
+                        .any(|field| scene.get(*field).is_none())
+                })
+        })
+    {
+        return Err("Incomplete format-thirty-seven retained mode scene".into());
+    }
     if let Some(version @ 1..=6) = version_number {
         validate_legacy_boundary(&value, version)?;
     }
@@ -841,7 +902,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=36) => {
+        Some(version @ 5..=37) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -859,301 +920,297 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                                 .iter()
                                 .all(|field| progress.contains_key(*field)))
                 });
-            let incomplete_board = value
-                .pointer("/session/board")
-                .and_then(serde_json::Value::as_object)
-                .is_some_and(|board| {
-                    [
-                        "stinky",
-                        "upgrades",
-                        "invasion",
-                        "niko",
-                        "pearls",
-                        "oscars",
-                        "dead_oscars",
-                        "oscar_unlocked",
-                        "weapon_strength",
-                        "weapon_unlocked",
-                    ]
-                    .iter()
-                    .any(|field| !board.contains_key(*field))
-                        || (version >= 6
-                            && ["fish_pets", "punch_sound_cooldown"]
-                                .iter()
-                                .any(|field| !board.contains_key(*field)))
-                        || (version >= 7
-                            && ["potion_unlocked", "potion_armed"]
-                                .iter()
-                                .any(|field| !board.contains_key(*field)))
-                        || (version >= 8
-                            && [
-                                "starcatcher_unlocked",
-                                "starcatchers",
-                                "dead_starcatchers",
-                                "clyde",
-                            ]
+            let incomplete_board = [
+                "/session/board",
+                "/session/retained_adventure/board",
+                "/session/retained_time_trial/board",
+                "/session/retained_challenge/board",
+            ]
+            .iter()
+            .filter_map(|path| value.pointer(path).and_then(serde_json::Value::as_object))
+            .any(|board| {
+                [
+                    "stinky",
+                    "upgrades",
+                    "invasion",
+                    "niko",
+                    "pearls",
+                    "oscars",
+                    "dead_oscars",
+                    "oscar_unlocked",
+                    "weapon_strength",
+                    "weapon_unlocked",
+                ]
+                .iter()
+                .any(|field| !board.contains_key(*field))
+                    || (version >= 6
+                        && ["fish_pets", "punch_sound_cooldown"]
                             .iter()
                             .any(|field| !board.contains_key(*field)))
-                        || (version >= 10
-                            && ["missiles", "rufus"]
-                                .iter()
-                                .any(|field| !board.contains_key(*field)))
-                        || (version >= 11 && !board.contains_key("notes"))
-                        || (version >= 14 && !board.contains_key("bomb_shots"))
-                        || (version >= 16
-                            && ["breeder_unlocked", "breeders", "dead_breeders", "rhubarb"]
-                                .iter()
-                                .any(|field| !board.contains_key(*field)))
-                        || (version >= 17 && incomplete_format_seventeen_board(board))
-                        || (version >= 20
-                            && [
-                                "dead_fish",
-                                "dead_oscars",
-                                "dead_ultras",
-                                "dead_breeders",
-                                "dead_starcatchers",
-                                "dead_grubbers",
-                                "dead_gekkos",
-                            ]
+                    || (version >= 7
+                        && ["potion_unlocked", "potion_armed"]
                             .iter()
-                            .any(|field| {
-                                board
-                                    .get(*field)
-                                    .and_then(serde_json::Value::as_array)
-                                    .is_none_or(|corpses| {
-                                        corpses
-                                            .iter()
-                                            .any(|corpse| corpse.get("revival_ticks").is_none())
-                                    })
-                            }))
-                        || ((21..23).contains(&version)
-                            && board
-                                .get("stinky")
-                                .filter(|stinky| !stinky.is_null())
-                                .is_some_and(|stinky| stinky.get("combat_id").is_none()))
-                        || (version >= 23
-                            && board
-                                .get("stinky")
+                            .any(|field| !board.contains_key(*field)))
+                    || (version >= 8
+                        && [
+                            "starcatcher_unlocked",
+                            "starcatchers",
+                            "dead_starcatchers",
+                            "clyde",
+                        ]
+                        .iter()
+                        .any(|field| !board.contains_key(*field)))
+                    || (version >= 10
+                        && ["missiles", "rufus"]
+                            .iter()
+                            .any(|field| !board.contains_key(*field)))
+                    || (version >= 11 && !board.contains_key("notes"))
+                    || (version >= 14 && !board.contains_key("bomb_shots"))
+                    || (version >= 16
+                        && ["breeder_unlocked", "breeders", "dead_breeders", "rhubarb"]
+                            .iter()
+                            .any(|field| !board.contains_key(*field)))
+                    || (version >= 17 && incomplete_format_seventeen_board(board))
+                    || (version >= 20
+                        && [
+                            "dead_fish",
+                            "dead_oscars",
+                            "dead_ultras",
+                            "dead_breeders",
+                            "dead_starcatchers",
+                            "dead_grubbers",
+                            "dead_gekkos",
+                        ]
+                        .iter()
+                        .any(|field| {
+                            board
+                                .get(*field)
                                 .and_then(serde_json::Value::as_array)
-                                .is_some_and(|pets| {
-                                    pets.iter().any(|pet| {
-                                        pet.get("combat_id").is_none()
-                                            || (version >= 25 && pet.get("presto_form").is_none())
-                                    })
-                                }))
-                        || (version >= 24
-                            && ["clyde", "niko", "rufus", "rhubarb"].iter().any(|field| {
-                                board
-                                    .get(*field)
-                                    .and_then(serde_json::Value::as_array)
-                                    .is_none_or(|pets| {
-                                        pets.iter().any(|pet| {
-                                            pet.get("presto_form").is_none()
-                                                || (*field == "niko"
-                                                    && ["x", "y", "vy"]
-                                                        .iter()
-                                                        .any(|part| pet.get(*part).is_none()))
-                                        })
-                                    })
-                            }))
-                        || (version >= 21
-                            && board
-                                .get("invasion")
-                                .filter(|wave| !wave.is_null())
-                                .is_some_and(|wave| {
-                                    wave.get("finale").is_none()
-                                        || wave
-                                            .get("finale")
-                                            .filter(|finale| !finale.is_null())
-                                            .is_some_and(|finale| {
-                                                [
-                                                    "boss",
-                                                    "children",
-                                                    "boss_defeated",
-                                                    "profile_attempts",
-                                                    "ordinary_ticks",
-                                                    "child_ticks",
-                                                    "secondary_coords",
-                                                ]
-                                                .iter()
-                                                .any(|field| finale.get(*field).is_none())
-                                            })
-                                }))
-                        || (version >= 15
-                            && board
-                                .get("missiles")
-                                .and_then(serde_json::Value::as_array)
-                                .is_some_and(|missiles| {
-                                    missiles.iter().any(|missile| {
-                                        ["kind", "reflected"]
-                                            .iter()
-                                            .any(|field| missile.get(*field).is_none())
-                                    })
-                                }))
-                        || (version >= 13
-                            && ["gekko_unlocked", "gekkos", "dead_gekkos"]
-                                .iter()
-                                .any(|field| !board.contains_key(*field)))
-                        || (version >= 13
-                            && board
-                                .get("coins")
-                                .and_then(serde_json::Value::as_array)
-                                .is_some_and(|coins| {
-                                    coins
+                                .is_none_or(|corpses| {
+                                    corpses
                                         .iter()
-                                        .any(|coin| coin.get("animation_ticks").is_none())
-                                }))
-                        || (version >= 14
-                            && board
-                                .get("coins")
-                                .and_then(serde_json::Value::as_array)
-                                .is_some_and(|coins| {
-                                    coins
-                                        .iter()
-                                        .any(|coin| coin.get("hazard_age_ticks").is_none())
-                                }))
-                        || (version >= 12
-                            && ["grubber_unlocked", "grubbers", "dead_grubbers", "larvae"]
-                                .iter()
-                                .any(|field| !board.contains_key(*field)))
-                        || (version >= 9
-                            && board
-                                .get("fish_pets")
-                                .and_then(serde_json::Value::as_array)
-                                .is_some_and(|pets| {
-                                    pets.iter().any(|pet| {
-                                        pet.get("coin_timer").is_none()
-                                            || (version >= 22 && pet.get("presto_form").is_none())
-                                            || (version >= 19
-                                                && ["gash_timer", "gash_eating_ticks"]
-                                                    .iter()
-                                                    .any(|field| pet.get(*field).is_none()))
-                                            || (version >= 18
-                                                && ["amp_timer", "amp_threshold", "amp_charge"]
-                                                    .iter()
-                                                    .any(|field| pet.get(*field).is_none()))
-                                            || (version >= 14
-                                                && ["bomb_threshold", "glint_phase"]
-                                                    .iter()
-                                                    .any(|field| pet.get(*field).is_none()))
-                                            || (version >= 11 && pet.get("meryl_blink").is_none())
-                                            || (version >= 12
-                                                && [
-                                                    "ward_active",
-                                                    "ward_timer",
-                                                    "published_x",
-                                                    "published_y",
-                                                ]
-                                                .iter()
-                                                .any(|field| pet.get(*field).is_none()))
-                                    })
-                                }))
-                        || board
-                            .get("food")
+                                        .any(|corpse| corpse.get("revival_ticks").is_none())
+                                })
+                        }))
+                    || ((21..23).contains(&version)
+                        && board
+                            .get("stinky")
+                            .filter(|stinky| !stinky.is_null())
+                            .is_some_and(|stinky| stinky.get("combat_id").is_none()))
+                    || (version >= 23
+                        && board
+                            .get("stinky")
                             .and_then(serde_json::Value::as_array)
-                            .is_some_and(|food| {
-                                food.iter().any(|pellet| {
-                                    pellet.get("quality").is_none()
-                                        || (version >= 7
-                                            && [
-                                                "direction",
-                                                "vx",
-                                                "vy",
-                                                "animation_period",
-                                                "free_from_zorf",
+                            .is_some_and(|pets| {
+                                pets.iter().any(|pet| {
+                                    pet.get("combat_id").is_none()
+                                        || (version >= 25 && pet.get("presto_form").is_none())
+                                })
+                            }))
+                    || (version >= 24
+                        && ["clyde", "niko", "rufus", "rhubarb"].iter().any(|field| {
+                            board
+                                .get(*field)
+                                .and_then(serde_json::Value::as_array)
+                                .is_none_or(|pets| {
+                                    pets.iter().any(|pet| {
+                                        pet.get("presto_form").is_none()
+                                            || (*field == "niko"
+                                                && ["x", "y", "vy"]
+                                                    .iter()
+                                                    .any(|part| pet.get(*part).is_none()))
+                                    })
+                                })
+                        }))
+                    || (version >= 21
+                        && board
+                            .get("invasion")
+                            .filter(|wave| !wave.is_null())
+                            .is_some_and(|wave| {
+                                wave.get("finale").is_none()
+                                    || wave
+                                        .get("finale")
+                                        .filter(|finale| !finale.is_null())
+                                        .is_some_and(|finale| {
+                                            [
+                                                "boss",
+                                                "children",
+                                                "boss_defeated",
+                                                "profile_attempts",
+                                                "ordinary_ticks",
+                                                "child_ticks",
+                                                "secondary_coords",
                                             ]
                                             .iter()
-                                            .any(|field| pellet.get(*field).is_none()))
-                                })
-                            })
-                        || board
-                            .get("fish")
+                                            .any(|field| finale.get(*field).is_none())
+                                        })
+                            }))
+                    || (version >= 15
+                        && board
+                            .get("missiles")
                             .and_then(serde_json::Value::as_array)
-                            .is_some_and(|fish| {
-                                fish.iter()
-                                    .any(|entity| entity.get("cannot_be_eaten_ticks").is_none())
-                            })
-                        || board
-                            .get("invasion")
-                            .and_then(serde_json::Value::as_object)
-                            .is_some_and(|wave| {
-                                (version < 11
-                                    && !wave.contains_key("kind")
-                                    && !wave.contains_key("plan"))
-                                    || (version >= 11
+                            .is_some_and(|missiles| {
+                                missiles.iter().any(|missile| {
+                                    ["kind", "reflected"]
+                                        .iter()
+                                        .any(|field| missile.get(*field).is_none())
+                                })
+                            }))
+                    || (version >= 13
+                        && ["gekko_unlocked", "gekkos", "dead_gekkos"]
+                            .iter()
+                            .any(|field| !board.contains_key(*field)))
+                    || (version >= 13
+                        && board
+                            .get("coins")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|coins| {
+                                coins
+                                    .iter()
+                                    .any(|coin| coin.get("animation_ticks").is_none())
+                            }))
+                    || (version >= 14
+                        && board
+                            .get("coins")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|coins| {
+                                coins
+                                    .iter()
+                                    .any(|coin| coin.get("hazard_age_ticks").is_none())
+                            }))
+                    || (version >= 12
+                        && ["grubber_unlocked", "grubbers", "dead_grubbers", "larvae"]
+                            .iter()
+                            .any(|field| !board.contains_key(*field)))
+                    || (version >= 9
+                        && board
+                            .get("fish_pets")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|pets| {
+                                pets.iter().any(|pet| {
+                                    pet.get("coin_timer").is_none()
+                                        || (version >= 22 && pet.get("presto_form").is_none())
+                                        || (version >= 19
+                                            && ["gash_timer", "gash_eating_ticks"]
+                                                .iter()
+                                                .any(|field| pet.get(*field).is_none()))
+                                        || (version >= 18
+                                            && ["amp_timer", "amp_threshold", "amp_charge"]
+                                                .iter()
+                                                .any(|field| pet.get(*field).is_none()))
+                                        || (version >= 14
+                                            && ["bomb_threshold", "glint_phase"]
+                                                .iter()
+                                                .any(|field| pet.get(*field).is_none()))
+                                        || (version >= 11 && pet.get("meryl_blink").is_none())
+                                        || (version >= 12
+                                            && [
+                                                "ward_active",
+                                                "ward_timer",
+                                                "published_x",
+                                                "published_y",
+                                            ]
+                                            .iter()
+                                            .any(|field| pet.get(*field).is_none()))
+                                })
+                            }))
+                    || board
+                        .get("food")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|food| {
+                            food.iter().any(|pellet| {
+                                pellet.get("quality").is_none()
+                                    || (version >= 7
                                         && [
-                                            "plan",
-                                            "actors",
-                                            "warps",
-                                            "dead_aliens",
-                                            "battle_active",
+                                            "direction",
+                                            "vx",
+                                            "vy",
+                                            "animation_period",
+                                            "free_from_zorf",
                                         ]
                                         .iter()
-                                        .any(|field| !wave.contains_key(*field)))
-                                    || (version >= 9 && !wave.contains_key("gus_warning_shown"))
-                                    || (version >= 11
-                                        && wave
-                                            .get("actors")
-                                            .and_then(serde_json::Value::as_array)
-                                            .is_some_and(|actors| {
-                                                actors
-                                                    .iter()
-                                                    .any(|actor| actor.get("kind").is_none())
-                                            }))
-                                    || (version >= 14
-                                        && wave
-                                            .get("actors")
-                                            .and_then(serde_json::Value::as_array)
-                                            .is_some_and(|actors| {
-                                                actors.iter().any(|actor| {
-                                                    [
-                                                        "phase_ticks",
-                                                        "phase_threshold",
-                                                        "healing",
-                                                        "ever_healed",
-                                                        "movement_divisor",
-                                                    ]
-                                                    .iter()
-                                                    .any(|field| actor.get(*field).is_none())
-                                                })
-                                            }))
-                                    || (version >= 11
-                                        && wave
-                                            .get("dead_aliens")
-                                            .and_then(serde_json::Value::as_array)
-                                            .is_some_and(|bodies| {
-                                                bodies.iter().any(|body| body.get("kind").is_none())
-                                            }))
-                                    || wave
-                                        .get("alien")
-                                        .and_then(serde_json::Value::as_object)
-                                        .is_some_and(|alien| !alien.contains_key("kind"))
-                                    || (version >= 6
-                                        && wave
-                                            .get("dead_alien")
-                                            .and_then(serde_json::Value::as_object)
-                                            .is_some_and(|body| !body.contains_key("kind")))
+                                        .any(|field| pellet.get(*field).is_none()))
                             })
-                        || (version >= 23
-                            && board
-                                .get("niko")
-                                .and_then(serde_json::Value::as_array)
-                                .is_some_and(|pets| {
-                                    pets.iter().any(|pet| {
-                                        pet.get("anchor_x").is_none()
-                                            || pet.get("anchor_y").is_none()
-                                    })
-                                }))
-                        || ((7..23).contains(&version)
-                            && board
-                                .get("niko")
-                                .and_then(serde_json::Value::as_object)
-                                .is_some_and(|niko| {
-                                    ["anchor_x", "anchor_y"]
+                        })
+                    || board
+                        .get("fish")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|fish| {
+                            fish.iter()
+                                .any(|entity| entity.get("cannot_be_eaten_ticks").is_none())
+                        })
+                    || board
+                        .get("invasion")
+                        .and_then(serde_json::Value::as_object)
+                        .is_some_and(|wave| {
+                            (version < 11
+                                && !wave.contains_key("kind")
+                                && !wave.contains_key("plan"))
+                                || (version >= 11
+                                    && ["plan", "actors", "warps", "dead_aliens", "battle_active"]
                                         .iter()
-                                        .any(|field| !niko.contains_key(*field))
-                                }))
-                });
+                                        .any(|field| !wave.contains_key(*field)))
+                                || (version >= 9 && !wave.contains_key("gus_warning_shown"))
+                                || (version >= 11
+                                    && wave
+                                        .get("actors")
+                                        .and_then(serde_json::Value::as_array)
+                                        .is_some_and(|actors| {
+                                            actors.iter().any(|actor| actor.get("kind").is_none())
+                                        }))
+                                || (version >= 14
+                                    && wave
+                                        .get("actors")
+                                        .and_then(serde_json::Value::as_array)
+                                        .is_some_and(|actors| {
+                                            actors.iter().any(|actor| {
+                                                [
+                                                    "phase_ticks",
+                                                    "phase_threshold",
+                                                    "healing",
+                                                    "ever_healed",
+                                                    "movement_divisor",
+                                                ]
+                                                .iter()
+                                                .any(|field| actor.get(*field).is_none())
+                                            })
+                                        }))
+                                || (version >= 11
+                                    && wave
+                                        .get("dead_aliens")
+                                        .and_then(serde_json::Value::as_array)
+                                        .is_some_and(|bodies| {
+                                            bodies.iter().any(|body| body.get("kind").is_none())
+                                        }))
+                                || wave
+                                    .get("alien")
+                                    .and_then(serde_json::Value::as_object)
+                                    .is_some_and(|alien| !alien.contains_key("kind"))
+                                || (version >= 6
+                                    && wave
+                                        .get("dead_alien")
+                                        .and_then(serde_json::Value::as_object)
+                                        .is_some_and(|body| !body.contains_key("kind")))
+                        })
+                    || (version >= 23
+                        && board
+                            .get("niko")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|pets| {
+                                pets.iter().any(|pet| {
+                                    pet.get("anchor_x").is_none() || pet.get("anchor_y").is_none()
+                                })
+                            }))
+                    || ((7..23).contains(&version)
+                        && board
+                            .get("niko")
+                            .and_then(serde_json::Value::as_object)
+                            .is_some_and(|niko| {
+                                ["anchor_x", "anchor_y"]
+                                    .iter()
+                                    .any(|field| !niko.contains_key(*field))
+                            }))
+            });
             if !complete_progress || incomplete_board {
                 let label = match version {
                     5 => "five",

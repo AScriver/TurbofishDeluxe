@@ -21,6 +21,38 @@ Parallelize bounded source or independent implementation work with explicit owne
 
 The subsequent2026-10-10 steering defers work outside remaining-system implementation and permits pinned WinFish for bulk behavior. Use existing primary outlines plus secondary behavior to finish these outcomes; investigate small details immediately only when materially needed for safe implementation. Preserve primary contradictions and explicit qualifications rather than delaying whole systems for complete retail parity.
 
+## Retained mode scenes and startup menu
+
+The normal app shows the selector after Title through a transient owner, while
+the current Session phase/Board remains unchanged and frozen. Selecting the
+current ongoing mode resumes it. W1 `GameSelector.cpp:378–440` and
+`WinFishApp.cpp:1869–1903,1945–1956,2111–2123` support separate mode saves and
+reload-before-chooser behavior; this remains secondary evidence, not new retail
+or primary proof. The existing single active Board cannot provide that behavior.
+
+Add required nullable parked Adventure/TT/Challenge scene payloads to the same
+Session: phase, Board, mode-specific run, next seed and that scene's working pet
+selection. Move ownership between parked and active fields; never save a second
+Session, wallet/progress/score ledger or restore an old global Session tick.
+VT retains its existing independent ledger/Board/seed/time; Sandbox remains
+disposable. Validate every parked payload against one current profile authority,
+captured creation state and current unlocks as a superset. Later entitlements
+must not repopulate an old Board or change its RNG/actor clocks.
+
+Recheck locks and source resumability before moving any payload. Receipt-sensitive
+reward/result phases and pending VT transaction dialogs permit same-mode resume
+and nonmutating panels, while blocking cross-mode moves/gifts until settled.
+Those gates are deliberate integrity rules; exact retail cancellation/result
+retention remains unknown. Switch on a draft, validate the complete manager,
+write atomically under the existing writer lease, then publish the route.
+Failure retains the previous scene and wallet. Durable payloads require current37
+and nested field guards with no defaults/migration; profile3/bank2 and frozen
+historical saves/builds stay unchanged. Necessary verification targets actual
+scene/save/accounting conservation, not getters or presentation matrices.
+
+[Retained mode scenes](mode-continuation.md) owns the E115 implementation,
+current37 persistence, selector-with-no-active-scene rule and focused check limits.
+
 ## Virtual Tank integration decisions
 
 [Virtual Tank/store](virtual-tank.md) owns the current33 ownership, transaction and load contract. Keep Profile as the shell authority and durable fish separate from transient positions/food/coins; preserve Adventure while visiting store/setup. Cursor5 gains a real seven-pet consumer while ordinary choices remain capped4. Use pinned secondary behavior for the completion sweep; do not invent offline catch-up or claim unverified retail RNG/coin/render parity.
@@ -31,7 +63,7 @@ The [current35 VT combat/pet checkpoint](virtual-tank.md#current35-combat-and-pe
 
 VT Store/Fish/Tank Setup adapters dispatch each typed action batch through the current Session before refreshing their captured-target snapshot; they add no simulation tick and never retarget a stale dialog. Actual purchase results travel as transient events for feedback/audio, rather than inferred wallet differences. VT pet selection and screensaver settings are transient overlays retaining the same setup/session. Gift confirmation uses the already-held normal writer lease, outside a session borrow, with the existing atomic profile transaction and exact result returned to the dialog. Opening/closing modal frames consume input and do not evolve retained gameplay.
 
-The remaining menu/chooser/Story/Hall joins use immutable profile snapshots and screen-local controllers, captures, UI clocks and effect streams. AdventureSession revalidates admissions and owns all mode transitions; Profiles owns scores and durable writes. Standalone Story/Hall overlays freeze retained simulation, while Challenge Story navigation returns typed actions to its existing session authority. Normal Title Start retains a saved ongoing scene: forcing GameSelector would violate the current single-session/Board contract. The actual GameSelector phase receives the new menu; an ordinary startup-menu bridge over retained modes remains explicit follow-up work.
+The menu/chooser/Story/Hall joins use immutable profile snapshots and screen-local controllers, captures, UI clocks and effect streams. AdventureSession revalidates admissions and owns all mode transitions; Profiles owns scores and durable writes. Standalone Story/Hall overlays freeze retained simulation, while Challenge Story navigation returns typed actions to its existing session authority. Normal Title Start and ongoing Menu use the transient selector and retained-scene transaction above.
 
 Consume the independent [BubbleMgr model](bubbles.md) through an app-owned runtime. Advance once per actual unpaused Board step before admitting typed actor events; retain particles after actor death and clear them when the transient scene is replaced. Use source caps and Bubbulator burst ticks/coordinates, replacing its earlier deterministic particle projection only after this owner is wired. Keep one private effect RNG, outside gameplay/store RNG and saves; its stream is a project projection, not proved retail replay order. Owned-image render operations restore material/tint/clip state. Source model checks remain historical; actual app/render/native fidelity stays pending until exercised.
 
