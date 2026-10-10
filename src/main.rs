@@ -4,7 +4,9 @@ use turbofish_deluxe::{
     assets::GameAssets,
     cli::{self, Options},
     install,
+    screensaver_bank::NormalWriterLease,
 };
+use turbofish_screenhost::ScreenCommand;
 
 fn prepare() -> Result<(), Box<dyn Error>> {
     let Some(mut options) = Options::parse()? else {
@@ -85,28 +87,83 @@ fn prepare() -> Result<(), Box<dyn Error>> {
         }
         return Ok(());
     }
-    let profiles = cli::load_profiles(&options)?;
+    let screensaver = options.screensaver;
+    let profiles_path = options.save_dir.join("profiles.json");
+    if matches!(screensaver, Some(ScreenCommand::Fullscreen)) && !profiles_path.is_file() {
+        return Err("Screensaver income requires an existing current project profile".into());
+    }
+    let normal_writer_lease = if screensaver.is_none() {
+        Some(NormalWriterLease::try_acquire(&options.save_dir)?)
+    } else {
+        None
+    };
+    let mut profiles = cli::load_profiles(&options)?;
+    if screensaver.is_none() {
+        if !profiles_path.exists() || options.new_game {
+            // Establish profile generation before another saver can read it.
+            cli::save_profiles_checkpoint(&options, &profiles)?;
+        }
+        let credited = profiles.claim_screensaver(&options.save_dir)?;
+        if credited > 0 {
+            println!("Claimed {credited} screensaver shells");
+        }
+    }
     let settings = turbofish_deluxe::settings::SettingsSave::load_or_default(
         &options.save_dir.join("settings.json"),
     )?;
-    macroquad::Window::from_config(
-        macroquad::miniquad::conf::Conf {
-            window_title: "Turbofish Deluxe".into(),
-            window_width: 960,
-            window_height: 720,
-            window_resizable: true,
-            high_dpi: true,
-            ..Default::default()
-        },
-        async move {
-            if let Err(error) =
-                app::run(options, game_root, identity, assets, profiles, settings).await
-            {
-                eprintln!("Runtime failed: {error}");
-                std::process::exit(1);
+    #[cfg(not(windows))]
+    if screensaver.is_some() {
+        return Err(turbofish_screenhost::HostError::UnsupportedPlatform.into());
+    }
+    if let Some(command) = screensaver {
+        match command {
+            ScreenCommand::Preview(parent) | ScreenCommand::Configure(Some(parent)) => {
+                parent.validate()?;
             }
-        },
-    );
+            ScreenCommand::Fullscreen | ScreenCommand::Configure(None) => {}
+        }
+    }
+    let mut window = macroquad::miniquad::conf::Conf {
+        window_title: "Turbofish Deluxe".into(),
+        window_width: 960,
+        window_height: 720,
+        window_resizable: true,
+        high_dpi: true,
+        ..Default::default()
+    };
+    if let Some(command) = screensaver {
+        window.window_resizable = false;
+        match command {
+            ScreenCommand::Fullscreen => {
+                window.window_title = "Turbofish Deluxe Screensaver".into();
+                window.fullscreen = true;
+            }
+            ScreenCommand::Preview(_) => {
+                window.window_title = "Turbofish Deluxe Preview".into();
+                window.window_width = 320;
+                window.window_height = 240;
+            }
+            ScreenCommand::Configure(_) => {
+                window.window_title = "Turbofish Deluxe Screensaver Settings".into();
+            }
+        }
+    }
+    macroquad::Window::from_config(window, async move {
+        let writer_lease = normal_writer_lease;
+        let result = if let Some(command) = screensaver {
+            app::run_screensaver(
+                options, game_root, identity, assets, profiles, settings, command,
+            )
+            .await
+        } else {
+            app::run(options, game_root, identity, assets, profiles, settings).await
+        };
+        drop(writer_lease);
+        if let Err(error) = result {
+            eprintln!("Runtime failed: {error}");
+            std::process::exit(1);
+        }
+    });
     Ok(())
 }
 

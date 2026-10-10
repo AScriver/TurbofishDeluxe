@@ -4473,6 +4473,79 @@ fn temporary_root(name: &str) -> PathBuf {
 }
 
 #[test]
+fn screensaver_credit_claim_is_capped_atomic_and_once_only_after_reopen() {
+    use turbofish_deluxe::{
+        bonus::MAX_SHELL_BALANCE,
+        profiles::Profiles,
+        screensaver_bank::{NormalWriterLease, ScreensaverBank},
+    };
+
+    let root = temporary_root("saver-credit");
+    let profiles_path = root.join("profiles.json");
+    let lease = NormalWriterLease::try_acquire(&root).unwrap();
+    assert!(NormalWriterLease::try_acquire(&root).is_err());
+    let mut profiles = Profiles::new("Owner", 42).unwrap();
+    profiles.save(&profiles_path).unwrap();
+    let key = profiles.current().unwrap().screensaver_key();
+    let bank = ScreensaverBank::new(&root);
+    // The bank can merge saver exits while the separate normal lease is held.
+    assert_eq!(bank.append(&key, 50_000).unwrap(), 50_000);
+    assert_eq!(bank.append(&key, 75_000).unwrap(), 125_000);
+    assert_eq!(profiles.claim_screensaver(&root).unwrap(), 100_000);
+    let snapshot = fs::read(&profiles_path).unwrap();
+    let mut reopened = Profiles::decode(&snapshot).unwrap();
+    assert_eq!(reopened.claim_screensaver(&root).unwrap(), 0);
+    assert_eq!(fs::read(&profiles_path).unwrap(), snapshot);
+    assert_eq!(reopened.current().unwrap().screensaver_claimed, 125_000);
+    assert_eq!(
+        reopened.current().unwrap().session.progress.shell_balance,
+        100_000
+    );
+
+    reopened
+        .rename(&profiles_path, key.profile_id, "Renamed")
+        .unwrap();
+    reopened
+        .current_mut()
+        .unwrap()
+        .session
+        .progress
+        .shell_balance = MAX_SHELL_BALANCE - 7;
+    reopened.save(&profiles_path).unwrap();
+    let snapshot = fs::read(&profiles_path).unwrap();
+    assert_eq!(bank.append(&key, 20).unwrap(), 125_020);
+    // A failed wallet save consumes neither in-memory credit nor its watermark.
+    fs::remove_file(&profiles_path).unwrap();
+    fs::create_dir(&profiles_path).unwrap();
+    assert!(reopened.claim_screensaver(&root).is_err());
+    assert_eq!(reopened.current().unwrap().screensaver_claimed, 125_000);
+    assert_eq!(
+        reopened.current().unwrap().session.progress.shell_balance,
+        MAX_SHELL_BALANCE - 7
+    );
+    fs::remove_dir(&profiles_path).unwrap();
+    fs::write(&profiles_path, snapshot).unwrap();
+    let mut reopened = Profiles::decode(&fs::read(&profiles_path).unwrap()).unwrap();
+    assert_eq!(reopened.claim_screensaver(&root).unwrap(), 7);
+    let mut reopened = Profiles::decode(&fs::read(&profiles_path).unwrap()).unwrap();
+    assert_eq!(reopened.claim_screensaver(&root).unwrap(), 0);
+    assert_eq!(
+        reopened.current().unwrap().session.progress.shell_balance,
+        MAX_SHELL_BALANCE
+    );
+    assert_eq!(reopened.current().unwrap().screensaver_claimed, 125_020);
+    // Recreating a manager with the same numeric ID cannot inherit old income.
+    let mut recreated = Profiles::new("Owner", 42).unwrap();
+    assert_eq!(recreated.claim_screensaver(&root).unwrap(), 0);
+    assert_eq!(
+        recreated.current().unwrap().session.progress.shell_balance,
+        0
+    );
+    drop(lease);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn atomic_save_replaces_complete_snapshot_and_retains_seeded_state() {
     let root = temporary_root("save");
     let path = root.join("adventure.json");
@@ -5888,6 +5961,7 @@ fn format_three_migration_preserves_old_state_and_rewrites_before_play() {
         quit_after: None,
         muted: true,
         test_speed: 1,
+        screensaver: None,
     };
     let migrated = cli::load_session(&options).unwrap();
     let board = migrated.board.as_ref().unwrap();
@@ -6190,6 +6264,7 @@ fn format_five_fourth_board_gets_explicit_new_support_without_rewriting_earned_s
         quit_after: None,
         muted: true,
         test_speed: 1,
+        screensaver: None,
     };
     let migrated = cli::load_session(&options).unwrap();
     let board = migrated.board.as_ref().unwrap();

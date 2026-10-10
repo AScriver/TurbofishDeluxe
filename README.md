@@ -10,7 +10,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 
 ## Start here
 
-- Current36 integrates [paged Help/earned Stories](docs/shared-interface.md#help-and-earned-stories) and [isolated screensaver preferences/preview](docs/screensaver.md). Focused checks/build passed. [Virtual Tank](docs/virtual-tank.md), [Sandbox](docs/sandbox.md), [shared interface/ending](docs/shared-interface.md), [Challenge](docs/challenge.md) and [Adventure replay](docs/adventure-replay.md) remain integrated. Next: Windows screensaver host and remaining functional omissions. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
+- Current36/profile2 integrates [paged Help/earned Stories](docs/shared-interface.md#help-and-earned-stories) and [screensaver preview/Windows host/credit transactions](docs/screensaver.md). Focused checks/build/package passed. [Virtual Tank](docs/virtual-tank.md), [Sandbox](docs/sandbox.md), [shared interface/ending](docs/shared-interface.md), [Challenge](docs/challenge.md) and [Adventure replay](docs/adventure-replay.md) remain integrated. Next: saver fish continuation and remaining functional omissions. Native/manual acceptance stays deferred during the [completion sweep](docs/DESIGN.md#completion-sweep).
 - Agents: read [AGENTS.md](AGENTS.md), then follow its startup order.
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).
@@ -69,7 +69,7 @@ The maintained runtime check preflights native files, runs workspace formatting/
 
 ### Focused runtime checks
 
-Use `-Check` for faster feedback while editing. The default `All` remains the complete milestone build/regression gate; focused checks do not replace it. The user deferred native/manual acceptance while reversing and implementation continue; normal-speed evidence is still required for a playability claim.
+Use `-Check` for necessary changed-behavior verification while editing. The default `All` remains available; the completion sweep uses focused checks and broadens only for a failure or unresolved correctness risk. Do not repeat passing unaffected checks. The user deferred native/manual acceptance while reversing and implementation continue; normal-speed evidence is still required for a playability claim.
 
 | Check | Runs |
 |---|---|
@@ -91,6 +91,19 @@ Use `-Check` for faster feedback while editing. The default `All` remains the co
 ```
 
 `-TestFilter` is a test-name substring supported by `Unit`, `Assets`, `Fonts`, `Persistence`, `Binding` and `OwnedMusic`. It is rejected for `All`, so the complete gate always runs unfiltered. Check Cargo's reported test count when filtering. All checks except `Format` verify the native audio package and configure its import library/DLL path; only `All` and `Build` stage the executable. `-GameDirectory` is supported by `All` and `OwnedMusic` only.
+
+### Screensaver host and package
+
+From a prepared Windows build, standard saver switches use the project runtime and separate project preferences. Commands shown below; native execution remains not tested:
+
+```powershell
+.\target\debug\turbofish-deluxe.exe /c --save-dir .scratch/saver/save
+.\target\debug\turbofish-deluxe.exe /s --save-dir .scratch/saver/save --evidence-dir .scratch/saver/evidence --mute --quit-after 30
+$buildIdentityPath = Read-Host 'Associated host build receipt path'
+.\scripts\New-ScreensaverPackage.ps1 -BuildIdentityPath $buildIdentityPath
+```
+
+The package command was exercised: it verifies associated build artifacts and places a byte-identical `.scr`, DLLs/notices and host license under ignored `target/screensaver/<build-id>`. It does not register or activate Windows settings. `/s` requires an existing current project profile and banks income on graceful exit; normal profile entry claims it once. Previews do not earn persistent shells. Profile manager format2 rejects older managers/missing metadata without backfill; session format stays36. `/p <HWND>` supports a supplied preview parent; actual embedding/focus/dismissal/monitor/audio acceptance is pending. [Screensaver](docs/screensaver.md) owns limitations; fish-state continuation remains pending.
 
 After changing a PowerShell script, run the host validator first; its `-ArgumentList` forwards focused options:
 

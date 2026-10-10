@@ -5,6 +5,7 @@ use std::{
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
+use turbofish_screenhost::{ScreenCommand, parse_command};
 
 #[derive(Debug)]
 pub struct Options {
@@ -17,6 +18,8 @@ pub struct Options {
     pub quit_after: Option<f64>,
     pub muted: bool,
     pub test_speed: u8,
+    /// Process launch mode; never serialized into project saves.
+    pub screensaver: Option<ScreenCommand>,
 }
 
 impl Options {
@@ -45,14 +48,17 @@ impl Options {
             quit_after: None,
             muted: false,
             test_speed: 1,
+            screensaver: None,
         };
-        let mut arguments = arguments.into_iter();
+        let mut arguments = arguments.into_iter().peekable();
         let mut explicit_save_dir = false;
+        let mut explicit_seed = false;
+        let mut explicit_test_speed = false;
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
                 "--help" | "-h" => {
                     println!(
-                        "Turbofish Deluxe\n\nReads your owned Insaniquarium Deluxe installation.\n\n--game-dir <directory>  Override Steam discovery\n--save-dir <directory>  Separate project saves (default: LOCALAPPDATA/TurbofishDeluxe)\n--new-game              Start a fresh project first tank\n--seed <integer>        Reproducible Rust PRNG (not retail replay parity)\n--evidence-dir <dir>    Write runtime events, state, identity and requested captures\n--inspect-assets       Decode all manifest images/effects without opening a window\n--quit-after <seconds>  Wall-clock run limit (required above 1x)\n--test-speed <1..8>    Opt-in accelerated test simulation\n--mute                 Disable effect playback\n\nAbove 1x requires explicit isolated --save-dir, --evidence-dir, --mute and --quit-after.\nEscape pauses; click Menu or press S to save. F12 captures when evidence is enabled."
+                        "Turbofish Deluxe\n\nReads your owned Insaniquarium Deluxe installation.\n\n--game-dir <directory>  Override Steam discovery\n--save-dir <directory>  Separate project saves (default: LOCALAPPDATA/TurbofishDeluxe)\n--new-game              Start a fresh project first tank\n--seed <integer>        Reproducible Rust PRNG (not retail replay parity)\n--evidence-dir <dir>    Write runtime events, state, identity and requested captures\n--inspect-assets       Decode all manifest images/effects without opening a window\n--quit-after <seconds>  Wall-clock run limit (required above 1x)\n--test-speed <1..8>    Opt-in accelerated test simulation\n--mute                 Disable effect playback\n/s                     Full-screen screensaver\n/p <decimal HWND>      Embed screensaver preview (/p:HWND also works)\n/c[:decimal HWND]      Screensaver preferences\n\nScreensaver /s and /p accept --game-dir, --save-dir, --evidence-dir, --mute and --quit-after. /c does not accept --evidence-dir. Above 1x requires explicit isolated --save-dir, --evidence-dir, --mute and --quit-after.\nEscape pauses; click Menu or press S to save. F12 captures when evidence is enabled."
                     );
                     return Ok(None);
                 }
@@ -73,6 +79,7 @@ impl Options {
                     )
                 }
                 "--seed" => {
+                    explicit_seed = true;
                     options.seed = arguments
                         .next()
                         .ok_or("--seed requires an integer")?
@@ -90,6 +97,7 @@ impl Options {
                 }
                 "--new-game" => options.new_game = true,
                 "--test-speed" => {
+                    explicit_test_speed = true;
                     let factor: u8 = arguments
                         .next()
                         .ok_or("--test-speed requires an integer from 1 through 8")?
@@ -102,8 +110,39 @@ impl Options {
                 }
                 "--inspect-assets" => options.inspect_assets = true,
                 "--mute" => options.muted = true,
+                _ if argument.starts_with('/') => {
+                    if options.screensaver.is_some() {
+                        return Err("Only one screensaver switch is allowed".into());
+                    }
+                    let switch = argument
+                        .split_once(':')
+                        .map_or(argument.as_str(), |(s, _)| s)
+                        .to_owned();
+                    let mut switch_args = vec![argument];
+                    if switch.eq_ignore_ascii_case("/p") && switch_args[0].find(':').is_none() {
+                        switch_args.push(arguments.next().ok_or("/p requires a decimal HWND")?);
+                    } else if switch.eq_ignore_ascii_case("/c")
+                        && switch_args[0].find(':').is_none()
+                        && arguments
+                            .peek()
+                            .is_some_and(|next| next.bytes().all(|byte| byte.is_ascii_digit()))
+                    {
+                        switch_args.push(arguments.next().expect("peeked decimal HWND"));
+                    }
+                    options.screensaver = Some(parse_command(&switch_args)?);
+                }
                 _ => return Err(format!("Unknown argument {argument}; use --help").into()),
             }
+        }
+        if options.screensaver.is_some()
+            && (options.new_game || options.inspect_assets || explicit_seed || explicit_test_speed)
+        {
+            return Err("Screensaver launch does not accept --new-game, --seed, --inspect-assets or --test-speed".into());
+        }
+        if matches!(options.screensaver, Some(ScreenCommand::Configure(_)))
+            && options.evidence_dir.is_some()
+        {
+            return Err("Screensaver /c has no scene to capture; omit --evidence-dir".into());
         }
         if options.test_speed > 1
             && (!explicit_save_dir

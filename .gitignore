@@ -22,6 +22,9 @@
 !/crates/turbofish-openmpt/LICENSE
 !/crates/turbofish-openmpt/src/**/*.rs
 !/crates/turbofish-openmpt/tests/**/*.rs
+!/crates/turbofish-screenhost/Cargo.toml
+!/crates/turbofish-screenhost/LICENSE
+!/crates/turbofish-screenhost/src/**/*.rs
 
 # Private trees override the allowlist, including source-shaped files.
 /.scratch/
