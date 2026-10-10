@@ -3,7 +3,7 @@
 //! mappings are secondary-source-derived; retail mixing/fades remain unproved.
 
 use crate::adventure::{AdventurePhase, AdventureSession};
-use rodio::{Decoder, DeviceSinkBuilder, Player, buffer::SamplesBuffer};
+use rodio::{Decoder, DeviceSinkBuilder, Player, Source, buffer::SamplesBuffer};
 use serde::Serialize;
 use std::{
     fs,
@@ -12,7 +12,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender, TrySendError},
     },
     thread::{self, JoinHandle},
@@ -112,7 +112,14 @@ impl MusicCue {
             | AdventurePhase::ChallengeInterlude { .. } => Some(Self::Interlude),
             AdventurePhase::GameOver { .. }
             | AdventurePhase::TimeTrialGameOver { .. }
-            | AdventurePhase::ChallengeLost => None,
+            | AdventurePhase::ChallengeLost
+            | AdventurePhase::VirtualTank
+            | AdventurePhase::VirtualStore
+            | AdventurePhase::VirtualPurchaseConfirm { .. }
+            | AdventurePhase::VirtualSetup
+            | AdventurePhase::VirtualRename { .. }
+            | AdventurePhase::VirtualFishSaleConfirm { .. }
+            | AdventurePhase::VirtualBackdropSaleConfirm => None,
         }
     }
 }
@@ -153,9 +160,47 @@ struct DesiredState {
     paused: bool,
 }
 
+struct AudioGains {
+    music: AtomicU32,
+    effects: AtomicU32,
+}
+
+impl AudioGains {
+    fn full() -> Self {
+        Self {
+            music: AtomicU32::new(1.0_f32.to_bits()),
+            effects: AtomicU32::new(1.0_f32.to_bits()),
+        }
+    }
+}
+
+struct DecoderShared {
+    stop: Arc<AtomicBool>,
+    failure: Arc<Mutex<Option<String>>>,
+    dropped_reports: Arc<AtomicU64>,
+    gains: Arc<AudioGains>,
+}
+
+enum EffectCommand {
+    Play {
+        bytes: Arc<[u8]>,
+        gain: f32,
+        speed: f32,
+        song_id: Option<i32>,
+    },
+    StopSong(i32),
+}
+
+struct ActiveEffect {
+    player: Player,
+    gain: f32,
+    song_id: Option<i32>,
+}
+
 pub struct MusicOwner {
     controls: SyncSender<DesiredState>,
-    effects: SyncSender<Arc<[u8]>>,
+    effects: SyncSender<EffectCommand>,
+    gains: Arc<AudioGains>,
     reports: Receiver<MusicReport>,
     stop: Arc<AtomicBool>,
     failure: Arc<Mutex<Option<String>>>,
@@ -174,9 +219,11 @@ impl MusicOwner {
         let stop = Arc::new(AtomicBool::new(false));
         let failure = Arc::new(Mutex::new(None));
         let dropped_reports = Arc::new(AtomicU64::new(0));
+        let gains = Arc::new(AudioGains::full());
         let worker_stop = stop.clone();
         let worker_failure = failure.clone();
         let worker_dropped_reports = dropped_reports.clone();
+        let worker_gains = gains.clone();
         let thread = thread::Builder::new()
             .name("turbofish-music".into())
             .spawn(move || {
@@ -185,14 +232,18 @@ impl MusicOwner {
                     commands,
                     effect_commands,
                     reports_sender,
-                    worker_stop,
-                    worker_failure,
-                    worker_dropped_reports,
+                    DecoderShared {
+                        stop: worker_stop,
+                        failure: worker_failure,
+                        dropped_reports: worker_dropped_reports,
+                        gains: worker_gains,
+                    },
                 );
             })?;
         Ok(Self {
             controls,
             effects,
+            gains,
             reports,
             stop,
             failure,
@@ -255,7 +306,56 @@ impl MusicOwner {
     }
 
     pub fn play_effect(&self, bytes: Arc<[u8]>) -> Option<MusicReport> {
-        match self.effects.try_send(bytes) {
+        self.send_effect(EffectCommand::Play {
+            bytes,
+            gain: 1.0,
+            speed: 1.0,
+            song_id: None,
+        })
+    }
+
+    pub fn set_music_volume(&self, value: f32) -> Result<(), String> {
+        set_gain(&self.gains.music, value)
+    }
+
+    pub fn set_effects_volume(&self, value: f32) -> Result<(), String> {
+        set_gain(&self.gains.effects, value)
+    }
+
+    /// A score voice uses a bounded effect instance on the existing output
+    /// thread. Pitch changes sample rate; source samples play to completion.
+    /// Score durations schedule the next note in FishSongPlayer.
+    pub fn play_tone(
+        &self,
+        bytes: Arc<[u8]>,
+        song_id: i32,
+        pitch_semitones: f32,
+        gain: f32,
+    ) -> Option<MusicReport> {
+        if song_id < 0
+            || !pitch_semitones.is_finite()
+            || !(-96.0..=96.0).contains(&pitch_semitones)
+            || !gain.is_finite()
+            || !(0.0..=1.0).contains(&gain)
+        {
+            return Some(MusicReport::EffectFailed {
+                reason: "Invalid fish-song tone parameters".into(),
+            });
+        }
+        self.send_effect(EffectCommand::Play {
+            bytes,
+            gain,
+            speed: 2.0_f32.powf(pitch_semitones / 12.0),
+            song_id: Some(song_id),
+        })
+    }
+
+    pub fn stop_song(&self, song_id: i32) -> Option<MusicReport> {
+        self.send_effect(EffectCommand::StopSong(song_id))
+    }
+
+    fn send_effect(&self, command: EffectCommand) -> Option<MusicReport> {
+        match self.effects.try_send(command) {
             Ok(()) => None,
             Err(TrySendError::Full(_)) => Some(MusicReport::Overload {
                 reason: "Sound effect queue full; effect dropped".into(),
@@ -265,6 +365,14 @@ impl MusicOwner {
             }),
         }
     }
+}
+
+fn set_gain(destination: &AtomicU32, value: f32) -> Result<(), String> {
+    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+        return Err("Audio volume must be between zero and one".into());
+    }
+    destination.store(value.to_bits(), Ordering::Relaxed);
+    Ok(())
 }
 
 impl Drop for MusicOwner {
@@ -334,12 +442,16 @@ fn report_unavailable(
 fn run_decoder(
     game_root: PathBuf,
     commands: Receiver<DesiredState>,
-    effect_commands: Receiver<Arc<[u8]>>,
+    effect_commands: Receiver<EffectCommand>,
     reports: SyncSender<MusicReport>,
-    stop: Arc<AtomicBool>,
-    failure: Arc<Mutex<Option<String>>>,
-    dropped_reports: Arc<AtomicU64>,
+    shared: DecoderShared,
 ) {
+    let DecoderShared {
+        stop,
+        failure,
+        dropped_reports,
+        gains,
+    } = shared;
     let callback_reports = reports.clone();
     let callback_failure = failure.clone();
     let callback_dropped = dropped_reports.clone();
@@ -388,12 +500,18 @@ fn run_decoder(
     let mut paused = false;
     let mut rendered_blocks = 0_u64;
     let mut underruns = 0_u64;
-    let mut effects: Vec<Player> = Vec::new();
+    let mut effects: Vec<ActiveEffect> = Vec::new();
     loop {
         if stop.load(Ordering::Relaxed) || callback_failed.load(Ordering::Relaxed) {
             break;
         }
-        effects.retain(|effect| !effect.empty());
+        effects.retain(|effect| !effect.player.empty());
+        let music_gain = f32::from_bits(gains.music.load(Ordering::Relaxed));
+        let effects_gain = f32::from_bits(gains.effects.load(Ordering::Relaxed));
+        player.set_volume(0.30 * music_gain);
+        for effect in &effects {
+            effect.player.set_volume(0.75 * effects_gain * effect.gain);
+        }
         let mut did_work = false;
         match commands.try_recv() {
             Ok(desired) => {
@@ -454,7 +572,7 @@ fn run_decoder(
                 if paused {
                     player.pause();
                 } else {
-                    player.set_volume(0.30);
+                    player.set_volume(0.30 * music_gain);
                     player.play();
                 }
                 if pause_changed {
@@ -468,14 +586,34 @@ fn run_decoder(
             break;
         }
         match effect_commands.try_recv() {
-            Ok(bytes) => match decode_effect(bytes) {
+            Ok(EffectCommand::StopSong(song_id)) => {
+                did_work = true;
+                effects.retain(|effect| {
+                    if effect.song_id == Some(song_id) {
+                        effect.player.stop();
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
+            Ok(EffectCommand::Play {
+                bytes,
+                gain,
+                speed,
+                song_id,
+            }) => match decode_effect(bytes) {
                 Ok(decoded) => {
                     did_work = true;
                     if effects.len() < MAX_ACTIVE_EFFECTS {
                         let effect = Player::connect_new(stream.mixer());
-                        effect.set_volume(0.75);
-                        effect.append(decoded);
-                        effects.push(effect);
+                        effect.set_volume(0.75 * effects_gain * gain);
+                        effect.append(decoded.speed(speed));
+                        effects.push(ActiveEffect {
+                            player: effect,
+                            gain,
+                            song_id,
+                        });
                     } else {
                         emit_report(
                             &reports,
@@ -575,7 +713,7 @@ fn run_decoder(
     }
     let _ = stop_and_drain(&player);
     for effect in &effects {
-        effect.stop();
+        effect.player.stop();
     }
     drop(player);
     drop(stream);
@@ -594,6 +732,7 @@ mod tests {
             MusicOwner {
                 controls,
                 effects,
+                gains: Arc::new(AudioGains::full()),
                 reports,
                 stop: Arc::new(AtomicBool::new(false)),
                 failure: Arc::new(Mutex::new(None)),

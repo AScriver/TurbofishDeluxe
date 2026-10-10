@@ -4,9 +4,9 @@ Updated: 2026-10-10, America/Phoenix. **Active goal/phase: implement and integra
 
 ## Current increment
 
-Current32 [Challenge](docs/challenge.md#current32-implementation-checkpoint) passed focused checks and is frozen as E100. Separate session/Board state, tank-before-pet selection, dynamic prices, multi-dispatch waves, completion/records and generic loss-to-selector are integrated. Native acceptance remains deferred. The Virtual Tank model now covers store stock, ownership, feeding/production, calendar reopening and seven-pet selection; integrate it with Board, Profile, save and UI next. Sandbox/Relax's implementation brief is ready. Root owns shared integration/Cargo/Git; no user input blocks work.
+Current33 [Virtual Tank/store](docs/virtual-tank.md#current33-implementation-checkpoint) is focused-verified and frozen as E101: selector, separate fish ledger/transient Board, checkout/name/sale, setup/pets/backdrops, feeding/production/collection and reopening. General non-Guppy diets, pet effects and actor/visual parity remain incomplete; do not label the whole mode finished. Profiles/options, singing-fish parser/timing, live gain/pitch and Sandbox helpers compile, but their frontend integration follows next. Current32 [Challenge](docs/challenge.md#current32-implementation-checkpoint) is committed in`e49d48c` and frozen as E100. Root owns shared integration/Cargo/Git; no user input blocks work. Native acceptance remains deferred.
 
-The latest implementation-only direction permits pinned WinFish for bulk remaining behavior. Challenge repairs continue while Sandbox/Relax's implementation brief and the independent Virtual Tank model proceed. Defer nonessential analysis; keep known binary contradictions and unverified secondary behavior explicit.
+The latest implementation-first direction permits pinned WinFish for bulk remaining behavior. Sandbox/Relax and shared menus/profiles/options/audio are the next parallel production assignments. Defer nonessential analysis; keep known binary contradictions and unverified secondary behavior explicit.
 
 Current31 [fourth slot](docs/extra-pets.md#current31-implementation-checkpoint) is committed in`e68aa4796f1e6ec06df63b09629b3e74c5899484` and privately frozen as E99. Cursor4/40,000-shell capacity has ordinary/replay/TT fourth-choice and selected-plus-fixed Tank5 consumers; cursor5 waits for Virtual Tank. [C1–C4](docs/extra-pets.md#fourth-slot-integration-contract) owns its contract. One complete636-check gate passed after a static save-label guard correction, with no extra probe matrix or native run. [MODLOG](MODLOG.md#2026-10-10--verify-fourth-slot-and-preserve-current31) owns exact receipts. HEAD now also includes the separate README license notice commit`7e94d27492104b2f878546f8eefc62eae6ab95fd`; preserve it. Current30/Walter remains committed in`f528c98d136f2f2092f2d057e77b3bdfa4b53663` and frozen as E98.
 
@@ -25,6 +25,8 @@ Current29 [Stanley/cursor2](docs/extra-pets.md#current29-implementation-checkpoi
 [A31: Tank 4-1](docs/adventure-4-1.md) is the latest native-accepted stage, committed `38c65be9ad439a727b2e7e1b1401db928b8e55f6` (E76/E78). Its frozen bundle, reports and genuine earned saves remain preserved.
 
 ## Current build verification
+
+**E101 — observed current33 focused checks; native deferred:** Formatting, strict workspace lint, two Virtual Tank/five music/one current33 persistence cases and locked build/staging passed. No full suite or owned-asset/music rerun. EXE SHA`89ED74700B041C4E56BC68B15DF0E95B1FC6F6E421B3B22B32ED566E21148A4D`, frozen at`.scratch/runtime/checkpoints/a42-code-01`;57 source/tool inputs and14 copied artifacts matched the associated launcher. E80 and its genuine earned save matched; zero owned games. [MODLOG](MODLOG.md#2026-10-10--verify-virtual-tank-and-preserve-current33) owns the compact receipt and actual compile/lint failures. Frontend profiles/options/song integration and broader VT actor behavior remain open. No native/manual/render/audio/retail/human acceptance claim or new migration/backfill.
 
 **E100 — observed current32 focused checks; native deferred:** Formatting, strict workspace lint, nine Challenge library/one persistence cases and locked build/staging passed. Full workspace/music reruns were not performed. EXE SHA`87D55431572585747F889A6B78E727996D8F42D36913794212CCD1B697F45207`, frozen at`.scratch/runtime/checkpoints/a40-code-01`;52 source/tool inputs and14 copied artifacts matched the associated launcher. Six selected original/PB05/E80/earned-save inputs matched; zero owned games. [MODLOG](MODLOG.md#2026-10-10--verify-challenge-and-preserve-current32) owns the compact receipt and actual failures. No native/manual/render/audio/retail/human acceptance claim or new migration/backfill.
 
@@ -126,8 +128,8 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 
 Current next action:
 
-1. Preserve and commit the focused-verified current32 [Challenge](docs/challenge.md) checkpoint. Do not repeat its passing checks for documentation or transfer work.
-2. Continue automatically through [the completion sweep](docs/DESIGN.md#completion-sweep). Sandbox/Relax recovery can proceed while Challenge integration is held; independent assignments must have separate files/resources. Serialize shared Ghidra, integration, Cargo, Git and native experiments.
+1. Commit the frozen current33 [Virtual Tank](docs/virtual-tank.md) checkpoint. Do not repeat its passing checks for documentation or transfer work.
+2. Continue directly with Sandbox/Relax and shared menus/profiles/options/highscores/audio in separate file assignments, then close remaining whole-system VT/effects gaps through [the completion sweep](docs/DESIGN.md#completion-sweep). Serialize shared Ghidra, Cargo, Git and native experiments.
 3. After the feature sweep, clear agent-executable native acceptance with isolated saves/evidence, deadlines, events/visual inspection and owned-process cleanup. Preserve E80 and the genuine current17 earning06 save for its remaining earned A32 acceptance; do not synthesize Amp's selector or alter the retail installation.
 4. Keep inaccessible retail comparison, audible output where unobserved, and human feel/fidelity explicitly pending. Build/unit results do not establish playability or complete the full runtime requirements.
 

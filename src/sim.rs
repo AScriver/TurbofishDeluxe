@@ -3,6 +3,9 @@
 //! Positions are logical 640x480 coordinates and advance in 28 ms ticks.
 
 use crate::challenge::{self, ChallengeShop};
+use crate::virtual_tank::{
+    FeedResult, GuppyFood, VirtualCoinKind, VirtualFishKind, VirtualProduction, VirtualTankState,
+};
 use crate::{
     alien::{AlienFoodView, AlienRuntimeRequest, PreyView, SylvesterKind},
     bilaterus::BilaterusPreyView,
@@ -35,6 +38,264 @@ use crate::invasion::EncounterKind;
 pub const TICK_MS: u32 = 28;
 pub const BOARD_WIDTH: f32 = 640.0;
 pub const BOARD_HEIGHT: f32 = 480.0;
+
+/// Mode-five Board state contains only physical poses and short-lived objects.
+/// VirtualTankState owns every fish identity and its durable attributes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VirtualBoardState {
+    pub tick: u64,
+    pub poses: Vec<VirtualFishPose>,
+    pub food: Vec<VirtualFoodPose>,
+    pub coins: Vec<VirtualCoinPose>,
+    pub next_object_id: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VirtualFishPose {
+    pub fish_id: u16,
+    pub x: f32,
+    pub y: f32,
+    pub vx: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VirtualFoodPose {
+    pub x: f32,
+    pub y: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VirtualCoinPose {
+    pub id: u64,
+    pub x: f32,
+    pub y: f32,
+    pub kind: VirtualCoinKind,
+}
+
+impl VirtualBoardState {
+    pub fn new(tank: &VirtualTankState) -> Self {
+        let mut board = Self {
+            tick: 0,
+            poses: Vec::new(),
+            food: Vec::new(),
+            coins: Vec::new(),
+            next_object_id: 1,
+        };
+        board.sync_fish(tank);
+        board
+    }
+
+    pub fn sync_fish(&mut self, tank: &VirtualTankState) {
+        self.poses.retain(|pose| {
+            tank.active_fish()
+                .any(|fish| fish.id == pose.fish_id && fish.shown)
+        });
+        for fish in tank.active_fish().filter(|fish| fish.shown) {
+            if !self.poses.iter().any(|pose| pose.fish_id == fish.id) {
+                let ordinal = u32::from(fish.id);
+                self.poses.push(VirtualFishPose {
+                    fish_id: fish.id,
+                    x: 96.0 + (ordinal.wrapping_mul(61) % 440) as f32,
+                    y: 96.0 + (ordinal.wrapping_mul(43) % 280) as f32,
+                    vx: if ordinal % 2 == 0 { 0.65 } else { -0.65 },
+                });
+            }
+        }
+        self.poses.sort_by_key(|pose| pose.fish_id);
+    }
+
+    pub fn clear_ephemeral(&mut self) {
+        self.food.clear();
+        self.coins.clear();
+    }
+
+    pub fn validate(&self, tank: &VirtualTankState) -> Result<(), String> {
+        let expected = tank.active_fish().filter(|fish| fish.shown).count();
+        if self.poses.len() != expected
+            || self.poses.iter().enumerate().any(|(index, pose)| {
+                (index > 0 && self.poses[index - 1].fish_id >= pose.fish_id)
+                    || !tank
+                        .active_fish()
+                        .any(|fish| fish.id == pose.fish_id && fish.shown)
+                    || !pose.x.is_finite()
+                    || !(20.0..=620.0).contains(&pose.x)
+                    || !pose.y.is_finite()
+                    || !(55.0..=455.0).contains(&pose.y)
+                    || !pose.vx.is_finite()
+                    || pose.vx.abs() > 4.0
+            })
+            || self.food.iter().any(|food| {
+                !food.x.is_finite()
+                    || !food.y.is_finite()
+                    || !(20.0..=620.0).contains(&food.x)
+                    || !(55.0..=455.0).contains(&food.y)
+            })
+            || self.coins.iter().any(|coin| {
+                coin.id == 0
+                    || coin.id >= self.next_object_id
+                    || !coin.x.is_finite()
+                    || !coin.y.is_finite()
+                    || !(20.0..=620.0).contains(&coin.x)
+                    || !(55.0..=455.0).contains(&coin.y)
+            })
+        {
+            return Err("Virtual Tank Board and durable fish disagree".into());
+        }
+        let mut ids = HashSet::new();
+        if self.coins.iter().any(|coin| !ids.insert(coin.id)) {
+            return Err("Virtual Tank coin identities repeat".into());
+        }
+        Ok(())
+    }
+
+    pub fn feed(&mut self, x: f32, y: f32) -> bool {
+        if !(20.0..=620.0).contains(&x) || !(55.0..=455.0).contains(&y) || self.food.len() >= 12 {
+            return false;
+        }
+        self.food.push(VirtualFoodPose { x, y });
+        true
+    }
+
+    pub fn collect(
+        &mut self,
+        x: f32,
+        y: f32,
+        tank: &mut VirtualTankState,
+        shells: &mut u32,
+    ) -> Option<u32> {
+        let index = self
+            .coins
+            .iter()
+            .position(|coin| (coin.x - x).abs() < 25.0 && (coin.y - y).abs() < 25.0)?;
+        let coin = self.coins.remove(index);
+        Some(tank.collect_coin(shells, coin.kind, 1, false))
+    }
+
+    pub fn update(
+        &mut self,
+        tank: &mut VirtualTankState,
+        now_seconds: u64,
+        day_start_seconds: u64,
+    ) {
+        self.tick = self.tick.saturating_add(1);
+        self.sync_fish(tank);
+        for food in &mut self.food {
+            food.y = (food.y + 1.2).min(455.0);
+        }
+        self.food.retain(|food| food.y < 455.0);
+        for coin in &mut self.coins {
+            coin.y = (coin.y + 0.9).min(455.0);
+        }
+        self.coins.retain(|coin| coin.y < 455.0);
+        let meryl = tank.selected_pets.contains(&PetKind::Meryl);
+        let mut newborns = Vec::new();
+        for pose in &mut self.poses {
+            pose.x += pose.vx;
+            if pose.x <= 24.0 || pose.x >= 616.0 {
+                pose.x = pose.x.clamp(24.0, 616.0);
+                pose.vx = -pose.vx;
+            }
+            let Some(kind) = tank
+                .fish
+                .iter()
+                .find(|fish| fish.id == pose.fish_id && fish.alive)
+                .map(|fish| fish.kind)
+            else {
+                continue;
+            };
+            if let Some(fish) = tank
+                .fish
+                .iter_mut()
+                .find(|fish| fish.id == pose.fish_id && fish.alive)
+            {
+                fish.tick_hunger(true);
+            }
+            if let Some(index) = self
+                .food
+                .iter()
+                .position(|food| (food.x - pose.x).abs() < 30.0 && (food.y - pose.y).abs() < 26.0)
+            {
+                let fed = if kind == VirtualFishKind::Guppy {
+                    tank.feed_guppy(
+                        pose.fish_id,
+                        GuppyFood::Basic,
+                        now_seconds,
+                        day_start_seconds,
+                    )
+                    .ok()
+                } else {
+                    tank.fish
+                        .iter_mut()
+                        .find(|fish| fish.id == pose.fish_id && fish.alive)
+                        .map(|fish| {
+                            fish.hunger = fish.hunger.saturating_add(500).min(1400);
+                            let _ = fish.record_qualifying_feed(now_seconds, day_start_seconds);
+                            FeedResult::Fed
+                        })
+                };
+                if fed.is_some() {
+                    self.food.remove(index);
+                }
+            }
+            if let Some(fish) = tank
+                .fish
+                .iter_mut()
+                .find(|fish| fish.id == pose.fish_id && fish.alive)
+            {
+                match fish.tick_production(
+                    tank.settings.drop_shells,
+                    false,
+                    0,
+                    tank.board_shells,
+                    meryl,
+                ) {
+                    Some(VirtualProduction::Coin(kind)) => {
+                        self.coins.push(VirtualCoinPose {
+                            id: self.next_object_id,
+                            x: pose.x,
+                            y: pose.y,
+                            kind,
+                        });
+                        self.next_object_id = self.next_object_id.saturating_add(1);
+                    }
+                    Some(VirtualProduction::CookieFoodDue) if self.food.len() < 12 => {
+                        self.food.push(VirtualFoodPose {
+                            x: pose.x,
+                            y: pose.y,
+                        });
+                    }
+                    Some(VirtualProduction::BreederBirthDue) => newborns.push(pose.fish_id),
+                    _ => {}
+                }
+            }
+        }
+        for parent_id in newborns {
+            let properties = tank
+                .active_fish()
+                .find(|fish| fish.id == parent_id)
+                .map(|fish| fish.properties);
+            if let Some(properties) = properties {
+                let mut seed = self.tick ^ (u64::from(parent_id) << 32);
+                let offer =
+                    crate::virtual_tank::source_offer(VirtualFishKind::Guppy, properties, || {
+                        seed = seed
+                            .wrapping_mul(6364136223846793005)
+                            .wrapping_add(1442695040888963407);
+                        (seed >> 32) as u32
+                    });
+                let _ = tank.birth_from_breeder(
+                    parent_id,
+                    now_seconds,
+                    day_start_seconds,
+                    offer.initial_hunger,
+                    offer.food_needed_to_grow,
+                    offer.coin_threshold,
+                );
+            }
+        }
+        self.sync_fish(tank);
+    }
+}
 pub const FOOD_PRICE: i32 = 5;
 pub const GUPPY_PRICE: i32 = 100;
 pub const EGG_PRICE: i32 = 150;
@@ -596,10 +857,20 @@ pub struct NoteState {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Action {
-    Click { x: f32, y: f32 },
-    RightClick { x: f32, y: f32 },
-    PrestoPress { pet: PetKind },
-    PrestoRelease { pet: Option<PetKind> },
+    Click {
+        x: f32,
+        y: f32,
+    },
+    RightClick {
+        x: f32,
+        y: f32,
+    },
+    PrestoPress {
+        pet: PetKind,
+    },
+    PrestoRelease {
+        pet: Option<PetKind>,
+    },
     PrestoCancel,
     BuyGuppy,
     BuyEgg,
@@ -613,21 +884,109 @@ pub enum Action {
     BuyGekko,
     BuyBreeder,
     BuyUltra,
-    HoldFeed { x: f32, y: f32, elapsed_ms: u32 },
-    HoldFire { x: f32, y: f32, elapsed_ms: u32 },
-    TogglePet { pet: PetKind },
-    ConfirmPetSelection { accept: bool },
+    HoldFeed {
+        x: f32,
+        y: f32,
+        elapsed_ms: u32,
+    },
+    HoldFire {
+        x: f32,
+        y: f32,
+        elapsed_ms: u32,
+    },
+    TogglePet {
+        pet: PetKind,
+    },
+    ConfirmPetSelection {
+        accept: bool,
+    },
     OfferBonusPurchase,
-    ConfirmBonusPurchase { accept: bool },
+    ConfirmBonusPurchase {
+        accept: bool,
+    },
     OpenMenu,
     PlayAdventure,
     PlayTimeTrial,
-    SelectTimeTrialTank { tank: u8 },
+    SelectTimeTrialTank {
+        tank: u8,
+    },
     PlayChallenge,
-    SelectChallengeTank { tank: u8 },
+    SelectChallengeTank {
+        tank: u8,
+    },
     ChallengeStory,
     Continue,
-    HatchHold { down: bool },
+    HatchHold {
+        down: bool,
+    },
+    PlayVirtualTank {
+        now_seconds: u64,
+        day_start_seconds: u64,
+    },
+    OpenVirtualStore {
+        now_seconds: u64,
+        day_start_seconds: u64,
+    },
+    OpenVirtualSetup,
+    VirtualStoreOffer {
+        slot: usize,
+    },
+    VirtualSetPurchaseName {
+        name: String,
+    },
+    VirtualConfirmPurchase {
+        accept: bool,
+        now_seconds: u64,
+        day_start_seconds: u64,
+    },
+    VirtualFeed {
+        x: f32,
+        y: f32,
+        now_seconds: u64,
+        day_start_seconds: u64,
+    },
+    VirtualCollect {
+        x: f32,
+        y: f32,
+    },
+    VirtualSelectFish {
+        id: u16,
+    },
+    VirtualRenameFish {
+        id: u16,
+        name: String,
+    },
+    VirtualBeginRename {
+        id: u16,
+    },
+    VirtualSetRename {
+        name: String,
+    },
+    VirtualShowFish {
+        id: u16,
+        shown: bool,
+    },
+    VirtualSellFish {
+        id: u16,
+        accept: bool,
+        now_seconds: u64,
+    },
+    VirtualOfferFishSale {
+        id: u16,
+    },
+    VirtualOfferBackdropSale,
+    VirtualSwitchBackdrop {
+        direction: i8,
+    },
+    VirtualSellBackdrop {
+        accept: bool,
+    },
+    VirtualTogglePet {
+        pet: PetKind,
+    },
+    VirtualSetSettings {
+        settings: crate::virtual_tank::VirtualSettings,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -643,6 +1002,14 @@ pub enum Rejection {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Event {
+    VirtualTankChanged {
+        tick: u64,
+    },
+    VirtualCoinCollected {
+        tick: u64,
+        amount: u32,
+        shell_balance: u32,
+    },
     BlipShopRevealed {
         tick: u64,
     },
@@ -6348,7 +6715,27 @@ impl AdventureState {
             | Action::Continue
             | Action::TogglePet { .. }
             | Action::ConfirmPetSelection { .. }
-            | Action::HatchHold { .. } => {
+            | Action::HatchHold { .. }
+            | Action::PlayVirtualTank { .. }
+            | Action::OpenVirtualStore { .. }
+            | Action::OpenVirtualSetup
+            | Action::VirtualStoreOffer { .. }
+            | Action::VirtualSetPurchaseName { .. }
+            | Action::VirtualConfirmPurchase { .. }
+            | Action::VirtualFeed { .. }
+            | Action::VirtualCollect { .. }
+            | Action::VirtualSelectFish { .. }
+            | Action::VirtualRenameFish { .. }
+            | Action::VirtualBeginRename { .. }
+            | Action::VirtualSetRename { .. }
+            | Action::VirtualShowFish { .. }
+            | Action::VirtualSellFish { .. }
+            | Action::VirtualOfferFishSale { .. }
+            | Action::VirtualOfferBackdropSale
+            | Action::VirtualSwitchBackdrop { .. }
+            | Action::VirtualSellBackdrop { .. }
+            | Action::VirtualTogglePet { .. }
+            | Action::VirtualSetSettings { .. } => {
                 events.push(Event::Rejected {
                     tick: self.tick,
                     reason: Rejection::Locked,

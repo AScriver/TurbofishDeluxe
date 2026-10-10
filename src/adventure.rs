@@ -8,13 +8,18 @@ use crate::{
     niko::PearlPhase,
 };
 use serde::{Deserialize, Serialize};
+use std::cell::Cell;
 
 use crate::challenge::{self, ChallengeResult, ChallengeRun, ChallengeScores};
 pub use crate::sim::PetKind;
+use crate::sim::VirtualBoardState;
 use crate::sim::{
     Action, AdventureState, BonusPurchaseOutcome, EGG_PRICE, Event, Rejection, TICK_MS,
 };
 use crate::time_trial::{self, TimeTrialResult, TimeTrialRun, TimeTrialScores};
+use crate::virtual_tank::{
+    self, FishBiography, PurchaseConfirmation, PurchaseResult, VirtualTankState,
+};
 
 const HATCH_OPEN_CHECK: u32 = 141;
 const HATCH_READY_CHECK: u32 = 170;
@@ -25,6 +30,7 @@ pub(crate) fn results_offer(cursor: u8) -> Option<(BonusPurchaseOutcome, u32)> {
         2 => Some((BonusPurchaseOutcome::Pet(PetKind::Stanley), 30_000)),
         3 => Some((BonusPurchaseOutcome::Pet(PetKind::Walter), 35_000)),
         4 => Some((BonusPurchaseOutcome::CapacityAtLeast(4), 40_000)),
+        5 => Some((BonusPurchaseOutcome::CapacityAtLeast(7), 45_000)),
         _ => None,
     }
 }
@@ -65,6 +71,19 @@ pub struct AdventureProgress {
 
 fn default_pet_capacity() -> u8 {
     3
+}
+
+fn virtual_roll(seed: &Cell<u64>) -> u32 {
+    let next = seed
+        .get()
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    seed.set(next);
+    (next >> 32) as u32
+}
+
+fn valid_virtual_day(now_seconds: u64, day_start_seconds: u64) -> bool {
+    day_start_seconds <= now_seconds && now_seconds - day_start_seconds < 86_400
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,6 +319,23 @@ pub enum AdventurePhase {
     ChallengeInterlude {
         tank: u8,
     },
+    VirtualTank,
+    VirtualStore,
+    VirtualPurchaseConfirm {
+        cycle: u64,
+        slot: usize,
+        price: u32,
+        name: String,
+    },
+    VirtualSetup,
+    VirtualFishSaleConfirm {
+        id: u16,
+    },
+    VirtualBackdropSaleConfirm,
+    VirtualRename {
+        id: u16,
+        name: String,
+    },
     FirstTankRescue,
     InvasionTutorial {
         tip: InvasionTip,
@@ -337,6 +373,7 @@ pub enum GameMode {
     Adventure,
     TimeTrial,
     Challenge,
+    VirtualTank,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -363,12 +400,404 @@ pub struct AdventureSession {
     pub challenge_scores: ChallengeScores,
     #[serde(deserialize_with = "Option::<ChallengeRun>::deserialize")]
     pub challenge: Option<ChallengeRun>,
+    pub virtual_tank: VirtualTankState,
+    #[serde(deserialize_with = "Option::<VirtualBoardState>::deserialize")]
+    pub virtual_board: Option<VirtualBoardState>,
+    pub virtual_saved_at_seconds: u64,
+    virtual_seed: u64,
     next_seed: u64,
     #[serde(skip)]
     hatch_held: bool,
 }
 
 impl AdventureSession {
+    pub fn resume_virtual_from_save(&mut self, now_seconds: u64, day_start_seconds: u64) {
+        let cleanup = self.virtual_tank.resume_from_save(
+            self.virtual_saved_at_seconds,
+            now_seconds,
+            day_start_seconds,
+        );
+        if cleanup.clear_ephemeral_actors
+            && let Some(board) = &mut self.virtual_board
+        {
+            board.clear_ephemeral();
+        }
+        self.virtual_saved_at_seconds = now_seconds;
+    }
+
+    fn apply_virtual_action(&mut self, action: &Action, events: &mut Vec<Event>) {
+        let tick = self.ticks;
+        let reject =
+            |events: &mut Vec<Event>, reason| events.push(Event::Rejected { tick, reason });
+        let changed = |events: &mut Vec<Event>| events.push(Event::VirtualTankChanged { tick });
+        match (self.phase.clone(), action) {
+            (AdventurePhase::VirtualTank, Action::OpenMenu) => {
+                self.phase = AdventurePhase::GameSelector;
+                self.mode = GameMode::Adventure;
+                events.push(Event::GameSelectorOpened { tick });
+            }
+            (
+                AdventurePhase::VirtualTank,
+                Action::OpenVirtualStore {
+                    now_seconds,
+                    day_start_seconds,
+                },
+            ) => {
+                if !valid_virtual_day(*now_seconds, *day_start_seconds) {
+                    reject(events, Rejection::Locked);
+                    return;
+                }
+                self.virtual_saved_at_seconds = *now_seconds;
+                let cycle = *day_start_seconds;
+                if self
+                    .virtual_tank
+                    .stock
+                    .as_ref()
+                    .is_none_or(|stock| stock.cycle != cycle)
+                {
+                    let seed = Cell::new(self.virtual_seed);
+                    let offers = virtual_tank::generate_store_stock(
+                        &self.virtual_tank,
+                        cycle,
+                        || virtual_roll(&seed),
+                        |kind, properties| {
+                            virtual_tank::source_offer(kind, properties, || virtual_roll(&seed))
+                        },
+                    );
+                    match offers.and_then(|offers| self.virtual_tank.install_stock(cycle, offers)) {
+                        Ok(()) => self.virtual_seed = seed.get(),
+                        Err(_) => {
+                            reject(events, Rejection::Locked);
+                            return;
+                        }
+                    }
+                }
+                self.phase = AdventurePhase::VirtualStore;
+                changed(events);
+            }
+            (AdventurePhase::VirtualTank, Action::OpenVirtualSetup) => {
+                self.phase = AdventurePhase::VirtualSetup;
+                changed(events);
+            }
+            (
+                AdventurePhase::VirtualTank,
+                Action::VirtualFeed {
+                    x,
+                    y,
+                    now_seconds,
+                    day_start_seconds,
+                },
+            ) => {
+                if !valid_virtual_day(*now_seconds, *day_start_seconds) {
+                    reject(events, Rejection::Locked);
+                    return;
+                }
+                self.virtual_saved_at_seconds = *now_seconds;
+                if self
+                    .virtual_board
+                    .as_mut()
+                    .is_some_and(|board| board.feed(*x, *y))
+                {
+                    changed(events);
+                } else {
+                    reject(events, Rejection::OutsideTank);
+                }
+            }
+            (AdventurePhase::VirtualTank, Action::VirtualCollect { x, y }) => {
+                if let Some(amount) = self.virtual_board.as_mut().and_then(|board| {
+                    board.collect(
+                        *x,
+                        *y,
+                        &mut self.virtual_tank,
+                        &mut self.progress.shell_balance,
+                    )
+                }) {
+                    events.push(Event::VirtualCoinCollected {
+                        tick,
+                        amount,
+                        shell_balance: self.progress.shell_balance,
+                    });
+                } else {
+                    reject(events, Rejection::Locked);
+                }
+            }
+            (
+                AdventurePhase::VirtualTank | AdventurePhase::VirtualSetup,
+                Action::VirtualSelectFish { id },
+            ) => {
+                if self.virtual_tank.select_fish(*id).is_ok() {
+                    changed(events);
+                } else {
+                    reject(events, Rejection::Locked);
+                }
+            }
+            (
+                AdventurePhase::VirtualTank | AdventurePhase::VirtualSetup,
+                Action::VirtualShowFish { id, shown },
+            ) => {
+                if self.virtual_tank.set_fish_shown(*id, *shown).is_ok() {
+                    if let Some(board) = &mut self.virtual_board {
+                        board.sync_fish(&self.virtual_tank);
+                    }
+                    changed(events);
+                } else {
+                    reject(events, Rejection::Locked);
+                }
+            }
+            (AdventurePhase::VirtualSetup, Action::VirtualRenameFish { id, name }) => {
+                if self.virtual_tank.rename_fish(*id, name).is_ok() {
+                    changed(events);
+                } else {
+                    reject(events, Rejection::Locked);
+                }
+            }
+            (AdventurePhase::VirtualSetup, Action::VirtualBeginRename { id }) => {
+                if let Some(fish) = self.virtual_tank.active_fish().find(|fish| fish.id == *id) {
+                    self.phase = AdventurePhase::VirtualRename {
+                        id: *id,
+                        name: fish.name.clone(),
+                    };
+                } else {
+                    reject(events, Rejection::Locked);
+                }
+            }
+            (AdventurePhase::VirtualRename { id, .. }, Action::VirtualSetRename { name })
+                if name.len() <= 64 =>
+            {
+                self.phase = AdventurePhase::VirtualRename {
+                    id,
+                    name: name.clone(),
+                };
+                changed(events);
+            }
+            (
+                AdventurePhase::VirtualRename { id, name },
+                Action::VirtualRenameFish { id: requested, .. },
+            ) if id == *requested => {
+                if self.virtual_tank.rename_fish(id, &name).is_ok() {
+                    self.phase = AdventurePhase::VirtualSetup;
+                    changed(events);
+                } else {
+                    reject(events, Rejection::Locked);
+                }
+            }
+            (AdventurePhase::VirtualRename { .. }, Action::OpenMenu) => {
+                self.phase = AdventurePhase::VirtualSetup;
+                changed(events);
+            }
+            (AdventurePhase::VirtualSetup, Action::VirtualOfferFishSale { id }) => {
+                if self.virtual_tank.active_fish().any(|fish| fish.id == *id) {
+                    self.phase = AdventurePhase::VirtualFishSaleConfirm { id: *id };
+                } else {
+                    reject(events, Rejection::Locked);
+                }
+            }
+            (
+                AdventurePhase::VirtualFishSaleConfirm { id },
+                Action::VirtualSellFish {
+                    id: requested,
+                    accept,
+                    now_seconds,
+                },
+            ) if id == *requested => {
+                self.virtual_saved_at_seconds = *now_seconds;
+                if self
+                    .virtual_tank
+                    .sell_fish(
+                        &mut self.progress.shell_balance,
+                        id,
+                        *accept,
+                        *now_seconds,
+                        true,
+                    )
+                    .is_ok()
+                {
+                    if let Some(board) = &mut self.virtual_board {
+                        board.sync_fish(&self.virtual_tank);
+                    }
+                    self.phase = AdventurePhase::VirtualSetup;
+                    changed(events);
+                } else {
+                    reject(events, Rejection::Locked);
+                }
+            }
+            (AdventurePhase::VirtualSetup, Action::VirtualOfferBackdropSale) => {
+                if self
+                    .virtual_tank
+                    .owned_backdrops
+                    .iter()
+                    .filter(|owned| **owned)
+                    .count()
+                    > 1
+                {
+                    self.phase = AdventurePhase::VirtualBackdropSaleConfirm;
+                } else {
+                    reject(events, Rejection::Locked);
+                }
+            }
+            (
+                AdventurePhase::VirtualBackdropSaleConfirm,
+                Action::VirtualSellBackdrop { accept },
+            ) => {
+                if self
+                    .virtual_tank
+                    .sell_backdrop(&mut self.progress.shell_balance, *accept)
+                    .is_ok()
+                {
+                    self.phase = AdventurePhase::VirtualSetup;
+                    changed(events);
+                } else {
+                    reject(events, Rejection::Locked);
+                }
+            }
+            (AdventurePhase::VirtualSetup, Action::VirtualSwitchBackdrop { direction }) => {
+                if self.virtual_tank.switch_backdrop(*direction).is_ok() {
+                    changed(events);
+                } else {
+                    reject(events, Rejection::Locked);
+                }
+            }
+            (AdventurePhase::VirtualSetup, Action::VirtualSetSettings { settings }) => {
+                if self.virtual_tank.set_settings(settings.clone()).is_ok() {
+                    changed(events);
+                } else {
+                    reject(events, Rejection::Locked);
+                }
+            }
+            (AdventurePhase::VirtualSetup, Action::VirtualTogglePet { pet }) => {
+                let mut selected = self.virtual_tank.selected_pets.clone();
+                if let Some(index) = selected.iter().position(|candidate| candidate == pet) {
+                    selected.remove(index);
+                } else {
+                    selected.push(*pet);
+                }
+                if self
+                    .virtual_tank
+                    .set_selected_pets(
+                        &selected,
+                        &self.progress.unlocked_pets,
+                        self.progress.pet_capacity,
+                    )
+                    .is_ok()
+                {
+                    changed(events);
+                } else {
+                    reject(events, Rejection::Locked);
+                }
+            }
+            (
+                AdventurePhase::VirtualStore | AdventurePhase::VirtualSetup,
+                Action::Continue | Action::OpenMenu,
+            ) => {
+                self.phase = AdventurePhase::VirtualTank;
+                changed(events);
+            }
+            (AdventurePhase::VirtualStore, Action::VirtualStoreOffer { slot }) => {
+                if let Some(stock) = &self.virtual_tank.stock
+                    && let Some(Some(offer)) = stock.offers.get(*slot)
+                    && !stock.bought[*slot]
+                {
+                    self.phase = AdventurePhase::VirtualPurchaseConfirm {
+                        cycle: stock.cycle,
+                        slot: *slot,
+                        price: offer.price(),
+                        name: String::new(),
+                    };
+                } else {
+                    reject(events, Rejection::Locked);
+                }
+            }
+            (
+                AdventurePhase::VirtualPurchaseConfirm {
+                    cycle, slot, price, ..
+                },
+                Action::VirtualSetPurchaseName { name },
+            ) if name.len() <= 64 => {
+                self.phase = AdventurePhase::VirtualPurchaseConfirm {
+                    cycle,
+                    slot,
+                    price,
+                    name: name.clone(),
+                };
+                changed(events);
+            }
+            (
+                AdventurePhase::VirtualPurchaseConfirm {
+                    cycle,
+                    slot,
+                    price,
+                    name,
+                },
+                Action::VirtualConfirmPurchase {
+                    accept,
+                    now_seconds,
+                    day_start_seconds,
+                },
+            ) => {
+                if !valid_virtual_day(*now_seconds, *day_start_seconds)
+                    || cycle != *day_start_seconds
+                {
+                    reject(events, Rejection::Locked);
+                    return;
+                }
+                let seed = Cell::new(self.virtual_seed);
+                let mut likes = [0; 3];
+                for index in 0..3 {
+                    loop {
+                        let candidate = (virtual_roll(&seed) % 331) as u16;
+                        if !likes[..index].contains(&candidate) {
+                            likes[index] = candidate;
+                            break;
+                        }
+                    }
+                }
+                let biography = FishBiography {
+                    hometown: (virtual_roll(&seed) % 374 + 1) as u16,
+                    likes,
+                };
+                let confirmation = PurchaseConfirmation {
+                    cycle,
+                    slot,
+                    expected_price: price,
+                    accepted: *accept,
+                    fish_name: Some(name),
+                    fish_biography: Some(biography),
+                };
+                match self.virtual_tank.confirm_purchase(
+                    &mut self.progress.shell_balance,
+                    confirmation,
+                    *now_seconds,
+                    *day_start_seconds,
+                ) {
+                    Ok(result) => {
+                        if matches!(result, PurchaseResult::Fish { .. }) {
+                            self.virtual_seed = seed.get();
+                        }
+                        self.virtual_saved_at_seconds = *now_seconds;
+                        if let Some(board) = &mut self.virtual_board {
+                            board.sync_fish(&self.virtual_tank);
+                        }
+                        self.phase = AdventurePhase::VirtualStore;
+                        changed(events);
+                    }
+                    Err(virtual_tank::VirtualTankError::InsufficientShells) => {
+                        reject(events, Rejection::InsufficientFunds)
+                    }
+                    Err(_) => reject(events, Rejection::Locked),
+                }
+            }
+            (
+                AdventurePhase::VirtualPurchaseConfirm { .. }
+                | AdventurePhase::VirtualFishSaleConfirm { .. }
+                | AdventurePhase::VirtualBackdropSaleConfirm,
+                Action::OpenMenu,
+            ) => {
+                self.phase = AdventurePhase::VirtualTank;
+                changed(events);
+            }
+            _ => reject(events, Rejection::Locked),
+        }
+    }
     pub fn new(seed: u64) -> Self {
         let board = AdventureState::new_adventure(seed);
         let next_seed = board.transition_seed();
@@ -396,6 +825,10 @@ impl AdventureSession {
             time_trial: None,
             challenge_scores: ChallengeScores::new(),
             challenge: None,
+            virtual_tank: VirtualTankState::default(),
+            virtual_board: None,
+            virtual_saved_at_seconds: 0,
+            virtual_seed: seed ^ 0x56_54_33_53_54_4f_52_45,
             next_seed,
             hatch_held: false,
         }
@@ -448,6 +881,10 @@ impl AdventureSession {
                 time_trial: None,
                 challenge_scores: ChallengeScores::new(),
                 challenge: None,
+                virtual_tank: VirtualTankState::default(),
+                virtual_board: None,
+                virtual_saved_at_seconds: 0,
+                virtual_seed: next_seed ^ 0x56_54_33_53_54_4f_52_45,
                 next_seed,
                 hatch_held: false,
             };
@@ -480,6 +917,10 @@ impl AdventureSession {
             time_trial: None,
             challenge_scores: ChallengeScores::new(),
             challenge: None,
+            virtual_tank: VirtualTankState::default(),
+            virtual_board: None,
+            virtual_saved_at_seconds: 0,
+            virtual_seed: next_seed ^ 0x56_54_33_53_54_4f_52_45,
             next_seed,
             hatch_held: false,
         };
@@ -491,6 +932,21 @@ impl AdventureSession {
 
     /// Reject a decoded session whose board, profile, and screen disagree.
     pub fn validate(&self) -> Result<(), String> {
+        self.virtual_tank
+            .validate()
+            .map_err(|error| format!("invalid Virtual Tank profile: {error:?}"))?;
+        if self.virtual_tank.selected_pets.len() > usize::from(self.progress.pet_capacity).min(7)
+            || self
+                .virtual_tank
+                .selected_pets
+                .iter()
+                .any(|pet| !self.progress.has_pet(*pet))
+            || self.virtual_board.as_ref().is_some_and(|board| {
+                board.tick > self.ticks || board.validate(&self.virtual_tank).is_err()
+            })
+        {
+            return Err("Virtual Tank fish, Board, or pet roster disagrees".into());
+        }
         self.time_trial_scores.validate()?;
         self.challenge_scores.validate()?;
         if self
@@ -779,7 +1235,7 @@ impl AdventureSession {
         if self.progress.purchase_cursor >= 4 {
             expected_unlocks.push(PetKind::Walter);
         }
-        if self.progress.purchase_cursor > 5
+        if self.progress.purchase_cursor > 6
             || self.progress.unlocked_pets != expected_unlocks
             || (!self.progress.adventure_completed
                 && (self.progress.tank, self.progress.level) == (5, 2))
@@ -790,7 +1246,9 @@ impl AdventureSession {
         if self.progress.tank < 5 && self.progress.cyrax_attempts != 0 {
             return Err("Cyrax attempts precede the finale".into());
         }
-        let expected_capacity = if self.progress.purchase_cursor == 5 {
+        let expected_capacity = if self.progress.purchase_cursor >= 6 {
+            7
+        } else if self.progress.purchase_cursor == 5 {
             4
         } else {
             3
@@ -848,6 +1306,21 @@ impl AdventureSession {
                     .is_some_and(|board| board.challenge_shop.is_some()))
         {
             return Err("non-Challenge phase retains Challenge state".into());
+        }
+        if self.mode == GameMode::VirtualTank {
+            return self.validate_virtual_tank();
+        }
+        if matches!(
+            self.phase,
+            AdventurePhase::VirtualTank
+                | AdventurePhase::VirtualStore
+                | AdventurePhase::VirtualPurchaseConfirm { .. }
+                | AdventurePhase::VirtualSetup
+                | AdventurePhase::VirtualFishSaleConfirm { .. }
+                | AdventurePhase::VirtualBackdropSaleConfirm
+                | AdventurePhase::VirtualRename { .. }
+        ) {
+            return Err("Virtual Tank screen requires Virtual Tank mode".into());
         }
         if self.mode == GameMode::TimeTrial {
             return self.validate_time_trial();
@@ -1121,6 +1594,61 @@ impl AdventureSession {
         }
     }
 
+    fn validate_virtual_tank(&self) -> Result<(), String> {
+        if self.board.is_some() || self.time_trial.is_some() || self.challenge.is_some() {
+            return Err("Virtual Tank must retain its own Board only".into());
+        }
+        let board = self
+            .virtual_board
+            .as_ref()
+            .ok_or("Virtual Tank Board is missing")?;
+        board.validate(&self.virtual_tank)?;
+        match &self.phase {
+            AdventurePhase::VirtualTank | AdventurePhase::VirtualSetup => Ok(()),
+            AdventurePhase::VirtualStore if self.virtual_tank.stock.is_some() => Ok(()),
+            AdventurePhase::VirtualFishSaleConfirm { id }
+                if self.virtual_tank.active_fish().any(|fish| fish.id == *id) =>
+            {
+                Ok(())
+            }
+            AdventurePhase::VirtualBackdropSaleConfirm
+                if self
+                    .virtual_tank
+                    .owned_backdrops
+                    .iter()
+                    .filter(|owned| **owned)
+                    .count()
+                    > 1 =>
+            {
+                Ok(())
+            }
+            AdventurePhase::VirtualRename { id, name }
+                if name.len() <= 64
+                    && self.virtual_tank.active_fish().any(|fish| fish.id == *id) =>
+            {
+                Ok(())
+            }
+            AdventurePhase::VirtualPurchaseConfirm {
+                cycle,
+                slot,
+                price,
+                name,
+            } if name.len() <= 64
+                && self.virtual_tank.stock.as_ref().is_some_and(|stock| {
+                    stock.cycle == *cycle
+                        && *slot < stock.offers.len()
+                        && !stock.bought[*slot]
+                        && stock.offers[*slot]
+                            .as_ref()
+                            .is_some_and(|offer| offer.price() == *price)
+                }) =>
+            {
+                Ok(())
+            }
+            _ => Err("Virtual Tank screen and stock disagree".into()),
+        }
+    }
+
     fn validate_time_trial(&self) -> Result<(), String> {
         match (&self.phase, &self.board, &self.time_trial) {
             (AdventurePhase::TimeTrialTankSelection, None, None) => Ok(()),
@@ -1362,6 +1890,23 @@ impl AdventureSession {
         let mut entered_playing = false;
         let mut entered_hatch = false;
         for action in actions {
+            if matches!(
+                self.phase,
+                AdventurePhase::VirtualTank
+                    | AdventurePhase::VirtualStore
+                    | AdventurePhase::VirtualPurchaseConfirm { .. }
+                    | AdventurePhase::VirtualSetup
+                    | AdventurePhase::VirtualFishSaleConfirm { .. }
+                    | AdventurePhase::VirtualBackdropSaleConfirm
+                    | AdventurePhase::VirtualRename { .. }
+            ) {
+                events.push(Event::Action {
+                    tick: self.ticks,
+                    action: action.clone(),
+                });
+                self.apply_virtual_action(action, &mut events);
+                continue;
+            }
             match self.phase.clone() {
                 AdventurePhase::ChallengeTankSelection => {
                     events.push(Event::Action {
@@ -2020,6 +2565,28 @@ impl AdventureSession {
                     {
                         self.mode = GameMode::Challenge;
                         self.phase = AdventurePhase::ChallengeTankSelection;
+                    } else if let Action::PlayVirtualTank {
+                        now_seconds,
+                        day_start_seconds,
+                    } = action
+                    {
+                        if !valid_virtual_day(*now_seconds, *day_start_seconds) {
+                            events.push(Event::Rejected {
+                                tick: self.ticks,
+                                reason: Rejection::Locked,
+                            });
+                            continue;
+                        }
+                        self.mode = GameMode::VirtualTank;
+                        self.virtual_saved_at_seconds = *now_seconds;
+                        for fish in &mut self.virtual_tank.fish {
+                            fish.refresh_calendar(*now_seconds, *day_start_seconds);
+                        }
+                        if self.virtual_board.is_none() {
+                            self.virtual_board = Some(VirtualBoardState::new(&self.virtual_tank));
+                        }
+                        self.phase = AdventurePhase::VirtualTank;
+                        events.push(Event::VirtualTankChanged { tick: self.ticks });
                     } else if *action == Action::PlayAdventure {
                         if self.progress.adventure_completed
                             && (self.progress.tank, self.progress.level) == (5, 2)
@@ -2231,6 +2798,15 @@ impl AdventureSession {
                         });
                     }
                 }
+                AdventurePhase::VirtualTank
+                | AdventurePhase::VirtualStore
+                | AdventurePhase::VirtualPurchaseConfirm { .. }
+                | AdventurePhase::VirtualSetup
+                | AdventurePhase::VirtualFishSaleConfirm { .. }
+                | AdventurePhase::VirtualBackdropSaleConfirm
+                | AdventurePhase::VirtualRename { .. } => {
+                    unreachable!("Virtual Tank input handled before common screens")
+                }
             }
         }
         (events, entered_playing, entered_hatch)
@@ -2242,6 +2818,16 @@ impl AdventureSession {
         self.ticks += 1;
         let (mut events, entered_playing, entered_hatch) = self.apply_actions_inner(actions);
         match &mut self.phase {
+            AdventurePhase::VirtualTank => {
+                if let Some(board) = &mut self.virtual_board {
+                    let day_start = self.virtual_saved_at_seconds / 86_400 * 86_400;
+                    board.update(
+                        &mut self.virtual_tank,
+                        self.virtual_saved_at_seconds,
+                        day_start,
+                    );
+                }
+            }
             AdventurePhase::ChallengePlaying if !entered_playing => {
                 let board = self.board.as_mut().expect("Challenge Board");
                 events.extend(board.begin_tick());
@@ -2452,6 +3038,12 @@ impl AdventureSession {
             | AdventurePhase::ChallengePetSelectionConfirmation { .. }
             | AdventurePhase::ChallengeLost
             | AdventurePhase::ChallengeInterlude { .. }
+            | AdventurePhase::VirtualStore
+            | AdventurePhase::VirtualPurchaseConfirm { .. }
+            | AdventurePhase::VirtualSetup
+            | AdventurePhase::VirtualFishSaleConfirm { .. }
+            | AdventurePhase::VirtualBackdropSaleConfirm
+            | AdventurePhase::VirtualRename { .. }
             | AdventurePhase::FirstTankRescue
             | AdventurePhase::InvasionTutorial { .. }
             | AdventurePhase::GameSelector

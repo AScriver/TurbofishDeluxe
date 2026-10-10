@@ -21,6 +21,14 @@ Parallelize bounded source or independent implementation work with explicit owne
 
 The subsequent2026-10-10 steering defers work outside remaining-system implementation and permits pinned WinFish for bulk behavior. Use existing primary outlines plus secondary behavior to finish these outcomes; investigate small details immediately only when materially needed for safe implementation. Preserve primary contradictions and explicit qualifications rather than delaying whole systems for complete retail parity.
 
+## Virtual Tank integration decisions
+
+[Virtual Tank/store](virtual-tank.md) owns the current33 ownership, transaction and load contract. Keep Profile as the shell authority and durable fish separate from transient positions/food/coins; preserve Adventure while visiting store/setup. Cursor5 gains a real seven-pet consumer while ordinary choices remain capped4. Use pinned secondary behavior for the completion sweep; do not invent offline catch-up or claim unverified retail RNG/coin/render parity.
+
+## Sandbox integration decisions
+
+[Sandbox/Relax](sandbox.md) owns admission, keyboard/setup/save boundaries. Keep Sandbox distinct from the Relax flag, and require the actual cursor>5 gate. Its Board is disposable and cannot overwrite the retained Adventure scene. Capacity11 is the recovered floor; ordinary/VT consumers retain4/7 limits. Relax setup can be represented internally while its retail activation remains unknown; no guessed selector unlock.
+
 ## Logical Presto in Time Trial
 
 Use [A37](presto.md)'s closed factory/input/release contract and [A38](time-trial.md)'s committed-selection distinction. Enable unlocked initial Presto in TT while retaining egg acquisition's exclusion. A logical roster member remains Presto; exactly one concrete flagged incarnation owns pose/actions/recharge and a fresh allocated ID. Permit an ordinary counterpart without permitting duplicate ordinary members or multiple flagged actors. Do not introduce a second current-form authority, actor health, or historical save backfill.

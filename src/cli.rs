@@ -141,7 +141,7 @@ pub struct LegacyProjectSave {
     pub state: AdventureState,
 }
 
-pub const SAVE_FORMAT_VERSION: u32 = 32;
+pub const SAVE_FORMAT_VERSION: u32 = 33;
 
 #[cfg(test)]
 mod current_twenty_one_tests {
@@ -229,7 +229,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             );
         }
     }
-    if version_number.is_some_and(|version| (24..=32).contains(&version)) {
+    if version_number.is_some_and(|version| (24..=33).contains(&version)) {
         let session = value
             .get("session")
             .and_then(serde_json::Value::as_object)
@@ -254,7 +254,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Older save cannot claim Time Trial mode".into());
     }
-    if version_number.is_some_and(|version| (26..=32).contains(&version))
+    if version_number.is_some_and(|version| (26..=33).contains(&version))
         && (value
             .pointer("/session/progress/adventure_completions")
             .is_none()
@@ -269,7 +269,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Incomplete format-twenty-six replay state".into());
     }
-    if version_number.is_some_and(|version| (27..=32).contains(&version)) {
+    if version_number.is_some_and(|version| (27..=33).contains(&version)) {
         let purchase = |result: &serde_json::Value| {
             result.get("purchase").is_some_and(|receipt| {
                 ["offered_cursor", "confirming", "purchased"]
@@ -298,7 +298,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             return Err("Incomplete format-twenty-seven purchase or Brinkley state".into());
         }
     }
-    if version_number.is_some_and(|version| (28..=32).contains(&version))
+    if version_number.is_some_and(|version| (28..=33).contains(&version))
         && (value
             .pointer("/session/board/fish_pets")
             .and_then(serde_json::Value::as_array)
@@ -326,7 +326,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Incomplete format-twenty-eight Nostradamus state".into());
     }
-    if version_number.is_some_and(|version| (29..=32).contains(&version))
+    if version_number.is_some_and(|version| (29..=33).contains(&version))
         && (value
             .pointer("/session/board/fish_pets")
             .and_then(serde_json::Value::as_array)
@@ -357,7 +357,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Incomplete format-twenty-nine Stanley state".into());
     }
-    if version_number.is_some_and(|version| (30..=32).contains(&version))
+    if version_number.is_some_and(|version| (30..=33).contains(&version))
         && value
             .pointer("/session/board")
             .filter(|board| !board.is_null())
@@ -412,7 +412,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
     {
         return Err("Challenge state requires format thirty-two".into());
     }
-    if version_number == Some(32)
+    if version_number.is_some_and(|version| version >= 32)
         && (value.pointer("/session/challenge").is_none()
             || value.pointer("/session/challenge_scores").is_none()
             || value
@@ -431,6 +431,166 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                 .is_some_and(|board| board.get("challenge_shop").is_none()))
     {
         return Err("Incomplete format-thirty-two Challenge state".into());
+    }
+    if version_number.is_some_and(|version| version < 33)
+        && ([
+            "virtual_tank",
+            "virtual_board",
+            "virtual_saved_at_seconds",
+            "virtual_seed",
+        ]
+        .iter()
+        .any(|key| value.pointer(&format!("/session/{key}")).is_some())
+            || value.pointer("/session/progress").is_some_and(|progress| {
+                progress
+                    .get("purchase_cursor")
+                    .and_then(serde_json::Value::as_u64)
+                    .is_some_and(|cursor| cursor > 5)
+                    || progress
+                        .get("pet_capacity")
+                        .and_then(serde_json::Value::as_u64)
+                        .is_some_and(|capacity| capacity > 4)
+            }))
+    {
+        return Err("Virtual Tank and seven-slot capacity require format thirty-three".into());
+    }
+    if version_number == Some(33) {
+        let session = value
+            .pointer("/session")
+            .ok_or("Format-thirty-three session missing")?;
+        if [
+            "virtual_tank",
+            "virtual_board",
+            "virtual_saved_at_seconds",
+            "virtual_seed",
+        ]
+        .iter()
+        .any(|key| session.get(*key).is_none())
+            || session.get("virtual_tank").is_some_and(|tank| {
+                [
+                    "fish",
+                    "selected_fish",
+                    "selected_pets",
+                    "owned_backdrops",
+                    "backdrop",
+                    "bubbulator_owned",
+                    "alien_attractor_owned",
+                    "food_upgrade_owned",
+                    "settings",
+                    "stock",
+                    "board_shells",
+                ]
+                .iter()
+                .any(|key| tank.get(*key).is_none())
+                    || tank.get("settings").is_some_and(|settings| {
+                        [
+                            "show_names",
+                            "bubbulator_shown",
+                            "alien_attractor_shown",
+                            "drop_shells",
+                            "always_show_hungry",
+                        ]
+                        .iter()
+                        .any(|key| settings.get(*key).is_none())
+                    })
+                    || tank
+                        .get("stock")
+                        .filter(|stock| !stock.is_null())
+                        .is_some_and(|stock| {
+                            ["cycle", "offers", "bought"]
+                                .iter()
+                                .any(|key| stock.get(*key).is_none())
+                        })
+                    || tank
+                        .get("fish")
+                        .and_then(serde_json::Value::as_array)
+                        .is_none_or(|fish| {
+                            fish.iter().any(|fish| {
+                                [
+                                    "id",
+                                    "name",
+                                    "kind",
+                                    "properties",
+                                    "shown",
+                                    "alive",
+                                    "purchased_at_seconds",
+                                    "bought_today",
+                                    "purchase_price",
+                                    "size",
+                                    "hunger",
+                                    "food_ate",
+                                    "food_needed_to_grow",
+                                    "growth_ticks",
+                                    "coin_ticks",
+                                    "coin_threshold",
+                                    "breeder_child",
+                                    "hometown",
+                                    "likes",
+                                    "day_start_seconds",
+                                    "last_mental_day_seconds",
+                                    "fed_today",
+                                    "mental_state",
+                                    "has_given_birth",
+                                ]
+                                .iter()
+                                .any(|key| fish.get(*key).is_none())
+                                    || fish.get("properties").is_some_and(|properties| {
+                                        [
+                                            "invisible",
+                                            "voracious",
+                                            "speedy",
+                                            "singing",
+                                            "backward",
+                                            "exotic_diet",
+                                            "named",
+                                            "colors",
+                                            "color_roll",
+                                        ]
+                                        .iter()
+                                        .any(|key| properties.get(*key).is_none())
+                                    })
+                            })
+                        })
+            })
+            || session
+                .get("virtual_board")
+                .filter(|board| !board.is_null())
+                .is_some_and(|board| {
+                    ["tick", "poses", "food", "coins", "next_object_id"]
+                        .iter()
+                        .any(|key| board.get(*key).is_none())
+                        || board
+                            .get("poses")
+                            .and_then(serde_json::Value::as_array)
+                            .is_none_or(|poses| {
+                                poses.iter().any(|pose| {
+                                    ["fish_id", "x", "y", "vx"]
+                                        .iter()
+                                        .any(|key| pose.get(*key).is_none())
+                                })
+                            })
+                        || board
+                            .get("food")
+                            .and_then(serde_json::Value::as_array)
+                            .is_none_or(|food| {
+                                food.iter().any(|item| {
+                                    ["x", "y"].iter().any(|key| item.get(*key).is_none())
+                                })
+                            })
+                        || board
+                            .get("coins")
+                            .and_then(serde_json::Value::as_array)
+                            .is_none_or(|coins| {
+                                coins.iter().any(|coin| {
+                                    ["id", "x", "y", "kind"]
+                                        .iter()
+                                        .any(|key| coin.get(*key).is_none())
+                                })
+                            })
+                })
+        {
+            return Err("Incomplete format-thirty-three Virtual Tank state".into());
+        }
     }
     if let Some(version @ 1..=6) = version_number {
         validate_legacy_boundary(&value, version)?;
@@ -528,7 +688,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
             }
             (session, true)
         }
-        Some(version @ 5..=32) => {
+        Some(version @ 5..=33) => {
             let complete_progress = value
                 .pointer("/session/progress")
                 .and_then(serde_json::Value::as_object)
@@ -871,6 +1031,7 @@ fn decode_save_with_migration(bytes: &[u8]) -> Result<(AdventureSession, bool), 
                     30 => "thirty",
                     31 => "thirty-one",
                     32 => "thirty-two",
+                    33 => "thirty-three",
                     _ => unreachable!("bounded format range"),
                 };
                 return Err(format!(

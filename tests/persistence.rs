@@ -4813,6 +4813,151 @@ fn current31_fourth_slot_purchase_reopens_without_pet_unlock_or_actor() {
 }
 
 #[test]
+fn current33_seven_slot_receipt_and_virtual_tank_checkout_reopen_as_one_profile() {
+    use turbofish_deluxe::sim::Event;
+    let mut session = AdventureSession::new(0x4533);
+    session.progress.tank = 2;
+    session.progress.level = 1;
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+        PetKind::Zorf,
+        PetKind::Brinkley,
+        PetKind::Nostradamus,
+        PetKind::Stanley,
+        PetKind::Walter,
+    ];
+    session.progress.purchase_cursor = 5;
+    session.progress.pet_capacity = 4;
+    session.progress.shell_balance = 45_000;
+    session.board = None;
+    session.phase = AdventurePhase::BonusResults {
+        result: turbofish_deluxe::bonus::BonusResult {
+            origin_tank: 1,
+            origin_level: 6,
+            earned: 0,
+            previous_balance: 45_000,
+            updates: 30,
+            purchase: PurchaseReceipt::new(5),
+        },
+    };
+    session.validate().unwrap();
+    let unlocks = session.progress.unlocked_pets.clone();
+    session.apply_actions(&[Action::OfferBonusPurchase]);
+    let mut session = cli::decode_save(&current_bytes(session)).unwrap();
+    let purchase = session.apply_actions(&[Action::ConfirmBonusPurchase { accept: true }]);
+    assert!(purchase.iter().any(|event| matches!(
+        event,
+        Event::BonusPurchaseCommitted {
+            outcome: turbofish_deluxe::sim::BonusPurchaseOutcome::CapacityAtLeast(7),
+            price: 45_000,
+            shell_balance: 0,
+            ..
+        }
+    )));
+    assert_eq!(
+        (
+            session.progress.purchase_cursor,
+            session.progress.pet_capacity
+        ),
+        (6, 7)
+    );
+    assert_eq!(session.progress.unlocked_pets, unlocks);
+    session.validate().unwrap();
+
+    // Explicit project fixture grants store funds after the receipt has been
+    // checked. No earned retail profile or original save is implied.
+    session.phase = AdventurePhase::GameSelector;
+    session.progress.shell_balance = 100;
+    session.apply_actions(&[Action::PlayVirtualTank {
+        now_seconds: 100_000,
+        day_start_seconds: 86_400,
+    }]);
+    assert_eq!(session.phase, AdventurePhase::VirtualTank);
+    assert!(session.board.is_none());
+    session.apply_actions(&[Action::OpenVirtualStore {
+        now_seconds: 100_000,
+        day_start_seconds: 86_400,
+    }]);
+    assert_eq!(session.phase, AdventurePhase::VirtualStore);
+    session.apply_actions(&[Action::VirtualStoreOffer { slot: 0 }]);
+    session.apply_actions(&[Action::VirtualSetPurchaseName {
+        name: "Atlas".into(),
+    }]);
+    session.apply_actions(&[Action::VirtualConfirmPurchase {
+        accept: false,
+        now_seconds: 100_000,
+        day_start_seconds: 86_400,
+    }]);
+    assert_eq!(session.progress.shell_balance, 100);
+    session.apply_actions(&[Action::VirtualStoreOffer { slot: 0 }]);
+    session.apply_actions(&[Action::VirtualSetPurchaseName {
+        name: "Atlas".into(),
+    }]);
+    session.apply_actions(&[Action::VirtualConfirmPurchase {
+        accept: true,
+        now_seconds: 100_000,
+        day_start_seconds: 86_400,
+    }]);
+    assert_eq!(session.progress.shell_balance, 75);
+    assert_eq!(
+        session.virtual_tank.active_fish().next().unwrap().name,
+        "Atlas"
+    );
+    assert_eq!(session.virtual_board.as_ref().unwrap().poses.len(), 1);
+    session.apply_actions(&[Action::Continue]);
+    let pose = session.virtual_board.as_ref().unwrap().poses[0].clone();
+    session.apply_actions(&[Action::VirtualFeed {
+        x: pose.x,
+        y: pose.y,
+        now_seconds: 100_000,
+        day_start_seconds: 86_400,
+    }]);
+    session.step(&[]);
+    assert!(session.virtual_tank.active_fish().next().unwrap().food_ate > 0);
+    let fish = session
+        .virtual_tank
+        .fish
+        .iter_mut()
+        .find(|fish| fish.alive)
+        .unwrap();
+    fish.size = turbofish_deluxe::virtual_tank::FishSize::Medium;
+    fish.coin_ticks = fish.coin_threshold - 1;
+    session.step(&[]);
+    let coin = session.virtual_board.as_ref().unwrap().coins[0].clone();
+    let credited = session.apply_actions(&[Action::VirtualCollect {
+        x: coin.x,
+        y: coin.y,
+    }]);
+    assert!(credited.iter().any(|event| matches!(
+        event,
+        Event::VirtualCoinCollected {
+            amount: 1,
+            shell_balance: 76,
+            ..
+        }
+    )));
+    session.validate().unwrap();
+    let bytes = current_bytes(session.clone());
+    let reopened = cli::decode_save(&bytes).unwrap();
+    assert_eq!(reopened.virtual_tank, session.virtual_tank);
+    assert_eq!(reopened.virtual_board, session.virtual_board);
+    assert_eq!(reopened.progress, session.progress);
+
+    let mut missing: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    missing["session"]
+        .as_object_mut()
+        .unwrap()
+        .remove("virtual_board");
+    assert!(cli::decode_save(&serde_json::to_vec(&missing).unwrap()).is_err());
+    let mut relabeled: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    relabeled["format_version"] = 32.into();
+    assert!(cli::decode_save(&serde_json::to_vec(&relabeled).unwrap()).is_err());
+}
+
+#[test]
 fn current_purchase_cursor_one_nostradamus_reopens_with_single_exact_debit() {
     let mut session = AdventureSession::new(0x3925);
     session.progress.tank = 2;

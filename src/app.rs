@@ -16,6 +16,7 @@ use crate::{
     },
     timing::{InputPress, StepClock, wall_deadline_reached},
     ultra::UltraPose,
+    virtual_tank::{StoreProduct, VirtualFishKind},
 };
 use macroquad::miniquad::{BlendFactor, BlendState, BlendValue, Equation};
 use macroquad::prelude::*;
@@ -265,6 +266,21 @@ fn results_continue_rect(height: f32) -> Rect {
 
 fn results_confirm_rect(accept: bool) -> Rect {
     Rect::new(if accept { 160.0 } else { 335.0 }, 306.0, 145.0, 38.0)
+}
+
+fn virtual_offer_rect(slot: usize) -> Rect {
+    Rect::new(
+        28.0 + (slot % 2) as f32 * 300.0,
+        110.0 + (slot / 2) as f32 * 82.0,
+        284.0,
+        76.0,
+    )
+}
+
+fn wall_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 fn bonus_results_display_balance(result: &BonusResult, wallet: u32) -> u32 {
@@ -608,7 +624,7 @@ impl Presentation {
                         | CoinKind::ShellDiamondPenta,
                     ..
                 } => continue,
-                Event::CoinCredited { .. } => "SOUND_POINTS",
+                Event::CoinCredited { .. } | Event::VirtualCoinCollected { .. } => "SOUND_POINTS",
                 Event::GuppyBought { .. }
                 | Event::EggBought { .. }
                 | Event::FoodQualityBought { .. }
@@ -721,6 +737,7 @@ impl Presentation {
                 | Event::PetSelectionChanged { .. }
                 | Event::PetSelectionConfirmation { .. }
                 | Event::BonusPurchaseOffered { .. } => "SOUND_BUTTONCLICK",
+                Event::VirtualTankChanged { .. } => "SOUND_BUTTONCLICK",
                 _ => continue,
             };
             for effect_id in std::iter::once(id)
@@ -2568,6 +2585,7 @@ impl Presentation {
             crate::sim::BonusPurchaseOutcome::Pet(PetKind::Stanley) => "STANLEY",
             crate::sim::BonusPurchaseOutcome::Pet(PetKind::Walter) => "WALTER",
             crate::sim::BonusPurchaseOutcome::CapacityAtLeast(4) => "FOURTH PET SLOT",
+            crate::sim::BonusPurchaseOutcome::CapacityAtLeast(7) => "SEVEN PET SLOTS",
             _ => unreachable!("implemented results offer"),
         };
         if receipt.purchased {
@@ -3413,6 +3431,227 @@ impl Presentation {
         self.main_button(Rect::new(186.0, 445.0, 264.0, height), "Main Menu");
     }
 
+    fn draw_virtual_tank(&self, session: &AdventureSession) {
+        let background = match session.virtual_tank.backdrop {
+            0 => "IMAGE_AQUARIUM1",
+            1 => "IMAGE_AQUARIUM2",
+            2 => "IMAGE_AQUARIUM4",
+            3 => "IMAGE_AQUARIUM5",
+            _ => "IMAGE_AQUARIUM6",
+        };
+        self.sprite(background, 0.0, 0.0, None, false, 1.0, 1.0);
+        if let Some(board) = &session.virtual_board {
+            for food in &board.food {
+                self.sprite(
+                    "IMAGE_FOOD",
+                    food.x - 20.0,
+                    food.y - 20.0,
+                    Some(Rect::new(0.0, 0.0, 40.0, 40.0)),
+                    false,
+                    1.0,
+                    1.0,
+                );
+            }
+            for pose in &board.poses {
+                let Some(fish) = session
+                    .virtual_tank
+                    .active_fish()
+                    .find(|fish| fish.id == pose.fish_id)
+                else {
+                    continue;
+                };
+                let (image, frame_size) = match fish.kind {
+                    VirtualFishKind::Guppy => ("IMAGE_SMALLSWIM", 80.0),
+                    VirtualFishKind::Oscar => ("IMAGE_SCL_OSCAR", 40.0),
+                    VirtualFishKind::Ultra | VirtualFishKind::Bi => ("IMAGE_SCL_ULTRA", 40.0),
+                    VirtualFishKind::Gekko => ("IMAGE_SCL_GEKKO", 40.0),
+                    VirtualFishKind::Penta => ("IMAGE_SCL_STARCATCHER", 40.0),
+                    VirtualFishKind::Grubber => ("IMAGE_SCL_GRUBBER", 40.0),
+                    VirtualFishKind::Breeder => ("IMAGE_SCL_BREEDER", 40.0),
+                    VirtualFishKind::Sylvester | VirtualFishKind::Ball => ("IMAGE_SYLV", 80.0),
+                };
+                self.sprite(
+                    image,
+                    pose.x - frame_size / 2.0,
+                    pose.y - frame_size / 2.0,
+                    Some(Rect::new(
+                        (board.tick % 10) as f32 * frame_size,
+                        0.0,
+                        frame_size,
+                        frame_size,
+                    )),
+                    pose.vx > 0.0,
+                    1.0,
+                    if fish.properties.invisible { 0.35 } else { 1.0 },
+                );
+                if session.virtual_tank.settings.show_names {
+                    self.fonts["Pix118"].text(&fish.name, pose.x - 18.0, pose.y - 26.0, WHITE);
+                }
+            }
+            for coin in &board.coins {
+                self.sprite(
+                    "IMAGE_SHELLS",
+                    coin.x - 16.0,
+                    coin.y - 16.0,
+                    Some(Rect::new(0.0, 0.0, 32.0, 32.0)),
+                    false,
+                    1.0,
+                    1.0,
+                );
+            }
+        }
+        draw_rectangle(0.0, 0.0, 640.0, 70.0, Color::new(0.02, 0.08, 0.13, 0.94));
+        self.centered_text(
+            "JungleFever15outline",
+            &format!("VIRTUAL TANK   SHELLS {}", session.progress.shell_balance),
+            50.0,
+            YELLOW,
+        );
+        self.main_button(Rect::new(16.0, 4.0, 110.0, 32.0), "Store");
+        self.main_button(Rect::new(140.0, 4.0, 110.0, 32.0), "Setup");
+        self.main_button(Rect::new(514.0, 4.0, 110.0, 32.0), "Menu");
+
+        match &session.phase {
+            AdventurePhase::VirtualStore | AdventurePhase::VirtualPurchaseConfirm { .. } => {
+                draw_rectangle(10.0, 65.0, 620.0, 390.0, Color::new(0.02, 0.08, 0.14, 0.96));
+                self.centered_text("JungleFever17outline", "DAILY STORE", 102.0, YELLOW);
+                if let Some(stock) = &session.virtual_tank.stock {
+                    for (slot, product) in stock.offers.iter().enumerate() {
+                        let rect = virtual_offer_rect(slot);
+                        draw_rectangle(
+                            rect.x,
+                            rect.y,
+                            rect.w,
+                            rect.h,
+                            Color::new(0.08, 0.2, 0.27, 0.96),
+                        );
+                        let label = match product {
+                            Some(StoreProduct::Fish(offer)) => {
+                                format!("{:?}  {} shells", offer.kind, offer.price())
+                            }
+                            Some(other) => format!("{other:?}  {} shells", other.price()),
+                            None => "Unavailable".to_owned(),
+                        };
+                        self.fonts["JungleFever10outline"].text(
+                            &format!(
+                                "{}: {}{}",
+                                slot + 1,
+                                label,
+                                if stock.bought[slot] { "  SOLD" } else { "" }
+                            ),
+                            rect.x + 8.0,
+                            rect.y + 45.0,
+                            WHITE,
+                        );
+                    }
+                }
+                self.main_button(Rect::new(500.0, 445.0, 110.0, 32.0), "Back");
+            }
+            AdventurePhase::VirtualSetup
+            | AdventurePhase::VirtualFishSaleConfirm { .. }
+            | AdventurePhase::VirtualBackdropSaleConfirm
+            | AdventurePhase::VirtualRename { .. } => {
+                draw_rectangle(10.0, 65.0, 620.0, 390.0, Color::new(0.02, 0.08, 0.14, 0.96));
+                self.fonts["JungleFever10outline"].text("Fish", 20.0, 94.0, YELLOW);
+                for (index, fish) in session.virtual_tank.active_fish().enumerate() {
+                    let x = 20.0 + (index / 10) as f32 * 145.0;
+                    let y = 115.0 + (index % 10) as f32 * 27.0;
+                    let short_name: String = fish.name.chars().take(10).collect();
+                    self.fonts["Pix118"].text(
+                        &format!(
+                            "{} {} {}",
+                            fish.id,
+                            short_name,
+                            if fish.shown { "on" } else { "off" }
+                        ),
+                        x,
+                        y,
+                        WHITE,
+                    );
+                }
+                if let Some(id) = session.virtual_tank.selected_fish {
+                    self.fonts["Pix118"].text(&format!("Selected {id}"), 20.0, 411.0, YELLOW);
+                    self.main_button(Rect::new(20.0, 417.0, 94.0, 30.0), "Hide/Show");
+                    self.main_button(Rect::new(120.0, 417.0, 82.0, 30.0), "Rename");
+                    self.main_button(Rect::new(208.0, 417.0, 76.0, 30.0), "Sell");
+                }
+                self.fonts["JungleFever10outline"].text(
+                    "Pets (tap to toggle)",
+                    330.0,
+                    93.0,
+                    YELLOW,
+                );
+                for (index, pet) in session.progress.unlocked_pets.iter().enumerate() {
+                    let x = 334.0 + (index % 3) as f32 * 95.0;
+                    let y = 120.0 + (index / 3) as f32 * 30.0;
+                    self.fonts["Pix118"].text(
+                        &format!(
+                            "{}{:?}",
+                            if session.virtual_tank.selected_pets.contains(pet) {
+                                "*"
+                            } else {
+                                " "
+                            },
+                            pet
+                        ),
+                        x,
+                        y,
+                        WHITE,
+                    );
+                }
+                self.fonts["Pix118"].text(
+                    &format!(
+                        "Backdrop {}   Drop shells {}",
+                        session.virtual_tank.backdrop, session.virtual_tank.settings.drop_shells
+                    ),
+                    330.0,
+                    392.0,
+                    WHITE,
+                );
+                self.main_button(Rect::new(330.0, 416.0, 50.0, 30.0), "<");
+                self.main_button(Rect::new(385.0, 416.0, 50.0, 30.0), ">");
+                self.main_button(Rect::new(440.0, 416.0, 65.0, 30.0), "Sell");
+                self.main_button(Rect::new(510.0, 416.0, 90.0, 30.0), "Shells");
+                self.main_button(Rect::new(515.0, 445.0, 100.0, 30.0), "Back");
+            }
+            _ => {}
+        }
+        if let AdventurePhase::VirtualPurchaseConfirm { price, name, .. } = &session.phase {
+            draw_rectangle(85.0, 150.0, 470.0, 210.0, Color::new(0.02, 0.1, 0.15, 0.98));
+            self.centered_text(
+                "JungleFever15outline",
+                &format!("Buy for {price} shells?"),
+                195.0,
+                YELLOW,
+            );
+            self.centered_text(
+                "JungleFever10outline",
+                &format!("Fish name: {name}"),
+                239.0,
+                WHITE,
+            );
+            self.main_button(Rect::new(140.0, 305.0, 150.0, 38.0), "Buy");
+            self.main_button(Rect::new(350.0, 305.0, 150.0, 38.0), "Cancel");
+        }
+        if let AdventurePhase::VirtualRename { name, .. } = &session.phase {
+            draw_rectangle(85.0, 150.0, 470.0, 210.0, Color::new(0.02, 0.1, 0.15, 0.98));
+            self.centered_text("JungleFever15outline", "Rename fish", 195.0, YELLOW);
+            self.centered_text("JungleFever10outline", name, 239.0, WHITE);
+            self.main_button(Rect::new(140.0, 305.0, 150.0, 38.0), "Save");
+            self.main_button(Rect::new(350.0, 305.0, 150.0, 38.0), "Cancel");
+        }
+        if matches!(
+            session.phase,
+            AdventurePhase::VirtualFishSaleConfirm { .. }
+                | AdventurePhase::VirtualBackdropSaleConfirm
+        ) {
+            draw_rectangle(85.0, 150.0, 470.0, 210.0, Color::new(0.02, 0.1, 0.15, 0.98));
+            self.centered_text("JungleFever15outline", "Confirm sale?", 195.0, YELLOW);
+            self.main_button(Rect::new(140.0, 305.0, 150.0, 38.0), "Sell");
+            self.main_button(Rect::new(350.0, 305.0, 150.0, 38.0), "Cancel");
+        }
+    }
+
     fn draw(
         &self,
         session: &AdventureSession,
@@ -3421,6 +3660,13 @@ impl Presentation {
         healing_warning_until_tick: Option<u64>,
     ) {
         match session.phase {
+            AdventurePhase::VirtualTank
+            | AdventurePhase::VirtualStore
+            | AdventurePhase::VirtualPurchaseConfirm { .. }
+            | AdventurePhase::VirtualSetup
+            | AdventurePhase::VirtualFishSaleConfirm { .. }
+            | AdventurePhase::VirtualBackdropSaleConfirm
+            | AdventurePhase::VirtualRename { .. } => self.draw_virtual_tank(session),
             AdventurePhase::Hatch { pet, updates } => self.draw_hatch(pet, updates),
             AdventurePhase::TankFourFinaleHatch { updates } => self.draw_finale_hatch(updates),
             AdventurePhase::AdventureFinaleInterlude => self.draw_adventure_finale_interlude(),
@@ -3716,6 +3962,15 @@ impl Presentation {
                     "Challenge",
                 );
             }
+            self.main_button(
+                Rect::new(
+                    186.0,
+                    430.0,
+                    264.0,
+                    self.images["IMAGE_MAINBUTTON"].height(),
+                ),
+                "Virtual Tank",
+            );
         }
         if matches!(
             session.phase,
@@ -4218,6 +4473,8 @@ pub async fn run(
     assets: GameAssets,
     mut session: AdventureSession,
 ) -> Result<(), Box<dyn Error>> {
+    let opened_at = wall_seconds();
+    session.resume_virtual_from_save(opened_at, opened_at / 86_400 * 86_400);
     let presentation = Presentation::load(&game_root, &assets, options.muted).await?;
     let (mut music, mut music_unavailable) = if options.muted {
         (None, None)
@@ -4254,7 +4511,29 @@ pub async fn run(
         let (mouse_x, mouse_y) = mouse_position();
         let pointer = (vec2(mouse_x, mouse_y) - offset) / scale;
         if is_key_pressed(KeyCode::Escape) {
-            if matches!(
+            if matches!(session.phase, AdventurePhase::VirtualPurchaseConfirm { .. }) {
+                let now_seconds = wall_seconds();
+                pending_actions.push(Action::VirtualConfirmPurchase {
+                    accept: false,
+                    now_seconds,
+                    day_start_seconds: now_seconds / 86_400 * 86_400,
+                });
+            } else if let AdventurePhase::VirtualFishSaleConfirm { id } = session.phase {
+                pending_actions.push(Action::VirtualSellFish {
+                    id,
+                    accept: false,
+                    now_seconds: wall_seconds(),
+                });
+            } else if matches!(session.phase, AdventurePhase::VirtualBackdropSaleConfirm) {
+                pending_actions.push(Action::VirtualSellBackdrop { accept: false });
+            } else if matches!(session.phase, AdventurePhase::VirtualRename { .. }) {
+                pending_actions.push(Action::OpenMenu);
+            } else if matches!(
+                session.phase,
+                AdventurePhase::VirtualStore | AdventurePhase::VirtualSetup
+            ) {
+                pending_actions.push(Action::Continue);
+            } else if matches!(
                 session.phase,
                 AdventurePhase::TimeTrialPrestoDialog { .. }
                     | AdventurePhase::AdventurePrestoDialog { .. }
@@ -4303,6 +4582,32 @@ pub async fn run(
         } else {
             Rect::new(525.0, 3.0, 101.0, 29.0)
         };
+        if !paused {
+            let current_name = match &session.phase {
+                AdventurePhase::VirtualPurchaseConfirm { name, .. }
+                | AdventurePhase::VirtualRename { name, .. } => Some(name.clone()),
+                _ => None,
+            };
+            if let Some(mut name) = current_name {
+                let original = name.clone();
+                if is_key_pressed(KeyCode::Backspace) {
+                    name.pop();
+                }
+                while let Some(character) = get_char_pressed() {
+                    if (character.is_ascii_graphic() || character == ' ')
+                        && name.len() + character.len_utf8() <= 64
+                    {
+                        name.push(character);
+                    }
+                }
+                if name != original {
+                    pending_actions.push(match session.phase {
+                        AdventurePhase::VirtualRename { .. } => Action::VirtualSetRename { name },
+                        _ => Action::VirtualSetPurchaseName { name },
+                    });
+                }
+            }
+        }
         if is_mouse_button_pressed(MouseButton::Left) {
             if matches!(
                 session.phase,
@@ -4353,6 +4658,206 @@ pub async fn run(
                 held_fire_at = None;
             } else if !paused {
                 let action = match session.phase {
+                    AdventurePhase::VirtualTank => {
+                        let now_seconds = wall_seconds();
+                        if Rect::new(16.0, 4.0, 110.0, 32.0).contains(pointer) {
+                            Action::OpenVirtualStore {
+                                now_seconds,
+                                day_start_seconds: now_seconds / 86_400 * 86_400,
+                            }
+                        } else if Rect::new(140.0, 4.0, 110.0, 32.0).contains(pointer) {
+                            Action::OpenVirtualSetup
+                        } else if Rect::new(514.0, 4.0, 110.0, 32.0).contains(pointer) {
+                            Action::OpenMenu
+                        } else if session.virtual_board.as_ref().is_some_and(|board| {
+                            board.coins.iter().any(|coin| {
+                                (coin.x - pointer.x).abs() < 25.0
+                                    && (coin.y - pointer.y).abs() < 25.0
+                            })
+                        }) {
+                            Action::VirtualCollect {
+                                x: pointer.x,
+                                y: pointer.y,
+                            }
+                        } else if let Some(id) = session
+                            .virtual_board
+                            .as_ref()
+                            .and_then(|board| {
+                                board.poses.iter().find(|pose| {
+                                    (pose.x - pointer.x).abs() < 32.0
+                                        && (pose.y - pointer.y).abs() < 32.0
+                                })
+                            })
+                            .map(|pose| pose.fish_id)
+                        {
+                            Action::VirtualSelectFish { id }
+                        } else {
+                            Action::VirtualFeed {
+                                x: pointer.x,
+                                y: pointer.y,
+                                now_seconds,
+                                day_start_seconds: now_seconds / 86_400 * 86_400,
+                            }
+                        }
+                    }
+                    AdventurePhase::VirtualStore => {
+                        if Rect::new(500.0, 445.0, 110.0, 32.0).contains(pointer)
+                            || Rect::new(514.0, 4.0, 110.0, 32.0).contains(pointer)
+                        {
+                            Action::Continue
+                        } else if let Some(slot) =
+                            (0..8).find(|slot| virtual_offer_rect(*slot).contains(pointer))
+                        {
+                            Action::VirtualStoreOffer { slot }
+                        } else {
+                            Action::Click {
+                                x: pointer.x,
+                                y: pointer.y,
+                            }
+                        }
+                    }
+                    AdventurePhase::VirtualPurchaseConfirm { .. } => {
+                        let now_seconds = wall_seconds();
+                        if Rect::new(140.0, 305.0, 150.0, 38.0).contains(pointer) {
+                            Action::VirtualConfirmPurchase {
+                                accept: true,
+                                now_seconds,
+                                day_start_seconds: now_seconds / 86_400 * 86_400,
+                            }
+                        } else if Rect::new(350.0, 305.0, 150.0, 38.0).contains(pointer) {
+                            Action::VirtualConfirmPurchase {
+                                accept: false,
+                                now_seconds,
+                                day_start_seconds: now_seconds / 86_400 * 86_400,
+                            }
+                        } else {
+                            Action::Click {
+                                x: pointer.x,
+                                y: pointer.y,
+                            }
+                        }
+                    }
+                    AdventurePhase::VirtualSetup => {
+                        let selected_id = session.virtual_tank.selected_fish;
+                        if Rect::new(515.0, 445.0, 100.0, 30.0).contains(pointer)
+                            || Rect::new(514.0, 4.0, 110.0, 32.0).contains(pointer)
+                        {
+                            Action::Continue
+                        } else if let Some(id) = session
+                            .virtual_tank
+                            .active_fish()
+                            .enumerate()
+                            .find(|(index, _)| {
+                                Rect::new(
+                                    20.0 + (*index / 10) as f32 * 145.0,
+                                    99.0 + (*index % 10) as f32 * 27.0,
+                                    140.0,
+                                    27.0,
+                                )
+                                .contains(pointer)
+                            })
+                            .map(|(_, fish)| fish.id)
+                        {
+                            Action::VirtualSelectFish { id }
+                        } else if let Some(id) = selected_id
+                            .filter(|_| Rect::new(20.0, 417.0, 94.0, 30.0).contains(pointer))
+                        {
+                            let shown = session
+                                .virtual_tank
+                                .active_fish()
+                                .find(|fish| fish.id == id)
+                                .is_some_and(|fish| !fish.shown);
+                            Action::VirtualShowFish { id, shown }
+                        } else if let Some(id) = selected_id
+                            .filter(|_| Rect::new(120.0, 417.0, 82.0, 30.0).contains(pointer))
+                        {
+                            Action::VirtualBeginRename { id }
+                        } else if let Some(id) = selected_id
+                            .filter(|_| Rect::new(208.0, 417.0, 76.0, 30.0).contains(pointer))
+                        {
+                            Action::VirtualOfferFishSale { id }
+                        } else if Rect::new(330.0, 416.0, 50.0, 30.0).contains(pointer) {
+                            Action::VirtualSwitchBackdrop { direction: -1 }
+                        } else if Rect::new(385.0, 416.0, 50.0, 30.0).contains(pointer) {
+                            Action::VirtualSwitchBackdrop { direction: 1 }
+                        } else if Rect::new(440.0, 416.0, 65.0, 30.0).contains(pointer) {
+                            Action::VirtualOfferBackdropSale
+                        } else if Rect::new(510.0, 416.0, 90.0, 30.0).contains(pointer) {
+                            let mut settings = session.virtual_tank.settings.clone();
+                            settings.drop_shells = !settings.drop_shells;
+                            Action::VirtualSetSettings { settings }
+                        } else if let Some(pet) = session
+                            .progress
+                            .unlocked_pets
+                            .iter()
+                            .enumerate()
+                            .find(|(index, _)| {
+                                Rect::new(
+                                    330.0 + (*index % 3) as f32 * 95.0,
+                                    102.0 + (*index / 3) as f32 * 30.0,
+                                    93.0,
+                                    29.0,
+                                )
+                                .contains(pointer)
+                            })
+                            .map(|(_, pet)| *pet)
+                        {
+                            Action::VirtualTogglePet { pet }
+                        } else {
+                            Action::Click {
+                                x: pointer.x,
+                                y: pointer.y,
+                            }
+                        }
+                    }
+                    AdventurePhase::VirtualFishSaleConfirm { id } => {
+                        let now_seconds = wall_seconds();
+                        if Rect::new(140.0, 305.0, 150.0, 38.0).contains(pointer) {
+                            Action::VirtualSellFish {
+                                id,
+                                accept: true,
+                                now_seconds,
+                            }
+                        } else if Rect::new(350.0, 305.0, 150.0, 38.0).contains(pointer) {
+                            Action::VirtualSellFish {
+                                id,
+                                accept: false,
+                                now_seconds,
+                            }
+                        } else {
+                            Action::Click {
+                                x: pointer.x,
+                                y: pointer.y,
+                            }
+                        }
+                    }
+                    AdventurePhase::VirtualBackdropSaleConfirm => {
+                        if Rect::new(140.0, 305.0, 150.0, 38.0).contains(pointer) {
+                            Action::VirtualSellBackdrop { accept: true }
+                        } else if Rect::new(350.0, 305.0, 150.0, 38.0).contains(pointer) {
+                            Action::VirtualSellBackdrop { accept: false }
+                        } else {
+                            Action::Click {
+                                x: pointer.x,
+                                y: pointer.y,
+                            }
+                        }
+                    }
+                    AdventurePhase::VirtualRename { id, ref name } => {
+                        if Rect::new(140.0, 305.0, 150.0, 38.0).contains(pointer) {
+                            Action::VirtualRenameFish {
+                                id,
+                                name: name.clone(),
+                            }
+                        } else if Rect::new(350.0, 305.0, 150.0, 38.0).contains(pointer) {
+                            Action::OpenMenu
+                        } else {
+                            Action::Click {
+                                x: pointer.x,
+                                y: pointer.y,
+                            }
+                        }
+                    }
                     AdventurePhase::ChallengeResults
                         if session
                             .challenge
@@ -4605,6 +5110,15 @@ pub async fn run(
                             && Rect::new(186.0, 370.0, 264.0, button_height).contains(pointer) =>
                     {
                         Action::PlayChallenge
+                    }
+                    AdventurePhase::GameSelector
+                        if Rect::new(186.0, 430.0, 264.0, button_height).contains(pointer) =>
+                    {
+                        let now_seconds = wall_seconds();
+                        Action::PlayVirtualTank {
+                            now_seconds,
+                            day_start_seconds: now_seconds / 86_400 * 86_400,
+                        }
                     }
                     AdventurePhase::HelpScreen
                         if Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
@@ -5068,6 +5582,8 @@ pub async fn run(
                         | Event::ChallengeCompleted { .. }
                         | Event::ChallengeShellsCredited { .. }
                         | Event::ChallengeLost { .. }
+                        | Event::VirtualTankChanged { .. }
+                        | Event::VirtualCoinCollected { .. }
                         | Event::Invasion {
                             event: InvasionEvent::ModalOpened(_),
                             ..
@@ -5089,6 +5605,7 @@ pub async fn run(
                 )
             })
         {
+            session.virtual_saved_at_seconds = wall_seconds();
             cli::save_session(&options, &session)?;
         }
         healing_warning_until_tick = healing_warning_after_events(
@@ -5163,6 +5680,7 @@ pub async fn run(
         }
         next_frame().await;
     }
+    session.virtual_saved_at_seconds = wall_seconds();
     cli::save_session(&options, &session)?;
     let after = install::identify(&game_root)?;
     if after.inventory_sha256 != identity.inventory_sha256 {
