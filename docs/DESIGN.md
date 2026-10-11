@@ -6,6 +6,18 @@ The user directed continued reversing and implementation on2026-10-09 and the wh
 
 The committed [remaining-runtime map](binary-recovery.md) owns BR01–12 main behavior outlines and exact follow-ups across all remaining families. A36/Tank5-1, [A37](presto.md)/[Time Trial](time-trial.md), completed replay and current31 [bonus-pet purchases/fourth slot](extra-pets.md) have frozen code checkpoints. Close materially blocking details before each increment; defer other refinements with exact references. Preserve atomic validated project writes even where retail error handling is weaker, and keep unknown Relax entry/offline ageing/repeated-result behavior explicit until recovered.
 
+## Object-search optimization
+
+Actionable#289's [offline measurements](performance.md) establish the current
+query/Board baseline before optimization. Retain linear scans for now: the
+measured whole updates are far below the28ms step budget, and no spatial cache
+or new saved state is justified. Stinky's temporary coin/note vector and ID
+sort are a bounded avoidable cost. Replace that work with a single pass ordered
+by the same truncated squared distance and registration-ID tie-break. Retain
+the strict distance cutoff, eligibility, separate coin-contact order, RNG,
+phase/update order and all current saves. This preserves the project's
+existing coin/note merge policy; it does not recover new retail behavior.
+
 ## Windows checkpoint publication
 
 A66's normal-speed Menu resume published the resumed profile, then the process

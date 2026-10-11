@@ -10681,7 +10681,8 @@ impl AdventureState {
             }
             // The installed payload ranks integer coin centers by squared distance
             // from Stinky's double center. W1's recovered source expression differs;
-            // equal-distance candidates retain their original coin-list order.
+            // equal-distance candidates retain the project's registration-ID
+            // merge order across coins and notes.
             if self.tank != 5 && !alien_live && (!self.coins.is_empty() || !self.notes.is_empty()) {
                 let center_x = stinky.x + 40.0;
                 let center_y = stinky.y + 40.0;
@@ -10913,9 +10914,11 @@ impl AdventureState {
         notes: &[NoteState],
         starcatcher_live: bool,
     ) -> Option<i32> {
-        let mut best_distance = 100_000_000_i64;
+        // The zero ID retains the strict distance cutoff when no candidate has
+        // won. IDs break ties exactly as the previous stable ID sort did.
+        let mut best_key = (100_000_000_i64, 0);
         let mut best_x = None;
-        let mut views = coins
+        let views = coins
             .iter()
             .filter_map(|coin| {
                 (!(coin.collecting
@@ -10923,15 +10926,13 @@ impl AdventureState {
                     || starcatcher_live && coin.kind == CoinKind::Star))
                     .then_some((coin.id, coin.x.trunc() as i32, coin.y.trunc() as i32))
             })
-            .collect::<Vec<_>>();
-        views.extend(notes.iter().map(|note| (note.id, note.x, note.y)));
-        views.sort_by_key(|(id, _, _)| *id);
-        for (_, x, y) in views {
+            .chain(notes.iter().map(|note| (note.id, note.x, note.y)));
+        for (id, x, y) in views {
             let dx = ((stinky.x + 40.0) - (f64::from(x) + 40.0)) as i64;
             let dy = ((stinky.y + 40.0) - (f64::from(y) + 40.0)) as i64;
             let distance = dx * dx + dy * dy;
-            if distance < best_distance {
-                best_distance = distance;
+            if (distance, id) < best_key {
+                best_key = (distance, id);
                 best_x = Some(x);
             }
         }
@@ -11341,6 +11342,9 @@ impl AdventureState {
         }
     }
 }
+
+#[cfg(test)]
+mod search_performance;
 
 #[cfg(test)]
 mod tests {
@@ -14046,6 +14050,74 @@ mod tests {
         // W1's left-associative +36 term would select x=136 and accelerate.
         assert_eq!(state.stinky.first().unwrap().vx, 0.0);
         assert_eq!(state.stinky.first().unwrap().chase_timer, 1);
+    }
+
+    #[test]
+    fn a289_stinky_merge_ties_and_subpixel_metric_match_existing_contract() {
+        let mut board = AdventureState::new_second_stage(0xa289);
+        board.stinky[0].x = 100.0;
+        board.stinky[0].y = 200.0;
+        let note_id = board.id();
+        board.notes.push(NoteState {
+            id: note_id,
+            x: 90,
+            y: 200,
+            age_ticks: 0,
+        });
+        a32_coin(&mut board, CoinKind::Silver, 110.9, 200.9);
+        a32_coin(&mut board, CoinKind::Silver, 90.9, 200.9);
+        board.coins.reverse();
+        let target = |board: &AdventureState| {
+            AdventureState::stinky_target_x(&board.stinky[0], &board.coins, &board.notes, false)
+        };
+        // All three integer widget centers are equally distant. The note was
+        // registered first, despite coins being scanned before notes now.
+        assert_eq!(target(&board), Some(90));
+        let later_note_id = board.id();
+        board.notes[0].id = later_note_id;
+        // The lower-ID coin wins even though it is last in the coin vector.
+        assert_eq!(target(&board), Some(110));
+        board.stinky[0].x = 100.75;
+        board.coins[0].x = 100.9;
+        board.coins[1].x = 101.9;
+        // Truncating both axes before squaring makes these distances equal;
+        // comparing untruncated floating distances would pick x=100 instead.
+        assert_eq!(target(&board), Some(101));
+    }
+
+    #[test]
+    fn a289_stinky_exclusions_and_note_targets_are_rechecked_after_mutation() {
+        let mut board = AdventureState::new_second_stage(0xa28a);
+        board.stinky[0].x = 100.0;
+        board.stinky[0].y = 200.0;
+        a32_coin(&mut board, CoinKind::Silver, 100.0, 200.0);
+        board.coins[0].collecting = true;
+        a32_coin(&mut board, CoinKind::Star, 105.0, 200.0);
+        a32_coin(&mut board, CoinKind::ShrapnelBomb, 100.0, 200.0);
+        a32_coin(&mut board, CoinKind::Silver, 150.0, 200.0);
+        let note_id = board.id();
+        board.notes.push(NoteState {
+            id: note_id,
+            x: 120,
+            y: 200,
+            age_ticks: 0,
+        });
+        let target = |board: &AdventureState, starcatcher_live| {
+            AdventureState::stinky_target_x(
+                &board.stinky[0],
+                &board.coins,
+                &board.notes,
+                starcatcher_live,
+            )
+        };
+        assert_eq!(target(&board, false), Some(105));
+        assert_eq!(target(&board, true), Some(120));
+        board.notes.clear();
+        assert_eq!(target(&board, true), Some(150));
+        board.coins[3].collecting = true;
+        assert_eq!(target(&board, true), None);
+        board.coins.clear();
+        assert_eq!(target(&board, false), None);
     }
 
     #[test]
