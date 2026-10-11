@@ -8,6 +8,11 @@ The committed [remaining-runtime map](binary-recovery.md) owns BR01–12 main be
 
 ## Completion sweep
 
+The [current product scope](requirements.md#goal-and-constraints) excludes
+further screensaver work following the user's2026-10-10 instruction. Retain
+already integrated code/checkpoints without removing normal VT/profile features
+or adding saver packaging, fixtures or acceptance work. Continue the game sweep.
+
 Continue automatically through these dependency-aware outcomes, preserving the active Challenge increment and all earned/frozen work:
 
 1. Complete Challenge entry, economy, waves, results, loss destination and persistence.
@@ -93,6 +98,11 @@ Keep Help navigation transient and app-lived: instruction page0, remembered ordi
 Store earned Story ownership with the current profile/session:32-bit seen mask and separate Cyrax flag. Challenge's Story outcome performs selection/unlock once; browsing cannot unlock stories or pay shells. PB05`00552e50` supplies the four groups, extra-pet-only gate and final Cyrax qualification, correcting W1's broader pet gate. Read original titles/lore statically from the identified owned executable; do not launch it or track extracted text. Unsupported executable identity must report unavailable lore rather than substitute invented paragraphs. Keep UI clocks transient and preserve the underlying scene while reading. Add required current fields without migration/backfill; native, exact screen art/input and audible comparison remain deferred.
 
 ## Screensaver integration decisions
+
+Preserved implementation history. Screensaver work is outside the current
+completion scope under [requirements](requirements.md#goal-and-constraints);
+do not continue this lane or require its unperformed acceptance. Existing code,
+metadata and evidence remain intact. Normal VT/game/profile scope is unchanged.
 
 Build a disposable preview from the selected profile's actual Virtual Tank. Clone the whole session, enter VT on the clone, and never assign or serialize the preview back into the live profile. Preview coin collection may update its displayed counter but cannot earn persistent shells or change live RNG/fish progression. Use separate project-owned auxiliary settings for sound, backdrop rotation, periodic dimming, money overlay and power saving; do not backfill existing settings or gameplay schemas. Pinned W1 screensaver defaults and Board clocks supply the initial behavior. Document renderer/time projections and unresolved source branches explicitly.
 

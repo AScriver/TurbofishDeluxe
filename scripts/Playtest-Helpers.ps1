@@ -17,6 +17,10 @@ namespace Turbofish.Playtest {
         public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
         [DllImport("user32.dll", SetLastError=true)]
         public static extern bool PostMessageW(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")]
+        public static extern bool SetForegroundWindow(IntPtr window);
     }
 }
 '@
@@ -59,10 +63,35 @@ function Assert-TurbofishOwnedWindow {
 
 function Send-TurbofishWindowMessage {
     param([Parameter(Mandatory)]$Playtest, [uint32]$Message, [long]$WParam, [long]$LParam)
+    $foregroundPermission = $Playtest.PSObject.Properties['AllowOwnedForeground']
+    if ($null -ne $foregroundPermission -and $foregroundPermission.Value -eq $true -and
+        $Message -in @(0x0100, 0x0101, 0x0200, 0x0201, 0x0202)) {
+        Set-TurbofishOwnedForeground -Playtest $Playtest -AllowForeground | Out-Null
+    }
     $windowHandle = Assert-TurbofishOwnedWindow -Playtest $Playtest
     if (-not [Turbofish.Playtest.Native]::PostMessageW($windowHandle, $Message, [IntPtr]$WParam, [IntPtr]$LParam)) {
         throw "Owned-window message failed: $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())."
     }
+}
+
+function Set-TurbofishOwnedForeground {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Playtest, [Parameter(Mandatory)][switch]$AllowForeground)
+    if (-not $AllowForeground) { throw 'Owned foreground activation requires explicit scenario permission.' }
+    $windowHandle = Assert-TurbofishOwnedWindow -Playtest $Playtest
+    $alreadyForeground = [Turbofish.Playtest.Native]::GetForegroundWindow() -eq $windowHandle
+    $requested = $false
+    if (-not $alreadyForeground) {
+        $requested = $true
+        $null = [Turbofish.Playtest.Native]::SetForegroundWindow($windowHandle)
+    }
+    $verifiedWindow = Assert-TurbofishOwnedWindow -Playtest $Playtest
+    $acquired = $verifiedWindow -eq $windowHandle -and [Turbofish.Playtest.Native]::GetForegroundWindow() -eq $windowHandle
+    Write-TurbofishInputReceipt -Playtest $Playtest -InputRecord ([ordered]@{
+        kind='owned_foreground'; already_foreground=$alreadyForeground; activation_requested=$requested; acquired=$acquired
+    })
+    if (-not $acquired) { throw 'Windows declined foreground for the retained owned project window; no input posted.' }
+    return $windowHandle
 }
 
 function Write-TurbofishInputReceipt {
@@ -376,6 +405,7 @@ function Stop-TurbofishPlaytest {
     $closeError = $null
     $ownedProcess.Refresh()
     if (-not $ownedProcess.HasExited) {
+        # WM_CLOSE never requires foreground; failed input admission must not block cleanup.
         try { Send-TurbofishWindowMessage -Playtest $Playtest -Message 0x0010 -WParam 0 -LParam 0 }
         catch { $closeError = $_.Exception.Message }
         if (-not $ownedProcess.WaitForExit($GraceMilliseconds)) {

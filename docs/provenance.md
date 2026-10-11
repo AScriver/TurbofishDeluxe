@@ -1,5 +1,7 @@
 # Provenance and lineage
 
+E118 inspects the already owned Steam250752 `properties/resources.xml:39` to resolve the selector's logical `FONT_TINY` to `data/Pix118.txt`. Manifest SHA`DECFCFD152C0328CDB99EB2D98F56567AA13A4CB009CF7CE280338F19BFDE5AE`; original executable identity remains the registered F54 wrapper. This is observed installed resource metadata, with W1 `GameSelector.cpp:306` supplying the secondary profile-link consumer. The original adapter uses that filename; no manifest/font/image bytes are bundled. [A64 native report](playtests/2026-10-10-mode-continuation-a64-01.md) owns the reproduced startup failure and subsequent execution limits. No new binary export, revision or license is introduced.
+
 E117 studies already registered W1 `Board.cpp:221,2307–2324,2613–2658,2925–2933,5596`,
 `GameObject.cpp:243–271,1079–1091`, `ProfileMgr.cpp:230–253`,
 `FishTypePet.cpp:538–565,616–624,1378–1446`, `OtherTypePet.cpp:618–630`,

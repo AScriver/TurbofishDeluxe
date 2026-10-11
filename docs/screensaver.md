@@ -1,5 +1,12 @@
 # Virtual Tank screensaver
 
+**Preserved optional implementation:** the user's2026-10-10 scope change removes
+further screensaver work and acceptance from completion requirements. Retain
+already integrated code/checkpoints; no new saver implementation, packaging,
+fixtures, OS integration or native runs. The details below record existing
+behavior/evidence and unperformed optional checks; normal VT/game work continues.
+See [requirements](requirements.md#goal-and-constraints).
+
 Selector previews are disposable; standalone savers can bank income and narrow VT continuation. [STATUS](../STATUS.md) owns verified build/checkpoint scope; [design](DESIGN.md#screensaver-integration-decisions) owns ownership decisions. Native execution, embedding and retail/visual/audio/human comparison remain not tested.
 
 ## Preferences and preview

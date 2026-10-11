@@ -10,7 +10,7 @@ The complete runtime goal remains in [requirements](docs/requirements.md). The [
 
 ## Start here
 
-- E117 joins the source-qualified [saver production cap](docs/screensaver.md#production-cap) and actual [Title/Menu UI evidence](docs/playtest-helpers.md#ui-stage-observation); one focused accounting regression plus format/lint/build passed. E116 biographies/configuration ownership, E115 [retained modes](docs/mode-continuation.md) and earlier joins remain preserved. Next: frozen supporting build/prepared fixtures and two exact native-driver handoffs. Native/manual acceptance remains pending under the [completion sweep](docs/DESIGN.md#completion-sweep).
+- E118 fixes an observed selector startup font lookup. [A64](docs/playtests/2026-10-10-mode-continuation-a64-01.md) reached actual Title/Menu and passed typed reopen comparison; further native input is blocked by denied foreground access. Mode/save/reopen acceptance remains incomplete. No broad suite repeated. Four game outcome lanes have isolated preparation with serialized native windows. E117 UI evidence, E116 biographies, E115 [retained modes](docs/mode-continuation.md) and earlier joins remain preserved. Further screensaver work is outside [completion scope](docs/requirements.md#goal-and-constraints); completed code stays. Retail/audio/human judgment remains pending under the [completion sweep](docs/DESIGN.md#completion-sweep).
 - Agents: read [AGENTS.md](AGENTS.md), then follow its startup order.
 - Engineering approach and pending choices: [docs/DESIGN.md](docs/DESIGN.md).
 - Change history: [MODLOG.md](MODLOG.md).

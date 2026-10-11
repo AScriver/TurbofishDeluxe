@@ -10,6 +10,14 @@ Game logic and simulation execute in Rust. General-purpose graphics, audio, and 
 
 The user's 2026-10-08 clarification removes legacy-save compatibility from scope. Support the current project-save format; do not add migrations or historical-state reconstruction for future milestones. Preserve existing implementation, commits and earned test saves. Any explicitly prepared development fixture must retain its source and prove exactly which neutral schema fields changed; it is not evidence of product save compatibility. Original-save import is not required.
 
+On2026-10-10 the user removed screensaver work from completion scope and directed
+already completed work to remain. Preserve merged saver/configuration/preview/
+bank/host code, saved metadata and existing checkpoints. Do not schedule further
+screensaver implementation, packaging, OS integration, native acceptance or
+fixtures. The complete game scope still includes Virtual Tank gameplay/store,
+normal modes, menus/input/rendering, progression/failure, profiles/saves and audio.
+Screensaver evidence gaps do not block completion of the requested game runtime.
+
 The MW2/Skate 3/Minecraft Rust mashup is inspiration for recovering and rebuilding a runtime, not a requirement to embed another game or copy its engine architecture.
 
 ## Establish the reference

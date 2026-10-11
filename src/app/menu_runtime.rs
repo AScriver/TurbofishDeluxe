@@ -39,7 +39,7 @@ pub(super) const REQUIRED_FONT_NAMES: [&str; 5] = [
     "JungleFever10outline",
     "BlambotPro8",
     "BlambotPro15",
-    "Tiny",
+    "Pix118",
 ];
 
 pub(super) const fn font_file_name(font: SelectorFont) -> &'static str {
@@ -48,7 +48,7 @@ pub(super) const fn font_file_name(font: SelectorFont) -> &'static str {
         SelectorFont::SmallOutline => "JungleFever10outline",
         SelectorFont::Hint => "BlambotPro8",
         SelectorFont::ProfileName => "BlambotPro15",
-        SelectorFont::ProfileLink => "Tiny",
+        SelectorFont::ProfileLink => "Pix118",
     }
 }
 

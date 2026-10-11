@@ -285,7 +285,13 @@ function Save-ContinuationCheckpoint {
             throw 'Frozen Menu live Session identity differs from its actual captured draw.'
         }
         $sample['ui_observation'] = $observation
-        $eventRecord = Get-ContinuationFile (Join-Path $Playtest.EvidenceDirectory 'events.local.jsonl')
+        $eventPath = Assert-ContinuationPath (Join-Path $Playtest.EvidenceDirectory 'events.local.jsonl')
+        $eventRecord = [ordered]@{
+            path = $eventPath
+            prefix_length_observed = (Get-Item -LiteralPath $eventPath).Length
+            sha256 = $null
+            evidence_scope = 'live append log reference only; final closed-file digest is in event-index.local.json'
+        }
     }
     $retainedFrame = Join-Path $captureRoot ($Name + '.png')
     if (Test-Path -LiteralPath $retainedFrame) { throw 'Checkpoint frame already exists.' }
@@ -329,7 +335,8 @@ function Invoke-ContinuationProcess {
     $playtest = [pscustomobject]@{ Process = $retainedProcess; RunDirectory = $processRoot; EvidenceDirectory = $evidenceRoot
         SavePath = $savePath; StatePath = (Join-Path $evidenceRoot 'state.local.json')
         InputLogPath = (Join-Path $processRoot 'inputs.local.jsonl'); UiStatePath = (Join-Path $evidenceRoot 'ui-state.local.json')
-        Cleanup = $null; TestSpeed = $TestSpeed }
+        Cleanup = $null; TestSpeed = $TestSpeed
+        AllowOwnedForeground = ($lease.Contains('allow_owned_foreground') -and $lease['allow_owned_foreground'] -eq $true) }
     $ownedProcesses.Add($playtest)
     [ordered]@{ process_id = $retainedProcess.Id; arguments = $nativeArguments; executable = $executableRecord
         build_receipt = $buildRecord; fixture_receipt = $fixtureRecord; native_lease = $leaseRecord
@@ -655,8 +662,10 @@ finally {
     foreach ($playtest in $ownedProcesses) {
         try {
             $cleanup = Stop-TurbofishPlaytest -Playtest $playtest -GraceMilliseconds 1000
-            if ($cleanup.forced -or $cleanup.exit_code -ne 0 -or -not $cleanup.exited) {
+            if ($cleanup.forced -or -not $cleanup.exited) {
                 $failureMessage = "$failureMessage Retained-process cleanup was forced/unsuccessful for $($cleanup.process_id)."
+            } elseif ($cleanup.exit_code -ne 0) {
+                $failureMessage = "$failureMessage Runtime exited with code $($cleanup.exit_code); owned process $($cleanup.process_id) was cleaned without forced termination."
             }
         }
         catch { $failureMessage = "$failureMessage Cleanup error: $($_.Exception.Message)" }
