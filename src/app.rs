@@ -1913,30 +1913,7 @@ impl Presentation {
                         1.0,
                         1.0,
                     ),
-                    MissileKind::EnergyBall => {
-                        let x = missile.widget_x as f32;
-                        let y = missile.widget_y as f32;
-                        self.additive_tinted_sprite(
-                            "IMAGE_ENERGYBALL",
-                            x,
-                            y,
-                            Rect::new(f32::from(missile.frame) * 80.0, 0.0, 80.0, 80.0),
-                            false,
-                            if missile.reflected {
-                                Color::from_rgba(175, 175, 50, 255)
-                            } else {
-                                Color::from_rgba(100, 100, 255, 55)
-                            },
-                        );
-                        self.additive_tinted_sprite(
-                            "IMAGE_ENERGYBALL",
-                            x,
-                            y,
-                            Rect::new(400.0, 0.0, 80.0, 80.0),
-                            false,
-                            Color::from_rgba(100, 100, 255, 255),
-                        );
-                    }
+                    MissileKind::EnergyBall => self.draw_energy_ball(missile),
                     MissileKind::Stanley => self.sprite(
                         "IMAGE_MISSILE",
                         missile.widget_x as f32,
@@ -4127,6 +4104,31 @@ impl Presentation {
         }
     }
 
+    fn draw_energy_ball(&self, missile: &crate::missile::ClassicMissile) {
+        let x = missile.widget_x as f32;
+        let y = missile.widget_y as f32;
+        self.additive_tinted_sprite(
+            "IMAGE_ENERGYBALL",
+            x,
+            y,
+            Rect::new(f32::from(missile.frame) * 80.0, 0.0, 80.0, 80.0),
+            false,
+            if missile.reflected {
+                Color::from_rgba(175, 175, 50, 255)
+            } else {
+                Color::from_rgba(100, 100, 255, 55)
+            },
+        );
+        self.additive_tinted_sprite(
+            "IMAGE_ENERGYBALL",
+            x,
+            y,
+            Rect::new(400.0, 0.0, 80.0, 80.0),
+            false,
+            Color::from_rgba(100, 100, 255, 255),
+        );
+    }
+
     fn draw_virtual_combat(
         &self,
         wave: &crate::invasion::Invasion1_2,
@@ -4254,12 +4256,16 @@ impl Presentation {
             );
         }
         for missile in missiles {
-            let (image, scale) = match missile.kind {
-                MissileKind::Classic | MissileKind::EnergyBall => ("IMAGE_MISSILE", 1.0),
-                MissileKind::Stanley => ("IMAGE_MISSILE", 0.625),
+            let scale = match missile.kind {
+                MissileKind::Classic => 1.0,
+                MissileKind::Stanley => 0.625,
+                MissileKind::EnergyBall => {
+                    self.draw_energy_ball(missile);
+                    continue;
+                }
             };
             self.sprite(
-                image,
+                "IMAGE_MISSILE",
                 missile.widget_x as f32,
                 missile.widget_y as f32,
                 Some(Rect::new(f32::from(missile.frame) * 80.0, 0.0, 80.0, 80.0)),

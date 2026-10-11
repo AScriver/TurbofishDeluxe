@@ -44,6 +44,10 @@ Niko has owner-keyed clickable pearls; Stinky/Clyde cannot claim them. Brinkley 
 
 Current35 requires combat, object IDs, form/specialty clocks and corpse state without migration/backfill. E103 passed two combat cases and one active-state ownership/save/reopen/setup-freeze case plus lint/build. [MODLOG](../MODLOG.md#2026-10-10--integrate-virtual-combat-and-pets-and-preserve-current35) owns identities and retained fixture failures. This is broad functional integration, not a per-pet acceptance matrix. Exact target geometry, cross-list/contact timing, weapon/input overlap priority, motion, RNG, death rendering, retail/audio/human parity remain unverified.
 
+## Shared combat projectile presentation
+
+E119 closes one concrete renderer join: VT `VirtualCombatState` can launch Ulysses `EnergyBall` projectiles, but its draw path grouped them with classic missiles and used `IMAGE_MISSILE`. Reuse Adventure's existing kind-based projectile drawing for both Boards, including the two additive `IMAGE_ENERGYBALL` layers and reflected tint. Classic and Stanley retain their existing frames/scales. This changes the asset consumer for an already implemented actor; simulation, ownership, timing, RNG and current37 saves remain unchanged. Exact retail appearance and native VT combat inspection remain deferred. Source review is not a playtest; changed-code check results belong to STATUS/MODLOG.
+
 ## Current35 audio and trait checkpoint
 
 E104 joins [VT cues and typed effects](audio.md#virtual-tank-audio-join), upgraded manual food, Speedy displacement, Backward sprite facing, Voracious vocalization and the Bubbulator device/bubbles. Profile and Board remain the only wallet/live-state authorities; no serialized fields or migration/backfill were added. The affected current35 case checks upgraded food, one typed collection credit, repeated-click rejection, active-state save/reopen/setup freeze and existing required-field/object-ID guards. One new cue case and that affected case passed with lint/build; [MODLOG](../MODLOG.md#2026-10-10--join-virtual-audio-and-trait-effects) owns identities and the style-only first failure.
