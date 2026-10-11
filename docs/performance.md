@@ -1,5 +1,11 @@
 # Offline runtime performance
 
+The subsequent [current-source audit](performance-audit-2026-10-11.md) ranks
+optimized normal builds, batched loader progress and repeated active VT views.
+It includes fresh offline component timings and a conservative loading-frame
+count. Those follow-ups are recommendations; no further runtime change or FPS
+gain is claimed.
+
 ## Frame, profile and checkpoint results
 
 Actionables#292-294 are Done, implemented in three disjoint worktree chats and
