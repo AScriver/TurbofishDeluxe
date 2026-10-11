@@ -390,6 +390,18 @@ impl Profiles {
         let Some(current) = self.current() else {
             return Ok(false);
         };
+        // Ordinary frames cannot change these tables. Keep their event batches
+        // away from the copied name and every profile's retained scenes.
+        if !events.iter().any(|event| {
+            matches!(
+                event,
+                Event::StageResultRecorded { .. }
+                    | Event::TimeTrialExpired { .. }
+                    | Event::ChallengeCompleted { .. }
+            )
+        }) {
+            return Ok(false);
+        }
         let name = current.name.clone();
         let mut draft = self.clone();
         let mut changed = false;
