@@ -2,7 +2,7 @@
 
 Product scope: [requirements](requirements.md). Current evidence and environment: [STATUS](../STATUS.md). Implementation is authorized through the full runtime scope. Recovered rules are authoritative in [behavior contract](behavior-contract.md).
 
-The user directed continued reversing and implementation on2026-10-09 and the whole completion sweep on2026-10-10. The2026-10-11 [verification plan](requirements.md#acceptance-and-working-style) supersedes the autonomous native backlog: the human plays normally and reports issues. Three explicitly authorized performance chats now own Actionables#292-294 in separate worktrees; root owns synthesis and integration. Other engineering retains single-primary ownership. Keep independently grounded regressions and necessary focused checks. Actual gameplay remains required before a playability claim; unperformed acceptance remains pending without repeated agent launches. Preserve stopped game-written saves and frozen identities; do not manufacture earned progression.
+The user directed continued reversing and implementation on2026-10-09 and the whole completion sweep on2026-10-10. The2026-10-11 [verification plan](requirements.md#acceptance-and-working-style) supersedes the autonomous native backlog: the human plays normally and reports issues. Three explicitly authorized performance chats completed Actionables#292-294 in separate worktrees; root owns synthesis and integration. Other engineering retains single-primary ownership. Keep independently grounded regressions and necessary focused checks. Actual gameplay remains required before a playability claim; unperformed acceptance remains pending without repeated agent launches. Preserve stopped game-written saves and frozen identities; do not manufacture earned progression.
 
 The committed [remaining-runtime map](binary-recovery.md) owns BR01–12 main behavior outlines and exact follow-ups across all remaining families. A36/Tank5-1, [A37](presto.md)/[Time Trial](time-trial.md), completed replay and current31 [bonus-pet purchases/fourth slot](extra-pets.md) have frozen code checkpoints. Close materially blocking details before each increment; defer other refinements with exact references. Preserve atomic validated project writes even where retail error handling is weaker, and keep unknown Relax entry/offline ageing/repeated-result behavior explicit until recovered.
 
@@ -38,6 +38,14 @@ current checkpoint projection, including Sandbox origin restoration. Preserve
 current37/profile3, all profiles/retained scenes, synchronous durability, atomic
 failure preservation and the existing bounded Windows publication retry. No
 asynchronous save queue, schema change or speculative cache is authorized.
+
+All three changes are implemented and reconciled on main. The
+[performance index](performance.md#frame-profile-and-checkpoint-results) links
+the owning reports, exact fixtures, focused checks, source/build identities,
+serial timing receipts and retained slower controls. Root verified that current
+source matches the final integrated lint/build inputs instead of repeating
+passing Cargo checks. These results establish the stated offline behavior;
+ordinary human gameplay and unobserved native/FPS/fidelity remain separate.
 
 ## Windows checkpoint publication
 
@@ -75,7 +83,7 @@ Continue automatically through these dependency-aware outcomes, preserving the a
 5. Complete finale/results presentation, music, audio and effects, and reconcile every remaining [compatibility](compatibility.md) item against the full requirements.
 6. Hand ordinary gameplay to the human under the current verification plan. Preserve earlier prepared scenarios, incomplete acceptance reports and E80's byte-exact earning06 save/frozen build. Use focused tests for detailed rules and transactions; do not launch autonomous input/render/mode/audio runs or play through every historical checklist. A later targeted native reproduction requires explicit user authorization and the existing identity/isolation/cleanup contract.
 
-Root owns integration, central records and final decisions. The current bounded performance batch permits three disjoint worktree workers, their own Cargo targets and reconciled pushes to main; other source work retains single-primary ownership. Broad integrated coverage remains the priority: keep necessary focused compile/lint/regressions, defer exhaustive evidence, repeated validation/reviews, fidelity refinements and polishing unless they resolve a concrete implementation or correctness/data-integrity issue. No overlapping probe matrix or implementation-mirror tests. Keep a short deferred-detail list and move directly to the next system. Reported human gameplay issues drive fixes; human feel/fidelity and inaccessible retail observations remain pending until reported/observed. A material access or decision blocker requires input.
+Root owns integration, central records and final decisions. The three disjoint performance worktree lanes are complete with checked contributions on main; other source work retains single-primary ownership. Broad integrated coverage remains the priority: keep necessary focused compile/lint/regressions, defer exhaustive evidence, repeated validation/reviews, fidelity refinements and polishing unless they resolve a concrete implementation or correctness/data-integrity issue. No overlapping probe matrix or implementation-mirror tests. Keep a short deferred-detail list and move directly to the next system. Reported human gameplay issues drive fixes; human feel/fidelity and inaccessible retail observations remain pending until reported/observed. A material access or decision blocker requires input.
 
 The subsequent2026-10-10 steering defers work outside remaining-system implementation and permits pinned WinFish for bulk behavior. Use existing primary outlines plus secondary behavior to finish these outcomes; investigate small details immediately only when materially needed for safe implementation. Preserve primary contradictions and explicit qualifications rather than delaying whole systems for complete retail parity.
 

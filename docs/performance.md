@@ -1,4 +1,26 @@
-# Offline object-search performance
+# Offline runtime performance
+
+## Frame, profile and checkpoint results
+
+Actionables#292-294 are Done, implemented in three disjoint worktree chats and
+reconciled on main. Their owning reports retain complete fixtures, actual checks,
+source/binary identities, serial timing receipts and uncertainty:
+
+| Actionable | Implemented change | Offline result and owning report |
+|---|---|---|
+| #292 | Filter ordinary non-score events before cloning profile name/manager | Empty/irrelevant calls avoid manager allocation; eight-profile medians about9-15 microseconds to6-8 nanoseconds. [Profile events](performance-profile-events.md) retains the slower duplicate-score control. |
+| #293 | Create Virtual Tank UI snapshots only after active page admission | Adventure/TT inactive frame pairs capture zero tanks instead of two; 20-fish pairs about2.1 microseconds to0.04-0.05. [Virtual UI](performance-virtual-ui.md) verifies active controls and captured dialog behavior. |
+| #294 | Borrow ordinary checkpoints, project one Sandbox copy, skip equivalent duplicate publications | Ordinary preparation has zero manager/session copies; qualifying result pairs publish once instead of twice and measured49-53% lower cost. [Checkpoints](performance-checkpoints.md) retains complete save equivalence, failure/exit evidence and slower whole-Sandbox control. |
+
+Nineteen focused regressions passed across the lanes; four affected score/save
+checks passed again after joining all source. Formatting, strict integrated
+library/binary/test-target Clippy and an isolated locked/offline normal-bin build
+passed. Root verified seven current source/fixture/dependency hashes and all
+three owned commits against that integrated gate, then checked central records
+without rerunning Cargo. No game-wide FPS gain or retail performance claim is
+established. Ordinary gameplay remains human-owned.
+
+## Object-search baseline and optimization
 
 Actionable **#289** measured the current Rust simulation before changing its
 object searches. These checks are offline and use deterministic, disposable
