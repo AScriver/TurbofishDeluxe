@@ -1,10 +1,12 @@
 # Current handoff
 
-Updated: 2026-10-11, America/Phoenix. **Active phase: preserve the current save fix and normal launch handoff; continue concrete engineering under the full normal-game requirements.** The user's latest [verification plan](docs/requirements.md#acceptance-and-working-style) assigns engineering to one primary agent and normal gameplay to the human, who will report issues. Autonomous gameplay/mode/input/audio scenarios are stopped; earlier prepared acceptance work stays historical. Coordinator heartbeat remains paused. Keep necessary focused tests/lint/build checks; no broad suites, unchanged-filter repeats or exhaustive live matrices. Screensaver work is excluded; completed code stays. [DESIGN](docs/DESIGN.md#completion-sweep) owns implementation order. The broad recovery pass, full requirements, E80 and genuine earning06 save remain preserved. Retail/audio/human fidelity remains explicitly pending wherever unobserved.
+Updated: 2026-10-11, America/Phoenix. **Active phase: implement the three authorized performance improvements in separate worktrees, then reconcile and push all finished work to main.** The user's latest [verification plan](docs/requirements.md#acceptance-and-working-style) permits this bounded parallel batch; other engineering retains single-primary ownership and normal gameplay stays with the human, who will report issues. Autonomous gameplay/mode/input/audio scenarios are stopped; earlier prepared acceptance work stays historical. Coordinator heartbeat remains paused. Keep necessary focused tests/lint/build checks; no broad suites, unchanged-filter repeats or exhaustive live matrices. Screensaver work is excluded; completed code stays. [DESIGN](docs/DESIGN.md#completion-sweep) owns implementation order. The broad recovery pass, full requirements, E80 and genuine earning06 save remain preserved. Retail/audio/human fidelity remains explicitly pending wherever unobserved.
 
 ## Current increment
 
-Current engineering increment is E121 / Actionable #289; E120's human ordinary-gameplay handoff remains current. Older increment entries retain historical next-run plans; the current `Next action` section supersedes them.
+Current engineering increment is E122 / Actionables #292-294; E121/#289 is complete and E120's human ordinary-gameplay handoff remains current. Older increment entries retain historical next-run plans; the current `Next action` section supersedes them.
+
+**E122 — bounded parallel performance batch (#292-294), in progress:** Three new scoped Actionables and three managed worktree chats are dispatched from clean main `0d971b3c`. #292 owns `Profiles::record_events` and related tests; #293 owns `refresh_virtual_ui`/`VirtualRuntime`; #294 owns checkpoint projection/publication and separate normal-frame persistence hunks. Root owns shared records, integration and final decisions. [Frame/checkpoint design](docs/DESIGN.md#frame-and-checkpoint-allocation) owns the invariants and resource policy. Source confirms avoidable no-op/hidden snapshot clones and redundant checkpoint work; improvements, measurements and focused validation remain pending. No live game or human saves are used.
 
 **E121 — measured object-search optimization (#289):** Stinky target selection now uses a single pass, removing its temporary coin/note vector and ID sort while preserving current distance, tie, eligibility and contact rules. [Performance](docs/performance.md) owns identified before/after fixtures, timings, hashes and limits. The crowded query median improved 2.72x; crowded whole-tick median fell 20.3%. Complete state and ordered-event digests match after one and 32 ticks. Whole-tick baselines do not justify a spatial index; food/prey searches remain unchanged. Fifteen affected simulation regressions, formatting, strict production lint, both measurement cases and an isolated build passed. An unrelated unchanged save-decoder diagnostic test failed in the broader filter; its exact limitation is retained below and in the report. No native run, normal-launch build refresh, save/profile change or parallel agent followed this work.
 
@@ -162,7 +164,7 @@ These maintenance checks retain historical records; they do not establish Tank4-
 
 ## Ownership
 
-The primary session alone owns engineering, synthesis, records, Cargo/fmt/build/Git and final decisions under the latest single-agent direction. Ordinary gameplay is human-owned; no autonomous native lease or delegate is active. A35 code ownership is closed in its [contract](docs/adventure-4-5.md#integration-and-checks). The broad recovery and table below retain historical ownership:
+Root owns synthesis, integration, central records and final decisions. The user explicitly authorized the current three performance chats in separate worktrees: #292 profile event handling, #293 inactive Virtual Tank UI and #294 checkpoint work. Workers own only their reserved functions, separate tests/reports and isolated build/fixture outputs; root reserves any extra source transfer. Ordinary gameplay is human-owned; no autonomous native lease is active. Other engineering retains single-primary ownership. A35 code ownership is closed in its [contract](docs/adventure-4-5.md#integration-and-checks). The broad recovery and table below retain historical ownership:
 
 | Owner | Responsibility |
 |---|---|
@@ -171,7 +173,7 @@ The primary session alone owns engineering, synthesis, records, Cargo/fmt/build/
 | Presentation/Nimbus owner | `fish_pet.rs`, `app.rs` |
 | Tester | `tests/persistence.rs`, isolated native evidence and owned-process cleanup |
 
-Root owns shared Cargo/fmt/process/database work; no new investigator/next-contract lease is assigned. No A32 or A66 agent-owned native process remains; historical cleanup is recorded. Preserve unrelated work and frozen artifacts; keep original installation read-only and project saves separate. Add no new legacy migration, backfill or import.
+Performance workers own separate Cargo targets and disposable offline fixtures; no shared process/database/native lease is assigned. Measurement timing is serialized after preparation. No A32 or A66 agent-owned native process remains; historical cleanup is recorded. Preserve unrelated work and frozen artifacts; keep original installation read-only and project saves separate. Add no new legacy migration, backfill or import.
 
 ## Evidence ledger
 
@@ -188,7 +190,7 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 Current next action:
 
 1. Human launches normally with the [startup command](docs/playtests/2026-10-10-mode-continuation-a66-01.md#default-profile-and-human-launch-handoff), plays and reports issues. No accelerated/muted/fixture flags are needed. Omit `--new-game` on later runs to resume. Do not inspect or stop the human session for automated testing.
-2. Root resolves reported issues and concrete remaining implementation gaps from [compatibility](docs/compatibility.md), with necessary focused unit/integration/lint/build checks and coherent commits. Do not restart A66 or the four prepared outcome lanes; preserve all their work and failed receipts. No repeated intake or legacy migration.
+2. Complete #292-294 with disjoint worktree ownership, focused offline checks and serial measurements; reconcile every owned contribution onto main without force and publish root's integration records. Then root resolves reported issues and concrete remaining implementation gaps from [compatibility](docs/compatibility.md). Do not restart A66 or the four prepared outcome lanes; preserve all their work and failed receipts. No repeated intake or legacy migration.
 3. Preserve E80 and genuine current17 earning06 unchanged. The old A32 egg/Amp/selector endpoint and other native scenarios remain unperformed historical acceptance, not a mandate to play through them automatically. [Relax](docs/sandbox.md#contract)'s retail activation remains unknown.
 4. Keep inaccessible retail comparison, audible output where unobserved, and human feel/fidelity explicitly pending. Record actual human feedback separately from agent checks; build/unit results do not establish full gameplay acceptance or completion.
 
