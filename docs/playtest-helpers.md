@@ -47,6 +47,7 @@ The host wrapper requires the already installed PSScriptAnalyzer. Validate the e
 | `Send-TurbofishClick` | Logical640x480 coordinates; current client size/letterboxing sampled per click; window-local move/down/up, release in `finally`. |
 | `Assert-TurbofishOwnedWindow` | Refresh returned process; reject exit/missing window; check HWND owner PID. Every posted message rechecks ownership and its native success result. No global input or title/name-based target selection; activation stays off by default. |
 | `Set-TurbofishOwnedForeground` | Explicit `-AllowForeground` only: read actual foreground, request activation only for the verified retained project HWND, recheck ownership/focus, and record before/request/after. Refuse input if Windows denies it; no thread attachment, third-party activation or global input. A serialized scenario may set `Playtest.AllowOwnedForeground=true` only under an exact lease allowing it. Only keyboard/mouse messages use that permission; `WM_CLOSE` cleanup never requires foreground. |
+| `Playtest.RequireOwnedForeground` | Opt-in manual activation policy: recheck retained HWND ownership and actual foreground before each keyboard/mouse message; refuse input after focus loss. No activation request. Takes precedence over `AllowOwnedForeground`; `WM_CLOSE` stays focus-independent. |
 | `Read-TurbofishJson` / `Assert-TurbofishSnapshot` | File sharing permits atomic replacement; live keys are `elapsed_seconds`, `paused`, `session_tick`, `phase`, `progress`, **`state`**. Missing keys/schema errors are explicit; nullable Board is valid. |
 | `Wait-TurbofishState` | Monotonic deadline, process liveness, retry only I/O/JSON read failures; optional exclusive `-AfterSessionTick` for freshness. Predicate must return one Boolean; exceptions surface immediately. Timeout names the expectation and last sample/read error. |
 | `Request-TurbofishCapture` | Reject an already pending request; wait for consumption and a new nonempty frame, bounded by timeout/process liveness. A request file alone is not success. |
@@ -90,8 +91,30 @@ exports GPU readback, requires a nonempty PNG, writes `capture-result.local.json
 as `{ "frame": "filename", "observation": <same-draw sideband> }`, then removes
 the request. `Request-TurbofishCapture` already accepts this `frame-*.png`
 contract; shared helpers are unchanged. Native `/s` and `/p` retain their
-existing capture API. This instrumentation has compile evidence only; actual
-input, rendering, readback and retail fidelity remain not tested.
+existing capture API. [A64](playtests/2026-10-10-mode-continuation-a64-01.md)
+records actual Title/Menu observations; [A66](playtests/2026-10-10-mode-continuation-a66-01.md)
+records a later ready Title and background cleanup. Full continuation and retail
+fidelity remain unaccepted.
+
+## Manual activation for mode continuation
+
+[Test-NativeModeContinuation.ps1](../scripts/Test-NativeModeContinuation.ps1)
+accepts optional `-ManualActivationWaitSeconds` (0–120; default0). Above0 requires
+an exact native lease with the same wait, `foreground_policy` set to
+`user-activated-owned-window`, current `helper_sha256`, and no automatic
+activation permission. Ask user availability before launch, then deliver a
+timed prompt while the retained owned window is live: activate through
+titlebar/taskbar, leave focused, and do not press Start/game controls. Actual
+foreground readback admits input; a text reply alone does not. The one serial
+reopen may need activation again. All waits share the scenario/lease deadline
+and cleanup reserve; they never renew it.
+
+Private `*-manual-activation.local.json` preserves the initial wait/owned window;
+`*-manual-activation-result.local.json` records observed foreground or timeout
+without rewriting that receipt. Zero automatic activation requests are recorded.
+A66's collision correction is parser-checked, not native-tested. Preserve failed
+attempts and allocate fresh run paths/leases; unavailable foreground defers the
+scenario rather than authorizing repeated launches.
 
 ## Scenario rules
 

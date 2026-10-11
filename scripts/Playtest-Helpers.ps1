@@ -63,9 +63,15 @@ function Assert-TurbofishOwnedWindow {
 
 function Send-TurbofishWindowMessage {
     param([Parameter(Mandatory)]$Playtest, [uint32]$Message, [long]$WParam, [long]$LParam)
+    $manualForeground = $Playtest.PSObject.Properties['RequireOwnedForeground']
     $foregroundPermission = $Playtest.PSObject.Properties['AllowOwnedForeground']
-    if ($null -ne $foregroundPermission -and $foregroundPermission.Value -eq $true -and
-        $Message -in @(0x0100, 0x0101, 0x0200, 0x0201, 0x0202)) {
+    $scenarioInput = $Message -in @(0x0100, 0x0101, 0x0200, 0x0201, 0x0202)
+    if ($scenarioInput -and $null -ne $manualForeground -and $manualForeground.Value -eq $true) {
+        $ownedInputWindow = Assert-TurbofishOwnedWindow -Playtest $Playtest
+        if ([Turbofish.Playtest.Native]::GetForegroundWindow() -ne $ownedInputWindow) {
+            throw 'Owned project window lost manual foreground; no input posted.'
+        }
+    } elseif ($scenarioInput -and $null -ne $foregroundPermission -and $foregroundPermission.Value -eq $true) {
         Set-TurbofishOwnedForeground -Playtest $Playtest -AllowForeground | Out-Null
     }
     $windowHandle = Assert-TurbofishOwnedWindow -Playtest $Playtest

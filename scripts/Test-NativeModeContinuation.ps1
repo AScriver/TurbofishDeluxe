@@ -43,6 +43,7 @@ param(
     [string]$GameDirectory,
     [ValidateSet(1)][int]$TestSpeed = 1,
     [ValidateRange(60, 300)][int]$WallDeadlineSeconds = 120,
+    [ValidateRange(0, 120)][int]$ManualActivationWaitSeconds = 0,
     [switch]$Mute
 )
 
@@ -336,6 +337,7 @@ function Invoke-ContinuationProcess {
         SavePath = $savePath; StatePath = (Join-Path $evidenceRoot 'state.local.json')
         InputLogPath = (Join-Path $processRoot 'inputs.local.jsonl'); UiStatePath = (Join-Path $evidenceRoot 'ui-state.local.json')
         Cleanup = $null; TestSpeed = $TestSpeed
+        RequireOwnedForeground = ($ManualActivationWaitSeconds -gt 0)
         AllowOwnedForeground = ($lease.Contains('allow_owned_foreground') -and $lease['allow_owned_foreground'] -eq $true) }
     $ownedProcesses.Add($playtest)
     [ordered]@{ process_id = $retainedProcess.Id; arguments = $nativeArguments; executable = $executableRecord
@@ -357,6 +359,45 @@ function Invoke-ContinuationProcess {
     throw 'Owned project window did not appear within bounded startup wait.'
 }
 
+function Wait-ContinuationManualActivation {
+    param($Playtest, [string]$Name)
+    if ($ManualActivationWaitSeconds -eq 0) { return }
+    $windowHandle = Assert-TurbofishOwnedWindow -Playtest $Playtest
+    $initialForeground = [Turbofish.Playtest.Native]::GetForegroundWindow() -eq $windowHandle
+    $activationLimit = Get-ContinuationBudget -Limit $ManualActivationWaitSeconds
+    $activationTimer = [System.Diagnostics.Stopwatch]::StartNew()
+    $handoff = [ordered]@{
+        status = 'waiting-for-owned-foreground'; process_id = $Playtest.Process.Id
+        window_handle = $windowHandle.ToInt64(); title = 'Turbofish Deluxe'
+        wait_seconds = $activationLimit; requested_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        already_foreground = $initialForeground; automatic_activation_requests = 0
+        instruction = 'Activate the project window through its titlebar/taskbar; leave it focused. Do not press Start or other game controls.'
+    }
+    $null = Write-ContinuationJson ($Name + '-manual-activation.local.json') $handoff
+    Write-Host "MANUAL_ACTIVATION_WAIT process_id=$($Playtest.Process.Id) window=$($windowHandle.ToInt64()) seconds=$activationLimit"
+    do {
+        $verifiedWindow = Assert-TurbofishOwnedWindow -Playtest $Playtest
+        if ($verifiedWindow -ne $windowHandle) { throw 'Owned window changed during manual activation wait.' }
+        if ([Turbofish.Playtest.Native]::GetForegroundWindow() -eq $windowHandle) {
+            $handoff.status = 'foreground-observed'
+            $handoff.waited_seconds = $activationTimer.Elapsed.TotalSeconds
+            $handoff.observed_utc = [DateTimeOffset]::UtcNow.ToString('o')
+            $null = Write-ContinuationJson ($Name + '-manual-activation-result.local.json') $handoff
+            Write-TurbofishInputReceipt -Playtest $Playtest -InputRecord ([ordered]@{
+                kind='owned_foreground_observation'; acquired=$true; already_foreground=$initialForeground
+                automatic_activation_requests=0; waited_seconds=$activationTimer.Elapsed.TotalSeconds
+            })
+            $checks.Add([ordered]@{ description='actual owned foreground before Title input'; result='passed'
+                process_id=$Playtest.Process.Id; already_foreground=$initialForeground; automatic_activation_requests=0 })
+            return
+        }
+        Start-Sleep -Milliseconds 75
+    } while ($activationTimer.Elapsed.TotalSeconds -lt $activationLimit)
+    $handoff.status = 'timed-out'; $handoff.waited_seconds = $activationTimer.Elapsed.TotalSeconds
+    $null = Write-ContinuationJson ($Name + '-manual-activation-result.local.json') $handoff
+    throw 'Manual owned-window activation did not occur within the bounded wait; no scenario input posted.'
+}
+
 function Open-ContinuationStartup {
     param($Playtest, [string]$Name)
     $identityPath = Join-Path $Playtest.EvidenceDirectory 'identity.local.json'
@@ -371,6 +412,14 @@ function Open-ContinuationStartup {
         $startBounds.x + $startBounds.width -gt 640 -or $startBounds.y + $startBounds.height -gt 480) { throw 'Observed Start rectangle is outside logical viewport.' }
     $startX = $startBounds.x + $startBounds.width / 2.0
     $startY = $startBounds.y + $startBounds.height / 2.0
+    Wait-ContinuationManualActivation -Playtest $Playtest -Name $Name
+    if ($ManualActivationWaitSeconds -gt 0) {
+        $activatedUi = Read-TurbofishJson $Playtest.UiStatePath
+        Assert-ContinuationUi $Playtest $activatedUi
+        if ($activatedUi.ui_stage -cne 'Title' -or -not $activatedUi.title.ready) {
+            throw 'Manual activation changed the ready Title; use titlebar/taskbar only, with no game-control input.'
+        }
+    }
     Send-TurbofishClick -Playtest $Playtest -X $startX -Y $startY -Reason 'ready Title Start press/release in observed same-draw bounds'
     $menuUi = Wait-ContinuationUi -Playtest $Playtest -Stage Menu -AfterFrame $capturedTitle.ui_frame
     $identity = Read-TurbofishJson $identityPath
@@ -550,6 +599,13 @@ try {
         [System.IO.Path]::GetFullPath($lease.build_artifact_root) -ine $buildArtifactDirectory -or
         [System.IO.Path]::GetFullPath($lease.run_directory) -ine $runRoot) { throw 'Explicit resource lease does not bind this driver/build/fixture/destination.' }
     $leaseExpires = [DateTimeOffset]::Parse($lease.expires_utc, [Globalization.CultureInfo]::InvariantCulture)
+    if ($ManualActivationWaitSeconds -gt 0 -and
+        (-not $lease.Contains('manual_activation_wait_seconds') -or $lease.manual_activation_wait_seconds -ne $ManualActivationWaitSeconds -or
+         -not $lease.Contains('foreground_policy') -or $lease.foreground_policy -cne 'user-activated-owned-window' -or
+         -not $lease.Contains('helper_sha256') -or $lease.helper_sha256 -ine (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'Playtest-Helpers.ps1')).Hash -or
+         ($lease.Contains('allow_owned_foreground') -and $lease.allow_owned_foreground -eq $true))) {
+        throw 'Manual activation requires exact lease wait/policy and no automatic foreground requests.'
+    }
     if (($leaseExpires - [DateTimeOffset]::UtcNow).TotalSeconds -lt $WallDeadlineSeconds) { throw 'Resource lease does not cover full scenario/cleanup deadline.' }
     $resolvedGameDirectory = if ($GameDirectory) { Assert-ContinuationPath $GameDirectory -Directory } else { $null }
     if ($GameDirectory -and $runRoot.StartsWith($resolvedGameDirectory + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Output overlaps owned installation.' }

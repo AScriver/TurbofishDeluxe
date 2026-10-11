@@ -1,0 +1,29 @@
+# A66 — Manual foreground continuation checkpoint
+
+Execution:2026-10-11 06:55–06:57 UTC (2026-10-10 America/Phoenix). One agent-run normal1x muted attempt; required Title/Menu/Adventure↔Time Trial/pause/save/reopen acceptance remains incomplete. Human playtest, audible output and retail fidelity are not tested. The [A64 report](2026-10-10-mode-continuation-a64-01.md) owns the unchanged prepared fixture and earlier failures; [mode continuation](../mode-continuation.md) owns expected transactions.
+
+## Identity and authorization
+
+Checkout `2557c2fbc4c4f263baf6303c3bc24a90fa04d5dd` plus the manual-foreground changes in `scripts/Playtest-Helpers.ps1` and `scripts/Test-NativeModeContinuation.ps1`; no Rust changes. Reused checked E119 bytes, rather than rebuilding or repeating a suite. EXE SHA`6FF6C11F55DCFEA8851B99F487FA43E23742A0246DA88A5EA21E5D63AE075425`; source-set SHA`3A60E6D4DE5AC116DD567366F6B963442E25D73A814D4C8FC7E6FCC4F26D6FF9`. Parent receipt `.scratch/evidence/20261011T005522210Z-635e5f79-build.local.json` SHA`A6CD4A5C2BEDC4463FDA0C94F5C06DD851D9475BC6A8B83B12EEB9B6232FFD63` retains source/toolchain identity. Fourteen existing executable/DLL/notice artifacts were copied into `.scratch/runtime/a66-game-bundle-01`; sixteen recorded artifacts matched. Relocation receipt `.scratch/evidence/a66-frozen-build.local.json` SHA`D538AFDB2832E1C5879BF947850390E2217D811219C87438855B7E67B537BCE6` binds exact frozen paths. This is not a new compilation or screensaver package.
+
+Human authorization for live testing was read directly from coordinator chat `01a12706-929c-74b1-92bf-a27e62ef8a87`, user message `01a129b6-4b6f-7790-b2db-28ac26927629` at06:46 UTC. Coordinator automation remains paused. Root held the only native lease; other four outcome lanes remained withheld. The lease required actual owned-window foreground observation, zero automatic activation requests, two sequential processes maximum,300s total wall deadline and120s manual activation wait per startup. Windows' prior foreground denial was not bypassed.
+
+Prepared current37/profile3 fixture, its receipt and byte hashes are unchanged from A64. Save origin is **prepared-not-earned**. The run copied it into `.scratch/playtests/a66-mode-acceptance-01/save`; no E80/genuine earned-save conversion or default-save use. Owned English Steam3320/build2507521.1 installation supplied assets read-only.
+
+## Attempt01 — Activation timeout and receipt collision
+
+Observed PID3964 reached ready Title,219/219 load tasks. Captured Title frame351 SHA`B618E67F2B9B3A77C56CD850D778C8730EB551F824B91AA68ADA31C6731146AC` was visually inspected: title artwork and loading-banner artwork render. Readiness is corroborated by same-draw metadata; this is not retail pixel acceptance or Start-input proof.
+
+Initial foreground was false. The driver wrote `startup-menu-manual-activation.local.json` at06:55:27 UTC and waited120s. No acquired-foreground receipt or scenario input was produced. After the wait, its immutable JSON writer rejected rewriting that same receipt: **`Evidence already exists`**. This driver defect masked the intended activation-timeout message. The final live sideband still showed ready Title with no Session at wall124.45s. A timely activation prompt was not delivered during the run; this attempt does not show that the user declined activation.
+
+Result `.scratch/playtests/a66-mode-acceptance-01/result.local.json` SHA`8A9C0BEA91E4D406291A2F00179547E506EE3545A2FA2D612CB11702387EB3B4`,127.39s, failed/incomplete. Menu entry, Adventure/TT input, conservation, pause, game-written save and second-process reopen are **not tested**. No runtime event file was created before Start; the driver's final review reported it missing. Owned `WM_CLOSE` cleanup worked without foreground: exitedtrue/exit1/forcedfalse/closeerrornull, with direct PID readback confirming no process. Source `TitleRuntime::check_deadline` reports startup cancellation on quit before gameplay; the exit1 does not establish a tank/runtime failure. No game-written progression is accepted.
+
+All recorded immutable EXE/build/fixture/lease inputs and copied dependencies matched after cleanup. Original installation and protected earned/frozen directories were not mutation targets. Native resource reservation is released with the failed result.
+
+## Correction and next action
+
+The driver now writes a distinct immutable `*-manual-activation-result.local.json` for observed foreground or timeout, preserving the original wait receipt. The shared helper's `RequireOwnedForeground` option rechecks the retained HWND owner and actual foreground before each keyboard/mouse message; it never activates. `WM_CLOSE` remains focus-independent. Manual mode requires an exact helper/driver/wait/policy lease and rejects automatic activation permission. Existing defaults are unchanged.
+
+Attempt01 driver SHA`7E50878975147729F918717EEE9D2DEF787CAF6608A855EA1E2DE1EAF79BDFDF`; helper SHA`3969A72903AA6EC3998DB23B0A5DCDA2EEA70E5AFF424FD97E395BE73CDF23F6`. Corrected driver SHA`65C8EF5A8A2FCCFBA2800461728B2012752CAC59DD3B988E83F793A98912C0A3` passed parser/automatic-variable validation with execution disabled. That corrected result-writing path is **not native-tested**. No Cargo, unit suite, decoder repeat or second native attempt followed this correction.
+
+Next run requires the user's availability to activate the actual project window through titlebar/taskbar, without Start/game controls, and repeat after the one serial reopen. Ask readiness before launching; deliver the timed prompt while the retained window is live. Use a fresh exact lease/run with the same frozen E119/fixture bytes. Inspect actual events, pixels, save conservation and owned-process cleanup. Do not retry without changed foreground availability; all broader game acceptance remains pending.
