@@ -526,16 +526,29 @@ impl AdventureSession {
     /// The retained mode, phase, Board and seed belong to the pre-entry scene.
     pub fn checkpoint_without_sandbox(&self) -> Self {
         let mut checkpoint = self.clone();
-        if checkpoint.mode == GameMode::Sandbox
-            && let Some((mode, phase, seed)) = checkpoint.sandbox_origin.take()
-        {
-            checkpoint.mode = mode;
-            checkpoint.phase = phase;
-            checkpoint.next_seed = seed;
-        }
-        checkpoint.sandbox_board = None;
-        checkpoint.sandbox_origin = None;
+        checkpoint.project_checkpoint_without_sandbox();
         checkpoint
+    }
+
+    /// A borrowed checkpoint must preserve both serialization and validation.
+    /// Residual transient fields require clearing even outside Sandbox mode.
+    pub(crate) fn checkpoint_needs_sandbox_projection(&self) -> bool {
+        self.mode == GameMode::Sandbox
+            || self.sandbox_board.is_some()
+            || self.sandbox_origin.is_some()
+    }
+
+    /// Apply the existing projection to an already owned checkpoint copy.
+    pub(crate) fn project_checkpoint_without_sandbox(&mut self) {
+        if self.mode == GameMode::Sandbox
+            && let Some((mode, phase, seed)) = self.sandbox_origin.take()
+        {
+            self.mode = mode;
+            self.phase = phase;
+            self.next_seed = seed;
+        }
+        self.sandbox_board = None;
+        self.sandbox_origin = None;
     }
 
     fn enter_sandbox(&mut self, events: &mut Vec<Event>) -> bool {

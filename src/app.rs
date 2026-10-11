@@ -6222,6 +6222,7 @@ pub async fn run(
         }
     };
     prevent_quit();
+    let mut exit_checkpoint_published = false;
     loop {
         let elapsed = get_time() - started;
         let scale = (screen_width() / 640.0).min(screen_height() / 480.0);
@@ -6673,6 +6674,7 @@ pub async fn run(
                 }
                 UiCommand::Quit => {
                     cli::save_profiles_checkpoint(&options, &profiles)?;
+                    exit_checkpoint_published = true;
                     break;
                 }
             };
@@ -8440,8 +8442,10 @@ pub async fn run(
             evidence.record_music(&music_reports, evidence_elapsed, session)?;
         }
         if exit_requested {
-            profiles.record_events(&options.save_dir.join("profiles.json"), &events)?;
-            cli::save_profiles_checkpoint(&options, &profiles)?;
+            let score_published =
+                profiles.record_events(&options.save_dir.join("profiles.json"), &events)?;
+            cli::save_profiles_checkpoint_after_score(&options, &profiles, score_published)?;
+            exit_checkpoint_published = true;
             break;
         }
         clear_background(BLACK);
@@ -8616,7 +8620,8 @@ pub async fn run(
                 get_time() - started,
             )?;
         }
-        profiles.record_events(&options.save_dir.join("profiles.json"), &events)?;
+        let mut score_checkpoint_current =
+            profiles.record_events(&options.save_dir.join("profiles.json"), &events)?;
         if phase_transitioned
             && profiles.current().is_some_and(|entry| {
                 matches!(
@@ -8627,6 +8632,9 @@ pub async fn run(
                 )
             })
         {
+            // Saver transactions can change the wallet or consumed receipt after
+            // scoring. Do not treat that earlier publication as the checkpoint.
+            score_checkpoint_current = false;
             match profiles.claim_screensaver(&options.save_dir) {
                 Ok(_) => screensaver_claim_error = None,
                 Err(error) => {
@@ -8640,6 +8648,7 @@ pub async fn run(
                 .current()
                 .is_some_and(|entry| entry.session.phase == AdventurePhase::GameSelector)
         {
+            score_checkpoint_current = false;
             match profiles.adopt_screensaver_scene(&options.save_dir) {
                 Ok(adopted) => {
                     if adopted {
@@ -8654,14 +8663,20 @@ pub async fn run(
             }
         }
         if save_due {
-            cli::save_profiles_checkpoint(&options, &profiles)?;
+            cli::save_profiles_checkpoint_after_score(
+                &options,
+                &profiles,
+                score_checkpoint_current,
+            )?;
         }
         next_frame().await;
     }
-    if let Some(current) = profiles.current_mut() {
-        current.session.virtual_saved_at_seconds = wall_seconds();
-    }
-    cli::save_profiles_checkpoint(&options, &profiles)?;
+    cli::save_final_profiles_checkpoint(
+        &options,
+        &mut profiles,
+        exit_checkpoint_published,
+        wall_seconds(),
+    )?;
     let after = install::identify(&game_root)?;
     if after.inventory_sha256 != identity.inventory_sha256 {
         return Err("Owned installation changed during run; inspect before continuing".into());

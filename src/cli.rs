@@ -1567,11 +1567,633 @@ pub fn save_profiles_checkpoint(
     options: &Options,
     profiles: &Profiles,
 ) -> Result<(), Box<dyn Error>> {
+    profiles_checkpoint(profiles).save(&options.save_dir.join("profiles.json"))
+}
+
+fn profiles_checkpoint(profiles: &Profiles) -> std::borrow::Cow<'_, Profiles> {
+    if checkpoint_matches_profiles(profiles) {
+        return std::borrow::Cow::Borrowed(profiles);
+    }
     let mut snapshot = profiles.clone();
     if let Some(current) = snapshot.current_mut() {
-        current.session = current.session.checkpoint_without_sandbox();
+        current.session.project_checkpoint_without_sandbox();
     }
-    snapshot.save(&options.save_dir.join("profiles.json"))
+    std::borrow::Cow::Owned(snapshot)
+}
+
+fn checkpoint_matches_profiles(profiles: &Profiles) -> bool {
+    profiles
+        .current()
+        .is_none_or(|current| !current.session.checkpoint_needs_sandbox_projection())
+}
+
+/// `score_published` is valid only immediately after a successful score save,
+/// with no intervening profile mutation. Sandbox raw score saves are not the
+/// projected checkpoint and must still be followed by a synchronous write.
+pub(crate) fn save_profiles_checkpoint_after_score(
+    options: &Options,
+    profiles: &Profiles,
+    score_published: bool,
+) -> Result<bool, Box<dyn Error>> {
+    if score_published && checkpoint_matches_profiles(profiles) {
+        return Ok(false);
+    }
+    save_profiles_checkpoint(options, profiles)?;
+    Ok(true)
+}
+
+/// Preserve the final wall-time stamp. An earlier exit checkpoint covers this
+/// boundary only if its complete projected payload remains unchanged.
+pub(crate) fn save_final_profiles_checkpoint(
+    options: &Options,
+    profiles: &mut Profiles,
+    exit_checkpoint_published: bool,
+    now_seconds: u64,
+) -> Result<bool, Box<dyn Error>> {
+    let previous_timestamp = profiles.current_mut().map(|current| {
+        std::mem::replace(&mut current.session.virtual_saved_at_seconds, now_seconds)
+    });
+    if exit_checkpoint_published
+        && previous_timestamp.is_none_or(|previous| previous == now_seconds)
+    {
+        return Ok(false);
+    }
+    if let Err(error) = save_profiles_checkpoint(options, profiles) {
+        if let (Some(current), Some(previous)) = (profiles.current_mut(), previous_timestamp) {
+            current.session.virtual_saved_at_seconds = previous;
+        }
+        return Err(error);
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+mod checkpoint_tests {
+    use super::*;
+    use crate::{
+        adventure::{AdventurePhase, GameMode, PetKind},
+        profiles::ProfileEntry,
+        sim::{Action, Event},
+    };
+    use sha2::{Digest, Sha256};
+    use std::{
+        hint::black_box,
+        sync::atomic::{AtomicU64, Ordering},
+        time::Instant,
+    };
+
+    struct FixtureDirectory(PathBuf);
+
+    impl FixtureDirectory {
+        fn new(label: &str) -> Self {
+            static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+            let path = env::current_dir()
+                .unwrap()
+                .join(".scratch/performance/294/fixtures")
+                .join(format!(
+                    "{label}-{}-{}",
+                    std::process::id(),
+                    SEQUENCE.fetch_add(1, Ordering::Relaxed)
+                ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn options(&self) -> Options {
+            Options {
+                game_dir: None,
+                save_dir: self.0.clone(),
+                evidence_dir: None,
+                seed: 0xa294,
+                new_game: false,
+                inspect_assets: false,
+                quit_after: None,
+                muted: true,
+                test_speed: 1,
+                screensaver: None,
+            }
+        }
+    }
+
+    impl Drop for FixtureDirectory {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    fn fixture(profile_count: u64, retained: bool, sandbox: bool) -> Profiles {
+        let mut profiles = Profiles::new("Fixture 1", 0xa294).unwrap();
+        profiles.entries.clear();
+        profiles.next_id = profile_count + 1;
+        for id in 1..=profile_count {
+            let mut session = AdventureSession::new(0xa294 + id);
+            if retained {
+                session.progress.tank = 2;
+                session.progress.level = 1;
+                session.progress.unlocked_pets = vec![
+                    PetKind::Stinky,
+                    PetKind::Niko,
+                    PetKind::Itchy,
+                    PetKind::Prego,
+                    PetKind::Zorf,
+                ];
+                session.progress.selected_pets = vec![PetKind::Stinky, PetKind::Niko];
+                session.board = Some(
+                    AdventureState::new_tank2_first_stage(
+                        0xa294 + id,
+                        &session.progress.selected_pets,
+                    )
+                    .unwrap(),
+                );
+                session.select_mode(GameMode::TimeTrial, 1_000, 0).unwrap();
+                session.apply_actions(&[Action::SelectTimeTrialTank { tank: 1 }, Action::Continue]);
+                assert_eq!(session.phase, AdventurePhase::TimeTrialPlaying);
+                for _ in 0..8 {
+                    session.step(&[]);
+                }
+                session.select_mode(GameMode::Adventure, 1_000, 0).unwrap();
+                assert!(session.retained_time_trial.is_some());
+            }
+            profiles.entries.push(ProfileEntry {
+                id,
+                name: format!("Fixture {id}"),
+                session,
+                screensaver_generation: format!("{id:032x}"),
+                screensaver_claimed: 0,
+                screensaver_scene_consumed: 0,
+            });
+        }
+        if sandbox {
+            let session = &mut profiles.current_mut().unwrap().session;
+            session.progress.unlocked_pets.extend([
+                PetKind::Brinkley,
+                PetKind::Nostradamus,
+                PetKind::Stanley,
+                PetKind::Walter,
+            ]);
+            session.progress.purchase_cursor = 6;
+            session.progress.pet_capacity = 7;
+            session.select_mode(GameMode::Sandbox, 1_000, 0).unwrap();
+            session.apply_actions(&[
+                Action::SandboxKeyChar { character: '2' },
+                Action::SandboxKeyChar { character: 'D' },
+            ]);
+            assert_eq!(session.mode, GameMode::Sandbox);
+            assert!(session.sandbox_board.is_some());
+        }
+        profiles.validate().unwrap();
+        profiles
+    }
+
+    fn legacy_checkpoint(profiles: &Profiles) -> Profiles {
+        let mut snapshot = profiles.clone();
+        if let Some(current) = snapshot.current_mut() {
+            current.session = current.session.checkpoint_without_sandbox();
+        }
+        snapshot
+    }
+
+    fn digest(bytes: &[u8]) -> String {
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    fn result_event() -> Event {
+        Event::TimeTrialExpired {
+            tick: 8,
+            tank: 1,
+            score: 500,
+        }
+    }
+
+    #[test]
+    fn checkpoints_preserve_complete_current_profiles_and_retained_scenes() {
+        for (name, profiles) in [
+            ("single", fixture(1, false, false)),
+            ("retained", fixture(8, true, false)),
+            ("sandbox", fixture(8, true, true)),
+            (
+                "empty",
+                Profiles {
+                    current_id: None,
+                    entries: vec![],
+                    ..fixture(1, false, false)
+                },
+            ),
+        ] {
+            let directory = FixtureDirectory::new(name);
+            let memory_before = format!("{profiles:?}");
+            let expected = serde_json::to_vec_pretty(&legacy_checkpoint(&profiles)).unwrap();
+            save_profiles_checkpoint(&directory.options(), &profiles).unwrap();
+            let bytes = std::fs::read(directory.0.join("profiles.json")).unwrap();
+            assert_eq!(bytes, expected, "complete projection: {name}");
+            let reopened = Profiles::decode(&bytes).unwrap();
+            assert_eq!(serde_json::to_vec_pretty(&reopened).unwrap(), expected);
+            assert_eq!(reopened.entries.len(), profiles.entries.len());
+            assert_eq!(
+                reopened.format_version,
+                crate::profiles::PROFILE_FORMAT_VERSION
+            );
+            assert_eq!(format!("{profiles:?}"), memory_before);
+            if name == "sandbox" {
+                let current = &reopened.current().unwrap().session;
+                assert_eq!(current.mode, GameMode::Adventure);
+                assert_eq!(current.phase, AdventurePhase::Playing);
+                assert!(current.sandbox_board.is_none());
+                assert!(current.retained_time_trial.is_some());
+                assert_eq!(
+                    serde_json::to_value(&current.board).unwrap(),
+                    serde_json::to_value(&profiles.current().unwrap().session.board).unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn checkpoint_projection_clears_residual_board_and_private_origin() {
+        for keep_board in [false, true] {
+            let mut profiles = fixture(8, true, true);
+            let session = &mut profiles.current_mut().unwrap().session;
+            session.mode = GameMode::Adventure;
+            session.phase = AdventurePhase::Playing;
+            if !keep_board {
+                session.sandbox_board = None;
+            }
+            // Leaving the mode fields manually retains private sandbox_origin.
+            // The existing projection clears it even outside Sandbox mode.
+            assert!(session.validate().is_err());
+            assert!(session.checkpoint_needs_sandbox_projection());
+            let before = format!("{profiles:?}");
+            let checkpoint = profiles_checkpoint(&profiles);
+            assert!(matches!(checkpoint, std::borrow::Cow::Owned(_)));
+            checkpoint.validate().unwrap();
+            assert_eq!(
+                serde_json::to_vec(&*checkpoint).unwrap(),
+                serde_json::to_vec(&legacy_checkpoint(&profiles)).unwrap()
+            );
+            assert!(
+                !checkpoint
+                    .current()
+                    .unwrap()
+                    .session
+                    .checkpoint_needs_sandbox_projection()
+            );
+            assert_eq!(format!("{profiles:?}"), before);
+        }
+    }
+
+    #[test]
+    fn scored_results_publish_once_when_projection_is_identity() {
+        let events = [
+            result_event(),
+            Event::StageResultRecorded {
+                tick: 8,
+                tank: 1,
+                level: 1,
+                seconds: 42,
+                settled_coin_ids: vec![],
+                settled_amount: 0,
+                final_balance: 0,
+                personal_best_seconds: 42,
+                survivors: None,
+            },
+            Event::ChallengeCompleted {
+                tick: 8,
+                tank: 1,
+                seconds: 42,
+            },
+        ];
+        for event in events {
+            let directory = FixtureDirectory::new("scored-result");
+            let options = directory.options();
+            let mut profiles = fixture(8, true, false);
+            let published = profiles
+                .record_events(&directory.0.join("profiles.json"), &[event])
+                .unwrap();
+            assert!(published);
+            let before = std::fs::read(directory.0.join("profiles.json")).unwrap();
+            #[cfg(windows)]
+            let _reader = {
+                use std::os::windows::fs::OpenOptionsExt;
+                // Replacement would fail and leave a pending generation if the
+                // equivalent follow-up attempted another publication.
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(1 | 2)
+                    .open(directory.0.join("profiles.json"))
+                    .unwrap()
+            };
+            let followup =
+                save_profiles_checkpoint_after_score(&options, &profiles, published).unwrap();
+            assert!(!followup);
+            assert!(!directory.0.join("profiles.pending").exists());
+            assert_eq!(u8::from(published) + u8::from(followup), 1);
+            assert_eq!(
+                std::fs::read(directory.0.join("profiles.json")).unwrap(),
+                before
+            );
+            assert_eq!(
+                serde_json::to_vec_pretty(&Profiles::decode(&before).unwrap()).unwrap(),
+                serde_json::to_vec_pretty(&profiles).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn unscored_transitions_explicit_saves_and_later_mutations_still_publish() {
+        let directory = FixtureDirectory::new("save-boundaries");
+        let options = directory.options();
+        let mut profiles = fixture(1, false, false);
+        let published = profiles
+            .record_events(&directory.0.join("profiles.json"), &[])
+            .unwrap();
+        assert!(!published);
+        assert!(save_profiles_checkpoint_after_score(&options, &profiles, published).unwrap());
+        profiles
+            .current_mut()
+            .unwrap()
+            .session
+            .apply_actions(&[Action::OpenMenu]);
+        profiles.validate().unwrap();
+        assert!(save_profiles_checkpoint_after_score(&options, &profiles, false).unwrap());
+        profiles
+            .current_mut()
+            .unwrap()
+            .session
+            .virtual_saved_at_seconds = 1_234;
+        assert!(save_profiles_checkpoint_after_score(&options, &profiles, false).unwrap());
+
+        assert!(
+            profiles
+                .record_events(&directory.0.join("profiles.json"), &[result_event()])
+                .unwrap()
+        );
+        // App invalidates the score proof before any subsequent saver transaction.
+        profiles
+            .current_mut()
+            .unwrap()
+            .session
+            .progress
+            .shell_balance = 19;
+        assert!(save_profiles_checkpoint_after_score(&options, &profiles, false).unwrap());
+        let reopened =
+            Profiles::decode(&std::fs::read(directory.0.join("profiles.json")).unwrap()).unwrap();
+        assert_eq!(
+            reopened.current().unwrap().session.progress.shell_balance,
+            19
+        );
+        assert_eq!(
+            reopened.current().unwrap().session.virtual_saved_at_seconds,
+            1_234
+        );
+
+        for score in 501..=505 {
+            profiles
+                .global_scores
+                .record(
+                    crate::highscores::ScoreKind::TimeTrial,
+                    1,
+                    None,
+                    "Other",
+                    score,
+                )
+                .unwrap();
+        }
+        let published = profiles
+            .record_events(&directory.0.join("profiles.json"), &[result_event()])
+            .unwrap();
+        assert!(
+            !published,
+            "a nonqualifying result is not a durable score save"
+        );
+        assert!(save_profiles_checkpoint_after_score(&options, &profiles, published).unwrap());
+    }
+
+    #[test]
+    fn sandbox_score_publication_is_followed_by_origin_projection() {
+        let directory = FixtureDirectory::new("sandbox-score");
+        let options = directory.options();
+        let mut profiles = fixture(8, true, true);
+        let seed_before = serde_json::to_value(
+            profiles
+                .current()
+                .unwrap()
+                .session
+                .checkpoint_without_sandbox(),
+        )
+        .unwrap()["next_seed"]
+            .clone();
+        assert!(
+            profiles
+                .record_events(&directory.0.join("profiles.json"), &[result_event()])
+                .unwrap()
+        );
+        let raw: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(directory.0.join("profiles.json")).unwrap())
+                .unwrap();
+        assert_eq!(raw["entries"][0]["session"]["mode"], "Sandbox");
+        let before = format!("{profiles:?}");
+        assert!(save_profiles_checkpoint_after_score(&options, &profiles, true).unwrap());
+        let bytes = std::fs::read(directory.0.join("profiles.json")).unwrap();
+        let reopened = Profiles::decode(&bytes).unwrap();
+        assert_eq!(
+            reopened.current().unwrap().session.mode,
+            GameMode::Adventure
+        );
+        assert_eq!(
+            reopened.current().unwrap().session.phase,
+            AdventurePhase::Playing
+        );
+        assert_eq!(
+            serde_json::to_value(&reopened.current().unwrap().session).unwrap()["next_seed"],
+            seed_before
+        );
+        assert_eq!(
+            bytes,
+            serde_json::to_vec_pretty(&legacy_checkpoint(&profiles)).unwrap()
+        );
+        assert_eq!(format!("{profiles:?}"), before);
+    }
+
+    #[test]
+    fn exit_cleanup_skips_only_an_identical_successful_checkpoint() {
+        for sandbox in [false, true] {
+            let directory = FixtureDirectory::new("exit-checkpoint");
+            let options = directory.options();
+            let mut profiles = fixture(8, true, sandbox);
+            profiles
+                .current_mut()
+                .unwrap()
+                .session
+                .virtual_saved_at_seconds = 10;
+            save_profiles_checkpoint(&options, &profiles).unwrap();
+            let before = std::fs::read(directory.0.join("profiles.json")).unwrap();
+            assert!(!save_final_profiles_checkpoint(&options, &mut profiles, true, 10).unwrap());
+            assert_eq!(
+                std::fs::read(directory.0.join("profiles.json")).unwrap(),
+                before
+            );
+            assert!(save_final_profiles_checkpoint(&options, &mut profiles, true, 11).unwrap());
+            let reopened =
+                Profiles::decode(&std::fs::read(directory.0.join("profiles.json")).unwrap())
+                    .unwrap();
+            assert_eq!(
+                reopened.current().unwrap().session.virtual_saved_at_seconds,
+                11
+            );
+            assert!(
+                save_final_profiles_checkpoint(&options, &mut profiles, false, 11).unwrap(),
+                "fallback exit always publishes"
+            );
+        }
+        let directory = FixtureDirectory::new("empty-exit");
+        let options = directory.options();
+        let mut profiles = Profiles {
+            current_id: None,
+            entries: vec![],
+            ..fixture(1, false, false)
+        };
+        assert!(save_final_profiles_checkpoint(&options, &mut profiles, false, 10).unwrap());
+        assert!(!save_final_profiles_checkpoint(&options, &mut profiles, true, 11).unwrap());
+        Profiles::decode(&std::fs::read(directory.0.join("profiles.json")).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn invalid_inactive_profile_preserves_previous_file_and_input_manager() {
+        let directory = FixtureDirectory::new("invalid-profile");
+        let options = directory.options();
+        let mut profiles = fixture(8, true, false);
+        save_profiles_checkpoint(&options, &profiles).unwrap();
+        let previous = std::fs::read(directory.0.join("profiles.json")).unwrap();
+        profiles.entries[7].id = 0;
+        let memory_before = format!("{profiles:?}");
+        assert!(save_profiles_checkpoint(&options, &profiles).is_err());
+        assert_eq!(
+            std::fs::read(directory.0.join("profiles.json")).unwrap(),
+            previous
+        );
+        assert_eq!(format!("{profiles:?}"), memory_before);
+        Profiles::decode(&previous).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn denied_publications_preserve_old_file_scores_and_final_timestamp() {
+        use std::os::windows::fs::OpenOptionsExt;
+        for sandbox in [false, true] {
+            let directory = FixtureDirectory::new("denied-profile");
+            let options = directory.options();
+            let mut profiles = fixture(8, true, sandbox);
+            save_profiles_checkpoint(&options, &profiles).unwrap();
+            let path = directory.0.join("profiles.json");
+            let previous = std::fs::read(&path).unwrap();
+            let reader = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(1 | 2)
+                .open(&path)
+                .unwrap();
+            profiles
+                .current_mut()
+                .unwrap()
+                .session
+                .progress
+                .shell_balance = 23;
+            let memory_before = format!("{profiles:?}");
+            assert!(save_profiles_checkpoint(&options, &profiles).is_err());
+            assert_eq!(format!("{profiles:?}"), memory_before);
+            assert!(profiles.record_events(&path, &[result_event()]).is_err());
+            assert_eq!(format!("{profiles:?}"), memory_before);
+            assert!(save_final_profiles_checkpoint(&options, &mut profiles, false, 123).is_err());
+            assert_eq!(format!("{profiles:?}"), memory_before);
+            assert_eq!(std::fs::read(&path).unwrap(), previous);
+            Profiles::decode(&previous).unwrap();
+            drop(reader);
+            save_profiles_checkpoint(&options, &profiles).unwrap();
+            assert!(!path.with_extension("pending").exists());
+            Profiles::decode(&std::fs::read(&path).unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore = "offline timing requires a serial coordinator lease"]
+    fn measure_checkpoint_costs() {
+        let label =
+            env::var("TURBOFISH_CHECKPOINT_LABEL").unwrap_or_else(|_| "unidentified".into());
+        for (name, profiles) in [
+            ("single", fixture(1, false, false)),
+            ("retained8", fixture(8, true, false)),
+            ("sandbox8", fixture(8, true, true)),
+        ] {
+            let directory = FixtureDirectory::new(&format!("measure-{label}-{name}"));
+            let options = directory.options();
+            let expected = serde_json::to_vec_pretty(&legacy_checkpoint(&profiles)).unwrap();
+            let mut copies_us = Vec::new();
+            let mut publications_us = Vec::new();
+            for _ in 0..9 {
+                let started = Instant::now();
+                for _ in 0..2_000 {
+                    black_box(profiles_checkpoint(black_box(&profiles)));
+                }
+                copies_us.push(started.elapsed().as_secs_f64() * 1e6 / 2_000.0);
+                let started = Instant::now();
+                for _ in 0..16 {
+                    save_profiles_checkpoint(black_box(&options), black_box(&profiles)).unwrap();
+                }
+                publications_us.push(started.elapsed().as_secs_f64() * 1e6 / 16.0);
+            }
+            let bytes = std::fs::read(directory.0.join("profiles.json")).unwrap();
+            assert_eq!(bytes, expected);
+            Profiles::decode(&bytes).unwrap();
+            let mut result_us = Vec::new();
+            let mut result_sha256 = None;
+            if name != "sandbox8" {
+                for _ in 0..9 {
+                    let mut sample_profiles: Vec<_> = (0..16).map(|_| profiles.clone()).collect();
+                    let started = Instant::now();
+                    for sample in &mut sample_profiles {
+                        let score_published = sample
+                            .record_events(&directory.0.join("profiles.json"), &[result_event()])
+                            .unwrap();
+                        assert!(score_published);
+                        save_profiles_checkpoint_after_score(&options, sample, score_published)
+                            .unwrap();
+                    }
+                    result_us.push(started.elapsed().as_secs_f64() * 1e6 / 16.0);
+                }
+                let result_bytes = std::fs::read(directory.0.join("profiles.json")).unwrap();
+                Profiles::decode(&result_bytes).unwrap();
+                let mut expected_result = legacy_checkpoint(&profiles);
+                expected_result
+                    .global_scores
+                    .record(
+                        crate::highscores::ScoreKind::TimeTrial,
+                        1,
+                        None,
+                        "Fixture 1",
+                        500,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    result_bytes,
+                    serde_json::to_vec_pretty(&expected_result).unwrap()
+                );
+                result_sha256 = Some(digest(&result_bytes));
+            }
+            println!(
+                "{}",
+                serde_json::json!({
+                    "label":label, "fixture":name, "profile_count":profiles.entries.len(),
+                    "seed":0xa294_u64, "fixture_sha256":digest(&serde_json::to_vec(&profiles).unwrap()),
+                    "checkpoint_sha256":digest(&expected), "checkpoint_bytes":expected.len(),
+                    "result_sha256":result_sha256,
+                    "samples":9, "copy_iterations":2_000, "publication_iterations":16,
+                    "copy_us":copies_us, "publication_us":publications_us, "result_us":result_us,
+                })
+            );
+        }
+    }
 }
 
 pub fn save_session(options: &Options, session: &AdventureSession) -> Result<(), Box<dyn Error>> {
