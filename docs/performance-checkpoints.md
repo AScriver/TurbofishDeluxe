@@ -128,8 +128,40 @@ attempt publication. These are offline persistence tests, not GUI scenarios.
 Formatting and workflow/link/allowlist checks passed. Fixture and measurement code are
 byte-identical after the change, SHA-256
 `83B422DB64B2D4243B5C3BDEDCB1D271799077EA66462A72FA9CD3953636D048`.
-Integrated main reconciliation, affected checks and final lint/build remain
-pending; the following exact command scope will be recorded after execution.
+Owned source/report commit `5fc4ee5` merged origin/main
+`5b6ad21141ddd7a626f249fbd089e1f3a06f3711` without conflict into
+`a45114d07e7adbd5e084d77beb81352f0a6073be`, retaining both sibling optimizations
+and coordinator records. Integrated formatting and four affected score-path
+tests passed. Each ran as a single exact library-test filter with
+`--locked --offline -- --exact --nocapture --test-threads=1`:
+
+- `cli::checkpoint_tests::scored_results_publish_once_when_projection_is_identity`
+- `cli::checkpoint_tests::unscored_transitions_explicit_saves_and_later_mutations_still_publish`
+- `cli::checkpoint_tests::sandbox_score_publication_is_followed_by_origin_projection`
+- `cli::checkpoint_tests::denied_publications_preserve_old_file_scores_and_final_timestamp`
+
+Unaffected projection/exit/validation tests retain their eight-test premerge
+evidence; no exhaustive or native rerun followed the merge. Strict integrated
+lib/bin/test-target Clippy passed with warnings denied (45.69s); locked/offline
+normal-bin build passed (46.31s). Both used the same isolated optimized dev
+profile and read-only native package described above, with no DLL staging or
+launcher refresh.
+
+Checked source commit is `a45114d07e7adbd5e084d77beb81352f0a6073be`; only this
+report was dirty during final validation. Integrated normal binary SHA-256
+`43B62B673420BE61C6A4E12ED2D2B56C42D33F7C386A927EA3B0F82B19B0D3BD`.
+The final `cli.rs`/`adventure.rs` hashes remain the patched measurement hashes
+above. Integrated `app.rs` SHA-256
+`EE8E6BEC0563193D5FA7CFA6C87B228AE2AC57D96C3258A7D4099F992A7AEB6E`,
+`profiles.rs`
+`35DAA25D2B74ADE38DBCDEE9982C0837712267A77A7257260F0D79C3A8E114E5`,
+`app/virtual_runtime.rs`
+`A1621D0115588FBE0A260102AF75939D0EEA5C82F5E051C15CE0236C002AE13E`.
+Full readback is `.scratch/performance/294/integrated-identity.json`;
+`integrated-Lint.log`, `integrated-Build.log` and the four
+`integrated-<test-name>.log` files retain commands/results. Documentation-only
+commits do not invalidate these source checks; future material edits must
+revalidate affected evidence.
 
 ```powershell
 & (Get-Command cargo).Source @('fmt', '--all', '--', '--check')
