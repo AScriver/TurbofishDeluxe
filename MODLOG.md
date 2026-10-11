@@ -2,6 +2,12 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-11 — Start the authorized three-worker performance batch
+
+Created Actionables#292-294 for no-op profile event clones, hidden Virtual Tank snapshots and redundant checkpoint copies/publications. Three new managed project chats/worktrees start from clean `0d971b3c`, with exact disjoint functions/test/report files reserved before dispatch. Root owns central records and integration; workers own local offline fixtures/build targets, focused checks, coherent commits and safe reconciled pushes to main. [DESIGN](docs/DESIGN.md#frame-and-checkpoint-allocation) records the shared bool, modal and durable-save invariants. User authorization is specific to this batch; prior runtime lanes and coordinator automation stay paused.
+
+Source inspection confirms the avoidable work; implementation and measurements are in progress, with no completed optimization claim yet. Serial timing leases avoid overlap with heavy parallel preparation. Ordinary gameplay remains human-owned, no game/native/input/audio test is dispatched, and live/frozen/earned saves and original installation remain preserved. AGENTS, requirements and STATUS reflect this bounded parallel exception to earlier single-primary engineering.
+
 ## 2026-10-11 — Measure crowded object searches and remove Stinky sorting
 
 E121 / Actionable #289 measured validated deterministic normal and crowded Boards before changing production searches. Stinky's helper now finds the minimum by truncated squared distance and registration ID in one pass, removing its candidate vector and stable sort. Equal-distance/duplicate-ID order, strict cutoff, filters, separate coin-contact order, RNG and update phases are preserved. No dependency, spatial cache, save/profile schema or upstream implementation was added. Hungry-guppy food/prey scans stay unchanged because the measured whole ticks do not justify a broader index. [DESIGN](docs/DESIGN.md#object-search-optimization) owns the decision; [performance](docs/performance.md) owns complete fixtures, measured identities, commands and limits.

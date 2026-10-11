@@ -5889,17 +5889,19 @@ fn refresh_virtual_ui(
     blocked: bool,
 ) {
     let now_seconds = wall_seconds();
-    let mut snapshot = crate::virtual_ui::VirtualUiSnapshot::capture(
-        &entry.session.virtual_tank,
-        entry.session.progress.shell_balance,
-        now_seconds,
-        true,
-    );
-    snapshot.external_block = blocked;
     runtime.refresh(
         entry.id,
         &entry.session.phase,
-        snapshot,
+        || {
+            let mut snapshot = crate::virtual_ui::VirtualUiSnapshot::capture(
+                &entry.session.virtual_tank,
+                entry.session.progress.shell_balance,
+                now_seconds,
+                true,
+            );
+            snapshot.external_block = blocked;
+            snapshot
+        },
         crate::virtual_ui::UiClock {
             ticks: (get_time() * 100.0) as u64,
             focused,
