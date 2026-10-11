@@ -167,7 +167,14 @@ function Get-ContinuationShared {
 
 function Get-ContinuationSaveToken {
     if (-not (Test-Path -LiteralPath $savePath -PathType Leaf)) { return 'missing' }
-    return ('{0}:{1}' -f [System.IO.File]::GetLastWriteTimeUtc($savePath).Ticks, (Get-FileHash -LiteralPath $savePath).Hash)
+    # Path-based Get-FileHash holds FileShare.Read, blocking Windows atomic save
+    # replacement while the observer polls. Hash the opened generation with
+    # delete sharing, just like Read-TurbofishJson, without weakening freshness.
+    $saveStream = [System.IO.FileStream]::new($savePath, [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+    try { $saveDigest = (Get-FileHash -InputStream $saveStream -Algorithm SHA256).Hash }
+    finally { $saveStream.Dispose() }
+    return ('{0}:{1}' -f [System.IO.File]::GetLastWriteTimeUtc($savePath).Ticks, $saveDigest)
 }
 
 function Wait-ContinuationSave {

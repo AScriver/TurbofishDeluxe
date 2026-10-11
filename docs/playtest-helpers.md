@@ -4,6 +4,11 @@ Use [Playtest-Helpers.ps1](../scripts/Playtest-Helpers.ps1) for new experiments.
 
 [Test-Playtest.ps1](../scripts/Test-Playtest.ps1) is the maintained replacement for the repeated live pause/reload mechanics. It runs an identified Playing Board at the selected speed, optionally checks a genuine copied save against pre-loop identity, posts Escape and a paused logical click, holds selected simulation state while session time advances, resumes, captures both views, closes, and compares the final session against the persisted save. `-ExerciseFoodClick` additionally checks an ordinary active food drop; use a starting Board with food capacity for that option. This smoke checks tooling; it does not earn a milestone or establish retail fidelity. The [initial verification report](playtests/2026-10-09-playtest-helpers-01.md) records historical normal-speed runs.
 
+The current [verification plan](requirements.md#acceptance-and-working-style)
+assigns normal gameplay to the human. Autonomous gameplay scenarios are stopped;
+these helpers and prepared reports remain available for a later explicitly
+authorized targeted reproduction. They do not mandate an exhaustive live sweep.
+
 ## Run and validate
 
 Use PowerShell 7 on Windows and an already built/staged project executable. The helper never builds, stages DLLs, launches the retail game, changes its installation, or reuses default project saves. Supply an independently checked SHA-256 from the build receipt. In a task-specific script validated through the host PowerShell wrapper:
@@ -22,7 +27,7 @@ $parameters = @{
 
 The default run directory is a fresh `.scratch/playtests/helpers-<UUID>/`, containing separate `save/`, `evidence/`, launch/input/cleanup and result or failure receipts. `-RunDirectory` accepts a new directory inside this repository's `.scratch/`; existing directories and reparse-point parents are rejected. `-SourceSavePath` and `-SourceSaveSha256` must be supplied together. The source is byte-copied and verified, without schema conversion or gameplay edits. `-GameDirectory` overrides normal owned-install discovery. Argument arrays preserve spaces in all paths.
 
-New automated gameplay scenarios explicitly supply `TestSpeed = 8` and `Mute = $true`, as the user requested. Use 4x when input/polling cannot keep up at 8x and record the reason. Reserve explicit `TestSpeed = 1` for normal-speed acceptance and checks that need normal timing, render/audio or retail comparison, with their purpose recorded. `-TestSpeed` accepts integers 1–8; its API default remains 1 for older frozen executable callers. Above 1 requires `-Mute` before any process or run-directory allocation. The helper supplies dedicated save/evidence directories and a wall safety deadline. Use a newly identified executable that supports the flag. Native snapshots and launch receipts identify the factor; the maintained smoke still does not earn or accept a gameplay milestone.
+If a later targeted automated gameplay diagnostic is explicitly authorized, supply `TestSpeed = 8` and `Mute = $true`. Use 4x when input/polling cannot keep up at 8x and record the reason. Reserve explicit `TestSpeed = 1` for checks that need normal timing, render/audio or retail comparison, with their purpose recorded. `-TestSpeed` accepts integers 1–8; its API default remains 1 for older frozen executable callers. Above 1 requires `-Mute` before any process or run-directory allocation. The helper supplies dedicated save/evidence directories and a wall safety deadline. Use an identified executable that supports the flag. Native snapshots and launch receipts identify the factor; the maintained smoke still does not earn or accept a gameplay milestone.
 
 Acceleration consumes ordinary 28 ms updates faster; it never supplies debug currency, health, skipped encounters or victories. Global pause uses 1x scheduling. Held inputs above 1x use consumed-step age; physical input sampling and Bilaterus connector observation remain at rendered-frame cadence. This can change accelerated traces. Tune a scenario's input/polling schedule to the requested speed and assess real losses honestly. Native rate, pause, input and reload checks remain separate from normal-speed/audio/retail acceptance. [Native verification](playtests/2026-10-09-accelerated-tests-01.md) records the measured rates, pause, deadline, path-guard and reopen checks.
 
@@ -102,7 +107,8 @@ fidelity remain unaccepted.
 accepts optional `-ManualActivationWaitSeconds` (0–120; default0). Above0 requires
 an exact native lease with the same wait, `foreground_policy` set to
 `user-activated-owned-window`, current `helper_sha256`, and no automatic
-activation permission. Ask user availability before launch, then deliver a
+activation permission. This procedure applies only to a later explicitly
+authorized targeted reproduction. Ask user availability before launch, then deliver a
 timed prompt while the retained owned window is live: activate through
 titlebar/taskbar, leave focused, and do not press Start/game controls. Actual
 foreground readback admits input; a text reply alone does not. The one serial
@@ -112,9 +118,12 @@ and cleanup reserve; they never renew it.
 Private `*-manual-activation.local.json` preserves the initial wait/owned window;
 `*-manual-activation-result.local.json` records observed foreground or timeout
 without rewriting that receipt. Zero automatic activation requests are recorded.
-A66's collision correction is parser-checked, not native-tested. Preserve failed
-attempts and allocate fresh run paths/leases; unavailable foreground defers the
-scenario rather than authorizing repeated launches.
+A66 attempts02/03 observed actual foreground and wrote distinct positive outcome
+receipts with zero automatic activation requests; the timeout branch remains
+unperformed after the correction. Both mode scenarios remained incomplete; see
+the [A66 report](playtests/2026-10-10-mode-continuation-a66-01.md). Preserve failed
+attempts. The current human-playtesting direction supersedes their next-run plan;
+neither prepared inputs nor unavailable foreground authorizes repeated launches.
 
 ## Scenario rules
 

@@ -6783,6 +6783,32 @@ fn current35_virtual_combat_preserves_owned_fish_and_reopens_active_state() {
 
 #[cfg(windows)]
 #[test]
+fn transient_reader_atomic_replace_publishes_complete_new_snapshot() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let root = temporary_root("brief-read-lock");
+    let path = root.join("state.local.json");
+    cli::write_json(&path, &serde_json::json!({"tick":1})).unwrap();
+    let reader = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1 | 2 | 4)
+        .open(&path)
+        .unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        drop(reader);
+    });
+    let publication = cli::write_json(&path, &serde_json::json!({"tick":2}));
+    release.join().unwrap();
+    publication.unwrap();
+    let current: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(current, serde_json::json!({"tick":2}));
+    assert!(!path.with_extension("pending").exists());
+    fs::remove_file(path).unwrap();
+    fs::remove_dir(root).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
 fn denied_atomic_replace_preserves_previous_complete_snapshot() {
     use std::os::windows::fs::OpenOptionsExt;
     let root = temporary_root("read-lock");

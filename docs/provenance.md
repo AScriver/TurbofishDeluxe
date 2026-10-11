@@ -1,5 +1,19 @@
 # Provenance and lineage
 
+A66's Windows persistence correction is original project code, not recovered
+game logic. Inspected Microsoft PowerShell7.6.6
+[GetHash.cs](https://github.com/PowerShell/PowerShell/blob/f260eb9c31ec72c5282f98e5ea24d9be4f8d7536/src/Microsoft.PowerShell.Commands.Utility/commands/utility/GetHash.cs#L163)
+(MIT, tag`v7.6.6`, resolved commit`f260eb9c31ec72c5282f98e5ea24d9be4f8d7536`)
+for the path-hash reader's `File.OpenRead` lifetime and the
+existing `-InputStream` entry point. Inspected Microsoft
+[ReplaceFileW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew)
+API documentation for sharing and documented partial-failure states; the latter
+candidate was not adopted. No upstream code/prose was copied and no dependency,
+save schema, original-binary identity or analysis/export count changed. Local
+host probes and failed approaches are recorded in the [A66 report](playtests/2026-10-10-mode-continuation-a66-01.md);
+[DESIGN](DESIGN.md#windows-checkpoint-publication) owns the bounded safe-Rust
+publication policy. These platform sources establish no retail-game fidelity.
+
 E118 inspects the already owned Steam250752 `properties/resources.xml:39` to resolve the selector's logical `FONT_TINY` to `data/Pix118.txt`. Manifest SHA`DECFCFD152C0328CDB99EB2D98F56567AA13A4CB009CF7CE280338F19BFDE5AE`; original executable identity remains the registered F54 wrapper. This is observed installed resource metadata, with W1 `GameSelector.cpp:306` supplying the secondary profile-link consumer. The original adapter uses that filename; no manifest/font/image bytes are bundled. [A64 native report](playtests/2026-10-10-mode-continuation-a64-01.md) owns the reproduced startup failure and subsequent execution limits. No new binary export, revision or license is introduced.
 
 E117 studies already registered W1 `Board.cpp:221,2307–2324,2613–2658,2925–2933,5596`,

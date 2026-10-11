@@ -2,9 +2,29 @@
 
 Product scope: [requirements](requirements.md). Current evidence and environment: [STATUS](../STATUS.md). Implementation is authorized through the full runtime scope. Recovered rules are authoritative in [behavior contract](behavior-contract.md).
 
-The user directed continued reversing and implementation on2026-10-09 and deferred detailed native/manual acceptance during implementation. On2026-10-10 the user requested the whole completion sweep below, followed by agent-executable native acceptance. Keep independently grounded regressions and focused checks. Native acceptance is required before a playability claim and remains pending wherever unperformed. Preserve stopped game-written saves and frozen identities; do not manufacture earned progression.
+The user directed continued reversing and implementation on2026-10-09 and the whole completion sweep on2026-10-10. The2026-10-11 [verification plan](requirements.md#acceptance-and-working-style) supersedes the autonomous native backlog: one primary agent handles engineering; the human plays normally and reports issues. Keep independently grounded regressions and necessary focused checks. Actual gameplay remains required before a playability claim; unperformed acceptance remains pending without repeated agent launches. Preserve stopped game-written saves and frozen identities; do not manufacture earned progression.
 
 The committed [remaining-runtime map](binary-recovery.md) owns BR01–12 main behavior outlines and exact follow-ups across all remaining families. A36/Tank5-1, [A37](presto.md)/[Time Trial](time-trial.md), completed replay and current31 [bonus-pet purchases/fourth slot](extra-pets.md) have frozen code checkpoints. Close materially blocking details before each increment; defer other refinements with exact references. Preserve atomic validated project writes even where retail error handling is weaker, and keep unknown Relax entry/offline ageing/repeated-result behavior explicit until recovered.
+
+## Windows checkpoint publication
+
+A66's normal-speed Menu resume published the resumed profile, then the process
+failed with Windows access-denied and left `profiles.pending`. Final telemetry
+contained a real Scene frame; the exact failing call was not traced. An isolated host probe confirmed
+that replacement by rename is denied while the current file is read, even with
+delete sharing; it succeeds after the reader closes. `ReplaceFileW` works with
+that reader but documents additional partial-failure states, so this correction
+keeps the existing pending-file/rename contract rather than adding a native
+dependency or weakening failure preservation.
+
+On Windows, retry only sharing/lock/access-denied rename errors with a100ms budget,
+with2ms intervals and both pending/current files still present. Persistent
+denial remains an error with the old complete checkpoint preserved; never delete
+the destination to force publication. Other platforms/errors keep immediate
+failure. Live save polling uses an explicitly delete-shared, promptly disposed
+hash stream; immutable/closed artifacts retain ordinary digest checks. This is
+project persistence/observation behavior, not a recovered retail mechanic.
+Acceptance and failed approaches belong to the [A66 report](playtests/2026-10-10-mode-continuation-a66-01.md).
 
 ## Completion sweep
 
@@ -20,9 +40,9 @@ Continue automatically through these dependency-aware outcomes, preserving the a
 3. Integrate Sandbox and Relax with their actual admission, unlock, Board and exit contracts; keep the two modes distinct until source evidence joins them.
 4. Complete shared menus/options, profile management, highscores and persistence across supported modes.
 5. Complete finale/results presentation, music, audio and effects, and reconcile every remaining [compatibility](compatibility.md) item against the full requirements.
-6. Keep the agent-executable native backlog deferred during the latest implementation-first phase: input, visual inspection, save/reopen/pause, earned progression, modes, failure/continuation and accessible audio. Later acceptance uses identified isolated runs, deadlines and owned-process cleanup, with normal-speed acceptance separate from accelerated diagnostics and E80's byte-exact earning06 save/frozen build preserved.
+6. Hand ordinary gameplay to the human under the current verification plan. Preserve earlier prepared scenarios, incomplete acceptance reports and E80's byte-exact earning06 save/frozen build. Use focused tests for detailed rules and transactions; do not launch autonomous input/render/mode/audio runs or play through every historical checklist. A later targeted native reproduction requires explicit user authorization and the existing identity/isolation/cleanup contract.
 
-Parallelize bounded source or independent implementation work with explicit ownership; serialize Ghidra, shared integration, Cargo, Git and native experiments. The latest user clarification makes broad integrated coverage the priority: keep necessary focused compile/lint/regressions, defer exhaustive evidence, repeated validation/reviews, fidelity refinements and polishing unless they resolve a concrete implementation or correctness/data-integrity issue. No overlapping probe matrix or implementation-mirror tests. Keep a short deferred-detail list and move directly to the next system. Human feel/fidelity and inaccessible retail observations remain pending; a material access or decision blocker requires input.
+Root alone owns source work, integration, Cargo, Git and records under the current single-agent direction. Broad integrated coverage remains the priority: keep necessary focused compile/lint/regressions, defer exhaustive evidence, repeated validation/reviews, fidelity refinements and polishing unless they resolve a concrete implementation or correctness/data-integrity issue. No overlapping probe matrix or implementation-mirror tests. Keep a short deferred-detail list and move directly to the next system. Reported human gameplay issues drive fixes; human feel/fidelity and inaccessible retail observations remain pending until reported/observed. A material access or decision blocker requires input.
 
 The subsequent2026-10-10 steering defers work outside remaining-system implementation and permits pinned WinFish for bulk behavior. Use existing primary outlines plus secondary behavior to finish these outcomes; investigate small details immediately only when materially needed for safe implementation. Preserve primary contradictions and explicit qualifications rather than delaying whole systems for complete retail parity.
 
