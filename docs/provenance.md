@@ -200,6 +200,15 @@ Tool identities, invocation constraints, and the distinction between fresh check
 
 ## New work and adaptations
 
+E131/#319 reuses the registered PB05 Fish Update exports and W1 pinned crosswalk
+for the human's remaining Adventure-guppy turn issue. [Boundary correction](guppy-turn-boundaries.md)
+owns exact clamp/easing/animation/Move instructions, independent static review,
+executed baseline failures and supporting Rust identity. Newly written Rust
+shares the recovered common motion tail between ordinary and warded guppies;
+the fixed turn clock is preserved. No new source, license scope, raw export,
+asset or proprietary source body enters Git. Native timing acceptance remains
+pending; the unrelated Time Trial fixture failure is preserved separately.
+
 The [E128 speed follow-up](playtests/2026-10-12-guppy-turn-speed-followup.md)
 rechecks the same registered PB05 animation/update instructions and their
 target hashes. Its private probe uses the retained identified Rust library;

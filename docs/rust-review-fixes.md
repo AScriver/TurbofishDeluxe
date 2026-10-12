@@ -26,6 +26,13 @@ The unrelated guppy files and tests remain in the original checkout. Validate
 this isolated source before each commit; revalidate affected checks after joining
 any later main changes.
 
+All eight correction commits now join main `5fd37f2`, which contains the
+independently completed guppy boundary correction. Source merges automatically;
+STATUS/MODLOG conflicts are resolved by retaining both records. Combined checks
+run in the isolated worktree before its integration commit and before a guarded
+fast-forward of the still-clean original checkout. No unrelated source or
+evidence is discarded. Final combined results are recorded below.
+
 ## Scope and order
 
 | Order | Actionable | Outcome | Engineering |
@@ -37,7 +44,7 @@ any later main changes.
 | 5 | #315 | Remove proven duplicate schema inventories | Committed `f270e92` |
 | 6 | #316 | Deliver applause through the effect path | Committed `88fbea5` |
 | 7 | #317 | Reuse existing glyph layout for clipped text | Committed `35f875f` |
-| 8 | #318 | Retain installation digests instead of buffers | Checked; commit follows |
+| 8 | #318 | Retain installation digests instead of buffers | Committed `469fde8` |
 
 All eight tracking records were created and researched/prepared to Ready. The
 #311 claim failed with `INTERNAL_ERROR`, `retryMode: never`, correlation
@@ -122,6 +129,34 @@ also passed during focused verification. Formatting, strict lint, compilation,
 isolated build and workflow pass. #313's claim failed without mutation,
 correlation `d2d57eb1-bf92-43ef-a446-5a2ef172be32`; inspection confirms Ready
 version6, unclaimed. No gameplay or live saves were used.
+
+## Combined completion
+
+All eight outcomes are committed in execution order. The joined supporting
+source is `469fde877ac3faf3d85245e5185e0af941bb1f32` plus the automatic merge of
+main `5fd37f241bfbfbf8e47d96a335969ca413440f71`; remaining record edits describe
+that join. A diff against main confirms the guppy source is preserved and the
+only additional sim changes are the two covered-funds predicates. Both
+STATUS/MODLOG histories and the incoming provenance/report are retained.
+
+All16 workspace/all-target test executables complete:912 passed, zero failed,
+11 ignored. Formatting, strict workspace/all-target Clippy, locked/offline
+compilation and debug build pass. Workflow passes115 documents,1160 local
+links,416 anchors,45 allowed and37 excluded path checks before the final
+record entry; it is rerun on final records before commit. Whitespace checks pass.
+The build uses Rust1.95.0 (`59807616e`), `x86_64-pc-windows-msvc`, existing
+libopenmpt0.8.9 and external Cargo/test storage. Its executable SHA256 is
+`78b994ef9c16987a86428ffcc4d99c6ed5b4cef4f48b58ce9af99e43906dc212`.
+No native game or audio device was opened. No live save, owned install,
+normal-launch artifact or human process was read/changed. Synthetic tests do
+not establish retail, audible or human gameplay acceptance.
+
+Final scoped inspections of #311-318 all confirm Ready version6, unclaimed.
+The non-retryable claim errors prevent claim-owned resolution, validation and
+Done transitions; engineering completion does not invent those tracker writes.
+The validated integration runner commits only the reviewed join/records and
+fast-forwards the original main checkout only if its HEAD and clean state still
+match. No push, force, reset, stash or unrelated cleanup is performed.
 
 ## Fish-song applause
 

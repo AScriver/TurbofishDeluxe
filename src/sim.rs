@@ -7628,21 +7628,7 @@ impl AdventureState {
                     }
                     fish.x += fish.walter.tick_recoil() as f32;
                     fish.walter.secondary = fish.walter.secondary.saturating_sub(1);
-                    Self::advance_animation(fish);
-                    fish.facing_right = fish.vx >= 0.0;
-                    fish.x = (fish.x + fish.vx / fish.speed_mod).clamp(10.0, 540.0);
-                    let min_y = if fish.bought_timer > 0 && fish.vy > 0.0 {
-                        30.0
-                    } else {
-                        95.0
-                    };
-                    fish.y = (fish.y + fish.vy / fish.speed_mod).clamp(min_y, 370.0);
-                    if fish.x <= 10.0 || fish.x >= 540.0 {
-                        fish.vx = -fish.vx;
-                    }
-                    if fish.y <= 95.0 || fish.y >= 370.0 {
-                        fish.vy = -fish.vy;
-                    }
+                    Self::advance_fish_motion(fish);
                     fish.hunger_visible = fish.hunger < 301;
                 }
             }
@@ -7867,23 +7853,7 @@ impl AdventureState {
         }
         fish.x += fish.walter.tick_recoil() as f32;
         fish.walter.secondary = fish.walter.secondary.saturating_sub(1);
-        // Fish::Update clamps before its final integration, then eases the
-        // horizontal velocity near an edge. The final Move may overshoot.
-        fish.x = fish.x.clamp(10.0, 540.0);
-        fish.y = fish.y.min(370.0);
-        if fish.bought_timer == 0 || fish.vy <= 0.0 {
-            fish.y = fish.y.max(95.0);
-        }
-        if fish.x > 535.0 && fish.vx > 0.1 {
-            fish.vx -= 0.1;
-        }
-        if fish.x < 15.0 && fish.vx < -0.1 {
-            fish.vx += 0.1;
-        }
-        Self::advance_animation(fish);
-        fish.facing_right = fish.vx >= 0.0;
-        fish.x += fish.vx / fish.speed_mod;
-        fish.y += fish.vy / fish.speed_mod;
+        Self::advance_fish_motion(fish);
         fish.hunger_visible = fish.hunger < 301;
         if let Some((fish_id, x, y, kind)) = coin_drop {
             let coin_id = self.id();
@@ -8050,6 +8020,26 @@ impl AdventureState {
         } else {
             (value - step).max(target)
         }
+    }
+
+    fn advance_fish_motion(fish: &mut Fish) {
+        // PB05 Fish::Update's common tail clamps/eases before animation.
+        // The final Move may overshoot; it does not introduce a wall bounce.
+        fish.x = fish.x.clamp(10.0, 540.0);
+        fish.y = fish.y.min(370.0);
+        if fish.bought_timer == 0 || fish.vy <= 0.0 {
+            fish.y = fish.y.max(95.0);
+        }
+        if fish.x > 535.0 && fish.vx > 0.1 {
+            fish.vx -= 0.1;
+        }
+        if fish.x < 15.0 && fish.vx < -0.1 {
+            fish.vx += 0.1;
+        }
+        Self::advance_animation(fish);
+        fish.facing_right = fish.vx >= 0.0;
+        fish.x += fish.vx / fish.speed_mod;
+        fish.y += fish.vy / fish.speed_mod;
     }
 
     fn advance_animation(fish: &mut Fish) {
@@ -13663,6 +13653,94 @@ mod tests {
     #[test]
     fn binary_guppy_left_to_right_turn_holds_starting_sprite_mirror() {
         assert_binary_guppy_turn(-1.0, 1.0, false);
+    }
+
+    #[test]
+    fn binary_guppy_boundary_eases_before_animation_without_bouncing() {
+        // PB05 004f79d9-004f7aa6 eases outward VX before animation, then
+        // integrates without a post-move velocity reversal or hard clamp.
+        for (x, vx, expected_x, expected_vx) in [(539.9, 0.5, 540.1, 0.4), (10.1, -0.5, 9.9, -0.4)]
+        {
+            let mut state = AdventureState::new_adventure(21);
+            state.fish.truncate(1);
+            let fish = &mut state.fish[0];
+            fish.x = x;
+            fish.y = 200.0;
+            fish.vx = vx;
+            fish.previous_vx = vx;
+            fish.vy = 0.0;
+            fish.speed_mod = 2.0;
+            fish.hunger = 600;
+            fish.bought_timer = 0;
+            fish.special_timer = 0;
+            fish.movement_timer = 0;
+            fish.movement_state = if vx > 0.0 { 4 } else { 3 };
+            fish.turn_ticks = 0;
+            fish.eating_ticks = 0;
+            state.tick();
+            let fish = &state.fish[0];
+            assert_eq!(fish.sprite_pose(), FishPose::Swim);
+            assert_eq!(fish.sprite_facing_right(), vx > 0.0);
+            assert_eq!(fish.turn_ticks, 0);
+            assert!((fish.vx - expected_vx).abs() < 0.00001);
+            assert!((fish.x - expected_x).abs() < 0.0001);
+        }
+    }
+
+    #[test]
+    fn binary_guppy_boundary_reclamps_before_an_ai_reversal_moves() {
+        // PB05 clamps the previous step's overshoot before animation/Move.
+        for (x, vx, expected_x, expected_turn) in [(540.2, -4.0, 538.0, 19), (9.8, 4.0, 12.0, -19)]
+        {
+            let mut state = AdventureState::new_adventure(21);
+            state.fish.truncate(1);
+            let fish = &mut state.fish[0];
+            fish.x = x;
+            fish.y = 200.0;
+            fish.vx = vx;
+            fish.previous_vx = -vx;
+            fish.vy = 0.0;
+            fish.speed_mod = 2.0;
+            fish.hunger = 600;
+            fish.bought_timer = 0;
+            fish.special_timer = 0;
+            fish.movement_timer = 0;
+            fish.movement_state = if vx > 0.0 { 4 } else { 3 };
+            fish.turn_ticks = 0;
+            fish.eating_ticks = 0;
+            state.tick();
+            let fish = &state.fish[0];
+            assert_eq!(fish.sprite_pose(), FishPose::Turn);
+            assert_eq!(fish.turn_ticks, expected_turn);
+            assert_eq!(fish.frame, 0);
+            assert_eq!(fish.sprite_facing_right(), vx < 0.0);
+            assert_eq!(fish.x, expected_x);
+            assert_eq!(fish.vx, vx);
+        }
+    }
+
+    #[test]
+    fn binary_guppy_boundary_clamps_y_before_move_without_reversing_vy() {
+        for (y, vy, expected_y) in [(94.9, -0.5, 94.75), (370.1, 0.5, 370.25)] {
+            let mut state = AdventureState::new_adventure(21);
+            state.fish.truncate(1);
+            let fish = &mut state.fish[0];
+            fish.x = 300.0;
+            fish.y = y;
+            fish.vx = 0.5;
+            fish.previous_vx = 0.5;
+            fish.vy = vy;
+            fish.speed_mod = 2.0;
+            fish.hunger = 600;
+            fish.bought_timer = 0;
+            fish.special_timer = 0;
+            fish.movement_timer = 0;
+            fish.movement_state = 4;
+            state.tick();
+            let fish = &state.fish[0];
+            assert_eq!(fish.y, expected_y);
+            assert_eq!(fish.vy, vy);
+        }
     }
 
     #[test]
