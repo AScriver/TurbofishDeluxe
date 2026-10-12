@@ -7,24 +7,8 @@ use turbofish_deluxe::{
     adventure::{AdventurePhase, AdventureSession, PetKind},
     bonus::PurchaseReceipt,
     cli,
-    sim::{Action, AdventureState, StinkyOrigin},
+    sim::{Action, AdventureState},
 };
-
-fn historical_envelope(save: cli::ProjectSave) -> serde_json::Value {
-    assert!(save.format_version < 26);
-    let mut value = serde_json::to_value(save).unwrap();
-    let session = value["session"].as_object_mut().unwrap();
-    session.remove("mode");
-    session.remove("time_trial");
-    session.remove("time_trial_scores");
-    if let Some(board) = session
-        .get_mut("board")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        board.remove("time_trial");
-    }
-    value
-}
 
 mod current_codec {
     use super::*;
@@ -88,6 +72,24 @@ mod current_codec {
                 expected
             );
             assert_eq!(serde_json::to_value(profiles).unwrap(), profile);
+        }
+    }
+
+    #[test]
+    fn current_containers_preserve_serialized_legacy_origin_tags() {
+        let mut session = serde_json::to_value(second_stage_session()).unwrap();
+        session["board"]["stinky"][0]["origin"] = json!("LegacyV2Resume");
+        for origin in ["LegacyV3Resume", "LegacyV4Resume", "LegacyV5Resume"] {
+            session["board"]["invasion"]["origin"] = json!(origin);
+            let standalone = cli::decode_save(&standalone_bytes(&session)).unwrap();
+            let profiles =
+                Profiles::decode(&serde_json::to_vec(&profile_value(session.clone())).unwrap())
+                    .unwrap();
+            assert_eq!(serde_json::to_value(standalone).unwrap(), session);
+            assert_eq!(
+                serde_json::to_value(&profiles.current().unwrap().session).unwrap(),
+                session
+            );
         }
     }
 
@@ -2841,7 +2843,7 @@ fn current_tank_four_pending_birth_and_rhubarb_push_continue_identically_after_r
 }
 
 #[test]
-fn format_sixteen_nimbus_hatch_enters_current_four_two_and_old_amp_selector_still_decodes() {
+fn current_nimbus_hatch_enters_four_two_and_amp_selector_resumes() {
     use turbofish_deluxe::sim::Event;
     let mut session = tank_four_first_session(&[PetKind::Rhubarb]);
     session.progress.level = 2;
@@ -2852,13 +2854,8 @@ fn format_sixteen_nimbus_hatch_enters_current_four_two_and_old_amp_selector_stil
         updates: 171,
     };
     session.validate().unwrap();
-    // The earned A31 endpoint has no Board. It loads byte-for-byte as a
-    // format-sixteen session; opening 4-2 constructs the current live state.
-    let bytes = serde_json::to_vec(&historical_envelope(cli::ProjectSave {
-        format_version: 16,
-        session: session.clone(),
-    }))
-    .unwrap();
+    // Pending hatch has no Board; opening 4-2 constructs the live state.
+    let bytes = current_bytes(session.clone());
     let mut loaded = cli::decode_save(&bytes).unwrap();
     assert_eq!(
         serde_json::to_value(&loaded).unwrap(),
@@ -2913,34 +2910,23 @@ fn format_sixteen_nimbus_hatch_enters_current_four_two_and_old_amp_selector_stil
         );
     }
 
-    // A historical format-seventeen 4-3 endpoint has no live Board, so it
-    // does not require format-eighteen Amp actor fields to enter the new stage.
-    let mut old_selector = tank_four_second_session(&[]);
-    old_selector.progress.level = 3;
-    old_selector.progress.unlocked_pets.push(PetKind::Amp);
-    old_selector.board = None;
-    old_selector.phase = AdventurePhase::Hatch {
+    let mut selector = tank_four_second_session(&[]);
+    selector.progress.level = 3;
+    selector.progress.unlocked_pets.push(PetKind::Amp);
+    selector.board = None;
+    selector.phase = AdventurePhase::Hatch {
         pet: PetKind::Amp,
         updates: 171,
     };
-    old_selector.validate().unwrap();
-    let old_bytes = serde_json::to_vec(&historical_envelope(cli::ProjectSave {
-        format_version: 17,
-        session: old_selector.clone(),
-    }))
-    .unwrap();
-    let mut old_selector = cli::decode_save(&old_bytes).unwrap();
+    selector.validate().unwrap();
+    let mut old_selector = cli::decode_save(&current_bytes(selector)).unwrap();
     old_selector.apply_actions(&[Action::Continue, Action::TogglePet { pet: PetKind::Amp }]);
     assert!(matches!(
         old_selector.phase,
         AdventurePhase::PetSelection { .. }
     ));
     assert!(old_selector.board.is_none());
-    let selector_bytes = serde_json::to_vec(&historical_envelope(cli::ProjectSave {
-        format_version: 17,
-        session: old_selector.clone(),
-    }))
-    .unwrap();
+    let selector_bytes = current_bytes(old_selector.clone());
     let mut resumed = cli::decode_save(&selector_bytes).unwrap();
     assert_eq!(
         serde_json::to_value(&resumed).unwrap(),
@@ -2955,9 +2941,8 @@ fn format_sixteen_nimbus_hatch_enters_current_four_two_and_old_amp_selector_stil
 }
 
 #[test]
-fn format_eighteen_board_null_gash_selector_enters_current_four_four() {
-    // A synthetic historical reward endpoint tests the old loader boundary;
-    // it is not evidence that three 4-3 eggs were earned in native play.
+fn current_board_null_gash_selector_enters_four_four() {
+    // Synthetic reward endpoint tests pending selection; it is not earned play evidence.
     let mut old_selector = tank_four_third_session(&[]);
     old_selector.progress.level = 4;
     old_selector.progress.unlocked_pets.push(PetKind::Gash);
@@ -2967,11 +2952,7 @@ fn format_eighteen_board_null_gash_selector_enters_current_four_four() {
         updates: 171,
     };
     old_selector.validate().unwrap();
-    let old_bytes = serde_json::to_vec(&historical_envelope(cli::ProjectSave {
-        format_version: 18,
-        session: old_selector.clone(),
-    }))
-    .unwrap();
+    let old_bytes = current_bytes(old_selector.clone());
     let mut old_selector = cli::decode_save(&old_bytes).unwrap();
     old_selector.apply_actions(&[Action::Continue, Action::TogglePet { pet: PetKind::Gash }]);
     assert!(matches!(
@@ -2979,11 +2960,7 @@ fn format_eighteen_board_null_gash_selector_enters_current_four_four() {
         AdventurePhase::PetSelection { .. }
     ));
     assert!(old_selector.board.is_none());
-    let selector_bytes = serde_json::to_vec(&historical_envelope(cli::ProjectSave {
-        format_version: 18,
-        session: old_selector.clone(),
-    }))
-    .unwrap();
+    let selector_bytes = current_bytes(old_selector.clone());
     let mut resumed = cli::decode_save(&selector_bytes).unwrap();
     assert_eq!(
         serde_json::to_value(&resumed).unwrap(),
@@ -5030,7 +5007,7 @@ fn atomic_save_replaces_complete_snapshot_and_retains_seeded_state() {
 }
 
 #[test]
-fn format_six_migrates_fifth_board_without_losing_earned_state() {
+fn current_fifth_board_reopens_without_losing_earned_state() {
     let roster = vec![PetKind::Stinky, PetKind::Itchy, PetKind::Prego];
     let mut session = AdventureSession::new(42);
     session.progress.level = 5;
@@ -5043,50 +5020,16 @@ fn format_six_migrates_fifth_board_without_losing_earned_state() {
     session.progress.selected_pets = roster.clone();
     session.board = Some(AdventureState::new_fifth_stage(42, &roster).unwrap());
     session.apply_actions(&[Action::Click { x: 300.0, y: 200.0 }]);
-    let original = session.board.as_ref().unwrap().clone();
-    let mut value = historical_envelope(cli::ProjectSave {
-        format_version: 6,
-        session,
-    });
-    value["session"]["progress"]
-        .as_object_mut()
-        .unwrap()
-        .remove("shell_balance");
-    let board = value["session"]["board"].as_object_mut().unwrap();
-    for field in ["potion_unlocked", "potion_armed"] {
-        board.remove(field);
-    }
-    for food in board["food"].as_array_mut().unwrap() {
-        for field in [
-            "direction",
-            "vx",
-            "vy",
-            "animation_period",
-            "free_from_zorf",
-        ] {
-            food.as_object_mut().unwrap().remove(field);
-        }
-    }
-    let migrated = cli::decode_save(&serde_json::to_vec(&value).unwrap()).unwrap();
-    assert_eq!(migrated.progress.shell_balance, 0);
-    assert_eq!(migrated.progress.selected_pets, roster);
-    let board = migrated.board.as_ref().unwrap();
+    session.validate().unwrap();
+    let before = serde_json::to_value(&session).unwrap();
+    let mut reopened = cli::decode_save(&current_bytes(session.clone())).unwrap();
+    assert_eq!(serde_json::to_value(&reopened).unwrap(), before);
+    assert_eq!(reopened.progress.selected_pets, roster);
+    assert_eq!(reopened.step(&[]), session.step(&[]));
     assert_eq!(
-        (board.tick, board.balance, board.eggs),
-        (original.tick, original.balance, original.eggs)
+        serde_json::to_value(&reopened).unwrap(),
+        serde_json::to_value(&session).unwrap()
     );
-    assert_eq!(
-        serde_json::to_value(board).unwrap()["rng_state"],
-        serde_json::to_value(&original).unwrap()["rng_state"]
-    );
-    assert_eq!(board.food[0].x, original.food[0].x);
-    assert_eq!(board.food[0].y, original.food[0].y);
-    assert!(!board.potion_armed);
-    assert_eq!(board.food[0].direction, 0);
-    let mut unsupported = value;
-    unsupported["session"]["progress"]["tank"] = 2.into();
-    unsupported["session"]["progress"]["level"] = 1.into();
-    assert!(cli::decode_save(&serde_json::to_vec(&unsupported).unwrap()).is_err());
 }
 
 #[test]
@@ -6233,119 +6176,68 @@ fn current_purchase_time_trial_result_requires_clock_and_receipt() {
 }
 
 #[test]
-fn legacy_board_save_migrates_without_losing_next_tick() {
-    let mut board = AdventureState::new_adventure(42);
+fn current_board_save_preserves_next_tick() {
+    let mut session = AdventureSession::new(42);
     for _ in 0..20 {
-        board.tick();
+        session.step(&[]);
     }
-    let bytes = serde_json::to_vec(&cli::LegacyProjectSave {
-        format_version: 1,
-        state: board.clone(),
-    })
-    .unwrap();
-    let mut session = cli::decode_save(&bytes).unwrap();
-    assert_eq!(session.ticks, 20);
-    assert_eq!(session.phase, AdventurePhase::Playing);
-    assert_eq!(session.step(&[]), board.tick());
+    let mut resumed = cli::decode_save(&current_bytes(session.clone())).unwrap();
+    assert_eq!(resumed.ticks, 20);
+    assert_eq!(resumed.phase, AdventurePhase::Playing);
+    assert_eq!(resumed.step(&[]), session.step(&[]));
     assert_eq!(
-        serde_json::to_value(session.board.unwrap()).unwrap(),
-        serde_json::to_value(board).unwrap()
+        serde_json::to_value(resumed).unwrap(),
+        serde_json::to_value(session).unwrap()
     );
 }
 
 #[test]
-fn completed_legacy_board_becomes_one_pending_reward() {
-    let mut board = AdventureState::new_adventure(42);
-    board.victory = true;
-    board.eggs = 3;
-    board.tick = 250;
-    let bytes = serde_json::to_vec(&cli::LegacyProjectSave {
-        format_version: 1,
-        state: board,
-    })
-    .unwrap();
-    let session = cli::decode_save(&bytes).unwrap();
-    assert_eq!((session.progress.tank, session.progress.level), (1, 2));
-    assert_eq!(session.progress.unlocked_pets, vec![PetKind::Stinky]);
-    assert!(session.board.is_none());
-    assert_eq!(session.progress.first_stage_best_seconds, Some(7));
-    assert_eq!(
-        session.phase,
-        AdventurePhase::Hatch {
-            pet: PetKind::Stinky,
-            updates: 0
-        }
-    );
-    let resumed = cli::decode_save(
-        &serde_json::to_vec(&cli::ProjectSave {
-            format_version: cli::SAVE_FORMAT_VERSION,
-            session,
-        })
-        .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(resumed.progress.unlocked_pets, vec![PetKind::Stinky]);
-    assert!(resumed.board.is_none());
-    assert_eq!(resumed.progress.first_stage_best_seconds, Some(7));
-}
-
-#[test]
-fn old_v2_hatch_retains_unknown_score_and_level_two_gets_one_explicit_pet_migration() {
+fn current_completed_board_keeps_one_pending_reward() {
     let mut session = AdventureSession::new(42);
     let board = session.board.as_mut().unwrap();
     board.egg_unlocked = true;
     board.balance = 450;
     session.apply_actions(&[Action::BuyEgg, Action::BuyEgg, Action::BuyEgg]);
-    let mut old_hatch = historical_envelope(cli::ProjectSave {
-        format_version: 2,
-        session: session.clone(),
-    });
-    old_hatch["session"]["progress"]
-        .as_object_mut()
-        .unwrap()
-        .remove("first_stage_best_seconds");
-    let mut resumed = cli::decode_save(&serde_json::to_vec(&old_hatch).unwrap()).unwrap();
-    assert_eq!(resumed.progress.first_stage_best_seconds, None);
+    assert_eq!(session.progress.unlocked_pets, vec![PetKind::Stinky]);
+    assert!(session.board.is_none());
+    assert!(matches!(
+        session.phase,
+        AdventurePhase::Hatch {
+            pet: PetKind::Stinky,
+            ..
+        }
+    ));
+    let resumed = cli::decode_save(&current_bytes(session.clone())).unwrap();
+    assert_eq!(
+        serde_json::to_value(&resumed).unwrap(),
+        serde_json::to_value(session).unwrap()
+    );
+    assert_eq!(resumed.progress.unlocked_pets, vec![PetKind::Stinky]);
+    assert!(resumed.board.is_none());
+}
+
+#[test]
+fn current_hatch_resumes_into_level_two_without_duplicate_reward() {
+    let mut session = AdventureSession::new(42);
+    let board = session.board.as_mut().unwrap();
+    board.egg_unlocked = true;
+    board.balance = 450;
+    session.apply_actions(&[Action::BuyEgg, Action::BuyEgg, Action::BuyEgg]);
+    let mut resumed = cli::decode_save(&current_bytes(session.clone())).unwrap();
+    assert_eq!(
+        serde_json::to_value(&resumed).unwrap(),
+        serde_json::to_value(&session).unwrap()
+    );
     for _ in 0..171 {
         resumed.step(&[]);
     }
     resumed.apply_actions(&[Action::Continue]);
-    let mut old_board = historical_envelope(cli::ProjectSave {
-        format_version: 2,
-        session: resumed,
-    });
-    old_board["session"]["board"]
-        .as_object_mut()
-        .unwrap()
-        .remove("stinky");
-    let migrated = cli::decode_save(&serde_json::to_vec(&old_board).unwrap()).unwrap();
-    assert_eq!(
-        migrated
-            .board
-            .as_ref()
-            .unwrap()
-            .stinky
-            .first()
-            .unwrap()
-            .origin,
-        StinkyOrigin::LegacyV2Resume
-    );
-    let mut round_trip = cli::decode_save(
-        &serde_json::to_vec(&cli::ProjectSave {
-            format_version: cli::SAVE_FORMAT_VERSION,
-            session: migrated.clone(),
-        })
-        .unwrap(),
-    )
-    .unwrap();
-    let mut uninterrupted = migrated;
-    assert_eq!(round_trip.step(&[]), uninterrupted.step(&[]));
+    let mut round_trip = cli::decode_save(&current_bytes(resumed.clone())).unwrap();
+    assert_eq!(round_trip.step(&[]), resumed.step(&[]));
     assert_eq!(
         serde_json::to_value(round_trip).unwrap(),
-        serde_json::to_value(uninterrupted).unwrap()
+        serde_json::to_value(resumed).unwrap()
     );
-    old_board["session"]["board"]["stinky"] = serde_json::Value::Null;
-    assert!(cli::decode_save(&serde_json::to_vec(&old_board).unwrap()).is_err());
 }
 
 fn second_stage_session() -> AdventureSession {
@@ -6362,38 +6254,18 @@ fn second_stage_session() -> AdventureSession {
 }
 
 #[test]
-fn format_three_migration_preserves_old_state_and_rewrites_before_play() {
-    let root = temporary_root("v3-migration");
+fn current_load_preserves_board_state_and_save_bytes() {
+    let root = temporary_root("current-load");
     let path = root.join("adventure.json");
     let mut session = second_stage_session();
     session.ticks = 4000;
     let board = session.board.as_mut().unwrap();
     board.tick = 1500;
     board.balance = 319;
-    // The old implementation opened the egg gate at Large growth. Migration
-    // keeps that evidence as the food-quality gate, without free upgrades.
-    board.egg_unlocked = true;
-    let expected_stinky = serde_json::to_value(&board.stinky).unwrap();
-    let expected_rng = serde_json::to_value(&*board).unwrap()["rng_state"].clone();
-    let first_best = session.progress.first_stage_best_seconds;
-    let mut legacy = historical_envelope(cli::ProjectSave {
-        format_version: 3,
-        session,
-    });
-    legacy["session"]["progress"]
-        .as_object_mut()
-        .unwrap()
-        .remove("later_stage_best_seconds");
-    let old_board = legacy["session"]["board"].as_object_mut().unwrap();
-    for field in ["upgrades", "invasion", "niko", "pearls"] {
-        old_board.remove(field);
-    }
-    for fish in old_board["fish"].as_array_mut().unwrap() {
-        fish.as_object_mut()
-            .unwrap()
-            .remove("cannot_be_eaten_ticks");
-    }
-    cli::write_json(&path, &legacy).unwrap();
+    session.validate().unwrap();
+    let expected = serde_json::to_value(&session).unwrap();
+    let bytes = current_bytes(session);
+    fs::write(&path, &bytes).unwrap();
     let options = cli::Options {
         game_dir: None,
         save_dir: root.clone(),
@@ -6406,36 +6278,9 @@ fn format_three_migration_preserves_old_state_and_rewrites_before_play() {
         test_speed: 1,
         screensaver: None,
     };
-    let migrated = cli::load_session(&options).unwrap();
-    let board = migrated.board.as_ref().unwrap();
-    assert_eq!(
-        (migrated.ticks, board.tick, board.balance),
-        (4000, 1500, 319)
-    );
-    assert_eq!(migrated.progress.first_stage_best_seconds, first_best);
-    assert_eq!(
-        serde_json::to_value(&board.stinky).unwrap(),
-        expected_stinky
-    );
-    assert_eq!(
-        serde_json::to_value(board).unwrap()["rng_state"],
-        expected_rng
-    );
-    assert!(board.upgrades.quality_unlocked);
-    assert_eq!((board.upgrades.quality, board.upgrades.quantity), (0, 1));
-    assert!(!board.egg_unlocked);
-    let wave = board.invasion.as_ref().unwrap();
-    assert_eq!(
-        wave.origin,
-        turbofish_deluxe::invasion::InvasionOrigin::LegacyV3Resume
-    );
-    assert_eq!(wave.countdown, 1750);
-    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    assert_eq!(saved["format_version"], cli::SAVE_FORMAT_VERSION);
-    assert_eq!(
-        serde_json::to_value(cli::decode_save(&fs::read(&path).unwrap()).unwrap()).unwrap(),
-        serde_json::to_value(migrated).unwrap()
-    );
+    let loaded = cli::load_session(&options).unwrap();
+    assert_eq!(serde_json::to_value(loaded).unwrap(), expected);
+    assert_eq!(fs::read(&path).unwrap(), bytes);
     assert!(!path.with_extension("pending").exists());
     fs::remove_file(path).unwrap();
     fs::remove_dir(root).unwrap();
@@ -6506,68 +6351,23 @@ fn third_stage_session() -> AdventureSession {
 }
 
 #[test]
-fn format_four_stage_three_migration_retains_state_and_remembered_growth_gate() {
+fn current_stage_three_preserves_progress_growth_gate_and_invasion() {
     let mut session = third_stage_session();
     session.ticks = 900;
     let board = session.board.as_mut().unwrap();
     board.tick = 50;
     board.balance = 400;
-    // Old format4 remembered Large growth after its fish/corpse disappeared.
     board.upgrades.quality_unlocked = true;
     board.upgrades.quantity_unlocked = true;
-    let expected_rng = serde_json::to_value(&*board).unwrap()["rng_state"].clone();
-    let expected_niko = serde_json::to_value(&board.niko).unwrap();
-    let progress_before = session.progress.clone();
-    let mut old = historical_envelope(cli::ProjectSave {
-        format_version: 4,
-        session,
-    });
-    let old_board = old["session"]["board"].as_object_mut().unwrap();
-    old_board.insert("invasion".into(), serde_json::Value::Null);
-    for field in [
-        "oscars",
-        "dead_oscars",
-        "oscar_unlocked",
-        "weapon_strength",
-        "weapon_unlocked",
-    ] {
-        old_board.remove(field);
-    }
-    let migrated = cli::decode_save(&serde_json::to_vec(&old).unwrap()).unwrap();
-    let board = migrated.board.as_ref().unwrap();
-    assert_eq!(migrated.progress, progress_before);
-    assert_eq!((migrated.ticks, board.tick, board.balance), (900, 50, 400));
+    session.validate().unwrap();
+    let expected = serde_json::to_value(&session).unwrap();
+    let mut reopened = cli::decode_save(&current_bytes(session.clone())).unwrap();
+    assert_eq!(serde_json::to_value(&reopened).unwrap(), expected);
+    assert_eq!(reopened.progress, session.progress);
+    assert_eq!(reopened.step(&[]), session.step(&[]));
     assert_eq!(
-        serde_json::to_value(board).unwrap()["rng_state"],
-        expected_rng
-    );
-    assert_eq!(serde_json::to_value(&board.niko).unwrap(), expected_niko);
-    assert!(board.oscar_unlocked);
-    assert!(!board.weapon_unlocked);
-    assert_eq!(board.weapon_strength, 2);
-    let wave = board.invasion.as_ref().unwrap();
-    assert_eq!(wave.countdown, 3000);
-    assert_eq!(
-        wave.plan.expected(),
-        turbofish_deluxe::invasion::EncounterKind::Single(
-            turbofish_deluxe::alien::SylvesterKind::Strong
-        )
-    );
-    assert_eq!(
-        wave.origin,
-        turbofish_deluxe::invasion::InvasionOrigin::LegacyV4Resume
-    );
-    let roundtrip = cli::decode_save(
-        &serde_json::to_vec(&cli::ProjectSave {
-            format_version: cli::SAVE_FORMAT_VERSION,
-            session: migrated.clone(),
-        })
-        .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        serde_json::to_value(roundtrip).unwrap(),
-        serde_json::to_value(migrated).unwrap()
+        serde_json::to_value(reopened).unwrap(),
+        serde_json::to_value(session).unwrap()
     );
 }
 
@@ -6611,7 +6411,7 @@ fn modern_requires_variant_and_rejects_weak_actor_on_strong_stage() {
 }
 
 #[test]
-fn format_six_requires_pet_fields_and_preserves_resumable_selection() {
+fn current_requires_pet_fields_and_preserves_resumable_selection() {
     let mut session = AdventureSession::new(42);
     session.progress.level = 5;
     session.progress.unlocked_pets = vec![
@@ -6625,10 +6425,12 @@ fn format_six_requires_pet_fields_and_preserves_resumable_selection() {
         selected: vec![PetKind::Niko, PetKind::Prego],
     };
     session.apply_actions(&[Action::Continue]);
-    let modern = historical_envelope(cli::ProjectSave {
-        format_version: 6,
+    session.validate().unwrap();
+    let modern = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
         session,
-    });
+    })
+    .unwrap();
     let loaded = cli::decode_save(&serde_json::to_vec(&modern).unwrap()).unwrap();
     assert_eq!(
         loaded.phase,
@@ -6640,7 +6442,6 @@ fn format_six_requires_pet_fields_and_preserves_resumable_selection() {
         loaded.progress.selected_pets,
         vec![PetKind::Niko, PetKind::Prego]
     );
-    assert_eq!(loaded.ticks, 0);
     for field in ["pet_capacity", "selected_pets"] {
         let mut incomplete = modern.clone();
         incomplete["session"]["progress"]
@@ -6652,11 +6453,11 @@ fn format_six_requires_pet_fields_and_preserves_resumable_selection() {
     let mut rejected = modern;
     rejected["session"]["phase"]["PetSelectionConfirmation"]["selected"] = serde_json::json!([]);
     assert!(cli::decode_save(&serde_json::to_vec(&rejected).unwrap()).is_err());
-    let board_session = second_stage_session();
-    let modern_board = historical_envelope(cli::ProjectSave {
-        format_version: 6,
-        session: board_session,
-    });
+    let modern_board = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
+        session: second_stage_session(),
+    })
+    .unwrap();
     for field in ["fish_pets", "punch_sound_cooldown"] {
         let mut incomplete = modern_board.clone();
         incomplete["session"]["board"]
@@ -6668,7 +6469,7 @@ fn format_six_requires_pet_fields_and_preserves_resumable_selection() {
 }
 
 #[test]
-fn format_five_fourth_board_gets_explicit_new_support_without_rewriting_earned_state() {
+fn current_fourth_board_preserves_earned_state_and_stage_support() {
     let mut session = AdventureSession::new(42);
     session.progress.level = 4;
     session.progress.unlocked_pets = vec![PetKind::Stinky, PetKind::Niko, PetKind::Itchy];
@@ -6677,79 +6478,30 @@ fn format_five_fourth_board_gets_explicit_new_support_without_rewriting_earned_s
     let board = session.board.as_mut().unwrap();
     board.tick = 700;
     board.balance = 1234;
-    board.invasion = None;
-    board.fish_pets.clear();
-    let old_niko = serde_json::to_value(&board.niko).unwrap();
-    let old_fish_ids = board.fish.iter().map(|fish| fish.id).collect::<Vec<_>>();
-    let mut legacy = historical_envelope(cli::ProjectSave {
-        format_version: 5,
-        session,
-    });
-    let old_progress = legacy["session"]["progress"].as_object_mut().unwrap();
-    old_progress.remove("pet_capacity");
-    old_progress.remove("selected_pets");
-    let old_board = legacy["session"]["board"].as_object_mut().unwrap();
-    old_board.remove("fish_pets");
-    old_board.remove("punch_sound_cooldown");
-    let root = temporary_root("v5-fourth");
-    fs::write(
-        root.join("adventure.json"),
-        serde_json::to_vec_pretty(&legacy).unwrap(),
-    )
-    .unwrap();
-    let options = cli::Options {
-        game_dir: None,
-        save_dir: root.clone(),
-        evidence_dir: None,
-        seed: 42,
-        new_game: false,
-        inspect_assets: false,
-        quit_after: None,
-        muted: true,
-        test_speed: 1,
-        screensaver: None,
-    };
-    let migrated = cli::load_session(&options).unwrap();
-    let board = migrated.board.as_ref().unwrap();
+    session.validate().unwrap();
+    let expected = serde_json::to_value(&session).unwrap();
+    let reopened = cli::decode_save(&current_bytes(session)).unwrap();
+    assert_eq!(serde_json::to_value(&reopened).unwrap(), expected);
+    let board = reopened.board.as_ref().unwrap();
     assert_eq!(
-        (migrated.ticks, board.tick, board.balance),
+        (reopened.ticks, board.tick, board.balance),
         (801, 700, 1234)
-    );
-    assert_eq!(serde_json::to_value(&board.niko).unwrap(), old_niko);
-    assert_eq!(
-        board.fish.iter().map(|fish| fish.id).collect::<Vec<_>>(),
-        old_fish_ids
     );
     assert_eq!(board.fish_pets.len(), 1);
     assert_eq!(
         board.fish_pets[0].kind,
         turbofish_deluxe::fish_pet::FishPetKind::Itchy
     );
-    let wave = board.invasion.as_ref().unwrap();
     assert_eq!(
-        wave.plan.expected(),
+        board.invasion.as_ref().unwrap().plan.expected(),
         turbofish_deluxe::invasion::EncounterKind::Single(
             turbofish_deluxe::alien::SylvesterKind::Balrog
         )
     );
-    assert_eq!(
-        wave.origin,
-        turbofish_deluxe::invasion::InvasionOrigin::LegacyV5Resume
-    );
-    assert_eq!(wave.countdown, 3000);
-    let saved: serde_json::Value =
-        serde_json::from_slice(&fs::read(root.join("adventure.json")).unwrap()).unwrap();
-    assert_eq!(saved["format_version"], cli::SAVE_FORMAT_VERSION);
-    let loaded = cli::load_session(&options).unwrap();
-    assert_eq!(
-        serde_json::to_value(loaded).unwrap(),
-        serde_json::to_value(migrated).unwrap()
-    );
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
-fn format_five_strong_corpse_kind_is_recovered_but_modern_missing_kind_is_rejected() {
+fn current_strong_corpse_kind_round_trips_and_missing_kind_rejects() {
     use turbofish_deluxe::{alien::SylvesterKind, invasion::DeadAlienEffect};
     let mut session = third_stage_session();
     session
@@ -6772,33 +6524,17 @@ fn format_five_strong_corpse_kind_is_recovered_but_modern_missing_kind_is_reject
         opacity: 1.0,
         remaining_ticks: 125,
     }];
-    let mut legacy = historical_envelope(cli::ProjectSave {
-        format_version: 5,
+    session.validate().unwrap();
+    let mut modern = serde_json::to_value(cli::ProjectSave {
+        format_version: cli::SAVE_FORMAT_VERSION,
         session,
-    });
-    legacy["session"]["board"]["invasion"]["dead_aliens"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("kind");
-    let migrated = cli::decode_save(&serde_json::to_vec(&legacy).unwrap()).unwrap();
+    })
+    .unwrap();
+    let reopened = cli::decode_save(&serde_json::to_vec(&modern).unwrap()).unwrap();
     assert_eq!(
-        migrated
-            .board
-            .as_ref()
-            .unwrap()
-            .invasion
-            .as_ref()
-            .unwrap()
-            .dead_aliens
-            .first()
-            .unwrap()
-            .kind,
+        reopened.board.unwrap().invasion.unwrap().dead_aliens[0].kind,
         SylvesterKind::Strong
     );
-    let mut modern = historical_envelope(cli::ProjectSave {
-        format_version: 6,
-        session: migrated,
-    });
     modern["session"]["board"]["invasion"]["dead_aliens"][0]
         .as_object_mut()
         .unwrap()
@@ -6842,37 +6578,10 @@ fn saved_invasion_modal_preserves_pause_and_does_not_repeat_warning() {
 }
 
 #[test]
-fn modern_missing_state_and_contradictory_completed_legacy_board_are_rejected() {
-    let mut completed = AdventureState::new_adventure(42);
-    completed.victory = true;
-    completed.eggs = 3;
-    for invalid in [
-        {
-            let mut board = completed.clone();
-            board.egg_price = 500;
-            board
-        },
-        {
-            let mut board = completed.clone();
-            board.pets.push(PetKind::Stinky);
-            board
-        },
-    ] {
-        let bytes = serde_json::to_vec(&cli::LegacyProjectSave {
-            format_version: 1,
-            state: invalid,
-        })
-        .unwrap();
-        assert!(cli::decode_save(&bytes).is_err());
-    }
-    let mut session = AdventureSession::from_legacy_board(completed).unwrap();
-    for _ in 0..171 {
-        session.step(&[]);
-    }
-    session.apply_actions(&[Action::Continue]);
+fn current_missing_pet_and_score_state_are_rejected() {
     let modern = serde_json::to_value(cli::ProjectSave {
         format_version: cli::SAVE_FORMAT_VERSION,
-        session,
+        session: second_stage_session(),
     })
     .unwrap();
     let mut missing_pet = modern.clone();

@@ -507,18 +507,6 @@ impl Invasion1_2 {
         wave
     }
 
-    pub fn legacy_v5_balrog_resume() -> Self {
-        Self::with_origin(InvasionOrigin::LegacyV5Resume, SylvesterKind::Balrog)
-    }
-
-    pub fn legacy_v4_strong_resume() -> Self {
-        Self::with_origin(InvasionOrigin::LegacyV4Resume, SylvesterKind::Strong)
-    }
-
-    pub fn legacy_v3_resume() -> Self {
-        Self::with_origin(InvasionOrigin::LegacyV3Resume, SylvesterKind::Weak)
-    }
-
     fn with_origin(origin: InvasionOrigin, kind: SylvesterKind) -> Self {
         Self {
             origin,

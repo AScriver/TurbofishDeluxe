@@ -402,13 +402,6 @@ pub enum GameMode {
     Sandbox,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MigrationError {
-    UnsupportedBoard,
-    InconsistentEggs,
-    InvalidBoard,
-}
-
 /// `board` is absent during hatch because the completed stage must not be
 /// resumed. `ticks` counts session updates; each board's `tick` starts at zero.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1178,120 +1171,6 @@ impl AdventureSession {
             sandbox_board: None,
             sandbox_origin: None,
         }
-    }
-
-    /// Upgrade a version-one save containing only the first board. A completed
-    /// board is converted to durable progress and a pending Stinky hatch.
-    pub fn from_legacy_board(mut board: AdventureState) -> Result<Self, MigrationError> {
-        if (board.tank, board.level) != (1, 1) {
-            return Err(MigrationError::UnsupportedBoard);
-        }
-        if board.eggs > 3 || board.victory != (board.eggs == 3) {
-            return Err(MigrationError::InconsistentEggs);
-        }
-        if board.egg_price != EGG_PRICE || !board.pets.is_empty() || !board.stinky.is_empty() {
-            return Err(MigrationError::InvalidBoard);
-        }
-        board.validate().map_err(|_| MigrationError::InvalidBoard)?;
-        let next_seed = board.transition_seed();
-        let ticks = board.tick;
-        if board.victory {
-            let seconds = elapsed_seconds(&board);
-            // Terminal settlement is not carried into the next tank. Retire
-            // this board once, just as for an ordinary first-stage completion.
-            settle_collecting_coins(&mut board);
-            let session = Self {
-                progress: AdventureProgress {
-                    tank: 1,
-                    level: 2,
-                    unlocked_pets: vec![PetKind::Stinky],
-                    pet_capacity: default_pet_capacity(),
-                    selected_pets: Vec::new(),
-                    shell_balance: 0,
-                    first_stage_best_seconds: Some(seconds),
-                    later_stage_best_seconds: Vec::new(),
-                    tank5_best_survivors: None,
-                    cyrax_attempts: 0,
-                    adventure_completed: false,
-                    adventure_completions: 0,
-                    purchase_cursor: 0,
-                    challenge_completed: [false; 4],
-                    stories: StoryState::default(),
-                },
-                board: None,
-                phase: AdventurePhase::Hatch {
-                    pet: PetKind::Stinky,
-                    updates: 0,
-                },
-                ticks,
-                mode: GameMode::Adventure,
-                time_trial_scores: TimeTrialScores::default(),
-                time_trial: None,
-                challenge_scores: ChallengeScores::new(),
-                challenge: None,
-                retained_adventure: None,
-                retained_time_trial: None,
-                retained_challenge: None,
-                virtual_tank: VirtualTankState::default(),
-                virtual_board: None,
-                virtual_saved_at_seconds: 0,
-                last_non_adventure_tank: 1,
-                finale_fallen_pets: Vec::new(),
-                virtual_seed: next_seed ^ 0x56_54_33_53_54_4f_52_45,
-                next_seed,
-                hatch_held: false,
-                sandbox_board: None,
-                sandbox_origin: None,
-            };
-            session
-                .validate()
-                .map_err(|_| MigrationError::InvalidBoard)?;
-            return Ok(session);
-        }
-        let session = Self {
-            progress: AdventureProgress {
-                tank: 1,
-                level: 1,
-                unlocked_pets: Vec::new(),
-                pet_capacity: default_pet_capacity(),
-                selected_pets: Vec::new(),
-                shell_balance: 0,
-                first_stage_best_seconds: None,
-                later_stage_best_seconds: Vec::new(),
-                tank5_best_survivors: None,
-                cyrax_attempts: 0,
-                adventure_completed: false,
-                adventure_completions: 0,
-                purchase_cursor: 0,
-                challenge_completed: [false; 4],
-                stories: StoryState::default(),
-            },
-            board: Some(board),
-            phase: AdventurePhase::Playing,
-            ticks,
-            mode: GameMode::Adventure,
-            time_trial_scores: TimeTrialScores::default(),
-            time_trial: None,
-            challenge_scores: ChallengeScores::new(),
-            challenge: None,
-            retained_adventure: None,
-            retained_time_trial: None,
-            retained_challenge: None,
-            virtual_tank: VirtualTankState::default(),
-            virtual_board: None,
-            virtual_saved_at_seconds: 0,
-            last_non_adventure_tank: 1,
-            finale_fallen_pets: Vec::new(),
-            virtual_seed: next_seed ^ 0x56_54_33_53_54_4f_52_45,
-            next_seed,
-            hatch_held: false,
-            sandbox_board: None,
-            sandbox_origin: None,
-        };
-        session
-            .validate()
-            .map_err(|_| MigrationError::InvalidBoard)?;
-        Ok(session)
     }
 
     /// Reject a decoded session whose board, profile, and screen disagree.
@@ -8953,27 +8832,31 @@ mod tests {
     }
 
     #[test]
-    fn legacy_completion_migrates_to_hatch_and_invalid_legacy_board_is_rejected() {
-        let mut completed = AdventureState::new_adventure(0x1122);
-        completed.eggs = 3;
-        completed.victory = true;
-        let migrated = AdventureSession::from_legacy_board(completed).unwrap();
-        assert!(migrated.board.is_none());
-        assert!(migrated.progress.has_pet(PetKind::Stinky));
-        assert!(migrated.validate().is_ok());
+    fn first_board_completion_hatches_once_and_invalid_board_is_rejected() {
+        let mut completed = AdventureSession::new(0x1122);
+        let board = completed.board.as_mut().unwrap();
+        board.egg_unlocked = true;
+        board.balance = 450;
+        completed.apply_actions(&[Action::BuyEgg, Action::BuyEgg, Action::BuyEgg]);
+        assert!(completed.board.is_none());
+        assert!(completed.progress.has_pet(PetKind::Stinky));
+        assert_eq!(
+            completed.phase,
+            AdventurePhase::Hatch {
+                pet: PetKind::Stinky,
+                updates: 0,
+            }
+        );
+        completed.validate().unwrap();
+        completed.apply_actions(&[Action::BuyEgg]);
+        assert_eq!(completed.progress.unlocked_pets, vec![PetKind::Stinky]);
 
-        let mut inconsistent = AdventureState::new_adventure(0x1122);
-        inconsistent.victory = true;
-        assert_eq!(
-            AdventureSession::from_legacy_board(inconsistent).unwrap_err(),
-            MigrationError::InconsistentEggs
-        );
-        let mut wrong_stage = AdventureState::new_second_stage(0x1122);
-        wrong_stage.victory = false;
-        assert_eq!(
-            AdventureSession::from_legacy_board(wrong_stage).unwrap_err(),
-            MigrationError::UnsupportedBoard
-        );
+        let mut inconsistent = AdventureSession::new(0x1122);
+        inconsistent.board.as_mut().unwrap().victory = true;
+        assert!(inconsistent.validate().is_err());
+        let mut wrong_stage = AdventureSession::new(0x1122);
+        wrong_stage.board = Some(AdventureState::new_second_stage(0x1122));
+        assert!(wrong_stage.validate().is_err());
     }
 
     #[test]

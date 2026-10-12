@@ -1,4 +1,6 @@
-use crate::{adventure::AdventureSession, install, profiles::Profiles, sim::AdventureState};
+#[cfg(test)]
+use crate::sim::AdventureState;
+use crate::{adventure::AdventureSession, install, profiles::Profiles};
 use std::{
     env,
     error::Error,
@@ -172,12 +174,6 @@ fn default_save_dir() -> PathBuf {
 pub struct ProjectSave {
     pub format_version: u32,
     pub session: AdventureSession,
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-pub struct LegacyProjectSave {
-    pub format_version: u32,
-    pub state: AdventureState,
 }
 
 pub const SAVE_FORMAT_VERSION: u32 = 37;

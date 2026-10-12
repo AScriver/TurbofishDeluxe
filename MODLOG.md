@@ -2,6 +2,24 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Remove dead legacy-save scaffolding
+
+The user requested cleanup after a read-only audit. Nine reconstruction
+functions, the unused migration error and production legacy wrapper are
+removed. Twelve persistence tests retain useful current-format transition,
+state and transaction assertions; affected library tests retain completion
+and Stinky coverage. Saved origin tags, session37/profile3 and completed
+screensaver code are preserved.
+
+The baseline migration test reproduces an obsolete success expectation.
+Initial changed-test compilation fails with E0382; borrowing its serialized
+session fixes the test. All21 focused tests, formatting, strict lint and an
+isolated build pass. [Owning record](docs/refactor-save-codec.md#dead-legacy-save-cleanup)
+owns exact commands, preserved failure logs, source/build identity and limits.
+Protected-source/reference checks pass; no live save, human game or
+normal-launch artifact was accessed. Concurrent guppy follow-up notes remain
+preserved separately. No work item was supplied; Actionables was not updated.
+
 ## 2026-10-12 — Correct Adventure guppy turn sprite mirroring
 
 Human feedback narrowed the turnaround timing issue to Adventure guppies.

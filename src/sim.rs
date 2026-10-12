@@ -3315,77 +3315,6 @@ impl AdventureState {
         self.fish_pets.push(pet);
     }
 
-    /// Only invoked while migrating old format-5 project saves. Their board
-    /// tick cannot recover elapsed Balrog wave phase or historical Itchy pose.
-    pub fn initialize_legacy_stage14_support(&mut self) {
-        if self.tank == 1 && self.level == 4 && self.invasion.is_none() {
-            self.invasion = Some(Invasion1_2::legacy_v5_balrog_resume());
-            if self.fish_pets.is_empty() && self.pets.contains(&PetKind::Itchy) {
-                self.spawn_fish_pet(FishPetKind::Itchy);
-            }
-        }
-    }
-
-    /// Old format-5 dead-alien effects predate their explicit variant field.
-    /// Recover only from the persisted owning wave at the migration boundary.
-    pub fn initialize_legacy_alien_body_kind(&mut self) {
-        if let Some(wave) = self.invasion.as_mut()
-            && let Some(body) = wave.dead_aliens.first_mut()
-            && let WavePlan::Fixed(kind) = wave.plan
-        {
-            body.kind = kind;
-        }
-    }
-
-    /// Explicit migration from old format-4 project boards. Existing 1-3
-    /// ticks do not reveal the historically elapsed strong-wave countdown.
-    pub fn initialize_legacy_stage13_support(&mut self) {
-        if self.tank == 1 && self.level == 3 && self.invasion.is_none() {
-            self.invasion = Some(Invasion1_2::legacy_v4_strong_resume());
-            let grew_large = self.upgrades.quality_unlocked
-                || self.fish.iter().any(|fish| fish.size == FishSize::Large)
-                || self
-                    .dead_fish
-                    .iter()
-                    .any(|fish| fish.size == FishSize::Large);
-            if grew_large {
-                self.upgrades.quality_unlocked = true;
-                self.upgrades.quantity_unlocked = true;
-                self.oscar_unlocked = true;
-            }
-            self.weapon_strength = 2;
-            self.weapon_unlocked = false;
-            self.egg_unlocked = false;
-        }
-    }
-
-    pub fn initialize_legacy_invasion(&mut self) {
-        if (self.tank, self.level) == (1, 2) {
-            self.upgrades.quality_unlocked = self.egg_unlocked
-                || self.fish.iter().any(|fish| fish.size == FishSize::Large)
-                || self
-                    .dead_fish
-                    .iter()
-                    .any(|fish| fish.size == FishSize::Large);
-            self.egg_unlocked = false;
-            self.invasion = Some(Invasion1_2::legacy_v3_resume());
-        }
-    }
-
-    /// Old v2 project saves stored the roster but no live pet object. This
-    /// creates a fresh deterministic state at the load boundary; it cannot
-    /// recover where Stinky historically was in that save.
-    pub fn initialize_missing_stinky(&mut self) -> bool {
-        if (self.tank, self.level) != (1, 2)
-            || !self.pets.contains(&PetKind::Stinky)
-            || !self.stinky.is_empty()
-        {
-            return false;
-        }
-        self.stinky = vec![self.spawn_stinky(StinkyOrigin::LegacyV2Resume)];
-        true
-    }
-
     fn spawn_stinky(&mut self, origin: StinkyOrigin) -> StinkyState {
         let combat_id = if self.tank == 5 {
             Some(self.id())
@@ -13906,24 +13835,18 @@ mod tests {
                 .iter()
                 .all(|fish| !fish.beginner && fish.food_ate == 2)
         );
-        assert!(!state.initialize_missing_stinky());
-
-        state.stinky.clear(); // The previous v2 project-save shape.
-        assert!(state.initialize_missing_stinky());
-        assert_eq!(
-            state.stinky.first().unwrap().origin,
-            StinkyOrigin::LegacyV2Resume
-        );
-        let restored: AdventureState =
-            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-        assert_eq!(
-            restored.stinky.first().unwrap().origin,
-            StinkyOrigin::LegacyV2Resume
-        );
-        assert!(!state.initialize_missing_stinky());
-        let mut first_stage = AdventureState::new_adventure(0x7788);
-        first_stage.pets.push(PetKind::Stinky);
-        assert!(!first_stage.initialize_missing_stinky());
+        // Origin tags remain part of current saves even after reconstruction
+        // helpers are removed. Loading must preserve the saved actor verbatim.
+        for origin in [StinkyOrigin::StageStart, StinkyOrigin::LegacyV2Resume] {
+            state.stinky[0].origin = origin;
+            let restored: AdventureState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(restored.stinky[0].origin, origin);
+            assert_eq!(
+                serde_json::to_value(restored).unwrap(),
+                serde_json::to_value(&state).unwrap()
+            );
+        }
     }
 
     #[test]

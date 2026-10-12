@@ -4,6 +4,17 @@ Updated: 2026-10-12, America/Phoenix. **E128 — reported Adventure guppy turnar
 
 ## Current increment
 
+**E129 — requested dead legacy-save cleanup, complete:** Nine reconstruction
+functions and the production legacy wrapper/error type are removed. Twelve
+persistence tests now use current-format scenarios; retained origin tags have
+explicit standalone/profile round-trip coverage. All21 focused checks,
+formatting, strict lint and an isolated build pass. Session37/profile3,
+completed screensaver code, live saves and normal-launch artifacts stay
+preserved. [Owning cleanup record](docs/refactor-save-codec.md#dead-legacy-save-cleanup)
+records exact checks, initial failures, source/build identity and limits.
+No work item was supplied; Actionables was not updated. The concurrent guppy
+motion/pose follow-up below remains separate and open.
+
 **E128 / Actionable#310 — Adventure guppy turnaround:** The human narrowed the
 reported timing issue to Adventure guppies. Fresh read-only PB05 instructions
 confirm the existing signed20-count/frame cadence but show that the authored

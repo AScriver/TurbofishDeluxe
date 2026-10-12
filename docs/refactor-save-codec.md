@@ -127,3 +127,85 @@ Rust source digests above remain unchanged. On that reconciled tree,
 both passed. No unaffected test filter was repeated. This is compile support for
 the reconciled contribution before root's shared joins; it does not replace the
 identified earlier EXE or claim the final joined batch is verified.
+
+## Dead legacy-save cleanup
+
+On 2026-10-12 the user explicitly requested removal of dead migration
+scaffolding and updates to its tests. This follow-up starts at clean main
+`401da2161fa63e42cbb8d5789c74aa49ebf4a897`. A bounded source review mapped
+the test consumers; root owns the joined change and validation.
+
+Nine unused reconstruction functions, `MigrationError`, and the production
+`LegacyProjectSave` wrapper are removed from Adventure, simulation, invasion
+and CLI code. Twelve historical acceptance tests now exercise complete current
+sessions, preserving next-tick equality, pending rewards, selectors, earned
+state, byte conservation and required-field/corpse-kind rejection. The two
+affected library tests retain normal completion and Stinky spawn/serialization
+checks. The obsolete historical-envelope fixture helper is removed.
+
+Standalone format37, profile format3 and every serialized field remain.
+`StinkyOrigin::LegacyV2Resume` and all three historical `InvasionOrigin`
+tags remain readable metadata in current saves. New standalone/profile
+round-trip coverage explicitly checks them. The existing codec suite retains
+rejection of every pre37 version, malformed input and unchanged saver metadata.
+Profile-manager, completed screensaver, normal-launch and native-host sources
+are unchanged. No save migration, schema bump or gameplay change is introduced.
+
+### Checks and actual failures
+
+The original `legacy_board_save_migrates_without_losing_next_tick` test fails
+against the baseline with `Project saves before format thirty-seven lack
+retained mode scenes`, confirming its obsolete expectation. The first changed
+test compilation fails with `E0382`: serialization moved `resumed` before its
+remaining assertions. Root changes that call to borrow; final checks pass.
+Both failed logs remain in ignored `.scratch/legacy-save-cleanup`.
+
+All commands use Rust/Cargo1.95.0, default features, MSVC x86_64, two jobs,
+incremental disabled and unoptimized debug/test profiles with debug info
+disabled. Cached libopenmpt0.8.9 supplies linking/loading; no installation,
+download or normal-launch staging occurs. Cargo targets and logs are isolated
+under `.scratch/legacy-save-cleanup`.
+
+| Executed command | Final result |
+|---|---|
+| `cargo fmt --all -- --check` | Passed |
+| `cargo clippy --locked --offline -p turbofish-deluxe --lib --bin turbofish-deluxe --tests -- -D warnings` | Passed |
+| `cargo test --locked --offline -p turbofish-deluxe --test persistence current_codec:: -- --nocapture` | 7 passed |
+| `cargo test --locked --offline -p turbofish-deluxe --test persistence <filter> -- --exact --nocapture`, each filter below | 12 passed |
+| `cargo test --locked --offline -p turbofish-deluxe --lib adventure::tests::first_board_completion_hatches_once_and_invalid_board_is_rejected -- --exact --nocapture` | 1 passed |
+| `cargo test --locked --offline -p turbofish-deluxe --lib sim::tests::second_stage_stinky_has_live_spawn_state_and_persisted_origin -- --exact --nocapture` | 1 passed |
+| `cargo build --locked --offline -p turbofish-deluxe --bin turbofish-deluxe` | Passed, isolated supporting build |
+
+The twelve exact persistence filters:
+
+```text
+current_nimbus_hatch_enters_four_two_and_amp_selector_resumes
+current_board_null_gash_selector_enters_four_four
+current_fifth_board_reopens_without_losing_earned_state
+current_board_save_preserves_next_tick
+current_completed_board_keeps_one_pending_reward
+current_hatch_resumes_into_level_two_without_duplicate_reward
+current_load_preserves_board_state_and_save_bytes
+current_stage_three_preserves_progress_growth_gate_and_invasion
+current_requires_pet_fields_and_preserves_resumable_selection
+current_fourth_board_preserves_earned_state_and_stage_support
+current_strong_corpse_kind_round_trips_and_missing_kind_rejects
+current_missing_pet_and_score_state_are_rejected
+```
+
+Final supporting EXE SHA-256:
+`afc8df0125cc8ea76170f9be647a40a804784bfa301e98319c4fb9a057135a11`.
+The post-check 122-input source snapshot SHA-256 is
+`d2832d1b752acb2dd64abfd58cc2f9d6daec944dd56dff9a5c4641c849c84718`;
+only the four production files and persistence tests changed among build inputs.
+Exact source/configuration identity is retained in
+`.scratch/legacy-save-cleanup/final-identity.local.json`.
+
+Total: 21 focused tests passed. Removed-helper reference, protected-source,
+workflow and whitespace checks passed. Test-created load fixtures were removed
+by their successful checks. No live/original saves, human game process or
+normal-launch artifacts were accessed or changed. Native gameplay, retail
+comparison and the separate guppy motion/pose follow-up remain outside this
+cleanup. No work item was supplied and this chat had no owned claim;
+Actionables was not updated. Concurrent follow-up documentation is preserved
+and excluded from this cleanup commit.
