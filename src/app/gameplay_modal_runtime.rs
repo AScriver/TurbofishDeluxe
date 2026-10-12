@@ -18,6 +18,108 @@ pub(super) struct GameplayModalRuntime {
     last_session_tick: Option<u64>,
 }
 
+impl GameplayModalRuntime {
+    /// Call before input/drawing on every frame, including non-modal phases.
+    /// This retires old captures and keeps the domain's admission current.
+    pub(super) fn sync(&mut self, session: &AdventureSession, button_height: f32) {
+        let rolled_back = self
+            .last_session_tick
+            .is_some_and(|previous| session.ticks < previous);
+        self.last_session_tick = Some(session.ticks);
+        let Some(state) = GameplayModalState::from_session(session) else {
+            self.modal = None;
+            return;
+        };
+        if !rolled_back
+            && self
+                .modal
+                .as_mut()
+                .is_some_and(|modal| modal.refresh(&state))
+        {
+            return;
+        }
+        let Some(generation) = self.generation.checked_add(1) else {
+            self.modal = None;
+            return;
+        };
+        self.generation = generation;
+        self.modal = Some(GameplayModal::new(generation, state, button_height));
+    }
+
+    pub(super) fn is_active(&self) -> bool {
+        self.modal.is_some()
+    }
+
+    pub(super) fn input(&mut self, input: &ModalInput) -> Option<GameplayModalIntent> {
+        self.modal.as_mut()?.input(input)
+    }
+
+    /// Root preserves existing Y/N aliases without bypassing the controller.
+    pub(super) fn request(&mut self, action: GameplayModalAction) -> Option<GameplayModalIntent> {
+        self.modal.as_mut()?.request(action)
+    }
+
+    pub(super) fn action_for(
+        &self,
+        intent: &GameplayModalIntent,
+        session: &AdventureSession,
+    ) -> Option<Action> {
+        self.modal
+            .as_ref()?
+            .action_for(intent, &GameplayModalState::from_session(session)?)
+    }
+
+    pub(super) fn transaction_result(
+        &mut self,
+        intent: &GameplayModalIntent,
+        feedback: GameplayModalFeedback,
+    ) -> bool {
+        self.modal
+            .as_mut()
+            .is_some_and(|modal| modal.transaction_result(intent, feedback))
+    }
+
+    pub(super) fn view(&self) -> Option<GameplayModalView> {
+        self.modal.as_ref().map(GameplayModal::view)
+    }
+
+    /// Higher-priority UI/focus loss must retire any behind-modal press.
+    pub(super) fn cancel_capture(&mut self) {
+        if let Some(modal) = &mut self.modal {
+            modal.cancel_capture();
+        }
+    }
+
+    /// Root calls on profile/session replacement even if ticks/phase coincide.
+    /// Keep generation monotonic so old request feedback remains invalid.
+    pub(super) fn clear(&mut self) {
+        self.modal = None;
+        self.last_session_tick = None;
+    }
+
+    /// The parent draws its dim layer once. Every text/control helper receives
+    /// the same view rectangle used by the pure controller.
+    pub(super) fn draw(&self, presentation: &Presentation) {
+        let Some(view) = self.view() else { return };
+        modal_runtime::draw_panel(presentation, view.panel);
+        modal_runtime::draw_title(presentation, view.title, view.title_bounds);
+        modal_runtime::draw_body(presentation, &view.body, view.body_bounds, true);
+        if let Some(message) = &view.feedback {
+            modal_runtime::draw_body(presentation, message, view.feedback_bounds, true);
+        }
+        for button in &view.buttons {
+            modal_runtime::draw_button(
+                presentation,
+                button.control.bounds,
+                button.label,
+                button.control.enabled,
+                button.pressed,
+                button.focused,
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,107 +222,5 @@ mod tests {
         runtime.cancel_capture();
         assert!(release(&mut runtime).is_none());
         assert!(runtime.is_active());
-    }
-}
-
-impl GameplayModalRuntime {
-    /// Call before input/drawing on every frame, including non-modal phases.
-    /// This retires old captures and keeps the domain's admission current.
-    pub(super) fn sync(&mut self, session: &AdventureSession, button_height: f32) {
-        let rolled_back = self
-            .last_session_tick
-            .is_some_and(|previous| session.ticks < previous);
-        self.last_session_tick = Some(session.ticks);
-        let Some(state) = GameplayModalState::from_session(session) else {
-            self.modal = None;
-            return;
-        };
-        if !rolled_back
-            && self
-                .modal
-                .as_mut()
-                .is_some_and(|modal| modal.refresh(&state))
-        {
-            return;
-        }
-        let Some(generation) = self.generation.checked_add(1) else {
-            self.modal = None;
-            return;
-        };
-        self.generation = generation;
-        self.modal = Some(GameplayModal::new(generation, state, button_height));
-    }
-
-    pub(super) fn is_active(&self) -> bool {
-        self.modal.is_some()
-    }
-
-    pub(super) fn input(&mut self, input: &ModalInput) -> Option<GameplayModalIntent> {
-        self.modal.as_mut()?.input(input)
-    }
-
-    /// Root preserves existing Y/N aliases without bypassing the controller.
-    pub(super) fn request(&mut self, action: GameplayModalAction) -> Option<GameplayModalIntent> {
-        self.modal.as_mut()?.request(action)
-    }
-
-    pub(super) fn action_for(
-        &self,
-        intent: &GameplayModalIntent,
-        session: &AdventureSession,
-    ) -> Option<Action> {
-        self.modal
-            .as_ref()?
-            .action_for(intent, &GameplayModalState::from_session(session)?)
-    }
-
-    pub(super) fn transaction_result(
-        &mut self,
-        intent: &GameplayModalIntent,
-        feedback: GameplayModalFeedback,
-    ) -> bool {
-        self.modal
-            .as_mut()
-            .is_some_and(|modal| modal.transaction_result(intent, feedback))
-    }
-
-    pub(super) fn view(&self) -> Option<GameplayModalView> {
-        self.modal.as_ref().map(GameplayModal::view)
-    }
-
-    /// Higher-priority UI/focus loss must retire any behind-modal press.
-    pub(super) fn cancel_capture(&mut self) {
-        if let Some(modal) = &mut self.modal {
-            modal.cancel_capture();
-        }
-    }
-
-    /// Root calls on profile/session replacement even if ticks/phase coincide.
-    /// Keep generation monotonic so old request feedback remains invalid.
-    pub(super) fn clear(&mut self) {
-        self.modal = None;
-        self.last_session_tick = None;
-    }
-
-    /// The parent draws its dim layer once. Every text/control helper receives
-    /// the same view rectangle used by the pure controller.
-    pub(super) fn draw(&self, presentation: &Presentation) {
-        let Some(view) = self.view() else { return };
-        modal_runtime::draw_panel(presentation, view.panel);
-        modal_runtime::draw_title(presentation, view.title, view.title_bounds);
-        modal_runtime::draw_body(presentation, &view.body, view.body_bounds, true);
-        if let Some(message) = &view.feedback {
-            modal_runtime::draw_body(presentation, message, view.feedback_bounds, true);
-        }
-        for button in &view.buttons {
-            modal_runtime::draw_button(
-                presentation,
-                button.control.bounds,
-                button.label,
-                button.control.enabled,
-                button.pressed,
-                button.focused,
-            );
-        }
     }
 }

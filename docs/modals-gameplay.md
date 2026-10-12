@@ -162,6 +162,42 @@ this source extension does not establish native or retail fidelity.
 The adapter retains its original `950F0BC2...D3A104BA` identity below. Seed,
 toolchain and private target/native-library configuration are unchanged.
 
+## Unit-test lint ordering correction
+
+Root's final #307 unit-test lint reported
+`clippy::items_after_test_module` at `gameplay_modal_runtime.rs:22`: the
+`#[cfg(test)] mod tests` block preceded `impl GameplayModalRuntime`. The earlier
+#306 strict production/selected-integration-target command passed but did not
+lint the library with unit-test configuration. That result remains valid only
+for its recorded target set; it did not establish strict unit-test lint.
+
+At pushed joined baseline `008eadb`, moved the existing test module to the file
+end. The original test-module and implementation chunks are unchanged apart
+from inter-item whitespace/order. No gameplay rules, public API, parent source
+or another worker's file changed. Root's actual ChallengeLost and other modal
+joins are now present in `008eadb`; the [joined source checkpoint](modal-batch-303-307.md#joined-source-checkpoint)
+records root's 72 focused checks. Final aggregate/release acceptance still
+belongs to root, so #306 retains its In progress claim.
+
+Private `check-04` at `008eadb` plus this owned adapter/report diff passed on
+2026-10-11 America/Phoenix (2026-10-12 UTC):
+
+```text
+cargo fmt --all --check
+cargo clippy --locked --offline --jobs 2 --lib --tests -- -D warnings
+cargo build --locked --offline --jobs 2 --bin turbofish-deluxe
+```
+
+The strict command includes library unit-test configuration and passed without
+the ordering lint or an allowance for it. Existing root module registrations
+were already present; the worker added no temporary declaration. Parent files
+still passed the runner's byte-restoration check. No behavioral test repetition
+or native execution was needed for this mechanical item-order change. Existing
+model/test source hashes remain `DAF60FA1...0BFE3C98E` / `C12B5050...A69B393E`;
+the earlier adapter/build identities below remain historical for their source
+order/baseline. Private complete receipts retain the new adapter and supporting
+unlaunched debug artifact identities, toolchain/configuration and exact logs.
+
 ## Verification
 
 Executed 2026-10-11 America/Phoenix (2026-10-12 UTC), agent-owned offline run
