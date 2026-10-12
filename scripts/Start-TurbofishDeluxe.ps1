@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$Release,
+    [switch]$Development,
     [switch]$PrepareOnly,
     [switch]$PreflightOnly,
     [switch]$Offline,
@@ -12,6 +13,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($Release -and $Development) { throw '-Release and -Development cannot be used together.' }
+# Normal play uses Cargo's optimized release profile. Keep -Release for callers
+# that already request it; -Development explicitly selects the debug profile.
+$profileDirectory = if ($Development) { 'debug' } else { 'release' }
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'Evidence.Common.ps1')
 if ($BuildIdentityPath) { Assert-EvidenceOutputPath -Path $BuildIdentityPath | Out-Null }
@@ -89,13 +94,12 @@ $cargoExecutable = (Get-Command cargo -ErrorAction Stop).Source
 $env:OPENMPT_LIB_DIR = Join-Path $packageRoot 'lib/amd64'
 $env:CARGO_TARGET_DIR = Join-Path $repositoryRoot 'target'
 $buildArguments = @('build', '--locked', '--manifest-path', (Join-Path $repositoryRoot 'Cargo.toml'))
-if ($Release) { $buildArguments += '--release' }
+if ($profileDirectory -eq 'release') { $buildArguments += '--release' }
 if ($Offline) { $buildArguments += '--offline' }
 $sourcesBeforeBuild = Get-EvidenceSources
 & $cargoExecutable @buildArguments
 if ($LASTEXITCODE -ne 0) { throw "Turbofish build failed: $LASTEXITCODE" }
 
-$profileDirectory = if ($Release) { 'release' } else { 'debug' }
 $outputDirectory = (Resolve-Path -LiteralPath (Join-Path $env:CARGO_TARGET_DIR $profileDirectory)).ProviderPath
 $targetPrefix = [System.IO.Path]::GetFullPath($env:CARGO_TARGET_DIR).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
 if (-not $outputDirectory.StartsWith($targetPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
