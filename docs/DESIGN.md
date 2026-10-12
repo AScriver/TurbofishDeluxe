@@ -78,6 +78,19 @@ owns final joined verification. Synthetic scheduling and adapter/profile
 measurements retain their scope; native startup/FPS and human feel remain
 unmeasured by this work.
 
+## Durable profile publication
+
+The 2026-10-12 review reproduced profile create/select overwriting a safe
+checkpoint with transient Sandbox state. `Profiles::save` is the publication
+authority for transactions, scores and CLI checkpoints: project every entry's
+Sandbox origin into a disposable snapshot, validate that complete payload, then
+publish it synchronously. Ordinary profiles borrow unchanged state; live sessions
+remain untouched and transactions commit memory only after successful writes.
+An immediately successful score publication already contains the checkpoint
+projection, including inactive Sandbox entries. Preserve required nullable fields,
+current37/profile3, atomic failure behavior and final timestamp rollback. The
+[review correction record](rust-review-fixes.md) owns evidence and checks.
+
 ## Current save admission
 
 On 2026-10-12 the user requested removing remaining development-save

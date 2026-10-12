@@ -15,6 +15,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    borrow::Cow,
     error::Error,
     path::Path,
     sync::atomic::{AtomicU64, Ordering},
@@ -213,11 +214,29 @@ impl Profiles {
     }
 
     pub fn save(&self, path: &Path) -> Result<(), Box<dyn Error>> {
-        self.validate()?;
+        let checkpoint = self.checkpoint();
+        checkpoint.validate()?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        crate::persistence::write_json(path, self)
+        crate::persistence::write_json(path, &*checkpoint)
+    }
+
+    /// Every publication restores transient Sandbox origins without changing
+    /// live sessions, including sessions belonging to inactive profiles.
+    pub(crate) fn checkpoint(&self) -> Cow<'_, Self> {
+        if self
+            .entries
+            .iter()
+            .all(|entry| !entry.session.checkpoint_needs_sandbox_projection())
+        {
+            return Cow::Borrowed(self);
+        }
+        let mut snapshot = self.clone();
+        for entry in &mut snapshot.entries {
+            entry.session.project_checkpoint_without_sandbox();
+        }
+        Cow::Owned(snapshot)
     }
 
     /// The normal writer holds its project lease. Snapshot the cumulative bank,

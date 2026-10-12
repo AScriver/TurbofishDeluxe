@@ -2,6 +2,20 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Project every profile at the publication boundary (#312)
+
+`src/profiles.rs` owns the durable all-entry Sandbox projection; ordinary state
+is borrowed and only a needed projection clones. `src/cli.rs` removes competing
+projection/equality helpers and skips an already successful score publication.
+The design decision is recorded in `docs/DESIGN.md`. New transaction, inactive
+entry and score regressions failed before the fix, then passed. All33 focused
+profile/writer/checkpoint/modal checks, strict lint, formatting and isolated
+build pass; workflow is checked before commit. An independent bounded source
+challenge found the skip's caller preconditions and final timestamp rollback
+intact. #312's claim failed without mutation and readback remains Ready/unclaimed;
+the [batch record](docs/rust-review-fixes.md) preserves exact tracking limits.
+No gameplay/live saves/install/audio device were used. Next: commit, then #313.
+
 ## 2026-10-12 — Repair stale Time Trial final-candidate fixture (#311)
 
 The user authorized fixing all eight review findings in order. #311-318 were

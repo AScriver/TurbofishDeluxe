@@ -30,8 +30,8 @@ any later main changes.
 
 | Order | Actionable | Outcome | Engineering |
 |---|---|---|---|
-| 1 | #311 | Valid final-candidate Time Trial fixture | Checked; commit follows |
-| 2 | #312 | All-entry Sandbox publication projection | Pending |
+| 1 | #311 | Valid final-candidate Time Trial fixture | Committed `c7b06fe` |
+| 2 | #312 | All-entry Sandbox publication projection | Checked; commit follows |
 | 3 | #313 | Covered pending-money debt admission | Pending |
 | 4 | #314 | Required nullable `last_laser` | Pending |
 | 5 | #315 | Remove proven duplicate schema inventories | Pending |
@@ -48,6 +48,10 @@ diagnostic pass; no root cause is asserted. The installed
 engineering. No denied request is retried, alternate lifecycle API is used or
 tracking completion invented. Actual checked engineering and tracker states
 remain separate. Later task claims are attempted only within their own scopes.
+
+#312's scoped claim also failed without mutation (`INTERNAL_ERROR`,
+`retryMode: never`, correlation `fb22ed39-460d-40a7-9e3d-59541fe8150f`).
+Explicit inspection confirms Ready version6 and no claim.
 
 ## Verification environment
 
@@ -80,3 +84,22 @@ production Time Trial admission and the other tests remain intact. Formatting,
 strict workspace/all-target Clippy, locked/offline build and workflow checks pass.
 The mixed-tree failures above remain historical. No gameplay, live save or
 audible output was tested.
+
+## Shared profile publication
+
+`Profiles::save` now publishes `Profiles::checkpoint`, which borrows ordinary
+state and clones only when any entry needs Sandbox projection. Every entry is
+projected in that snapshot; live sessions and transaction rollback remain intact.
+CLI checkpointing uses this shared publication boundary, removing its competing
+current-entry projection. A successful score publication already contains the
+durable projection, so its immediate redundant write is skipped. Durable
+projection validation does not certify discarded transient Sandbox fields.
+
+Three focused regressions failed before the correction: profile transactions,
+inactive Sandbox entries and score publication. All pass after it. Nine profile
+persistence, ten writer, ten CLI checkpoint and four modal join tests pass
+(33 passes, one ignored). The attempted Adventure Sandbox filter matched zero
+tests and supplies no coverage. Strict lint, formatting, isolated build and
+workflow pass. A bounded adversarial source review found no uncovered mutation
+between score publication and the skip, and confirmed final timestamp rollback.
+No gameplay, live save or audio device was used.

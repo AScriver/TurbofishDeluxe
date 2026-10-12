@@ -1161,35 +1161,18 @@ pub fn save_profiles_checkpoint(
     options: &Options,
     profiles: &Profiles,
 ) -> Result<(), Box<dyn Error>> {
-    profiles_checkpoint(profiles).save(&options.save_dir.join("profiles.json"))
-}
-
-fn profiles_checkpoint(profiles: &Profiles) -> std::borrow::Cow<'_, Profiles> {
-    if checkpoint_matches_profiles(profiles) {
-        return std::borrow::Cow::Borrowed(profiles);
-    }
-    let mut snapshot = profiles.clone();
-    if let Some(current) = snapshot.current_mut() {
-        current.session.project_checkpoint_without_sandbox();
-    }
-    std::borrow::Cow::Owned(snapshot)
-}
-
-fn checkpoint_matches_profiles(profiles: &Profiles) -> bool {
-    profiles
-        .current()
-        .is_none_or(|current| !current.session.checkpoint_needs_sandbox_projection())
+    profiles.save(&options.save_dir.join("profiles.json"))
 }
 
 /// `score_published` is valid only immediately after a successful score save,
-/// with no intervening profile mutation. Sandbox raw score saves are not the
-/// projected checkpoint and must still be followed by a synchronous write.
+/// with no intervening profile mutation. Every profile save already contains
+/// the complete checkpoint projection, including Sandbox origins.
 pub(crate) fn save_profiles_checkpoint_after_score(
     options: &Options,
     profiles: &Profiles,
     score_published: bool,
 ) -> Result<bool, Box<dyn Error>> {
-    if score_published && checkpoint_matches_profiles(profiles) {
+    if score_published {
         return Ok(false);
     }
     save_profiles_checkpoint(options, profiles)?;
@@ -1420,7 +1403,7 @@ mod checkpoint_tests {
             assert!(session.validate().is_err());
             assert!(session.checkpoint_needs_sandbox_projection());
             let before = format!("{profiles:?}");
-            let checkpoint = profiles_checkpoint(&profiles);
+            let checkpoint = profiles.checkpoint();
             assert!(matches!(checkpoint, std::borrow::Cow::Owned(_)));
             checkpoint.validate().unwrap();
             assert_eq!(
@@ -1566,7 +1549,7 @@ mod checkpoint_tests {
     }
 
     #[test]
-    fn sandbox_score_publication_is_followed_by_origin_projection() {
+    fn sandbox_score_publication_already_contains_origin_projection() {
         let directory = FixtureDirectory::new("sandbox-score");
         let options = directory.options();
         let mut profiles = fixture(8, true, true);
@@ -1587,9 +1570,9 @@ mod checkpoint_tests {
         let raw: serde_json::Value =
             serde_json::from_slice(&std::fs::read(directory.0.join("profiles.json")).unwrap())
                 .unwrap();
-        assert_eq!(raw["entries"][0]["session"]["mode"], "Sandbox");
+        assert_eq!(raw["entries"][0]["session"]["mode"], "Adventure");
         let before = format!("{profiles:?}");
-        assert!(save_profiles_checkpoint_after_score(&options, &profiles, true).unwrap());
+        assert!(!save_profiles_checkpoint_after_score(&options, &profiles, true).unwrap());
         let bytes = std::fs::read(directory.0.join("profiles.json")).unwrap();
         let reopened = Profiles::decode(&bytes).unwrap();
         assert_eq!(
@@ -1607,6 +1590,59 @@ mod checkpoint_tests {
         assert_eq!(
             bytes,
             serde_json::to_vec_pretty(&legacy_checkpoint(&profiles)).unwrap()
+        );
+        assert_eq!(format!("{profiles:?}"), before);
+    }
+
+    #[test]
+    fn profile_transactions_publish_sandbox_origins_and_keep_live_sessions() {
+        for operation in ["select", "create", "rename", "delete", "score"] {
+            let directory = FixtureDirectory::new(operation);
+            let options = directory.options();
+            let path = directory.0.join("profiles.json");
+            let mut profiles = fixture(2, true, true);
+            save_profiles_checkpoint(&options, &profiles).unwrap();
+            Profiles::decode(&std::fs::read(&path).unwrap()).unwrap();
+            let live_before = format!("{:?}", profiles.entries[0].session);
+            match operation {
+                "select" => profiles.select(&path, 2).unwrap(),
+                "create" => {
+                    profiles.create(&path, "New profile", 42).unwrap();
+                }
+                "rename" => profiles.rename(&path, 1, "Renamed").unwrap(),
+                "delete" => profiles.delete(&path, 2).unwrap(),
+                "score" => {
+                    assert!(profiles.record_events(&path, &[result_event()]).unwrap());
+                }
+                _ => unreachable!(),
+            }
+            let reopened = Profiles::decode(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(reopened.current_id, profiles.current_id);
+            assert_eq!(reopened.entries.len(), profiles.entries.len());
+            assert_eq!(reopened.entries[0].session.mode, GameMode::Adventure);
+            assert!(reopened.entries[0].session.retained_time_trial.is_some());
+            assert_eq!(format!("{:?}", profiles.entries[0].session), live_before);
+            save_profiles_checkpoint(&options, &profiles).unwrap();
+            Profiles::decode(&std::fs::read(&path).unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn profile_publication_projects_every_inactive_sandbox_entry() {
+        let directory = FixtureDirectory::new("inactive-sandbox");
+        let path = directory.0.join("profiles.json");
+        let mut profiles = fixture(3, true, true);
+        profiles.entries[1].session = profiles.entries[0].session.clone();
+        profiles.current_id = Some(3);
+        profiles.validate().unwrap();
+        let before = format!("{profiles:?}");
+        profiles.save(&path).unwrap();
+        let reopened = Profiles::decode(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(
+            reopened
+                .entries
+                .iter()
+                .all(|entry| entry.session.mode == GameMode::Adventure)
         );
         assert_eq!(format!("{profiles:?}"), before);
     }
@@ -1695,6 +1731,9 @@ mod checkpoint_tests {
                 .progress
                 .shell_balance = 23;
             let memory_before = format!("{profiles:?}");
+            assert!(profiles.select(&path, 2).is_err());
+            assert_eq!(format!("{profiles:?}"), memory_before);
+            assert_eq!(std::fs::read(&path).unwrap(), previous);
             assert!(save_profiles_checkpoint(&options, &profiles).is_err());
             assert_eq!(format!("{profiles:?}"), memory_before);
             assert!(profiles.record_events(&path, &[result_event()]).is_err());
@@ -1728,7 +1767,7 @@ mod checkpoint_tests {
             for _ in 0..9 {
                 let started = Instant::now();
                 for _ in 0..2_000 {
-                    black_box(profiles_checkpoint(black_box(&profiles)));
+                    black_box(black_box(&profiles).checkpoint());
                 }
                 copies_us.push(started.elapsed().as_secs_f64() * 1e6 / 2_000.0);
                 let started = Instant::now();
