@@ -2,6 +2,17 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Reserve necessary checkpoint error correction
+
+Source inspection found a concrete mismatch: the writer formats final rename
+errors as String, but both optional observation consumers downcast them to
+`std::io::Error` for Windows reader-conflict deferral. Created Actionable#308
+before implementation. The [contract](docs/necessary-fixes.md#checkpoint-publication-error-identity)
+reserves a new worker's exact writer/test/report paths and root's actual caller
+joins. Preserve destination context, OS identity, existing100ms retry and old/
+pending bytes; focused disposable fixtures must reproduce the defect first.
+No runtime correction, native test or new fidelity claim is recorded yet.
+
 ## 2026-10-12 — Complete modal joins and release all five claims
 
 E125 / Actionables#303-307 are Done with qualifying Passed validation and

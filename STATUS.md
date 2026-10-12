@@ -4,6 +4,14 @@ Updated: 2026-10-12, America/Phoenix. **E125 / Actionables#303-307: modal fronte
 
 ## Current increment
 
+**E126 — necessary checkpoint error fix, in preparation:** Actionable#308
+records source-confirmed loss of I/O identity after publication failure.
+Optional observation consumers cannot recognize Windows reader conflicts from
+that formatted String. The [contract](docs/necessary-fixes.md#checkpoint-publication-error-identity)
+reserves the writer/tests/report for a new worker and both actual consumers for
+root. Reproduce on isolated offline fixtures, preserve context/OS identity and
+join existing defer/recovery policy. No corrected runtime result is claimed yet.
+
 **E125 — modal frontend completion, complete:** Actionables#303-307 are Done
 with qualifying Passed validation and released claims, read back at versions
 13/13/14/15/14. Five owned contributions and the Challenge-loss extension are
@@ -253,7 +261,7 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 
 Current next action:
 
-0. E125 is complete and pushed; #303-307 are Done with released claims. Preserve
+0. Implement/check #308 through the [reserved contract](docs/necessary-fixes.md#checkpoint-publication-error-identity), including root's actual observation joins. E125 is complete and pushed; #303-307 are Done with released claims. Preserve
 all closed modal/refactor worktrees, reports and private evidence. E124's
 #298-302 retain their separately recorded Ready/unclaimed tooling limitation;
 do not retry that route or resume completed workers.
