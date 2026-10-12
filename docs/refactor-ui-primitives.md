@@ -100,6 +100,22 @@ and private unoptimized game EXE SHA256
 The EXE was built, never launched or staged into the normal launcher.
 Subsequent report-only edits do not change checked runtime/test inputs.
 
+Owned code/tests/report were committed as `b360b05`, then reconciled cleanly
+with concurrent main at `a5bf857`, preserving #298's font API and #300's
+persistence extraction. The font changes add glyph placement without changing
+width measurement or parsing, so existing UI checks remain applicable. Strict
+affected-target lint and normal-bin compilation passed again for the combined
+source, without rerunning unchanged UI tests.
+`.scratch/refactor-301/Joined-20261012T045759460Z.log` and
+`build-identity-20261012T045759460Z.json` capture the clean reconciled tree:
+all91 Rust/Cargo inputs matched before/after build, source-set SHA256
+`777C80CC12950E044019A2934D27C102B2FA89A225B2B19CB1803DCBBA46932F`,
+EXE SHA256
+`1BC7D7E234F36859878F63887AA0582CF309F807F9AF1CD8C38080F3374C0095`,
+Rust1.95.0 MSVC and Cargo1.95.0, unoptimized dev profile/debug0/two jobs.
+Root's `app.rs` joins and their affected verification remain pending; this
+checked core contribution does not claim the whole Actionable is complete.
+
 ## Tracking and cleanup
 
 The scoped task was Ready version6 and unclaimed. The sole claim attempt
@@ -118,5 +134,8 @@ given its required image name, point size and default point-size metadata.
 Production helpers did not change for that correction. Failed output remains
 in `.scratch/refactor-301/Checks-20261012T045212101Z.log`. No temporary module
 registration or shared resource was needed.
-Private scratch/build evidence is retained; production joins and final checked
-commit identity will be recorded here after their respective gates.
+The worktree is clean after the owned commits and reconciliation. Private
+scratch/build evidence is retained. No shared resources, processes, services,
+live saves, frozen builds or original installation were acquired or changed.
+Production joins remain with root; its final integration receipt should record
+their validation before reporting the entire refactor complete.
