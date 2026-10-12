@@ -198,6 +198,12 @@ the earlier adapter/build identities below remain historical for their source
 order/baseline. Private complete receipts retain the new adapter and supporting
 unlaunched debug artifact identities, toolchain/configuration and exact logs.
 
+Mechanical source correction is committed as
+`b7c3808dfef2046ed39febe096d8a09ce58f13d3`. Checked moved adapter SHA-256:
+`72763E910B2DB40C2E5A94D019A8B7B9A8EAFC7F3E67E2DC9B6ABE9327CB90E0`.
+Supporting unlaunched debug EXE SHA-256:
+`49103CADFE34440E155CBDA35AEB8BE028C52D8BF5E64D6485107B11663A3061`.
+
 ## Verification
 
 Executed 2026-10-11 America/Phoenix (2026-10-12 UTC), agent-owned offline run
