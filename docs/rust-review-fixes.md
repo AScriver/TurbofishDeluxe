@@ -36,8 +36,8 @@ any later main changes.
 | 4 | #314 | Required nullable `last_laser` | Committed `2ec1a62` |
 | 5 | #315 | Remove proven duplicate schema inventories | Committed `f270e92` |
 | 6 | #316 | Deliver applause through the effect path | Committed `88fbea5` |
-| 7 | #317 | Reuse existing glyph layout for clipped text | Checked; commit follows |
-| 8 | #318 | Retain installation digests instead of buffers | Pending |
+| 7 | #317 | Reuse existing glyph layout for clipped text | Committed `35f875f` |
+| 8 | #318 | Retain installation digests instead of buffers | Checked; commit follows |
 
 All eight tracking records were created and researched/prepared to Ready. The
 #311 claim failed with `INTERNAL_ERROR`, `retryMode: never`, correlation
@@ -155,6 +155,26 @@ filter matched zero and supplies no coverage; all ten font integration tests ran
 Native pixels/rendering remain untested. #317's non-retryable claim failed
 without mutation, correlation `04af7c59-507d-4e9b-9bba-73dfd04f0028`; inspection
 confirms Ready version6, unclaimed. No gameplay or live saves used.
+
+## Installation inventory metadata
+
+`install::inventory` retains each normalized path, byte length and raw32-byte
+SHA256, releasing file contents immediately. `identify` releases executable
+bytes after deriving its hash, length and PE machine. Sorting and the existing
+path/NUL/u64-LE/raw-digest framing are unchanged. No cache, streaming layer,
+parallel read or dependency is added. The retained content bound becomes one
+file plus per-file metadata; this is source-supported, not a measured benchmark.
+
+A synthetic installation matches independent .NET hash constants before and
+after the change, including Steam metadata. It detects content changes and
+rejects denied asset reads, an outside-root inventory entry and malformed PE.
+The first independent calculation script failed on PowerShell array-cast
+precedence before any file I/O; an explicit byte-array variable corrected it.
+All three installation checks, formatting, strict lint, compilation, isolated
+build and workflow pass. #318's non-retryable claim failed without mutation,
+correlation `bf5364e4-ed99-4bea-be36-53117b862f41`; inspection confirms Ready
+version6, unclaimed. Only temporary synthetic files were read/written; no owned
+installation, gameplay, audio device or live save was used.
 
 ## Required nullable laser state
 

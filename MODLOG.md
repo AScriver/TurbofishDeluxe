@@ -2,6 +2,18 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Retain installation digests instead of file buffers (#318)
+
+`src/install.rs` retains path/length/raw digest tuples and releases executable
+bytes after deriving identity. Exact hash framing/sorting and containment/error
+handling remain. A synthetic-installation regression matches independent .NET
+golden hashes before/after and checks content changes, read denial, containment
+and malformed PE. Three installation checks, strict lint and compilation pass;
+formatting/build/workflow precede commit. The independent calculation's initial
+PowerShell cast error and correction are recorded in the [batch record](docs/rust-review-fixes.md).
+#318 remains Ready/unclaimed after claim failure. No owned installation,
+gameplay/live saves/audio device were used. Next: commit, join and final checks.
+
 ## 2026-10-12 — Reuse glyph layout in clipped renderers (#317)
 
 `src/app/menu_runtime.rs`, `finale_runtime.rs` and `tank_selection_runtime.rs`

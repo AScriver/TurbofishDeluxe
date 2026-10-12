@@ -101,17 +101,20 @@ pub fn identify(root: &Path) -> Result<InstallIdentity> {
     } else {
         "Insaniquarium.exe"
     };
-    let bytes = fs::read(root.join(executable))?;
-    let pe_machine = pe_machine(&bytes)?;
+    let (executable_sha256, executable_bytes, pe_machine) = {
+        let bytes = fs::read(root.join(executable))?;
+        let machine = pe_machine(&bytes)?;
+        (sha256(&bytes), bytes.len() as u64, machine)
+    };
     let mut files = Vec::new();
     inventory(root, root, &mut files)?;
     files.sort_by(|a, b| a.0.cmp(&b.0));
     let mut inventory_digest = Sha256::new();
-    for (path, bytes) in &files {
+    for (path, length, digest) in &files {
         inventory_digest.update(path.as_bytes());
         inventory_digest.update([0]);
-        inventory_digest.update((bytes.len() as u64).to_le_bytes());
-        inventory_digest.update(Sha256::digest(bytes));
+        inventory_digest.update(length.to_le_bytes());
+        inventory_digest.update(digest);
     }
     let steam_build = root
         .parent()
@@ -120,8 +123,8 @@ pub fn identify(root: &Path) -> Result<InstallIdentity> {
         .and_then(|text| values_for_key(&text, "buildid").into_iter().next());
     Ok(InstallIdentity {
         executable: executable.into(),
-        executable_sha256: sha256(&bytes),
-        executable_bytes: bytes.len() as u64,
+        executable_sha256,
+        executable_bytes,
         pe_machine,
         asset_file_count: files.len(),
         inventory_sha256: hex(&inventory_digest.finalize()),
@@ -129,7 +132,11 @@ pub fn identify(root: &Path) -> Result<InstallIdentity> {
     })
 }
 
-fn inventory(root: &Path, directory: &Path, files: &mut Vec<(String, Vec<u8>)>) -> Result<()> {
+fn inventory(
+    root: &Path,
+    directory: &Path,
+    files: &mut Vec<(String, u64, [u8; 32])>,
+) -> Result<()> {
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let path = entry.path();
@@ -148,7 +155,8 @@ fn inventory(root: &Path, directory: &Path, files: &mut Vec<(String, Vec<u8>)>) 
                 .strip_prefix(root)?
                 .to_string_lossy()
                 .replace('\\', "/");
-            files.push((relative, fs::read(path)?));
+            let bytes = fs::read(path)?;
+            files.push((relative, bytes.len() as u64, Sha256::digest(&bytes).into()));
         }
     }
     Ok(())
@@ -246,6 +254,16 @@ pub fn project_destination(path: &Path, game_root: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn reference_bytes() -> Vec<u8> {
+        let mut bytes = vec![0; 100];
+        bytes[..2].copy_from_slice(b"MZ");
+        bytes[0x3c..0x40].copy_from_slice(&80_u32.to_le_bytes());
+        bytes[80..84].copy_from_slice(b"PE\0\0");
+        bytes[84..86].copy_from_slice(&0x14c_u16.to_le_bytes());
+        bytes
+    }
+
     #[test]
     fn keyvalues_preserves_escaped_paths_and_ignores_comments() {
         let text = r#""libraryfolders" { "0" { "path" "C:\\Program Files (x86)\\Steam" } // "path" "wrong"
@@ -259,11 +277,68 @@ mod tests {
     fn malformed_reference_is_rejected() {
         assert!(pe_machine(b"MZ").is_err());
         assert!(pe_machine(&[0; 100]).is_err());
-        let mut bytes = vec![0; 100];
-        bytes[..2].copy_from_slice(b"MZ");
-        bytes[0x3c..0x40].copy_from_slice(&80_u32.to_le_bytes());
-        bytes[80..84].copy_from_slice(b"PE\0\0");
-        bytes[84..86].copy_from_slice(&0x14c_u16.to_le_bytes());
-        assert_eq!(pe_machine(&bytes).unwrap(), 0x14c);
+        assert_eq!(pe_machine(&reference_bytes()).unwrap(), 0x14c);
+    }
+
+    #[test]
+    fn synthetic_installation_identity_preserves_hash_framing_and_errors() {
+        let temporary = env::temp_dir().join(format!(
+            "turbofish-inventory-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root = temporary.join("steamapps/common/fixture");
+        fs::create_dir_all(root.join("images")).unwrap();
+        fs::create_dir_all(root.join("data")).unwrap();
+        fs::write(root.join("images/Z.dat"), b"later").unwrap();
+        fs::write(root.join("data/foo.bin"), b"\0asset\xff").unwrap();
+        fs::write(root.join("InsaniquariumDeluxe.exe"), reference_bytes()).unwrap();
+        fs::write(
+            temporary.join("steamapps/appmanifest_3320.acf"),
+            b"\"buildid\" \"12345\"",
+        )
+        .unwrap();
+        let root = root.canonicalize().unwrap();
+        // Independently computed with .NET SHA256 over path/NUL/u64-LE/raw hash.
+        assert_eq!(
+            serde_json::to_value(identify(&root).unwrap()).unwrap(),
+            serde_json::json!({
+                "executable": "InsaniquariumDeluxe.exe",
+                "executable_sha256": "150d645c7173e41f1a8f59735e095ed69503aafe7c20a5f35c53196750c98530",
+                "executable_bytes": 100,
+                "pe_machine": 0x14c,
+                "asset_file_count": 3,
+                "inventory_sha256": "be4cd5e592aeaacf242f3b31e632e517e7cfa262dd263366ef048a6713bda685",
+                "steam_build": "12345",
+            })
+        );
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            let lock = fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(root.join("data/foo.bin"))
+                .unwrap();
+            assert!(identify(&root).is_err());
+            drop(lock);
+        }
+        fs::write(root.join("data/foo.bin"), b"changed").unwrap();
+        assert_ne!(
+            identify(&root).unwrap().inventory_sha256,
+            "be4cd5e592aeaacf242f3b31e632e517e7cfa262dd263366ef048a6713bda685"
+        );
+        let outside = temporary.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("sentinel"), b"fixture only").unwrap();
+        let mut files = Vec::new();
+        assert!(inventory(&root, &outside, &mut files).is_err());
+        assert!(files.is_empty());
+        fs::write(root.join("InsaniquariumDeluxe.exe"), b"MZ").unwrap();
+        assert!(identify(&root).is_err());
+        fs::remove_dir_all(temporary).unwrap();
     }
 }
