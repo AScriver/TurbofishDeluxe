@@ -18,6 +18,7 @@ use crate::{
         self as story, StoryAsset, StoryAssets, StoryFont, StoryPortrait, StoryTextMetrics,
     },
     timing::StepClock,
+    ui,
 };
 use macroquad::prelude::*;
 
@@ -367,8 +368,8 @@ pub(super) fn draw_story_view(
             font_text(
                 font,
                 control.label,
-                control.bounds.x + (control.bounds.width - width) / 2.0,
-                control.bounds.y + (control.bounds.height + ascent) / 2.0,
+                ui::centered_text_x(story_rect(control.bounds), width),
+                ui::centered_ascent_baseline(story_rect(control.bounds), ascent),
                 rgba(if hovered {
                     control.hover_color
                 } else {
@@ -502,7 +503,7 @@ pub(super) fn draw_hall_scene(
                     font_text(
                         font,
                         button.control.label(),
-                        bounds.x + (bounds.w - width) / 2.0,
+                        ui::centered_text_x(bounds, width),
                         bounds.y + bounds.h * 0.7,
                         WHITE,
                         clip,
