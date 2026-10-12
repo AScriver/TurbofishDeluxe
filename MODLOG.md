@@ -2,6 +2,27 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Join and verify checkpoint observer error recovery
+
+New #308 worker source `f75ad30` preserves destination context and original
+publication I/O error. Root changed both actual optional-observer guards to the
+shared inspection helper, keeping Windows5/32 policy and durable save failures.
+UI observation publication has a narrow testable method used by record_draw;
+the state observer is tested through its existing record method. No graphics/
+gameplay device context is required. The [joined checkpoint](docs/necessary-fixes.md#joined-checkpoint-for-actionable-308)
+owns identity, exact commands and the writer's independent report.
+
+Root's original-writer red gate reproduced both fatal reader-lock paths (OS5,
+two failed/two invalid-destination cases passed). After integration all four
+observer cases passed: old complete bytes retained, latest state after unlock,
+one defer/recovery diagnostic and invalid destinations still fatal. Matched
+worker writer tests total ten, yielding14 focused contracts. Formatting, strict
+affected lint, locked/offline debug build and122 input/139 source-artifact
+readbacks passed. Source bytes stayed unchanged during checks and are frozen in
+the final private bundle. E125 release/evidence remains preserved. No passing
+unaffected suite, native run, live save or human process was touched. Source
+publication and normal #308 Done/release readback follow this checked increment.
+
 ## 2026-10-12 — Reserve necessary checkpoint error correction
 
 Source inspection found a concrete mismatch: the writer formats final rename

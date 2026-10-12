@@ -4787,21 +4787,7 @@ impl UiEvidence {
             "session_phase":session.map(|scene| &scene.phase),
             "coordinate_space":{"width":640,"height":480}
         });
-        match cli::write_json(&self.root.join("ui-state.local.json"), &observation) {
-            Ok(()) => self.publication_deferred = false,
-            Err(error)
-                if cfg!(windows)
-                    && error
-                        .downcast_ref::<std::io::Error>()
-                        .is_some_and(|failure| matches!(failure.raw_os_error(), Some(5 | 32))) =>
-            {
-                if !self.publication_deferred {
-                    eprintln!("UI observation deferred by a file reader: {error}");
-                }
-                self.publication_deferred = true;
-            }
-            Err(error) => return Err(error),
-        }
+        self.publish_observation(&observation)?;
         let request = self.root.join("capture.request");
         let local_request = self.root.join("capture-request.local.json");
         if is_key_pressed(KeyCode::F12) || request.exists() || local_request.exists() {
@@ -4823,6 +4809,27 @@ impl UiEvidence {
             if local_request.exists() {
                 fs::remove_file(local_request)?;
             }
+        }
+        Ok(())
+    }
+    // Optional snapshot publication can be exercised without a graphics context.
+    fn publish_observation(
+        &mut self,
+        observation: &serde_json::Value,
+    ) -> Result<(), Box<dyn Error>> {
+        match cli::write_json(&self.root.join("ui-state.local.json"), observation) {
+            Ok(()) => self.publication_deferred = false,
+            Err(error)
+                if cfg!(windows)
+                    && crate::persistence::io_error(error.as_ref())
+                        .is_some_and(|failure| matches!(failure.raw_os_error(), Some(5 | 32))) =>
+            {
+                if !self.publication_deferred {
+                    eprintln!("UI observation deferred by a file reader: {error}");
+                }
+                self.publication_deferred = true;
+            }
+            Err(error) => return Err(error),
         }
         Ok(())
     }
@@ -4918,11 +4925,9 @@ impl Evidence {
                     self.last_paused = paused;
                 }
                 Err(error)
-                    if error
-                        .downcast_ref::<std::io::Error>()
-                        .is_some_and(|failure| {
-                            cfg!(windows) && matches!(failure.raw_os_error(), Some(5 | 32))
-                        }) =>
+                    if crate::persistence::io_error(error.as_ref()).is_some_and(|failure| {
+                        cfg!(windows) && matches!(failure.raw_os_error(), Some(5 | 32))
+                    }) =>
                 {
                     // Ordinary Windows readers may deny replacement. Preserve the
                     // last complete snapshot and retry the latest state next frame.
@@ -5073,6 +5078,172 @@ mod accelerated_event_timing_tests {
             Evidence::write_event_rows(&mut Vec::new(), &events, &[], session.ticks, 0, 2.0, 8)
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod observation_publication_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct Fixture(PathBuf);
+
+    impl Fixture {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!(
+                "turbofish-observation-publication-{}-{stamp}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed),
+            ));
+            fs::create_dir(&root).unwrap();
+            Self(root)
+        }
+
+        fn evidence(&self) -> Evidence {
+            Evidence {
+                root: self.0.clone(),
+                events: BufWriter::new(File::create(self.0.join("events.local.jsonl")).unwrap()),
+                last_state_tick: u64::MAX,
+                snapshot_deferred: false,
+                last_paused: false,
+                test_speed: 1,
+                start_session_tick: 0,
+            }
+        }
+
+        fn invalid_root(&self) -> PathBuf {
+            let blocker = self.0.join("not-a-directory");
+            fs::write(&blocker, b"owned fixture").unwrap();
+            blocker.join("child")
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    #[cfg(windows)]
+    fn hold_reader(path: &Path) -> File {
+        use std::os::windows::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1 | 2)
+            .open(path)
+            .unwrap()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ui_reader_conflict_preserves_previous_snapshot_and_retries_latest() {
+        let fixture = Fixture::new();
+        let path = fixture.0.join("ui-state.local.json");
+        let mut ui = UiEvidence::open(&fixture.0).unwrap();
+        ui.publish_observation(&serde_json::json!({"ui_frame":1}))
+            .unwrap();
+        let previous = fs::read(&path).unwrap();
+        let reader = hold_reader(&path);
+
+        ui.publish_observation(&serde_json::json!({"ui_frame":2}))
+            .unwrap();
+        assert!(ui.publication_deferred);
+        assert_eq!(fs::read(&path).unwrap(), previous);
+        ui.publish_observation(&serde_json::json!({"ui_frame":3}))
+            .unwrap();
+        assert!(ui.publication_deferred);
+        assert_eq!(fs::read(&path).unwrap(), previous);
+
+        drop(reader);
+        ui.publish_observation(&serde_json::json!({"ui_frame":4}))
+            .unwrap();
+        assert!(!ui.publication_deferred);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&fs::read(&path).unwrap()).unwrap()["ui_frame"],
+            4
+        );
+        assert!(!path.with_extension("pending").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn state_reader_conflict_emits_one_defer_and_recovers_latest_snapshot() {
+        let fixture = Fixture::new();
+        let path = fixture.0.join("state.local.json");
+        let mut evidence = fixture.evidence();
+        let mut session = AdventureSession::new(7);
+        evidence.record(&[], &[], &session, 0.0, false).unwrap();
+        let previous = fs::read(&path).unwrap();
+        let reader = hold_reader(&path);
+
+        session.step(&[]);
+        evidence.record(&[], &[], &session, 0.1, false).unwrap();
+        assert!(evidence.snapshot_deferred);
+        assert_eq!(evidence.last_state_tick, 0);
+        assert_eq!(fs::read(&path).unwrap(), previous);
+        session.step(&[]);
+        evidence.record(&[], &[], &session, 0.2, false).unwrap();
+        assert!(evidence.snapshot_deferred);
+        assert_eq!(fs::read(&path).unwrap(), previous);
+
+        drop(reader);
+        evidence.record(&[], &[], &session, 0.3, true).unwrap();
+        assert!(!evidence.snapshot_deferred);
+        assert_eq!(evidence.last_state_tick, session.ticks);
+        assert!(evidence.last_paused);
+        let snapshot: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(snapshot["session_tick"], session.ticks);
+        assert_eq!(snapshot["paused"], true);
+        assert!(!path.with_extension("pending").exists());
+        let rows: Vec<serde_json::Value> = fs::read_to_string(fixture.0.join("events.local.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|row| serde_json::from_str(row).unwrap())
+            .collect();
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row["diagnostic"] == "snapshot_publication_deferred")
+                .count(),
+            1
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row["diagnostic"] == "snapshot_publication_recovered")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn invalid_ui_destination_stays_an_error_without_deferral() {
+        let fixture = Fixture::new();
+        let mut ui = UiEvidence {
+            root: fixture.invalid_root(),
+            frame: 0,
+            publication_deferred: false,
+        };
+        assert!(
+            ui.publish_observation(&serde_json::json!({"ui_frame":1}))
+                .is_err()
+        );
+        assert!(!ui.publication_deferred);
+    }
+
+    #[test]
+    fn invalid_state_destination_stays_an_error_without_advancing_publication() {
+        let fixture = Fixture::new();
+        let mut evidence = fixture.evidence();
+        evidence.root = fixture.invalid_root();
+        let session = AdventureSession::new(7);
+        assert!(evidence.record(&[], &[], &session, 0.1, false).is_err());
+        assert!(!evidence.snapshot_deferred);
+        assert_eq!(evidence.last_state_tick, u64::MAX);
     }
 }
 

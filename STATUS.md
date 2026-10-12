@@ -4,13 +4,15 @@ Updated: 2026-10-12, America/Phoenix. **E125 / Actionables#303-307: modal fronte
 
 ## Current increment
 
-**E126 — necessary checkpoint error fix, in preparation:** Actionable#308
-records source-confirmed loss of I/O identity after publication failure.
-Optional observation consumers cannot recognize Windows reader conflicts from
-that formatted String. The [contract](docs/necessary-fixes.md#checkpoint-publication-error-identity)
-reserves the writer/tests/report for a new worker and both actual consumers for
-root. Reproduce on isolated offline fixtures, preserve context/OS identity and
-join existing defer/recovery policy. No corrected runtime result is claimed yet.
+**E126 — necessary checkpoint error fix, joined and checked:** New worker
+source `f75ad30` preserves contextual I/O identity; root joins both optional
+observation consumers to the helper. Four actual observer regressions and ten
+matched writer contracts passed, including lock/defer/recovery and fatal invalid
+destinations. Formatting, strict affected lint, locked/offline debug build and
+all122 input/139 source-artifact readbacks passed. The [joined checkpoint](docs/necessary-fixes.md#joined-checkpoint-for-actionable-308)
+owns independent red results, exact identity, sources and boundaries. #308 is
+still In progress with its worker claim until pushed source/final acceptance
+and normal completion are read back. No native game/live-save run occurred.
 
 **E125 — modal frontend completion, complete:** Actionables#303-307 are Done
 with qualifying Passed validation and released claims, read back at versions
@@ -86,6 +88,20 @@ Current29 [Stanley/cursor2](docs/extra-pets.md#current29-implementation-checkpoi
 [A31: Tank 4-1](docs/adventure-4-1.md) is the latest native-accepted stage, committed `38c65be9ad439a727b2e7e1b1401db928b8e55f6` (E76/E78). Its frozen bundle, reports and genuine earned saves remain preserved.
 
 ## Current build verification
+
+**E126 — final joined observer/writer gate:** Worker source `f75ad30` plus root's
+recorded dirty `app.rs` joins matches source digest
+`1fc42c5db070331c525754f6d3407b38b8ed9b583a69b3c85692c7b76fbff37c`.
+Four actual observer tests and ten worker writer cases passed; formatting,
+strict lib/bin/checkpoint-target lint and `cargo build --locked --offline -j 2 --bin turbofish-deluxe`
+passed with Rust/Cargo1.95 MSVC. Frozen private receipt
+`.scratch/coordination/necessary-308-final-build.local.json` has ID
+`4424c959d520b0907ad99352d29c9aade145c7b2be09b6084b21fe09fece6b7c`;
+EXE SHA`b9d8a955b2af7bdf82f8ee7e5e7d8a056c1606c8350a575e477758a7eb5d8a53`.
+All122 build inputs and139 source/artifact rows matched. The [joined checkpoint](docs/necessary-fixes.md#joined-checkpoint-for-actionable-308)
+owns actual failed red runs and limits. E125's release bytes below are preserved
+as historical acceptance. No normal-launch artifact, game/live-save or native
+acceptance was changed or inspected.
 
 **E125 — final joined modal gate:** Source `ea9ed918240de62d69bf13ee8b5787546b2c71d2`,
 Rust/Cargo1.95 MSVC, `cargo build --locked --offline -j 2 --release --bin turbofish-deluxe`.
@@ -248,6 +264,7 @@ Completed performance worktrees retain separate Cargo targets and disposable off
 
 | ID | Class / current scope | Evidence |
 |---|---|---|
+| E126 | Observed isolated Windows reader-lock failures and corrected actual optional-observer recovery; native unrun | [Joined checkpoint](docs/necessary-fixes.md#joined-checkpoint-for-actionable-308), writer report and current frozen build identity above |
 | E125 | Observed focused offline modal/writer contracts and joined lint/release build; native unrun | [Modal completion](docs/modal-batch-303-307.md#completion-and-joined-verification), five linked reports and current integrated build identity above |
 | E124 | Observed focused offline contracts and joined lint/release build; native unrun | [Refactor completion](docs/refactor-batch-298-302.md#completion-and-joined-verification), five linked reports and current integrated build identity above |
 | E122 | Observed offline equivalence/measurements and integrated focused checks; native unrun | [Performance index](docs/performance.md#frame-profile-and-checkpoint-results), linked profile/VT/checkpoint reports and current integrated build identity above |

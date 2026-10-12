@@ -1,5 +1,53 @@
 # Necessary correctness fixes
 
+## Joined checkpoint for Actionable 308
+
+Checked worker source `f75ad305a342d1d1148db136810bb27359fca974` is fetched
+from pushed main. [Writer report](checkpoint-error-context.md) owns its
+unchanged-writer red failure, ten focused checks, source hashes, retained script
+failure and cleanup. Root joins both actual optional observers to `io_error`;
+`record_draw` calls its extracted publication method, allowing offline testing
+of the real UI writer without a graphics context. Windows5/32 eligibility and
+all durable save behavior remain unchanged.
+
+Root first ran `cargo test --locked --offline -j 2 --lib observation_publication_tests`
+with the unchanged writer and original direct-downcast guards: two reader-lock
+cases failed on OS5; two invalid-destination cases passed. Red receipt
+`.scratch/coordination/necessary-308-original-observers.local.json` captures
+716cdd0 plus the extraction/test dirty tree, unchanged writer SHA
+`82CDAF4CA793E012A1E3F4ADC8FB7B980D12C5C4819147EA3B36F0DA35E2B4BD`,
+app SHA`77D08529BA710C11DED0E796A2EF53B1FFD62F3F73B3C1E5A84B837028D687F9`
+and test EXE SHA`50F635450486DCC5D8682F2CBC935162446BEC11CF8C906D19DDE3AAE153FDE4`.
+The failed072652 log and original app snapshot remain private and unchanged.
+
+After helper/caller integration, all four actual observer cases passed:
+previous complete snapshots survive locks, latest UI/state publishes after
+unlock, state emits one defer/one recovery diagnostic, and invalid destinations
+remain errors without advancing publication state. Together with the matched
+ten writer cases,14 focused contracts passed. Formatting, strict lib/bin/
+checkpoint-target lint and locked/offline normal-bin debug build passed; sources
+stayed unchanged throughout the joined gate. Logs are
+`necessary-308-20261012-073455-*` in coordination scratch. No broad suite was
+repeated. Only root's existing private debug cache was reused; E125's identified
+release bytes remain preserved.
+
+Final frozen build receipt `.scratch/coordination/necessary-308-final-build.local.json`
+has ID`4424c959d520b0907ad99352d29c9aade145c7b2be09b6084b21fe09fece6b7c`,
+receipt SHA`bb83720ceb7402b1346399170b0b27a53019b8978a1fe6900523015cfb66b5f9`,
+source-set digest`1fc42c5db070331c525754f6d3407b38b8ed9b583a69b3c85692c7b76fbff37c`
+and EXE SHA`b9d8a955b2af7bdf82f8ee7e5e7d8a056c1606c8350a575e477758a7eb5d8a53`.
+All122 maintained build inputs and139 source/artifact rows match. Rust/Cargo1.95
+MSVC, default dev profile and locked/offline native dependencies identify this
+build. Receipt associates f75ad30 plus root's recorded dirty app join; subsequent
+commit/central-record changes do not change those input bytes.
+
+Source transfers stay assigned until the joined source publication and normal
+qualifying Actionables completion/release are read back. No native, audible,
+retail, FPS, human-feel or full-runtime acceptance follows from these offline
+checks. All uniquely contained disposable locks/fixtures were released/removed;
+human processes/saves, original install, frozen/earned lineages and excluded
+saver work remain untouched.
+
 The user authorizes only necessary new fixes after the completed modal batch,
 with an Actionable for each verified finding and independent new chats/worktrees.
 Completed modal/refactor workers, prepared native scenarios and heartbeat stay
