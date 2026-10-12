@@ -10,7 +10,7 @@ schema and the human gameplay policy remain the contracts.
 
 | Actionable | Complete outcome | Worker-owned maintained files |
 |---|---|---|
-| #298 | Shared glyph layout used by normal and clipped Help text | `src/font.rs`, `tests/font.rs`, `docs/refactor-font-rendering.md` |
+| #298 | Shared glyph layout used by normal and clipped Help text | `src/font.rs`, `tests/fonts.rs`, `docs/refactor-font-rendering.md` |
 | #299 | Direct shared current-format session admission and profile decode | `src/cli.rs`, `src/profiles.rs`, `tests/persistence.rs`, `docs/refactor-save-codec.md` |
 | #300 | Existing checkpoint writer moved to persistence | `src/persistence.rs`, `src/settings.rs`, `tests/checkpoint_writer.rs`, `docs/refactor-persistence.md` |
 | #301 | Matching UI drawing/layout primitives reused by render consumers | `src/ui.rs`, `src/app/virtual_runtime/render.rs`, `src/app/records_runtime.rs`, `tests/ui_primitives.rs`, `docs/refactor-ui-primitives.md` |
@@ -63,6 +63,25 @@ Screensaver code is outside refactor scope. Agree any font/UI API assumption
 with the recorded contract rather than editing another worker's source.
 
 ## Resource and validation contract
+
+### Recorded tracking-tool failure
+
+All five new chats received a claim `INTERNAL_ERROR` with `retryMode: never`.
+Scoped readbacks remain Ready version6, unclaimed. Correlation
+`7765257a-9a7b-451d-9ecf-2b5ac440c80d` identifies the shared installed Actionables
+failure: task-detail decoding rejects an activity type at `activity[1].type`
+and the claim transaction rolls back. Root verified the server log read-only;
+the database, service and installed release remain untouched.
+
+The installed Actionables workflow's unavailable-tool fallback applies:
+"If the server or required tool remains unavailable, continue the user's work
+and report the tracking limitation." Authorized engineering proceeds under the
+exact file/resource contract while tracking stays explicitly Ready/unclaimed.
+Do not invent claims, retry the denied request, bypass via another API, report
+tracking completion or rewrite history. Root records actual checked engineering
+completion separately and reconciles tracking only after the service recovers.
+The existing font-test file is `tests/fonts.rs`; it replaces the originally
+mistaken singular path in the initial task description.
 
 Each chat owns its worktree, ignored scratch, private Cargo target and disposable
 offline fixtures. Builds may run concurrently with bounded job counts. Reuse
