@@ -343,6 +343,23 @@ impl MusicOwner {
         })
     }
 
+    pub(crate) fn play_song_command(
+        &self,
+        bytes: Arc<[u8]>,
+        command: crate::fish_songs::ToneCommand,
+    ) -> Option<MusicReport> {
+        if command.sample == crate::fish_songs::ToneSample::Applause {
+            self.play_effect(bytes)
+        } else {
+            self.play_tone(
+                bytes,
+                command.song_id,
+                command.pitch_semitones,
+                command.gain,
+            )
+        }
+    }
+
     pub fn set_music_volume(&self, value: f32) -> Result<(), String> {
         set_gain(&self.gains.music, value)
     }
@@ -919,6 +936,94 @@ mod tests {
     fn corrupt_effect_is_a_local_decode_failure() {
         let result = decode_effect(Arc::<[u8]>::from(b"bad audio".as_slice()));
         assert!(matches!(result, Err(MusicReport::EffectFailed { .. })));
+    }
+
+    #[test]
+    fn fish_song_applause_uses_effect_ownership_and_tones_keep_validation() {
+        use crate::fish_songs::{FishSongPlayer, SongData, ToneCommand, ToneSample};
+
+        let (mut owner, _controls) = owner_without_device();
+        let (effects, commands) = mpsc::sync_channel(MAX_COMMAND_BACKLOG);
+        owner.effects = effects;
+        let bytes = Arc::<[u8]>::from(b"queue fixture".as_slice());
+        let score = SongData::parse("applause.txt", "*speed 2\n*line 1\nc4 q\n").unwrap();
+        let mut player = FishSongPlayer::default();
+        player.start(&score, 7, 1_000, true).unwrap();
+        let tone = player.advance(1_000)[0];
+        assert!(owner.play_song_command(bytes.clone(), tone).is_none());
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            EffectCommand::Play {
+                song_id: Some(7),
+                ..
+            }
+        ));
+
+        let applause = player.advance(1_400)[0];
+        assert_eq!(applause.sample, ToneSample::Applause);
+        assert_eq!(applause.song_id, -1);
+        assert!(owner.play_song_command(bytes.clone(), applause).is_none());
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            EffectCommand::Play {
+                song_id: None,
+                gain: 1.0,
+                speed: 1.0,
+                ..
+            }
+        ));
+
+        for sample in [
+            ToneSample::Normal,
+            ToneSample::High,
+            ToneSample::SuperHigh,
+            ToneSample::Low,
+        ] {
+            let command = ToneCommand {
+                sample,
+                pitch_semitones: 12.0,
+                gain: 0.5,
+                ..tone
+            };
+            assert!(owner.play_song_command(bytes.clone(), command).is_none());
+            assert!(matches!(
+                commands.try_recv().unwrap(),
+                EffectCommand::Play {
+                    song_id: Some(7),
+                    gain: 0.5,
+                    speed: 2.0,
+                    ..
+                }
+            ));
+        }
+        for invalid in [
+            ToneCommand {
+                song_id: -1,
+                ..tone
+            },
+            ToneCommand {
+                pitch_semitones: f32::NAN,
+                ..tone
+            },
+            ToneCommand {
+                pitch_semitones: 97.0,
+                ..tone
+            },
+            ToneCommand {
+                gain: f32::INFINITY,
+                ..tone
+            },
+            ToneCommand { gain: 2.0, ..tone },
+        ] {
+            assert!(matches!(
+                owner.play_song_command(bytes.clone(), invalid),
+                Some(MusicReport::EffectFailed { .. })
+            ));
+            assert!(matches!(
+                commands.try_recv(),
+                Err(mpsc::TryRecvError::Empty)
+            ));
+        }
     }
 
     #[test]

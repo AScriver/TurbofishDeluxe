@@ -2,6 +2,17 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Route fish-song applause through effects (#316)
+
+`src/app.rs` uses `MusicOwner::play_song_command` in `src/music.rs` to route
+applause to the existing effect queue and keep real tones on their validated
+path. A real scheduler/device-free owner regression reproduced rejection, then
+verified applause ownership/gain/speed, four tone samples and invalid parameter
+rejection. All12 song/music checks, strict lint and compilation pass;
+formatting/build/workflow precede commit. No audio device, audible playback,
+gameplay/live saves/install were used. #316 remains Ready/unclaimed after claim
+failure; [batch record](docs/rust-review-fixes.md) owns tracking limits. Next: #317.
+
 ## 2026-10-12 — Remove duplicate save-schema inventories (#315)
 
 `src/cli.rs` deletes343 inventory/helper lines and retains54 compact shape-check

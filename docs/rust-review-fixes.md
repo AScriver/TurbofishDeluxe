@@ -34,8 +34,8 @@ any later main changes.
 | 2 | #312 | All-entry Sandbox publication projection | Committed `8f80305` |
 | 3 | #313 | Covered pending-money debt admission | Committed `587b6b6` |
 | 4 | #314 | Required nullable `last_laser` | Committed `2ec1a62` |
-| 5 | #315 | Remove proven duplicate schema inventories | Checked; commit follows |
-| 6 | #316 | Deliver applause through the effect path | Pending |
+| 5 | #315 | Remove proven duplicate schema inventories | Committed `f270e92` |
+| 6 | #316 | Deliver applause through the effect path | Checked; commit follows |
 | 7 | #317 | Reuse existing glyph layout for clipped text | Pending |
 | 8 | #318 | Retain installation digests instead of buffers | Pending |
 
@@ -122,6 +122,22 @@ also passed during focused verification. Formatting, strict lint, compilation,
 isolated build and workflow pass. #313's claim failed without mutation,
 correlation `d2d57eb1-bf92-43ef-a446-5a2ef172be32`; inspection confirms Ready
 version6, unclaimed. No gameplay or live saves were used.
+
+## Fish-song applause
+
+The actual app loop calls `MusicOwner::play_song_command`, whose only routing
+decision sends applause to the existing effect path and sends real samples to
+the existing validated tone path. Existing public tone/effect methods remain.
+The scheduler-to-owner regression first reproduced rejection of generated
+applause (`song_id=-1`), then passed with unowned, full-gain/unpitched effect
+commands. All four tone samples retain song ownership, pitch/gain and rejection
+of invalid IDs, pitch and gain. The existing device-free owner/channel fixture
+supplies the command evidence; no audio device is opened.
+
+All12 focused song/music checks, formatting, strict lint, compilation, isolated
+build and workflow pass. Audible playback remains untested. #316's non-retryable
+claim failed without mutation, correlation `c3a5c92a-a53d-4724-b20a-0f22131c9b71`;
+inspection confirms Ready version6, unclaimed. No gameplay or live saves used.
 
 ## Required nullable laser state
 

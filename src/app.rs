@@ -8992,12 +8992,8 @@ pub async fn run(
             if let (Some(owner), Some(bytes)) = (
                 music.as_ref(),
                 presentation.sounds.get(command.sample.sound_id()),
-            ) && let Some(report) = owner.play_tone(
-                bytes.clone(),
-                command.song_id,
-                command.pitch_semitones,
-                command.gain,
-            ) {
+            ) && let Some(report) = owner.play_song_command(bytes.clone(), command)
+            {
                 music_reports.push(report);
             }
         }
