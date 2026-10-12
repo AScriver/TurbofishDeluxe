@@ -2,6 +2,25 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Check guppy turn clock against movement speed
+
+The human suggested that turns might miss a movement-speed factor. Fresh target
+and instruction hash readback matches PB05. The original uses a fixed20-count
+turn clock, a separate ordinary swim-speed threshold, and velocity/divisor
+movement. All24 controlled retained-E128-library cases/480 full Board updates
+pass the independently recovered turn sequence and position contract. Faster
+fish travel farther before the same head-on frame, explaining the stronger
+motion/pose gap. [Owning report](docs/playtests/2026-10-12-guppy-turn-speed-followup.md)
+records exact addresses, build/source identity, checks and fixture limits.
+Current clean2dd559d leaves the active turn/movement routines unchanged.
+PowerShell parser/automatic-variable checks pass; no native game, save access,
+runtime source change or new Actionable. Retail movement/rendered-speed
+comparison and human timing acceptance remain pending.
+
+Documentation workflow and scoped whitespace checks run before the docs-only
+commit through the validated private `Finish-SpeedFollowup.ps1`; the maintained
+command is `scripts/Test-Workflow.ps1` via `Invoke-CodexPowerShell.ps1 -Execute`.
+
 ## 2026-10-12 — Remove remaining development-save compatibility
 
 The user requested removal of backward compatibility for old development saves.

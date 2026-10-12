@@ -200,6 +200,11 @@ Tool identities, invocation constraints, and the distinction between fresh check
 
 ## New work and adaptations
 
+The [E128 speed follow-up](playtests/2026-10-12-guppy-turn-speed-followup.md)
+rechecks the same registered PB05 animation/update instructions and their
+target hashes. Its private probe uses the retained identified Rust library;
+no new reference source, export, asset or license boundary is introduced.
+
 E128's human follow-up reuses the already registered PB05 ordinary Fish Update
 instructions at004f6970 and inspects the owned installed smallturn.gif read-only.
 The [motion/pose report](playtests/2026-10-12-guppy-turn-motion-followup.md) owns

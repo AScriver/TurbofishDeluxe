@@ -40,6 +40,15 @@ unforced cleanup of all four attempts. The visible symptom is observed locally;
 retail wall-clock/visual comparison and human acceptance remain pending. No
 additional runtime change or Actionables mutation occurred.
 
+**E128 movement-speed follow-up:** The human suggested a missing speed factor.
+Primary instructions distinguish a fixed turn clock from speed-dependent swim
+cadence and ordinary velocity/divisor movement. All24 isolated retained-build
+cases/480 full updates have the same turn sequence; faster fish travel farther
+before the head-on pose. [Speed report](docs/playtests/2026-10-12-guppy-turn-speed-followup.md)
+owns exact addresses, identities, fixture limits and receipts. No further
+runtime change or new defect was established; retail movement/visual comparison
+and human acceptance remain pending.
+
 **E128 / Actionable#310 — Adventure guppy turnaround:** The human narrowed the
 reported timing issue to Adventure guppies. Fresh read-only PB05 instructions
 confirm the existing signed20-count/frame cadence but show that the authored
