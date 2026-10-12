@@ -1,14 +1,16 @@
 # Current handoff
 
 Updated: 2026-10-12, America/Phoenix. **#311-318 — all eight Rust review
-corrections checked and committed.** The [owning record](docs/rust-review-fixes.md)
-owns ordered commits, focused checks, failed approaches and tracking limitations.
-All eight Actionables were created/prepared; their non-retryable claim failures
-left them Ready/unclaimed under the recorded unavailable-tool fallback.
+corrections committed on main and Done.** The [owning record](docs/rust-review-fixes.md#tracking-completion-after-claim-repair)
+owns ordered commits, actual checks, failed approaches and terminal readback.
+Actionables omitted its own bulk-preparation activity from its shared schema;
+repair `e365424` is checked, deployed and merged into its existing AScriver branch.
+The managed restart preserves every Actionables database row and configuration.
+Each task now reads back Done version12 with Passed validation and no claim.
 The joined tree preserves main `5fd37f2` and the completed E131/#319 guppy
 correction. All912 tests pass (11 ignored), plus formatting, strict Clippy,
 compilation, isolated build and workflow. Root owns the guarded integration;
-both histories remain intact. Tracker completion awaits a functioning claim tool.
+both histories remain intact. Original claim failures remain historical.
 No gameplay, live saves, owned installation, audio device or normal-launch
 artifact is used. Earlier human/retail/audio acceptance limits below remain.
 

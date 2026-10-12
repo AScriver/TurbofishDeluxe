@@ -2,6 +2,28 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Repair Actionables claims and close #311–318
+
+Actionables commit `e365424` accepts its legitimate `agent-bulk-prepared` audit
+event in the shared enum. The actual MCP prepare/claim/detail/release regression
+reproduces the old failure, then passes;83 focused checks, formatting, types,
+29 frontend tests and production build pass. Its broader API run records287
+passes/two failures (known historical-skill compatibility plus startup-port
+failure); the isolated startup rerun passes all six. No unrelated repair is
+claimed. Deploy the checked managed release with copied-database rehearsal,
+backups and exact preservation of14 tables/5812 rows. Health, MCP authentication,
+all eight detail reads, listener ownership and configuration preservation pass.
+Merge the repair into Actionables' existing AScriver branch, as selected by the
+user; preserve its three unrelated local documentation edits.
+
+Record each Turbofish correction commit, joined912-pass test evidence, format/
+strict lint/compile/build/workflow checks, actual limits and Resolution through
+the restored normal MCP lifecycle. All #311–318 read back Done version12 with
+qualifying Passed validation and released claims. The [completion record](docs/rust-review-fixes.md#tracking-completion-after-claim-repair)
+owns exact commits, validation identities, deployment and retained failures.
+Turbofish source stays at joined `7e43925`; only records change on main. No
+gameplay, audio device, owned installation, live save or human process is used.
+
 ## 2026-10-12 — Join all eight Rust review corrections
 
 All eight fixes have separate checked commits in the proposed order. Join

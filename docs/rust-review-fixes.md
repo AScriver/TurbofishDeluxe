@@ -1,5 +1,9 @@
 # Rust review corrections
 
+Tracking is now closed: all #311–318 are Done version12 with Passed validation
+and released claims. [Claim repair and terminal readback](#tracking-completion-after-claim-repair)
+below supersede the historical Ready/unclaimed limitation without discarding it.
+
 The user authorized all eight reviewed findings on 2026-10-12, in the ordered
 refactoring plan below, with one Actionable per outcome and local commits after
 focused verification. Root owns all edits and integration. Preserve unrelated
@@ -243,3 +247,72 @@ the new array rejection. Formatting, strict lint, compilation, isolated build
 and workflow pass. #315's non-retryable claim failed without mutation,
 correlation `6e42f9d6-73ac-4877-897c-1f0f79b0f6ef`; inspection confirms Ready
 version6, unclaimed. No gameplay or live saves were used.
+
+## Tracking completion after claim repair
+
+The user explicitly authorized fixing the Actionables claim error and recording
+the existing verified commits/checks before completing #311–318. The current
+Turbofish source is main `7e4392537a68afdcc8c84d6e88aaf6fc3ba596ed`;
+the eight reviewed commits and the unrelated guppy correction are preserved.
+Only completion records change in this follow-up. Existing912-pass evidence,
+11 ignored tests, formatting, strict lint, compilation and build remain current
+for that source. The final pre-integration workflow passed115 documents,
+1161 links,417 anchors,45 allowed and37 excluded paths.
+
+The actual managed log for correlation
+`5eed16e3-d972-4d10-875c-e18e97e64b56` identifies a Zod failure at
+`activity[1].type` in task-detail projection during the claim transaction.
+Bulk preparation writes `agent-bulk-prepared`, which its shared activity enum
+omitted. This explains why preparation and summary inspection succeeded while
+claims rolled back. Actionables commit
+`e36542422436049da842811fe5413e6d570b0373` adds the one legitimate event and
+extends the existing MCP preparation regression through claim/detail/release.
+No event is discarded, validation bypassed or task row edited directly.
+
+The regression fails with the same INTERNAL_ERROR before correction, then
+passes. All83 focused MCP/agent-task checks, formatting, type checks,29 frontend
+checks and production build pass with Node24.14.1, pnpm11.9.0, frozen/offline
+dependencies and disposable database/configuration. The broader Actionables
+API run has287 passes/two failures: the previously documented historical-skill
+revision mismatch (`9a28601`) and a temporary-port connection failure. The
+isolated startup suite passes all six; the combined failure remains historical.
+An initial test assertion used the wrong API envelope and was corrected. A
+Git-worktree scope-test assumption required a normal validation clone. These
+failures do not become a full-release-gate success claim.
+
+Managed release `20261012-193031-e36542422436` is built from that clean commit.
+Every one of its159 source files matches the commit. Copied-database rehearsal
+and managed live restart both preserve all14 tables and5812 rows, including319
+Actionables, exactly. SQLite integrity/foreign keys, web/API health/schema,
+unauthenticated MCP401/authenticated initialization200, all eight detail reads,
+loopback listener ownership and configuration/manager preferences pass. No
+migration or seed runs. The prior launch/release and consistent database backups
+remain under the Actionables package's `backups/claim-fix-20261012` directory.
+The repair fast-forwards its existing AScriver branch, as the user selected,
+without changing its unrelated AGENTS/README/local installation notes.
+
+Each original work item is listed, claimed, fully reconciled, advanced to
+In progress, given source references, then completed atomically with its actual
+Resolution and Passed automated validation. Scoped readback confirms Done
+version12, the recorded commit, a qualifying Passed record and no active claim:
+
+| Actionable | Verified correction commit | Qualifying validation record |
+|---|---|---|
+| #311 | `c7b06fe69bb36159d3d50d7a4a0c1e108232f318` | `cmv5njat8000cp8v4yl3jy8hc` |
+| #312 | `8f80305b0ba1c829f19761ae826e0a4708670456` | `cmv5nkb4k000tp8v4pm8bar3s` |
+| #313 | `587b6b65f56bc6d31c9dccd8facd340e0172ae6f` | `cmv5nkxm2001ap8v4qmk4eau6` |
+| #314 | `2ec1a622f0d17ecdd1cdab32c245709baf47896b` | `cmv5nlsw4001rp8v4i47c3ge8` |
+| #315 | `f270e925d85f9ccd6993b1447ad03c3debe45707` | `cmv5nmhqz0028p8v4apbjj3ve` |
+| #316 | `88fbea5671b3309d0bcba15ac299ddf3003d3c1a` | `cmv5nn1jg002pp8v4t8xrjiv8` |
+| #317 | `35f875f8c7ce49231e9aee0a4fd0255f3c0a7760` | `cmv5nnw7i0036p8v4zc7z3uqe` |
+| #318 | `469fde877ac3faf3d85245e5185e0af941bb1f32` | `cmv5noo7j003np8v439daeenv` |
+
+The saved evidence gives each focused result and the exact joined commands,
+source/build identity, executable digest and retained logs. Ordinary gameplay,
+audible/native/retail acceptance remain unperformed where previously pending.
+No gameplay, audio device, owned install, live save, normal-launch artifact or
+human-owned process is accessed. Completed workers/chats and heartbeat stay
+closed. Final documentation workflow and whitespace pass before commit:
+115 documents,1163 links,420 anchors,45 allowed paths,37 excluded paths and
+241 eligible files in the original checkout. Runtime verification is not part
+of that documentation check.
