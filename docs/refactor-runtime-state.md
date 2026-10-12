@@ -144,6 +144,24 @@ shared module registration was necessary or remains. All invoked compiler/test
 processes exited; scratch receipts, synthetic fixtures, and target artifacts
 are retained for review. No other process or resource needs cleanup.
 
+### Reconciled contribution
+
+Owned code/report commit `d033190` contains exactly the three reserved paths.
+Merge `2a13da0dd61e3b46a517ded827ad874be9ad71fa` preserves concurrent font,
+persistence, UI, and central tracking-exception contributions through
+`eaeca5b`; there were no conflicts or changes to the owned Rust hashes above.
+On that clean merged source, formatting, the same strict lib/bin/test-target
+Clippy command, locked/offline normal-bin compilation, and workflow checks all
+passed. Unaffected behavioral filters were not repeated. The final workflow
+readback has 35 required files, 100 documents, 1,053 local links, 352 anchors,
+45 included/37 excluded path checks, and 211 eligible files.
+
+The separate immutable `.scratch/refactor302/identity-joined.local.json`
+records the clean merged commit and development executable SHA-256
+`9FEDDE784FF6D9583B36C7C650687ABB93633CB8EDA2AFA05A289C751D6C9B08`.
+It was compiled, not launched. Documentation-only receipt updates after that
+identity do not change runtime inputs or invalidate the owned checks.
+
 ## Tracking and transfer
 
 The shared Actionables runtime rejected the claim operation with
