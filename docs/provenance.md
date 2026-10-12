@@ -1,5 +1,17 @@
 # Provenance and lineage
 
+E125's modal frontend completion studies bounded functional layout/input facts
+from the already registered W1 pin and license boundary below:
+`OptionsDialog`, `UserDialog`, `NewUserDialog`, `MoneyDialog`, `WinFishCommon`
+dialog/button/checkbox helpers, `WinFishApp` dialog construction and already
+registered Board phase branches, plus framework `Dialog`, `DialogButton`,
+`Slider`, `EditWidget` and `ListWidget`. The [modal contract](modal-batch-303-307.md)
+owns exact reservation and evidence limits. These are original Rust adaptations
+using read-only locally owned images/fonts; no source bodies, extracted prose,
+proprietary assets or raw analysis output enter Git. Existing primary
+corrections and production state/transaction authorities win; no new binary
+export or native/retail fidelity result is claimed.
+
 A66's Windows persistence correction is original project code, not recovered
 game logic. Inspected Microsoft PowerShell7.6.6
 [GetHash.cs](https://github.com/PowerShell/PowerShell/blob/f260eb9c31ec72c5282f98e5ea24d9be4f8d7536/src/Microsoft.PowerShell.Commands.Utility/commands/utility/GetHash.cs#L163)

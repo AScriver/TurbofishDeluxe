@@ -2,6 +2,20 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-11 — Start five modal frontend completion lanes
+
+Created Actionables#303-307 from the user-authorized unfinished-modal audit:
+Options/pause, profile forms, Quit/information, gameplay prompts and shell gifts.
+The [modal contract](docs/modal-batch-303-307.md) reserves exact disjoint new
+adapter/model/test/report files, the existing gift adapter, root shared
+controls/rendering/resources and all parent joins before dispatch. New tasks
+start in Inbox for ordinary claim/research flow; previous failing prepared
+records are not retried. Shared core has a concrete API and preservation
+contracts; no generic UI framework or save/domain change is planned.
+Source pin/study boundaries are recorded before worker study. Human ordinary
+gameplay, original installation, saver exclusion and real/frozen/earned saves
+remain untouched. No implementation or native acceptance is claimed yet.
+
 ## 2026-10-11 — Complete five integrated code-quality refactors
 
 E124 used five explicitly authorized new chats/worktrees with disjoint source

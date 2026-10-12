@@ -4,6 +4,15 @@ Updated: 2026-10-11, America/Phoenix. **E124 / Actionables#298-302: all five cod
 
 ## Current increment
 
+**E125 — modal frontend completion, starting:** Created Actionables#303-307
+for Options/pause, Profiles, Quit/notices, gameplay prompts and shell transfer.
+The user authorized new parallel chats/worktrees and checked commits pushed to
+main. The [modal contract](docs/modal-batch-303-307.md) reserves disjoint source,
+shared owned-art/control interfaces and root-owned production joins before
+dispatch. Use ordinary Inbox claim/research flow; no prepared-record retry.
+No new modal implementation or native result is claimed yet. Human gameplay,
+current37/profile3, saver exclusion and saved lineages remain unchanged.
+
 **E124 — bounded code-quality batch, engineering complete:** Five new
 chats/worktrees pushed shared glyph layout, direct current-format save admission,
 checkpoint persistence, reusable UI primitives and concrete input/modal/audio

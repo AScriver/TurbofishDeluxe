@@ -443,6 +443,14 @@ A run manifest consumes one explicit telemetry directory plus a build receipt an
 
 ## Bounded code-quality extraction
 
+The user-authorized E125 modal completion uses five bounded adapters for
+Options/pause, profile forms, Quit/information, gameplay prompts and shell
+transfer. Root supplies shared owned-art rendering and focused capture/focus
+controls, while existing session/settings/profile/save owners retain authority.
+The [modal contract](modal-batch-303-307.md) owns interfaces, sources, scope and
+required parent integration. No generic UI framework, format change or saver
+work is introduced; native gameplay remains human-owned.
+
 E124 / Actionables#298-302 extracts shared font placement, current-format save
 admission, checkpoint storage, matching UI primitives and cohesive normal-game
 runtime state. Existing observable ordering, current37 schema, domain mode
