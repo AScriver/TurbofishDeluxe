@@ -2,6 +2,12 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-11 — Start the next three performance improvements
+
+Created Actionables#295-297 for optimized default launches, batched real resource loading and repeated active VT views. The user explicitly requested new parallel chats/worktrees and all finished work on main. The [E123 contract](docs/performance-batch-295-297.md) reserves exclusive source/test/report files, stable parent interfaces, worker-local targets/fixtures and serial final timings before dispatch. Root owns integration and central records; the source baseline is clean `9188cbc`.
+
+The earlier audit establishes source-confirmed avoidable work, with no implementation result claimed yet. Necessary focused correctness checks and offline measurements are authorized; human normal gameplay, native input/audio, services, real/frozen/earned saves and original installation stay untouched. Earlier workers and paused automation remain paused. AGENTS, requirements, DESIGN and STATUS record the bounded parallel exception.
+
 ## 2026-10-11 — Audit remaining runtime performance after the completed batch
 
 Audited clean `703cc79` without changing runtime source. The [new audit](docs/performance-audit-2026-10-11.md) records three ranked follow-ups: optimized normal-play builds, bounded batching of real loader progress and repeated active Virtual Tank view construction. The normal launcher and README use debug by default. Successful asset completion currently yields once per resource;139 base images/8 fonts/45 sounds, conservatively excluding all seven bootstrap resources, imply at least185 unmuted completion frames. About3.08seconds at60FPS is a source-derived scheduling calculation with instant tasks, not observed startup time.
