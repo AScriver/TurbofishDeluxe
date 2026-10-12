@@ -2,6 +2,26 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-11 — Join five modal frontends to normal runtime
+
+Fetched five checked owned contributions and the Challenge-loss extension on
+`a6828e8`. Root joined actual
+normal modal input/render/resource routing, setting apply/save/rollback,
+profile checkpoint transactions, retryable Quit save results, retained
+pause/Help/menu lifetimes and admitted gameplay actions. Single dim/input
+ownership replaces the normal flat modal consumers; finished saver code is
+preserved. Four real-writer/lifetime tests plus the affected model/adapter
+contracts passed:72 focused checks, formatting and strict lib/bin/test lint.
+First root check failed two test-input assumptions; source-confirmed current-
+first profile ordering and post-failure Cancel focus corrected both. The
+[joined checkpoint](docs/modal-batch-303-307.md#joined-source-checkpoint) owns
+the exact commands, source commits and limits. Challenge loss now uses the
+same Game Over frontend and its existing immediate Continue rule. A later
+format gate found wrapping in the new higher-priority gift draw condition;
+formatting corrected it and all affected checks passed. Obsolete gift
+collector removal, final release identity and tracking completion
+remain pending. No game launch, live save access or native fidelity claim.
+
 ## 2026-10-11 — Start five modal frontend completion lanes
 
 Root subsequently added registered shared modal input/capture/focus controls

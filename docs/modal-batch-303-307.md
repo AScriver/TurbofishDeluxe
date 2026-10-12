@@ -25,6 +25,51 @@ is `x + value * max(width - thumb_width, 0)`. Controllers must align drag/value
 geometry with that rule or report a narrow layout correction. Source-informed
 art/control composition is not observed retail pixel/native acceptance.
 
+## Joined source checkpoint
+
+Shared core is pushed at `9d29e1e`. Checked owned source commits are
+`398cdab` (#303), `b7e5c5f` (#304), `19bb37c` (#305), `66f70da` (#306)
+and `6a33e66` (#307), reconciled on pushed main `befdb53`. #306's additional
+Challenge-loss projection is pushed at `a6828e8`. Root's production
+joins are in `src/app.rs`/`src/lib.rs`: active-modal-only native collection,
+owned-art drawing/resources with one parent dim layer, setting application/
+save/rollback with exact request feedback, atomic profile operations after
+checkpoint admission, Quit save-before-exit feedback and retry, retained
+pause/help/menu lifetimes, and phase/payload-checked gameplay actions.
+Game Over counters keep their existing normal tick admission; an active
+gameplay prompt owns input without creating a global simulation pause.
+Independent options/pause opening epochs survive a nested Quit dialog.
+Existing finished saver input/painters/routes and saved game rules remain with
+their previous owners.
+
+Root ran `cargo test --locked --offline -j 2` for the five modal integration
+targets and the selected `--lib` filters `modal_join_tests`,
+`app::shell_gift_runtime::tests`, `app::gameplay_modal_runtime::tests` and
+`app::notice_runtime::tests`:71 passed. The Challenge-loss follow-up adds one
+independent immediate-admission/no-reward case; the affected root/gameplay/gift
+filters passed again, bringing the checked total to72. Formatting and strict lib/bin/five-test
+Clippy passed. Four parent tests exercise the real checkpoint/profile writers
+on owned disposable temporary fixtures, failed-create allocation, failed
+selection plus successful retry/reopen, Quit failure/retry and pause lifetime.
+The first parent-test attempt passed two/failed two: its fixture incorrectly
+assumed current profile sorted last and Quit retry retained Quit focus. Source
+readback established current-first ordering and safe Cancel focus after a
+failed save; corrected input sequences passed all four. No production rule
+changed for those failures. Private timestamped check logs remain in the root
+coordination scratch directory.
+
+Challenge loss now uses the same Game Over modal with its existing immediate
+Continue admission. Root removed its old flat painter and direct pointer/Enter
+dispatch, retaining Challenge result screens and game rules. The affected
+gate first found only formatting in the higher-priority gift draw condition;
+formatting corrected it and the gate passed (`20261012-063252` logs).
+Remaining bounded joins: #307's
+temporary deprecated `poll` is removed after the normalized parent join is
+published. Release artifact identity/workflow checks and qualifying Actionables
+completion still follow. Source checks establish no native/retail/pixel/audio/
+human playability claim. Owned manifest declarations for the shared seven
+images plus `HELPSHELL`/`Liddie12` were read back; no asset bytes are committed.
+
 E125 starts from clean main `a4897097e0d79083f459cd259d4bd41d6506b42c`.
 The user explicitly requested Actionables for unfinished modal screens,
 implementation in new parallel chats/worktrees where independent, and all

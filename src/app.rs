@@ -10,8 +10,9 @@ use crate::{
     help::{HelpController, HelpExit, HelpReturn, demo::HelpAction},
     install::{self, InstallIdentity},
     interlude::{InterludeController, MusicStage},
-    invasion::{InvasionEvent, InvasionTip},
+    invasion::InvasionEvent,
     missile::MissileKind,
+    modal::ModalInput,
     music::{MusicCue, MusicOwner, MusicReport},
     oscar::OscarPose,
     profiles::{Profiles, ScoreTab},
@@ -68,9 +69,16 @@ use records_runtime::RecordsRuntime;
 #[path = "app/runtime_state.rs"]
 mod runtime_state;
 use runtime_state::{FishSongRuntime, InputCapture, ModalPause};
+#[path = "app/gameplay_modal_runtime.rs"]
+mod gameplay_modal_runtime;
 #[path = "app/modal_runtime.rs"]
-#[allow(dead_code)] // Removed when the bounded screen adapters join these functions.
 mod modal_runtime;
+#[path = "app/notice_runtime.rs"]
+mod notice_runtime;
+#[path = "app/options_runtime.rs"]
+mod options_runtime;
+#[path = "app/profile_runtime.rs"]
+mod profile_runtime;
 #[path = "app/shell_gift_runtime.rs"]
 mod shell_gift_runtime;
 #[path = "app/virtual_input_runtime.rs"]
@@ -4340,7 +4348,6 @@ impl Presentation {
     fn draw(
         &self,
         session: &AdventureSession,
-        paused: bool,
         pointer: Vec2,
         healing_warning_until_tick: Option<u64>,
         finale: Option<(&FinaleRuntime, &InterludeController)>,
@@ -4503,121 +4510,6 @@ impl Presentation {
                 YELLOW,
             );
         }
-        if matches!(
-            session.phase,
-            AdventurePhase::PetSelectionConfirmation { .. }
-                | AdventurePhase::ChallengePetSelectionConfirmation { .. }
-        ) {
-            draw_rectangle(
-                110.0,
-                150.0,
-                420.0,
-                210.0,
-                Color::new(0.02, 0.1, 0.15, 0.96),
-            );
-            self.centered_text("JungleFever15outline", "Select More Pets?", 194.0, YELLOW);
-            self.centered_text(
-                "JungleFever10outline",
-                "Continue with fewer than 3 pets?",
-                232.0,
-                WHITE,
-            );
-            let height = self.images["IMAGE_MAINBUTTON"].height();
-            self.main_button(Rect::new(155.0, 300.0, 145.0, height), "Yes");
-            self.main_button(Rect::new(340.0, 300.0, 145.0, height), "No");
-        }
-        if session.phase == AdventurePhase::FirstTankRescue {
-            draw_rectangle(90.0, 150.0, 460.0, 200.0, Color::new(0.02, 0.1, 0.15, 0.96));
-            self.centered_text(
-                "JungleFever15outline",
-                "YOUR LAST FISH HAS DIED!",
-                186.0,
-                YELLOW,
-            );
-            self.centered_text(
-                "JungleFever10outline",
-                "We'll give you another fish to keep playing.",
-                225.0,
-                WHITE,
-            );
-            self.centered_text(
-                "JungleFever10outline",
-                "Make sure you keep it well fed!",
-                251.0,
-                WHITE,
-            );
-            self.main_button(
-                Rect::new(
-                    186.0,
-                    295.0,
-                    264.0,
-                    self.images["IMAGE_MAINBUTTON"].height(),
-                ),
-                "Click to Continue",
-            );
-        }
-        if let AdventurePhase::InvasionTutorial { tip }
-        | AdventurePhase::ChallengeInvasionTutorial { tip }
-        | AdventurePhase::TimeTrialInvasionTutorial { tip } = session.phase
-        {
-            draw_rectangle(72.0, 123.0, 496.0, 252.0, Color::new(0.02, 0.1, 0.15, 0.96));
-            let (title, lines) = match tip {
-                InvasionTip::Danger => (
-                    "DANGER!",
-                    [
-                        "Aliens are approaching your tank!",
-                        "Click on them to defend your fish.",
-                    ],
-                ),
-                InvasionTip::BattleTip => (
-                    "ALIEN ATTACK!",
-                    [
-                        "Click an alien repeatedly to defeat it.",
-                        "Keep your fish safe!",
-                    ],
-                ),
-                InvasionTip::GusWarning => (
-                    "WARNING!",
-                    [
-                        "Lasers cannot hurt this alien.",
-                        "Click in the tank to feed it instead.",
-                    ],
-                ),
-            };
-            self.centered_text("JungleFever17outline", title, 174.0, YELLOW);
-            for (index, line) in lines.iter().enumerate() {
-                self.centered_text(
-                    "JungleFever10outline",
-                    line,
-                    220.0 + index as f32 * 28.0,
-                    WHITE,
-                );
-            }
-            self.main_button(
-                Rect::new(
-                    186.0,
-                    310.0,
-                    264.0,
-                    self.images["IMAGE_MAINBUTTON"].height(),
-                ),
-                "Click to Continue",
-            );
-        }
-        if let AdventurePhase::GameOver { updates } = session.phase {
-            draw_rectangle(72.0, 123.0, 496.0, 252.0, Color::new(0.02, 0.1, 0.15, 0.96));
-            self.centered_text("JungleFever17outline", "GAME OVER", 182.0, YELLOW);
-            if updates > 30 {
-                self.main_button(
-                    Rect::new(
-                        186.0,
-                        310.0,
-                        264.0,
-                        self.images["IMAGE_MAINBUTTON"].height(),
-                    ),
-                    "Click to Continue",
-                );
-            }
-        }
         if session.phase == AdventurePhase::GameSelector {
             self.centered_text("JungleFever17outline", "INSANIQUARIUM", 112.0, YELLOW);
             self.main_button(
@@ -4730,19 +4622,6 @@ impl Presentation {
                 "Story",
             );
         }
-        if session.phase == AdventurePhase::ChallengeLost {
-            draw_rectangle(72.0, 123.0, 496.0, 252.0, Color::new(0.02, 0.1, 0.15, 0.96));
-            self.centered_text("JungleFever17outline", "GAME OVER", 182.0, YELLOW);
-            self.main_button(
-                Rect::new(
-                    186.0,
-                    310.0,
-                    264.0,
-                    self.images["IMAGE_MAINBUTTON"].height(),
-                ),
-                "Continue",
-            );
-        }
         if session.phase == AdventurePhase::TimeTrialTimesUp {
             draw_rectangle(72.0, 123.0, 496.0, 252.0, Color::new(0.02, 0.1, 0.15, 0.96));
             self.centered_text("JungleFever17outline", "TIME'S UP!", 180.0, YELLOW);
@@ -4799,21 +4678,6 @@ impl Presentation {
                 "Continue",
             );
         }
-        if let AdventurePhase::TimeTrialGameOver { updates } = session.phase {
-            draw_rectangle(72.0, 123.0, 496.0, 252.0, Color::new(0.02, 0.1, 0.15, 0.96));
-            self.centered_text("JungleFever17outline", "GAME OVER", 182.0, YELLOW);
-            if updates > 30 {
-                self.main_button(
-                    Rect::new(
-                        186.0,
-                        310.0,
-                        264.0,
-                        self.images["IMAGE_MAINBUTTON"].height(),
-                    ),
-                    "Continue",
-                );
-            }
-        }
         if session.phase == AdventurePhase::HelpScreen {
             self.centered_text("JungleFever17outline", "ADVENTURE", 112.0, YELLOW);
             self.centered_text(
@@ -4831,19 +4695,6 @@ impl Presentation {
                 ),
                 "Start",
             );
-        }
-        if paused {
-            draw_rectangle(
-                150.0,
-                160.0,
-                340.0,
-                165.0,
-                Color::new(0.02, 0.1, 0.15, 0.94),
-            );
-            draw_text("Paused", 266.0, 207.0, 28.0, WHITE);
-            draw_text("Esc: resume    S: save", 203.0, 247.0, 21.0, WHITE);
-            draw_text("Q: save and exit", 235.0, 277.0, 21.0, WHITE);
-            draw_text("F1: help", 271.0, 307.0, 21.0, WHITE);
         }
     }
 }
@@ -5292,6 +5143,12 @@ enum UiCommand {
     Stories,
     Gift,
     Quit,
+    ModalProfile(crate::profile_modal::ProfileRequest),
+    ModalSetting(crate::options_modal::OptionsSettingRequest),
+    ModalQuit(crate::notice_modal::NoticeRequest),
+    ModalHelp,
+    PauseMenu,
+    ModeResume,
 }
 
 struct SelectorUi {
@@ -5302,6 +5159,14 @@ struct SelectorUi {
     score_tab: ScoreTab,
     score_focus: Option<usize>,
     error: String,
+    modal_epoch: u64,
+    options_epoch: u64,
+    pause_epoch: u64,
+    profile_modal: Option<profile_runtime::ProfileRuntime>,
+    options_modal: Option<options_runtime::OptionsRuntime>,
+    pause_modal: Option<options_runtime::OptionsRuntime>,
+    notice_modal: Option<notice_runtime::NoticeRuntime>,
+    notice_lock: Option<(crate::game_selector::Mode, crate::game_selector::LockReason)>,
 }
 
 impl Default for SelectorUi {
@@ -5314,12 +5179,325 @@ impl Default for SelectorUi {
             score_tab: ScoreTab::Adventure,
             score_focus: None,
             error: String::new(),
+            modal_epoch: 0,
+            options_epoch: 0,
+            pause_epoch: 0,
+            profile_modal: None,
+            options_modal: None,
+            pause_modal: None,
+            notice_modal: None,
+            notice_lock: None,
         }
     }
 }
 
 fn ui_button(rect: Rect, label: &str) {
     crate::ui::fallback_button(rect, label);
+}
+
+/// A checkpoint failure is a dialog result, so profile creation/selection
+/// cannot terminate the application or mutate the manager before publication.
+fn apply_profile_modal_action(
+    options: &Options,
+    profiles: &mut Profiles,
+    action: crate::profile_modal::ProfileAction,
+) -> Result<bool, Box<dyn Error>> {
+    let path = options.save_dir.join("profiles.json");
+    match action {
+        crate::profile_modal::ProfileAction::Create { name } => {
+            if profiles.current().is_some() {
+                cli::save_profiles_checkpoint(options, profiles)?;
+            }
+            profiles
+                .create(&path, &name, options.seed.wrapping_add(profiles.next_id))
+                .map(|_| true)
+        }
+        crate::profile_modal::ProfileAction::Select { id } => {
+            cli::save_profiles_checkpoint(options, profiles)?;
+            profiles.select(&path, id).map(|_| true)
+        }
+        crate::profile_modal::ProfileAction::Rename { id, name } => {
+            profiles.rename(&path, id, &name).map(|_| false)
+        }
+        crate::profile_modal::ProfileAction::Delete { id } => {
+            profiles.delete(&path, id).map(|_| true)
+        }
+    }
+}
+
+#[cfg(test)]
+mod modal_join_tests {
+    use super::*;
+    use crate::profile_modal::{ProfileAction, ProfileIntent};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "turbofish-modal-join-{}-{time}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed),
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+        fn options(&self) -> Options {
+            Options {
+                game_dir: None,
+                save_dir: self.0.clone(),
+                evidence_dir: None,
+                seed: 7,
+                new_game: false,
+                inspect_assets: false,
+                quit_after: None,
+                muted: true,
+                test_speed: 1,
+                screensaver: None,
+            }
+        }
+        fn blocked_options(&self) -> Options {
+            fs::write(self.0.join("blocked"), b"owned offline fixture").unwrap();
+            let mut options = self.options();
+            options.save_dir = self.0.join("blocked").join("child");
+            options
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+    fn neutral() -> ModalInput {
+        ModalInput {
+            focused: true,
+            ..ModalInput::default()
+        }
+    }
+
+    #[test]
+    fn failed_checkpoint_keeps_profile_request_open_and_retry_uses_real_writer() {
+        let fixture = Fixture::new();
+        let mut profiles = Profiles::new("Alpha", 7).unwrap();
+        let beta = profiles
+            .create(&fixture.0.join("profiles.json"), "Beta", 8)
+            .unwrap();
+        let mut ui = SelectorUi {
+            panel: Some(SelectorPanel::Profiles),
+            ..SelectorUi::default()
+        };
+        ui.sync_normal_modals(&profiles, false, true);
+        let runtime = ui.profile_modal.as_mut().unwrap();
+        runtime.input(
+            &ModalInput {
+                down_key: true,
+                ..neutral()
+            },
+            &profiles,
+        );
+        let Some(ProfileIntent::Transaction(request)) = runtime
+            .input(
+                &ModalInput {
+                    accept: true,
+                    ..neutral()
+                },
+                &profiles,
+            )
+            .intent
+        else {
+            panic!("profile selection request missing")
+        };
+        assert_eq!(request.action, ProfileAction::Select { id: 1 });
+        let snapshot = serde_json::to_value(&profiles).unwrap();
+        let failed = apply_profile_modal_action(
+            &fixture.blocked_options(),
+            &mut profiles,
+            request.action.clone(),
+        );
+        assert!(failed.is_err());
+        assert_eq!(serde_json::to_value(&profiles).unwrap(), snapshot);
+        assert_eq!(profiles.current_id, Some(beta));
+        ui.finish_normal_command(Some(&request), None, None, &failed, &profiles);
+        let runtime = ui.profile_modal.as_mut().unwrap();
+        let view = runtime.view(&profiles).unwrap();
+        assert!(!view.pending && !view.feedback.is_empty());
+        assert!(runtime.is_open());
+        let Some(ProfileIntent::Transaction(retry)) = runtime
+            .input(
+                &ModalInput {
+                    accept: true,
+                    ..neutral()
+                },
+                &profiles,
+            )
+            .intent
+        else {
+            panic!("retry missing")
+        };
+        assert_ne!(retry.sequence, request.sequence);
+        let result =
+            apply_profile_modal_action(&fixture.options(), &mut profiles, retry.action.clone());
+        assert!(result.is_ok());
+        ui.finish_normal_command(Some(&retry), None, None, &result, &profiles);
+        assert_eq!(profiles.current_id, Some(1));
+        assert!(ui.profile_modal.is_none() && ui.panel.is_none());
+        let saved = Profiles::load_or_new(&fixture.0.join("profiles.json"), "unused", 9).unwrap();
+        assert_eq!(saved.current_id, Some(1));
+    }
+
+    #[test]
+    fn failed_checkpoint_cannot_allocate_a_new_profile() {
+        let fixture = Fixture::new();
+        let mut profiles = Profiles::new("Alpha", 7).unwrap();
+        let snapshot = serde_json::to_value(&profiles).unwrap();
+        let result = apply_profile_modal_action(
+            &fixture.blocked_options(),
+            &mut profiles,
+            ProfileAction::Create {
+                name: "Beta".into(),
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(serde_json::to_value(&profiles).unwrap(), snapshot);
+    }
+
+    #[test]
+    fn quit_checkpoint_failure_is_reported_before_exit_and_remains_retryable() {
+        let fixture = Fixture::new();
+        let profiles = Profiles::new("Alpha", 7).unwrap();
+        let mut ui = SelectorUi {
+            panel: Some(SelectorPanel::Quit),
+            ..SelectorUi::default()
+        };
+        ui.sync_normal_modals(&profiles, false, true);
+        let runtime = ui.notice_modal.as_mut().unwrap();
+        runtime.input(&neutral());
+        runtime.input(&ModalInput {
+            next: true,
+            ..neutral()
+        });
+        let Some(crate::notice_modal::NoticeIntent::Quit(request)) = runtime
+            .input(&ModalInput {
+                accept: true,
+                ..neutral()
+            })
+            .intent
+        else {
+            panic!("quit request missing")
+        };
+        let failed =
+            cli::save_profiles_checkpoint(&fixture.blocked_options(), &profiles).map(|()| false);
+        assert!(failed.is_err());
+        ui.finish_normal_command(None, None, Some(request), &failed, &profiles);
+        let runtime = ui.notice_modal.as_mut().unwrap();
+        assert!(runtime.is_open());
+        let view = runtime.view().unwrap();
+        assert!(!view.pending && view.feedback.is_some());
+        runtime.input(&neutral());
+        runtime.input(&ModalInput {
+            next: true,
+            ..neutral()
+        });
+        let Some(crate::notice_modal::NoticeIntent::Quit(retry)) = runtime
+            .input(&ModalInput {
+                accept: true,
+                ..neutral()
+            })
+            .intent
+        else {
+            panic!("quit retry missing")
+        };
+        assert_ne!(retry.attempt, request.attempt);
+        let result = cli::save_profiles_checkpoint(&fixture.options(), &profiles).map(|()| false);
+        ui.finish_normal_command(None, None, Some(retry), &result, &profiles);
+        assert!(result.is_ok());
+        assert!(!ui.notice_modal.as_ref().unwrap().is_open());
+    }
+
+    #[test]
+    fn nested_quit_does_not_invalidate_retained_pause_epoch() {
+        let profiles = Profiles::new("Alpha", 7).unwrap();
+        let mut ui = SelectorUi::default();
+        ui.sync_normal_modals(&profiles, true, false);
+        let epoch = ui.pause_epoch;
+        ui.panel = Some(SelectorPanel::Quit);
+        ui.sync_normal_modals(&profiles, true, false);
+        assert_ne!(ui.modal_epoch, epoch);
+        ui.panel = None;
+        ui.notice_modal = None;
+        ui.sync_normal_modals(&profiles, true, false);
+        assert_eq!(ui.pause_epoch, epoch);
+        let facts = crate::options_modal::OptionsFacts {
+            settings: GameSettings::default(),
+            capabilities: SettingsCapabilities {
+                music_volume: false,
+                effects_volume: false,
+                fullscreen: false,
+                custom_cursor: false,
+            },
+            context_epoch: epoch,
+            slider_thumb_width: 16.0,
+        };
+        assert_eq!(
+            ui.pause_modal.as_mut().unwrap().input(
+                &ModalInput {
+                    cancel: true,
+                    ..neutral()
+                },
+                facts,
+            ),
+            Some(crate::options_modal::OptionsIntent::Resume)
+        );
+    }
+}
+
+/// Called only for the active normal-game modal. Collect characters once;
+/// suspended input is drained so it cannot be replayed after focus returns.
+fn poll_modal_input(pointer: Vec2, focused: bool) -> ModalInput {
+    let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
+    let control = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl);
+    let mut text = String::new();
+    while let Some(character) = get_char_pressed() {
+        if focused && !control && !character.is_control() {
+            text.push(character);
+        }
+    }
+    if focused
+        && control
+        && is_key_pressed(KeyCode::V)
+        && let Some(paste) = macroquad::miniquad::window::clipboard_get()
+    {
+        text = paste;
+    }
+    ModalInput {
+        pointer,
+        focused,
+        pressed: is_mouse_button_pressed(MouseButton::Left),
+        released: is_mouse_button_released(MouseButton::Left),
+        down: is_mouse_button_down(MouseButton::Left),
+        accept: is_key_pressed(KeyCode::Enter),
+        cancel: is_key_pressed(KeyCode::Escape),
+        next: is_key_pressed(KeyCode::Tab) && !shift,
+        previous: is_key_pressed(KeyCode::Tab) && shift,
+        left: is_key_pressed(KeyCode::Left),
+        right: is_key_pressed(KeyCode::Right),
+        up: is_key_pressed(KeyCode::Up),
+        down_key: is_key_pressed(KeyCode::Down),
+        backspace: is_key_pressed(KeyCode::Backspace),
+        delete: is_key_pressed(KeyCode::Delete),
+        home: is_key_pressed(KeyCode::Home),
+        end: is_key_pressed(KeyCode::End),
+        text,
+    }
+}
+
+fn dim_modal_scene() {
+    draw_rectangle(0.0, 0.0, 640.0, 480.0, Color::new(0.0, 0.0, 0.0, 0.55));
 }
 
 fn help_input(
@@ -5369,6 +5547,213 @@ fn typed_profile_name(name: &mut String) {
 }
 
 impl SelectorUi {
+    fn next_modal_epoch(&mut self) -> u64 {
+        self.modal_epoch = self.modal_epoch.wrapping_add(1);
+        self.modal_epoch
+    }
+
+    /// Only normal-game callers use these adapters. The legacy saver adapter
+    /// below remains unchanged and keeps its existing configuration routes.
+    fn sync_normal_modals(&mut self, profiles: &Profiles, paused: bool, selector_open: bool) {
+        if self.panel != Some(SelectorPanel::Profiles) {
+            self.profile_modal = None;
+        } else if self.profile_modal.is_none() {
+            self.profile_modal = Some(profile_runtime::ProfileRuntime::new(profiles));
+        }
+        if self.panel != Some(SelectorPanel::Options) {
+            self.options_modal = None;
+        } else if self.options_modal.is_none() {
+            let epoch = self.next_modal_epoch();
+            self.options_epoch = epoch;
+            self.options_modal = Some(options_runtime::OptionsRuntime::options(
+                crate::options_modal::OptionsContext::Selector,
+                epoch,
+            ));
+        }
+        if !matches!(
+            self.panel,
+            Some(SelectorPanel::Notice | SelectorPanel::Quit)
+        ) {
+            self.notice_modal = None;
+        } else if self.notice_modal.is_none() {
+            let epoch = self.next_modal_epoch();
+            self.notice_modal = Some(if self.panel == Some(SelectorPanel::Quit) {
+                notice_runtime::NoticeRuntime::quit(epoch, "")
+            } else if let Some((mode, reason)) = self.notice_lock.take() {
+                notice_runtime::NoticeRuntime::locked_mode(epoch, mode, reason, "")
+            } else {
+                notice_runtime::NoticeRuntime::information(epoch, "Information", &self.error, "")
+            });
+        }
+        if !paused || selector_open {
+            self.pause_modal = None;
+        } else if self.panel.is_none() && self.pause_modal.is_none() {
+            let epoch = self.next_modal_epoch();
+            self.pause_epoch = epoch;
+            self.pause_modal = Some(options_runtime::OptionsRuntime::pause(epoch));
+        }
+    }
+
+    fn normal_modal_active(&self) -> bool {
+        self.profile_modal.is_some()
+            || self.options_modal.is_some()
+            || self.notice_modal.is_some()
+            || self.pause_modal.is_some()
+    }
+
+    fn cancel_normal_capture(&mut self) {
+        if let Some(runtime) = &mut self.profile_modal {
+            runtime.cancel_capture();
+        }
+        if let Some(runtime) = &mut self.options_modal {
+            runtime.cancel_capture();
+        }
+        if let Some(runtime) = &mut self.pause_modal {
+            runtime.cancel_capture();
+        }
+        if let Some(runtime) = &mut self.notice_modal {
+            runtime.cancel_capture();
+        }
+    }
+
+    fn input_normal_modal(
+        &mut self,
+        input: &ModalInput,
+        profiles: &Profiles,
+        presentation: &Presentation,
+        settings: GameSettings,
+        capabilities: SettingsCapabilities,
+    ) -> Option<UiCommand> {
+        if let Some(runtime) = &mut self.notice_modal {
+            let frame = runtime.input(input);
+            debug_assert!(frame.consumed);
+            match frame.intent {
+                Some(crate::notice_modal::NoticeIntent::Quit(request)) => {
+                    return Some(UiCommand::ModalQuit(request));
+                }
+                Some(
+                    crate::notice_modal::NoticeIntent::Cancel(_)
+                    | crate::notice_modal::NoticeIntent::Dismiss(_),
+                ) => {
+                    self.panel = None;
+                    self.notice_modal = None;
+                    self.error.clear();
+                }
+                None => {}
+            }
+            return None;
+        }
+        if let Some(runtime) = &mut self.profile_modal {
+            let frame = runtime.input(input, profiles);
+            debug_assert!(frame.consumed);
+            match frame.intent {
+                Some(crate::profile_modal::ProfileIntent::Transaction(request)) => {
+                    return Some(UiCommand::ModalProfile(request));
+                }
+                Some(crate::profile_modal::ProfileIntent::Close) => {
+                    self.panel = None;
+                    self.profile_modal = None;
+                }
+                None => {}
+            }
+            return None;
+        }
+        let epoch = if self.options_modal.is_some() {
+            self.options_epoch
+        } else {
+            self.pause_epoch
+        };
+        let facts = options_runtime::facts(presentation, settings, capabilities, epoch);
+        let runtime = self.options_modal.as_mut().or(self.pause_modal.as_mut())?;
+        match runtime.input(input, facts)? {
+            crate::options_modal::OptionsIntent::Setting(request) => {
+                Some(UiCommand::ModalSetting(request))
+            }
+            crate::options_modal::OptionsIntent::Close => {
+                self.panel = None;
+                self.options_modal = None;
+                None
+            }
+            crate::options_modal::OptionsIntent::Resume => {
+                self.pause_modal = None;
+                Some(UiCommand::ModeResume)
+            }
+            crate::options_modal::OptionsIntent::Help => {
+                self.cancel_normal_capture();
+                Some(UiCommand::ModalHelp)
+            }
+            crate::options_modal::OptionsIntent::MainMenu => Some(UiCommand::PauseMenu),
+            crate::options_modal::OptionsIntent::Stories => Some(UiCommand::Stories),
+            crate::options_modal::OptionsIntent::Screensaver => {
+                self.panel = Some(SelectorPanel::Screensaver);
+                self.options_modal = None;
+                None
+            }
+        }
+    }
+
+    fn finish_normal_command(
+        &mut self,
+        profile_request: Option<&crate::profile_modal::ProfileRequest>,
+        setting_request: Option<crate::options_modal::OptionsSettingRequest>,
+        quit_request: Option<crate::notice_modal::NoticeRequest>,
+        result: &Result<bool, Box<dyn Error>>,
+        profiles: &Profiles,
+    ) {
+        let feedback = || result.as_ref().map(|_| ()).map_err(ToString::to_string);
+        if let Some(request) = profile_request
+            && let Some(runtime) = &mut self.profile_modal
+        {
+            runtime.transaction_finished(request, feedback(), profiles);
+            if !runtime.is_open() {
+                self.panel = None;
+                self.profile_modal = None;
+            }
+        }
+        if let Some(request) = setting_request {
+            if let Some(runtime) = &mut self.options_modal {
+                runtime.finish_setting(request, feedback());
+            } else if let Some(runtime) = &mut self.pause_modal {
+                runtime.finish_setting(request, feedback());
+            }
+        }
+        if let Some(request) = quit_request
+            && let Some(runtime) = &mut self.notice_modal
+        {
+            runtime.quit_finished(request, feedback());
+        }
+    }
+
+    fn draw_normal_modal(
+        &mut self,
+        presentation: &Presentation,
+        profiles: &Profiles,
+        settings: GameSettings,
+        capabilities: SettingsCapabilities,
+        paused: bool,
+        selector_open: bool,
+    ) {
+        self.sync_normal_modals(profiles, paused, selector_open);
+        if let Some(runtime) = &self.notice_modal {
+            dim_modal_scene();
+            runtime.draw(presentation);
+        } else if let Some(runtime) = &self.profile_modal {
+            dim_modal_scene();
+            runtime.draw(presentation, profiles);
+        } else if let Some(runtime) = self.options_modal.as_ref().or(self.pause_modal.as_ref()) {
+            dim_modal_scene();
+            let epoch = if self.options_modal.is_some() {
+                self.options_epoch
+            } else {
+                self.pause_epoch
+            };
+            runtime.draw(
+                presentation,
+                options_runtime::facts(presentation, settings, capabilities, epoch),
+            );
+        }
+    }
+
     /// Returns whether this frame's selector input belongs to UI and any
     /// persistent action to commit before borrowing the live session.
     fn input(
@@ -5841,11 +6226,14 @@ fn route_menu_intent(
         }
         SelectorIntent::Dialog(dialog) => {
             ui.error.clear();
+            ui.notice_modal = None;
+            ui.notice_lock = None;
             ui.panel = Some(match dialog {
                 DialogIntent::Options => SelectorPanel::Options,
                 DialogIntent::ChooseProfile => SelectorPanel::Profiles,
                 DialogIntent::Quit => SelectorPanel::Quit,
-                DialogIntent::LockedMode { reason, .. } => {
+                DialogIntent::LockedMode { mode, reason } => {
+                    ui.notice_lock = Some((mode, reason));
                     ui.error = reason.guidance().into();
                     SelectorPanel::Notice
                 }
@@ -6182,6 +6570,7 @@ pub async fn run(
     let mut virtual_pets = None::<virtual_input_runtime::VirtualPetPicker>;
     let mut virtual_screensaver_open = false;
     let mut gift = None::<ShellGiftRuntime>;
+    let mut gameplay_modal = gameplay_modal_runtime::GameplayModalRuntime::default();
     let mut ui_resource_error = None::<String>;
     let mut entry_code = EntryCode::default();
     let song_catalog = match SongCatalog::load_from_install(&game_root) {
@@ -6233,6 +6622,7 @@ pub async fn run(
         if profiles.current().is_none() {
             selector_ui.panel = Some(SelectorPanel::Profiles);
         }
+        selector_ui.sync_normal_modals(&profiles, pause.is_paused(), selector_open);
         if !startup_menu_open
             && profiles
                 .current()
@@ -6294,11 +6684,17 @@ pub async fn run(
         }
         let mut gift_active_frame = gift_was_active;
         if let Some(runtime) = gift.as_mut() {
-            let input = shell_gift_runtime::ShellGiftInput::poll(
+            let blocked =
+                help_was_active || story_was_active || preview_was_active || hall_was_active;
+            let mut input = shell_gift_runtime::ShellGiftInput::from_modal(poll_modal_input(
                 pointer,
-                focused,
-                help_was_active || story_was_active || preview_was_active || hall_was_active,
-            );
+                focused && !blocked,
+            ));
+            input.blocked_by_modal = blocked;
+            input.wheel = mouse_wheel().1;
+            input.keys = get_keys_pressed().into_iter().collect();
+            input.shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
+            input.control = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl);
             let frame = runtime.input(&profiles, &input);
             gift_active_frame |= frame.consumed;
             match frame.intent {
@@ -6328,7 +6724,44 @@ pub async fn run(
             || hall_was_active
             || gift_active_frame
         {
+            selector_ui.cancel_normal_capture();
             (true, None)
+        } else if selector_ui.normal_modal_active() {
+            let input = poll_modal_input(pointer, focused);
+            let command = if focused
+                && is_key_pressed(KeyCode::F1)
+                && (selector_ui.options_modal.is_some() || selector_ui.pause_modal.is_some())
+                && selector_ui.notice_modal.is_none()
+                && selector_ui.profile_modal.is_none()
+            {
+                selector_ui.cancel_normal_capture();
+                Some(UiCommand::ModalHelp)
+            } else if focused
+                && is_key_pressed(KeyCode::Q)
+                && selector_ui.panel.is_none()
+                && selector_ui.pause_modal.as_ref().is_some_and(|runtime| {
+                    runtime.page() == crate::options_modal::OptionsPage::Pause
+                })
+            {
+                selector_ui.panel = Some(SelectorPanel::Quit);
+                selector_ui.notice_modal = None;
+                selector_ui.cancel_normal_capture();
+                None
+            } else {
+                selector_ui.input_normal_modal(
+                    &input,
+                    &profiles,
+                    &presentation,
+                    settings.settings,
+                    RuntimeSettingsBackend {
+                        audio: music.as_ref(),
+                    }
+                    .capabilities(),
+                )
+            };
+            clock.clear_backlog();
+            input_capture.cancel_holds();
+            (true, command)
         } else if selector_ui.panel.is_some() {
             selector_ui.input(
                 &profiles,
@@ -6461,6 +6894,8 @@ pub async fn run(
         let mut help_active_frame = help_was_active || help.view().is_some();
         let mut story_active_frame = story_was_active || story_browser_open;
         let mut ui_active = selector_ui.panel.is_some()
+            || ui_owned_input
+            || selector_ui.normal_modal_active()
             || startup_menu_open
             || profiles.current().is_none()
             || help_active_frame
@@ -6477,180 +6912,283 @@ pub async fn run(
         }
         if let Some(command) = ui_command {
             let profiles_path = options.save_dir.join("profiles.json");
-            let result = match command {
-                UiCommand::Mode(destination) => {
-                    let now_seconds = wall_seconds();
-                    let result = profiles.transact(&profiles_path, |draft| {
-                        draft
-                            .current_mut()
-                            .ok_or("Choose a current profile first.")?
-                            .session
-                            .select_mode(destination, now_seconds, now_seconds / 86_400 * 86_400)
-                    });
-                    match result {
-                        Ok(events) => {
-                            frontend_events.extend(events);
-                            frontend_transitioned = true;
-                            startup_menu_open = false;
-                            startup_menu_frame = true;
-                            selector_ui.panel = None;
-                            chooser = None;
-                            virtual_pets = None;
-                            virtual_screensaver_open = false;
-                            pause.resume_mode();
-                            input_capture.cancel_queued_input();
-                            clock.clear_backlog();
-                            ui_active = true;
-                            Ok(false)
+            let profile_request = match &command {
+                UiCommand::ModalProfile(request) => Some(request.clone()),
+                _ => None,
+            };
+            let setting_request = match command {
+                UiCommand::ModalSetting(request) => Some(request),
+                _ => None,
+            };
+            let quit_request = match command {
+                UiCommand::ModalQuit(request) => Some(request),
+                _ => None,
+            };
+            let stale_setting = setting_request.is_some_and(|request| {
+                request.previous != settings.settings
+                    || request.context_epoch
+                        != if selector_ui.options_modal.is_some() {
+                            selector_ui.options_epoch
+                        } else {
+                            selector_ui.pause_epoch
                         }
-                        Err(error) => {
-                            selector_ui.panel = Some(SelectorPanel::Notice);
-                            Err(error)
-                        }
+            });
+            let stale_quit = quit_request.is_some_and(|request| {
+                !selector_ui.notice_modal.as_ref().is_some_and(|runtime| {
+                    runtime.is_open() && runtime.identity() == request.identity
+                })
+            });
+            let command = match command {
+                UiCommand::ModalProfile(request) => match request.action {
+                    crate::profile_modal::ProfileAction::Create { name } => UiCommand::Create(name),
+                    crate::profile_modal::ProfileAction::Select { id } => UiCommand::Select(id),
+                    crate::profile_modal::ProfileAction::Rename { id, name } => {
+                        UiCommand::Rename(id, name)
                     }
-                }
-                UiCommand::Create(name) => {
-                    if profiles.current().is_some() {
-                        cli::save_profiles_checkpoint(&options, &profiles)?;
-                    }
-                    profiles
-                        .create(
-                            &profiles_path,
-                            &name,
-                            options.seed.wrapping_add(profiles.next_id),
-                        )
-                        .map(|_| true)
-                }
-                UiCommand::Select(id) => {
-                    cli::save_profiles_checkpoint(&options, &profiles)?;
-                    profiles.select(&profiles_path, id).map(|_| true)
-                }
-                UiCommand::Rename(id, name) => {
-                    profiles.rename(&profiles_path, id, &name).map(|_| false)
-                }
-                UiCommand::Delete(id) => profiles.delete(&profiles_path, id).map(|_| true),
-                UiCommand::Setting(change) => {
-                    let previous = settings.settings;
-                    let mut backend = RuntimeSettingsBackend {
-                        audio: music.as_ref(),
-                    };
-                    match settings.settings.change(&mut backend, change) {
-                        Err(error) => Err(error.into()),
-                        Ok(()) => match settings.save(&options.save_dir.join("settings.json")) {
+                    crate::profile_modal::ProfileAction::Delete { id } => UiCommand::Delete(id),
+                },
+                UiCommand::ModalSetting(request) => UiCommand::Setting(request.change),
+                UiCommand::ModalQuit(_) => UiCommand::Quit,
+                command => command,
+            };
+            let quitting = matches!(command, UiCommand::Quit);
+            let returning_to_menu = matches!(command, UiCommand::PauseMenu);
+            let result = if stale_setting || stale_quit {
+                Err("Dialog changed before this request could be applied. Try again.".into())
+            } else {
+                match command {
+                    UiCommand::Mode(destination) => {
+                        let now_seconds = wall_seconds();
+                        let result = profiles.transact(&profiles_path, |draft| {
+                            draft
+                                .current_mut()
+                                .ok_or("Choose a current profile first.")?
+                                .session
+                                .select_mode(
+                                    destination,
+                                    now_seconds,
+                                    now_seconds / 86_400 * 86_400,
+                                )
+                        });
+                        match result {
+                            Ok(events) => {
+                                frontend_events.extend(events);
+                                frontend_transitioned = true;
+                                startup_menu_open = false;
+                                startup_menu_frame = true;
+                                selector_ui.panel = None;
+                                chooser = None;
+                                virtual_pets = None;
+                                virtual_screensaver_open = false;
+                                pause.resume_mode();
+                                gameplay_modal.clear();
+                                input_capture.cancel_queued_input();
+                                clock.clear_backlog();
+                                ui_active = true;
+                                Ok(false)
+                            }
                             Err(error) => {
-                                settings.settings = previous;
-                                let _ = match change {
-                                    SettingChange::MusicVolume(_) => {
-                                        backend.set_music_volume(previous.music_volume)
-                                    }
-                                    SettingChange::EffectsVolume(_) => {
-                                        backend.set_effects_volume(previous.effects_volume)
-                                    }
-                                    SettingChange::Fullscreen(_) => {
-                                        backend.set_fullscreen(previous.fullscreen)
-                                    }
-                                    SettingChange::CustomCursor(_) => {
-                                        backend.set_custom_cursor(previous.custom_cursor)
-                                    }
-                                };
+                                selector_ui.panel = Some(SelectorPanel::Notice);
                                 Err(error)
                             }
-                            Ok(()) => Ok(false),
-                        },
+                        }
                     }
-                }
-                UiCommand::ScreensaverToggle(index) => {
-                    let settings = &mut screensaver_file.settings;
-                    match index {
-                        0 => settings.sound = !settings.sound,
-                        1 => settings.rotate_backdrops = !settings.rotate_backdrops,
-                        2 => settings.periodic_dim = !settings.periodic_dim,
-                        3 => settings.show_money = !settings.show_money,
-                        4 if cfg!(windows) => settings.power_save = !settings.power_save,
-                        _ => unreachable!("only supported screensaver switches"),
-                    }
-                    screensaver_dirty = true;
-                    Ok(false)
-                }
-                UiCommand::ScreensaverSave => match screensaver_file.save(&screensaver_path) {
-                    Ok(()) => {
-                        screensaver_dirty = false;
-                        screensaver_load_error = None;
-                        Ok(false)
-                    }
-                    Err(error) => Err(error),
-                },
-                UiCommand::ScreensaverPreview => {
-                    match prepare_screensaver_preview(
-                        &profiles,
-                        screensaver_file.settings,
-                        wall_seconds(),
-                    ) {
-                        Ok(preview) => {
-                            match MonitorPowerGuard::new(screensaver_file.settings.power_save) {
-                                Ok(guard) => {
-                                    _screensaver_power_guard = Some(guard);
-                                    screensaver_preview = Some(preview);
-                                    preview_bubbles
-                                        .reinitialize(options.seed ^ 0x0050_5245_5649_4557);
-                                    preview_clock.clear_backlog();
-                                    clock.clear_backlog();
-                                    songs.pause((get_time() * 1000.0) as u64);
-                                    ui_active = true;
-                                    Ok(false)
+                    UiCommand::Create(name) => apply_profile_modal_action(
+                        &options,
+                        &mut profiles,
+                        crate::profile_modal::ProfileAction::Create { name },
+                    ),
+                    UiCommand::Select(id) => apply_profile_modal_action(
+                        &options,
+                        &mut profiles,
+                        crate::profile_modal::ProfileAction::Select { id },
+                    ),
+                    UiCommand::Rename(id, name) => apply_profile_modal_action(
+                        &options,
+                        &mut profiles,
+                        crate::profile_modal::ProfileAction::Rename { id, name },
+                    ),
+                    UiCommand::Delete(id) => apply_profile_modal_action(
+                        &options,
+                        &mut profiles,
+                        crate::profile_modal::ProfileAction::Delete { id },
+                    ),
+                    UiCommand::Setting(change) => {
+                        let previous = settings.settings;
+                        let mut backend = RuntimeSettingsBackend {
+                            audio: music.as_ref(),
+                        };
+                        match settings.settings.change(&mut backend, change) {
+                            Err(error) => Err(error.into()),
+                            Ok(()) => {
+                                match settings.save(&options.save_dir.join("settings.json")) {
+                                    Err(error) => {
+                                        settings.settings = previous;
+                                        let _ =
+                                            match change {
+                                                SettingChange::MusicVolume(_) => {
+                                                    backend.set_music_volume(previous.music_volume)
+                                                }
+                                                SettingChange::EffectsVolume(_) => backend
+                                                    .set_effects_volume(previous.effects_volume),
+                                                SettingChange::Fullscreen(_) => {
+                                                    backend.set_fullscreen(previous.fullscreen)
+                                                }
+                                                SettingChange::CustomCursor(_) => backend
+                                                    .set_custom_cursor(previous.custom_cursor),
+                                            };
+                                        Err(error)
+                                    }
+                                    Ok(()) => Ok(false),
                                 }
-                                Err(error) => Err(error.into()),
                             }
                         }
-                        Err(error) => Err(format!("Preview unavailable: {error:?}").into()),
                     }
-                }
-                UiCommand::Stories => {
-                    story_browser_open = profiles.current().is_some_and(|entry| {
-                        records.open_story(&entry.session, records.remembered_story())
-                    });
-                    if !story_browser_open {
-                        selector_ui.panel = Some(SelectorPanel::Notice);
-                    }
-                    story_active_frame = story_browser_open;
-                    ui_active = true;
-                    if story_browser_open {
+                    UiCommand::ScreensaverToggle(index) => {
+                        let settings = &mut screensaver_file.settings;
+                        match index {
+                            0 => settings.sound = !settings.sound,
+                            1 => settings.rotate_backdrops = !settings.rotate_backdrops,
+                            2 => settings.periodic_dim = !settings.periodic_dim,
+                            3 => settings.show_money = !settings.show_money,
+                            4 if cfg!(windows) => settings.power_save = !settings.power_save,
+                            _ => unreachable!("only supported screensaver switches"),
+                        }
+                        screensaver_dirty = true;
                         Ok(false)
-                    } else {
-                        Err("No stories earned for this profile yet.".into())
                     }
-                }
-                UiCommand::Gift => {
-                    ui_active = true;
-                    gift_active_frame = true;
-                    clock.clear_backlog();
-                    let result = if profiles
-                        .current()
-                        .is_some_and(|entry| entry.session.menu_transactions_blocked())
-                    {
-                        Err(crate::shell_gift::ShellGiftError::TransactionFailed(
-                            "Finish the pending reward or transaction before giving shells.".into(),
-                        ))
-                    } else {
-                        ShellGiftRuntime::open(&profiles)
-                    };
-                    match result {
-                        Ok(runtime) => {
-                            gift = Some(runtime);
+                    UiCommand::ScreensaverSave => match screensaver_file.save(&screensaver_path) {
+                        Ok(()) => {
+                            screensaver_dirty = false;
+                            screensaver_load_error = None;
                             Ok(false)
                         }
-                        Err(error) => {
-                            selector_ui.panel = Some(SelectorPanel::Notice);
-                            Err(error.to_string().into())
+                        Err(error) => Err(error),
+                    },
+                    UiCommand::ScreensaverPreview => {
+                        match prepare_screensaver_preview(
+                            &profiles,
+                            screensaver_file.settings,
+                            wall_seconds(),
+                        ) {
+                            Ok(preview) => {
+                                match MonitorPowerGuard::new(screensaver_file.settings.power_save) {
+                                    Ok(guard) => {
+                                        _screensaver_power_guard = Some(guard);
+                                        screensaver_preview = Some(preview);
+                                        preview_bubbles
+                                            .reinitialize(options.seed ^ 0x0050_5245_5649_4557);
+                                        preview_clock.clear_backlog();
+                                        clock.clear_backlog();
+                                        songs.pause((get_time() * 1000.0) as u64);
+                                        ui_active = true;
+                                        Ok(false)
+                                    }
+                                    Err(error) => Err(error.into()),
+                                }
+                            }
+                            Err(error) => Err(format!("Preview unavailable: {error:?}").into()),
                         }
                     }
-                }
-                UiCommand::Quit => {
-                    cli::save_profiles_checkpoint(&options, &profiles)?;
-                    exit_checkpoint_published = true;
-                    break;
+                    UiCommand::Stories => {
+                        story_browser_open = profiles.current().is_some_and(|entry| {
+                            records.open_story(&entry.session, records.remembered_story())
+                        });
+                        if !story_browser_open {
+                            selector_ui.panel = Some(SelectorPanel::Notice);
+                        }
+                        story_active_frame = story_browser_open;
+                        ui_active = true;
+                        if story_browser_open {
+                            Ok(false)
+                        } else {
+                            Err("No stories earned for this profile yet.".into())
+                        }
+                    }
+                    UiCommand::Gift => {
+                        ui_active = true;
+                        gift_active_frame = true;
+                        clock.clear_backlog();
+                        let result = if profiles
+                            .current()
+                            .is_some_and(|entry| entry.session.menu_transactions_blocked())
+                        {
+                            Err(crate::shell_gift::ShellGiftError::TransactionFailed(
+                                "Finish the pending reward or transaction before giving shells."
+                                    .into(),
+                            ))
+                        } else {
+                            ShellGiftRuntime::open(&profiles)
+                        };
+                        match result {
+                            Ok(runtime) => {
+                                gift = Some(runtime);
+                                Ok(false)
+                            }
+                            Err(error) => {
+                                selector_ui.panel = Some(SelectorPanel::Notice);
+                                Err(error.to_string().into())
+                            }
+                        }
+                    }
+                    UiCommand::Quit => {
+                        cli::save_profiles_checkpoint(&options, &profiles).map(|()| false)
+                    }
+                    UiCommand::ModeResume => {
+                        pause.resume_mode();
+                        input_capture.cancel_queued_input();
+                        clock.clear_backlog();
+                        Ok(false)
+                    }
+                    UiCommand::ModalHelp => {
+                        if pause.is_paused() {
+                            pause.enter_help();
+                            help.open_pages(HelpReturn::PausedTank);
+                        } else {
+                            help.open_pages(HelpReturn::Selector);
+                        }
+                        help_active_frame = true;
+                        input_capture.cancel_holds();
+                        clock.clear_backlog();
+                        Ok(false)
+                    }
+                    UiCommand::PauseMenu => {
+                        cli::save_profiles_checkpoint(&options, &profiles).map(|()| {
+                            startup_menu_open = true;
+                            startup_menu_frame = true;
+                            menu_epoch = menu_epoch.wrapping_add(1);
+                            menu = Some(MenuRuntime::new(options.seed ^ menu_epoch, &assets));
+                            selector_ui.pause_modal = None;
+                            selector_ui.cancel_normal_capture();
+                            input_capture.cancel_queued_input();
+                            clock.clear_backlog();
+                            false
+                        })
+                    }
+                    UiCommand::ModalProfile(_)
+                    | UiCommand::ModalSetting(_)
+                    | UiCommand::ModalQuit(_) => {
+                        unreachable!("modal payloads were normalized above")
+                    }
                 }
             };
+            selector_ui.finish_normal_command(
+                profile_request.as_ref(),
+                setting_request,
+                quit_request,
+                &result,
+                &profiles,
+            );
+            if returning_to_menu
+                && let Err(error) = &result
+                && let Some(runtime) = &mut selector_ui.pause_modal
+            {
+                runtime.set_error(error.to_string());
+            }
+            if quitting && result.is_ok() {
+                exit_checkpoint_published = true;
+                break;
+            }
             match result {
                 Ok(switched) => {
                     selector_ui.error.clear();
@@ -6666,6 +7204,11 @@ pub async fn run(
                         interlude_clock.clear_backlog();
                         help = HelpController::new();
                         pause.reset_profile();
+                        gameplay_modal.clear();
+                        selector_ui.options_modal = None;
+                        selector_ui.pause_modal = None;
+                        selector_ui.notice_modal = None;
+                        selector_ui.notice_lock = None;
                         story_browser_open = false;
                         screensaver_preview = None;
                         _screensaver_power_guard = None;
@@ -6715,7 +7258,12 @@ pub async fn run(
                         }
                     }
                 }
-                Err(error) => selector_ui.error = error.to_string(),
+                Err(error) => {
+                    selector_ui.error = error.to_string();
+                    if let Some(runtime) = &mut selector_ui.notice_modal {
+                        runtime.show_error(runtime.identity(), &selector_ui.error);
+                    }
+                }
             }
         }
         let mut virtual_modal_frame = virtual_pets.is_some() || virtual_screensaver_open;
@@ -6919,16 +7467,16 @@ pub async fn run(
                 (480.0 * scale) as i32,
             ));
             set_camera(&camera);
-            selector_ui.draw(
+            selector_ui.draw_normal_modal(
+                &presentation,
                 &profiles,
                 settings.settings,
                 RuntimeSettingsBackend {
                     audio: music.as_ref(),
                 }
                 .capabilities(),
-                screensaver_file.settings,
-                screensaver_dirty,
-                screensaver_load_error.as_deref(),
+                pause.is_paused(),
+                true,
             );
             if let Some(error) = screensaver_claim_error.as_deref() {
                 draw_text(
@@ -6954,6 +7502,51 @@ pub async fn run(
             continue;
         }
         let session = &mut profiles.current_mut().ok_or("No current profile")?.session;
+        gameplay_modal.sync(session, presentation.images["IMAGE_DIALOGBUTTON"].height());
+        if gameplay_modal.is_active() {
+            input_capture.cancel_holds();
+            if pause.is_paused() || ui_active || !focused {
+                gameplay_modal.cancel_capture();
+            } else {
+                let input = poll_modal_input(pointer, focused);
+                let intent = gameplay_modal.input(&input).or_else(|| {
+                    if is_key_pressed(KeyCode::Y) {
+                        gameplay_modal
+                            .request(crate::gameplay_modal::GameplayModalAction::ConfirmPets)
+                    } else if is_key_pressed(KeyCode::N) {
+                        gameplay_modal
+                            .request(crate::gameplay_modal::GameplayModalAction::ChooseMorePets)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(intent) = intent {
+                    let feedback = if let Some(action) = gameplay_modal.action_for(&intent, session)
+                    {
+                        let previous_phase = session.phase.clone();
+                        frontend_events.extend(session.apply_actions(&[action]));
+                        if session.phase != previous_phase {
+                            frontend_transitioned = true;
+                            ui_active = true;
+                            clock.clear_backlog();
+                            crate::gameplay_modal::GameplayModalFeedback::Applied
+                        } else {
+                            crate::gameplay_modal::GameplayModalFeedback::Rejected(
+                                "This action is not available yet. Try again.".into(),
+                            )
+                        }
+                    } else {
+                        crate::gameplay_modal::GameplayModalFeedback::Rejected(
+                            "The game state changed. Try again.".into(),
+                        )
+                    };
+                    gameplay_modal.transaction_result(&intent, feedback);
+                }
+            }
+            // Consume modal input while still allowing the domain's Game Over
+            // admission counter to advance at its existing normal tick rate.
+            ui_owned_input = true;
+        }
         if !ui_active
             && is_key_pressed(KeyCode::F1)
             && !matches!(
@@ -7415,11 +8008,6 @@ pub async fn run(
                     {
                         Action::ChallengeStory
                     }
-                    AdventurePhase::ChallengeLost
-                        if Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
-                    {
-                        Action::Continue
-                    }
                     AdventurePhase::BonusResults { ref result }
                         if result.purchase.confirming
                             && results_confirm_rect(true).contains(pointer) =>
@@ -7567,30 +8155,6 @@ pub async fn run(
                     {
                         Action::Continue
                     }
-                    AdventurePhase::TimeTrialGameOver { updates }
-                        if updates > 30
-                            && Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
-                    {
-                        Action::Continue
-                    }
-                    AdventurePhase::TimeTrialInvasionTutorial { .. }
-                    | AdventurePhase::ChallengeInvasionTutorial { .. }
-                        if Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
-                    {
-                        Action::Continue
-                    }
-                    AdventurePhase::PetSelectionConfirmation { .. }
-                    | AdventurePhase::ChallengePetSelectionConfirmation { .. }
-                        if Rect::new(155.0, 300.0, 145.0, button_height).contains(pointer) =>
-                    {
-                        Action::ConfirmPetSelection { accept: true }
-                    }
-                    AdventurePhase::PetSelectionConfirmation { .. }
-                    | AdventurePhase::ChallengePetSelectionConfirmation { .. }
-                        if Rect::new(340.0, 300.0, 145.0, button_height).contains(pointer) =>
-                    {
-                        Action::ConfirmPetSelection { accept: false }
-                    }
                     AdventurePhase::Hatch { updates, .. }
                     | AdventurePhase::TankFourFinaleHatch { updates }
                         if updates > 170
@@ -7600,22 +8164,6 @@ pub async fn run(
                     }
                     AdventurePhase::Hatch { .. } | AdventurePhase::TankFourFinaleHatch { .. } => {
                         input_capture.begin_hatch_hold(is_mouse_button_down(MouseButton::Left))
-                    }
-                    AdventurePhase::FirstTankRescue
-                        if Rect::new(186.0, 295.0, 264.0, button_height).contains(pointer) =>
-                    {
-                        Action::Continue
-                    }
-                    AdventurePhase::InvasionTutorial { .. }
-                        if Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
-                    {
-                        Action::Continue
-                    }
-                    AdventurePhase::GameOver { updates }
-                        if updates > 30
-                            && Rect::new(186.0, 310.0, 264.0, button_height).contains(pointer) =>
-                    {
-                        Action::Continue
                     }
                     AdventurePhase::GameSelector
                         if Rect::new(186.0, 250.0, 264.0, button_height).contains(pointer) =>
@@ -7872,23 +8420,17 @@ pub async fn run(
         }
         let enter_continues = matches!(
             session.phase,
-            AdventurePhase::FirstTankRescue
-                | AdventurePhase::TimeTrialPetSelection { .. }
+            AdventurePhase::TimeTrialPetSelection { .. }
                 | AdventurePhase::ChallengePetSelection { .. }
-                | AdventurePhase::ChallengeLost
                 | AdventurePhase::ChallengeResults
                 | AdventurePhase::ChallengeInterlude { .. }
-                | AdventurePhase::ChallengeInvasionTutorial { .. }
                 | AdventurePhase::TimeTrialTimesUp
                 | AdventurePhase::TimeTrialResults
-                | AdventurePhase::TimeTrialInvasionTutorial { .. }
-                | AdventurePhase::InvasionTutorial { .. }
                 | AdventurePhase::HelpScreen
                 | AdventurePhase::Hatch { .. }
                 | AdventurePhase::TankFourFinaleHatch { .. }
                 | AdventurePhase::PetSelection { .. }
-        ) || matches!(session.phase, AdventurePhase::GameOver { updates } | AdventurePhase::TimeTrialGameOver { updates } if updates > 30)
-            || matches!(session.phase, AdventurePhase::BonusResults { ref result } if result.updates >= 30);
+        ) || matches!(session.phase, AdventurePhase::BonusResults { ref result } if result.updates >= 30);
         if !pause.is_paused()
             && !ui_active
             && story_interlude_input.is_none()
@@ -7907,31 +8449,21 @@ pub async fn run(
             }
             input_capture.pending_actions.push(Action::OpenMenu);
         }
-        if !pause.is_paused()
-            && !ui_active
-            && matches!(
-                session.phase,
-                AdventurePhase::PetSelectionConfirmation { .. }
-                    | AdventurePhase::ChallengePetSelectionConfirmation { .. }
-            )
-        {
-            if is_key_pressed(KeyCode::Y) || is_key_pressed(KeyCode::Enter) {
-                input_capture
-                    .pending_actions
-                    .push(Action::ConfirmPetSelection { accept: true });
-            } else if is_key_pressed(KeyCode::N) {
-                input_capture
-                    .pending_actions
-                    .push(Action::ConfirmPetSelection { accept: false });
-            }
-        }
-        let save_requested = !ui_active && is_key_pressed(KeyCode::S);
-        let mut exit_requested = is_quit_requested()
-            || (pause.is_paused()
-                && !help_active_frame
-                && !story_active_frame
-                && is_key_pressed(KeyCode::Q))
-            || wall_deadline_reached(elapsed, options.quit_after);
+        let pause_shortcuts = focused
+            && pause.is_paused()
+            && selector_ui.panel.is_none()
+            && !help_active_frame
+            && !story_active_frame
+            && !gift_active_frame
+            && !hall_was_active
+            && selector_ui
+                .pause_modal
+                .as_ref()
+                .is_some_and(|runtime| runtime.page() == crate::options_modal::OptionsPage::Pause);
+        let save_requested =
+            focused && (!ui_active || pause_shortcuts) && is_key_pressed(KeyCode::S);
+        let mut exit_requested =
+            is_quit_requested() || wall_deadline_reached(elapsed, options.quit_after);
         let mut events = frontend_events;
         let mut event_stamps = Vec::new();
         let mut phase_transitioned = frontend_transitioned;
@@ -8354,7 +8886,6 @@ pub async fn run(
         {
             presentation.draw(
                 session,
-                pause.is_paused(),
                 pointer,
                 healing_warning_until_tick,
                 finale.as_ref().zip(interlude.as_ref()),
@@ -8362,6 +8893,19 @@ pub async fn run(
         }
         if bubble_board_clock(session).is_some() {
             bubbles.draw(&presentation);
+        }
+        gameplay_modal.sync(session, presentation.images["IMAGE_DIALOGBUTTON"].height());
+        if !startup_menu_open
+            && !pause.is_paused()
+            && gameplay_modal.is_active()
+            && !help_active_frame
+            && !story_active_frame
+            && !hall_was_active
+            && !gift_active_frame
+            && selector_ui.panel.is_none()
+        {
+            dim_modal_scene();
+            gameplay_modal.draw(&presentation);
         }
         if let AdventurePhase::ChallengeInterlude { story, .. } = session.phase {
             records.sync_challenge_story(session, story);
@@ -8433,7 +8977,10 @@ pub async fn run(
                     });
                 }
             }
-            if !records.hall_open() && !story_browser_open {
+            if !records.hall_open()
+                && !story_browser_open
+                && selector_ui.panel == Some(SelectorPanel::Screensaver)
+            {
                 selector_ui.draw(
                     &profiles,
                     settings.settings,
@@ -8447,6 +8994,24 @@ pub async fn run(
                 );
             }
         }
+        if !help_active_frame
+            && !story_active_frame
+            && !hall_was_active
+            && !gift_active_frame
+            && !virtual_screensaver_open
+        {
+            selector_ui.draw_normal_modal(
+                &presentation,
+                &profiles,
+                settings.settings,
+                RuntimeSettingsBackend {
+                    audio: music.as_ref(),
+                }
+                .capabilities(),
+                pause.is_paused(),
+                draw_selector,
+            );
+        }
         help_runtime::draw(&presentation, &help);
         if story_browser_open && let Some(entry) = profiles.current() {
             records.draw_story(
@@ -8457,7 +9022,12 @@ pub async fn run(
             );
         }
         records.draw_hall(&presentation, &profiles);
-        if let Some(runtime) = gift.as_mut() {
+        if !help_active_frame
+            && !story_active_frame
+            && !hall_was_active
+            && let Some(runtime) = gift.as_mut()
+        {
+            dim_modal_scene();
             runtime.draw(&presentation, &profiles, pointer);
         }
         if let Some(error) = ui_resource_error.as_deref() {

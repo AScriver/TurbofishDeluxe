@@ -4,19 +4,21 @@ Updated: 2026-10-11, America/Phoenix. **E125 / Actionables#303-307: five modal f
 
 ## Current increment
 
-**E125 — modal frontend completion, starting:** Created Actionables#303-307
-for Options/pause, Profiles, Quit/notices, gameplay prompts and shell transfer.
-The user authorized new parallel chats/worktrees and checked commits pushed to
-main. The [modal contract](docs/modal-batch-303-307.md) reserves disjoint source,
-shared owned-art/control interfaces and root-owned production joins before
-dispatch. Use ordinary Inbox claim/research flow; no prepared-record retry.
-All five ordinary Inbox claims succeeded and tasks reached In progress. Root's
-shared owned-art drawing/control core passed six release/focus/disabled/cancel
-contracts, formatting and strict lib/bin/core-test lint. Installed resource
-metadata resolves all seven shared image IDs; W1 pin readback matches. Screen
-adapters and parent joins are still in progress; no completed modal/native
-result is claimed. Human gameplay, current37/profile3, saver exclusion and
-saved lineages remain unchanged.
+**E125 — modal frontend completion, joined source:** Actionables#303-307
+claimed successfully through the ordinary Inbox flow. Five owned source
+contributions and the Challenge-loss extension are fetched from pushed main
+`a6828e8`; root registered and
+joined the actual normal input/render/resources, setting/save feedback,
+profile transactions, Quit checkpoint, gameplay admission and pause/help/menu
+callers. Root's72 focused joined tests and strict lib/bin/affected-test lint
+passed. The [modal contract](docs/modal-batch-303-307.md#joined-source-checkpoint)
+owns checked commits, source interfaces, first test failures and exact limits.
+Challenge loss now uses the same Game Over frontend with immediate Continue.
+Final release build and obsolete gift collector removal remain pending;
+all tasks retain their claims In progress.
+Shared installed resource declarations and the W1 pin were read back. Human
+gameplay, current37/profile3, saver exclusion and saved lineages are unchanged;
+no native/retail/pixel/audio/playability result follows from these checks.
 
 **E124 — bounded code-quality batch, engineering complete:** Five new
 chats/worktrees pushed shared glyph layout, direct current-format save admission,
