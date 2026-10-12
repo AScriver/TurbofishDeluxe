@@ -2,6 +2,36 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Complete modal joins and release all five claims
+
+E125 / Actionables#303-307 are Done with qualifying Passed validation and
+released claims, read back at versions13/13/14/15/14. Root's actual production
+joins are pushed at `008eadb`; final source `ea9ed91` includes the removed
+temporary gift collector, clipped balance-first header and `b7c3808` unit-test
+ordering correction. The [completion record](docs/modal-batch-303-307.md#completion-and-joined-verification)
+links all owned commits/reports, exact checks, source/artifact identity and
+preserved failures. Seventy-two focused contracts passed; final affected gift,
+formatting, strict production/five-test-target lint and locked/offline release
+build passed. All122 maintained build inputs stayed unchanged during compile;
+139 source/artifact rows and all owned ancestors matched the final receipt.
+
+Worker strict unit-test lint exposed `items_after_test_module` in the gameplay
+adapter; its owner moved the module without changing behavior and reran the
+failed gate successfully. The earlier wrong test import and root input-sequence
+assumptions, formatting stop and gift fixture containment correction remain in
+their owning reports/private logs. No native, retail, pixel, audio or human-feel
+acceptance follows from these checks. No human process/live save, original
+installation or preserved saver/earned lineage was touched.
+
+Central records close the five source transfers and correct the stale open
+malformed-save diagnostic entry: E124/#299 already fixed and checked it. The
+user now authorizes only necessary new fixes through new Actionables and new
+independent chats/worktrees, with checked commits reconciled/pushed to main.
+Completed workers and coordinator automation remain closed; ordinary gameplay
+stays with the human. Final workflow verification passed35 required files,
+107 documents,1096 local links,379 anchors,45 included/37 excluded path checks
+and233 eligible files; publication verifies whitespace and checked inputs.
+
 ## 2026-10-11 — Join five modal frontends to normal runtime
 
 Fetched five checked owned contributions and the Challenge-loss extension on

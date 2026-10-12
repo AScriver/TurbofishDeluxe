@@ -448,8 +448,13 @@ Options/pause, profile forms, Quit/information, gameplay prompts and shell
 transfer. Root supplies shared owned-art rendering and focused capture/focus
 controls, while existing session/settings/profile/save owners retain authority.
 The [modal contract](modal-batch-303-307.md) owns interfaces, sources, scope and
-required parent integration. No generic UI framework, format change or saver
-work is introduced; native gameplay remains human-owned.
+required parent integration. The [completion record](modal-batch-303-307.md#completion-and-joined-verification)
+closes all five source transfers with Done/released tracking,72 focused checks
+and an identified release build. Production callers are joined at `008eadb` with
+one parent input/dim owner and real transaction feedback; independent pause
+epochs survive nested Quit and gameplay admission retains its domain clock.
+No generic UI framework, format change or saver work is introduced; native
+gameplay remains human-owned.
 
 E124 / Actionables#298-302 extracts shared font placement, current-format save
 admission, checkpoint storage, matching UI primitives and cohesive normal-game

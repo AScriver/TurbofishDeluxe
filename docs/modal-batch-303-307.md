@@ -1,5 +1,72 @@
 # Modal frontend completion batch
 
+## Completion and joined verification
+
+E125 engineering is complete on pushed source `ea9ed918240de62d69bf13ee8b5787546b2c71d2`.
+All five Actionables are terminal Done with qualifying Passed validation and
+released claims, independently read back on2026-10-12. Their source transfers
+are closed; keep worktrees, checked reports and private evidence. Subsequent
+necessary fixes use new Actionables/chats and fresh ownership reservations.
+
+| Actionable | Checked owned source | Owning report | Done version |
+|---|---|---|---|
+| #303 Options/pause | `398cdab23477b24c1693f0d1978e641ac7bd89d8` | [Options](modals-options.md) | 13 |
+| #304 Profiles | `b7e5c5f1a4071ef5ab8f39920489d5ba0de96191`, reconciled `d445c51` | [Profiles](modals-profiles.md) | 13 |
+| #305 Quit/notices | `19bb37c6cc3cf5b467d7e32d587214905c9e9610` | [Notices](modals-notices.md) | 14 |
+| #306 Gameplay | `66f70da`, Challenge loss `a6828e8`, test ordering `b7c3808`, report `01a50dc` | [Gameplay](modals-gameplay.md) | 15 |
+| #307 Shell gifts | `6a33e669ab3d249545d6f5bb1fbeeaf901377005`, final `ea9ed918240de62d69bf13ee8b5787546b2c71d2` | [Gifts](modals-shell-gift.md) | 14 |
+
+Shared core `9d29e1e` and actual parent joins `008eadb` are ancestors of the
+final checked source, as are all owned source commits. The joined checkpoint
+below owns caller/clock/transaction behavior. The final gift change removes
+the deprecated native collector after the normalized parent join and clips a
+balance-first donor header; its transaction API remains unchanged.
+
+Root's focused `cargo test --locked --offline -j 2` checks total72 unique cases:
+six shared controls,15 Options,12 profiles,11 notices,12 gameplay, four parent
+writer/lifetime tests, eight gift transactions, three gameplay-adapter and one
+notice-adapter case. Five integration targets are `modal_controls`,
+`options_modal`, `profile_modal`, `notice_modal`, `gameplay_modal`; selected
+`--lib` filters are `modal_join_tests`, `app::shell_gift_runtime::tests`,
+`app::gameplay_modal_runtime::tests`, `app::notice_runtime::tests`.
+Formatting and strict production/five-target Clippy passed; affected gameplay/
+gift/parent checks passed after the Challenge extension, and eight gift cases
+plus formatting/strict lint passed after the final gift change. Worker strict
+`--lib --tests` lint passed after the mechanical test-module-order correction.
+No unchanged broad suite was repeated.
+
+`cargo build --locked --offline -j 2 --release --bin turbofish-deluxe` passed
+with Rust/Cargo1.95 MSVC. Private receipt
+`.scratch/coordination/modal-final-20261012-065700-release.local.json` has ID
+`bd7150279145c784bd0ffa4e64b1980e56e64fac8d465e591ee2715b6683b41e`
+and SHA`bd9f70c986b3e391c1682dd406d6340933bc252f553e813e5d506cd028ca1490`.
+All122 maintained build-input hashes stayed unchanged during compilation;
+139 source/artifact rows matched on readback. Release EXE in the private root
+target has SHA`fd37c61048abf51ad3e455920866b773bff807a23f20abc0f4c12eae0a75d826`.
+Source-set digest is `d421045c5d5ff978ab3fcb28b350d406d829af1c83d24aa56ee2e4e1d5593954`.
+Final logs are `modal-joins-20261012-065615-*` and
+`modal-final-20261012-065700-*` in coordination scratch; earlier failed logs
+remain preserved. Only central records were dirty during the release build.
+
+The joined checkpoint retains root's two failed input assumptions and format
+stop. Gameplay's wrong test import was corrected; later strict unit-test lint
+caught `items_after_test_module`, resolved by moving that existing test module.
+The gift report retains its earlier write-failure fixture containment repair;
+owned disposable fixtures are empty after cleanup. These failures produced no
+new gameplay-rule claim. Tracking retained failed/Partial validations before
+qualifying final Passed records; completion did not erase them.
+
+Human ordinary gameplay remains the acceptance path. No native game/input/
+render/audio comparison, retail fidelity, human-feel or full-runtime acceptance
+was performed. No live/earned/frozen save or human process was inspected; the
+original install and completed excluded saver paths remain preserved. Later
+central-record changes do not invalidate this identified source/artifact gate.
+
+Final workflow verification passed35 required files,107 documents,1096 local
+links,379 heading anchors,45 included/37 excluded path checks and233 eligible
+files. Publication checks whitespace, receipt/source hashes and remote main
+readback without rebuilding unchanged code.
+
 ## Shared core checkpoint
 
 The five ordinary Inbox claims succeeded and reached In progress. Root's

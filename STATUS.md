@@ -1,24 +1,24 @@
 # Current handoff
 
-Updated: 2026-10-11, America/Phoenix. **E125 / Actionables#303-307: five modal frontend chats/worktrees active and claimed.** The [modal contract](docs/modal-batch-303-307.md) owns source interfaces/resources and root production joins. E124 engineering is complete; its five tracking records remain Ready/unclaimed after the separate prepared-record claim failure. Earlier workers stay closed. Ordinary gameplay remains human-owned; autonomous scenarios and coordinator heartbeat remain stopped. Screensaver work is excluded and finished code is preserved. Real/frozen/earned saves, E80 and genuine earning06 remain untouched; retail/audio/human fidelity stays pending where unobserved.
+Updated: 2026-10-12, America/Phoenix. **E125 / Actionables#303-307: modal frontends complete, integrated and pushed; all five tasks Done with released claims.** The [completion record](docs/modal-batch-303-307.md#completion-and-joined-verification) owns checked source/build identities and closed transfers. The user authorizes subsequent necessary fixes through new Actionables and independent new chats/worktrees. E124 engineering is complete; its five tracking records remain Ready/unclaimed after the separate prepared-record claim failure. Earlier workers stay closed. Ordinary gameplay remains human-owned; autonomous scenarios and coordinator heartbeat remain stopped. Screensaver work is excluded and finished code is preserved. Real/frozen/earned saves, E80 and genuine earning06 remain untouched; retail/audio/human fidelity stays pending where unobserved.
 
 ## Current increment
 
-**E125 — modal frontend completion, joined source:** Actionables#303-307
-claimed successfully through the ordinary Inbox flow. Five owned source
-contributions and the Challenge-loss extension are fetched from pushed main
-`a6828e8`; root registered and
-joined the actual normal input/render/resources, setting/save feedback,
+**E125 — modal frontend completion, complete:** Actionables#303-307 are Done
+with qualifying Passed validation and released claims, read back at versions
+13/13/14/15/14. Five owned contributions and the Challenge-loss extension are
+joined through actual normal input/render/resources, settings/save feedback,
 profile transactions, Quit checkpoint, gameplay admission and pause/help/menu
-callers. Root's72 focused joined tests and strict lib/bin/affected-test lint
-passed. The [modal contract](docs/modal-batch-303-307.md#joined-source-checkpoint)
-owns checked commits, source interfaces, first test failures and exact limits.
-Challenge loss now uses the same Game Over frontend with immediate Continue.
-Final release build and obsolete gift collector removal remain pending;
-all tasks retain their claims In progress.
-Shared installed resource declarations and the W1 pin were read back. Human
-gameplay, current37/profile3, saver exclusion and saved lineages are unchanged;
-no native/retail/pixel/audio/playability result follows from these checks.
+callers at `008eadb`. Final source `ea9ed91` removes the temporary gift collector
+and bounds its balance header; `b7c3808` corrects unit-test module ordering.
+Root's72 focused checks, formatting, strict production/affected-target lint and
+locked/offline release build passed. All122 maintained build inputs and139
+source/artifact rows match the final receipt; every owned source commit is an
+ancestor. The [completion record](docs/modal-batch-303-307.md#completion-and-joined-verification)
+owns reports, identity, actual failures and limits. Shared installed resource
+declarations and the W1 pin were read back. Human gameplay, current37/profile3,
+saver exclusion and saved lineages remain unchanged; no native/retail/pixel/
+audio/playability result follows from these checks.
 
 **E124 — bounded code-quality batch, engineering complete:** Five new
 chats/worktrees pushed shared glyph layout, direct current-format save admission,
@@ -78,6 +78,21 @@ Current29 [Stanley/cursor2](docs/extra-pets.md#current29-implementation-checkpoi
 [A31: Tank 4-1](docs/adventure-4-1.md) is the latest native-accepted stage, committed `38c65be9ad439a727b2e7e1b1401db928b8e55f6` (E76/E78). Its frozen bundle, reports and genuine earned saves remain preserved.
 
 ## Current build verification
+
+**E125 — final joined modal gate:** Source `ea9ed918240de62d69bf13ee8b5787546b2c71d2`,
+Rust/Cargo1.95 MSVC, `cargo build --locked --offline -j 2 --release --bin turbofish-deluxe`.
+Private receipt `.scratch/coordination/modal-final-20261012-065700-release.local.json`
+has ID `bd7150279145c784bd0ffa4e64b1980e56e64fac8d465e591ee2715b6683b41e`;
+release EXE SHA`fd37c61048abf51ad3e455920866b773bff807a23f20abc0f4c12eae0a75d826`.
+All122 build inputs were unchanged during compilation;139 source/artifact rows
+and all owned ancestors passed readback. Seventy-two focused checks passed,
+including real-writer failure/retry, gameplay admission and retained pause.
+Final gift checks, formatting and strict production/five-target lint passed
+after the last source change; worker strict unit-test lint passed after the
+ordering correction. The [completion record](docs/modal-batch-303-307.md#completion-and-joined-verification)
+owns exact commands/logs and preserved failures. Later central-record changes
+affect no build input. No normal-launch artifact replacement, native run or
+human/live-save inspection occurred.
 
 **E124 — final joined refactor gate:** Source `17286a4ebab8f60efdbb2a1f7caa29039e1afb22`
 matches the92 input hashes captured at `3297c62` plus the four recorded root
@@ -210,7 +225,7 @@ These maintenance checks retain historical records; they do not establish Tank4-
 
 ## Ownership
 
-Root owns synthesis, integration, central records and final decisions. The [E124 completion](docs/refactor-batch-298-302.md#completion-and-joined-verification) closes all five refactor source transfers with production joins checked and pushed. The [E123 contract](docs/performance-batch-295-297.md) closes source transfers for #295 launcher, #296 Title loading and #297 active VT views. Earlier#292-294 source transfers are closed and contributions checked on main; preserve all private build/fixture evidence. Ordinary gameplay is human-owned; no autonomous native lease is active. Other engineering retains single-primary ownership. A35 code ownership is closed in its [contract](docs/adventure-4-5.md#integration-and-checks). The broad recovery and table below retain historical ownership:
+Root owns synthesis, integration, central records and final decisions. The [E125 completion](docs/modal-batch-303-307.md#completion-and-joined-verification) closes all five modal source transfers with actual production joins checked and pushed. The [E124 completion](docs/refactor-batch-298-302.md#completion-and-joined-verification) closes all five refactor source transfers. The [E123 contract](docs/performance-batch-295-297.md) closes source transfers for #295 launcher, #296 Title loading and #297 active VT views. Earlier#292-294 source transfers are closed; preserve all private build/fixture evidence. Ordinary gameplay is human-owned; no autonomous native lease is active. Subsequent necessary fixes require new scoped Actionables, exact ownership reservations and independent new chats/worktrees where useful. Completed workers and the heartbeat remain closed. A35 code ownership is closed in its [contract](docs/adventure-4-5.md#integration-and-checks). The broad recovery and table below retain historical ownership:
 
 | Owner | Responsibility |
 |---|---|
@@ -225,6 +240,7 @@ Completed performance worktrees retain separate Cargo targets and disposable off
 
 | ID | Class / current scope | Evidence |
 |---|---|---|
+| E125 | Observed focused offline modal/writer contracts and joined lint/release build; native unrun | [Modal completion](docs/modal-batch-303-307.md#completion-and-joined-verification), five linked reports and current integrated build identity above |
 | E124 | Observed focused offline contracts and joined lint/release build; native unrun | [Refactor completion](docs/refactor-batch-298-302.md#completion-and-joined-verification), five linked reports and current integrated build identity above |
 | E122 | Observed offline equivalence/measurements and integrated focused checks; native unrun | [Performance index](docs/performance.md#frame-profile-and-checkpoint-results), linked profile/VT/checkpoint reports and current integrated build identity above |
 | E120 | Observed focused publication tests/lint/build; native correction not accepted | Build identity above; [Windows publication design](docs/DESIGN.md#windows-checkpoint-publication), [A66 attempts/probes/startup handoff](docs/playtests/2026-10-10-mode-continuation-a66-01.md) |
@@ -237,19 +253,19 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 
 Current next action:
 
-0. E124 engineering is complete and pushed. Preserve the five closed worktrees,
-reports and private evidence. Reconcile #298-302 tracking only after its claim
-tool recovers; Ready/unclaimed remains the exact current tracker state. No
-refactor worker or native scenario needs dispatch.
+0. E125 is complete and pushed; #303-307 are Done with released claims. Preserve
+all closed modal/refactor worktrees, reports and private evidence. E124's
+#298-302 retain their separately recorded Ready/unclaimed tooling limitation;
+do not retry that route or resume completed workers.
 
 1. Human launches normally with the [startup command](docs/playtests/2026-10-10-mode-continuation-a66-01.md#default-profile-and-human-launch-handoff), plays and reports issues. No accelerated/muted/fixture flags are needed. Omit `--new-game` on later runs to resume. Do not inspect or stop the human session for automated testing.
-2. Root resolves reported issues and concrete remaining gaps from [compatibility](docs/compatibility.md). Completed #292-302 engineering, joined checks and evidence stay preserved without redispatch. Do not restart A66 or the four prepared outcome lanes; preserve all their work and failed receipts. No repeated intake or legacy migration.
+2. Root checks reported issues and concrete remaining gaps for necessary fixes only. Create an Actionable for each verified new finding before implementation; reserve disjoint source ownership, dispatch new chats/worktrees for independent fixes, and commit/push checked progress to main. Completed #292-307 engineering and evidence stay preserved without redispatch. Do not restart A66 or the four prepared outcome lanes; preserve their work and failed receipts. No speculative polish, repeated intake or legacy migration.
 3. Preserve E80 and genuine current17 earning06 unchanged. The old A32 egg/Amp/selector endpoint and other native scenarios remain unperformed historical acceptance, not a mandate to play through them automatically. [Relax](docs/sandbox.md#contract)'s retail activation remains unknown.
 4. Keep inaccessible retail comparison, audible output where unobserved, and human feel/fidelity explicitly pending. Record actual human feedback separately from agent checks; build/unit results do not establish full gameplay acceptance or completion.
 
 ## Deferred detail pass
 
-- **Malformed-save diagnostics:** the pre-existing current-format missing-field test panics at `src/cli.rs:1247` because the decoder's error-label table ends at version35 while current format is37. #289's broader filter observed this before target selection; `src/cli.rs` is unchanged from its parent. [Performance](docs/performance.md#focused-checks-and-retained-failures) owns the exact failed case/log. Fix and verify that diagnostic path separately; do not treat the filter as passed.
+- **Malformed-save diagnostics, closed in E124/#299:** direct current-format admission removed the old version35 label-table panic; both affected diagnostics pass. [Codec completion](docs/refactor-batch-298-302.md#completion-and-joined-verification) owns the checked fix. #289's failed broader filter remains historical evidence in [performance](docs/performance.md#focused-checks-and-retained-failures), not an open task.
 - [Challenge](docs/challenge.md): exact widget creation/input/dialog presentation, retail RNG/clock/row codecs and live fidelity.
 - [Remaining modes/Virtual Tank](docs/binary-recovery.md): secondary-derived stock/properties/offline/coin rules and remaining primary comparisons; do not delay bulk integration for nonblocking parity.
 - [Compatibility](docs/compatibility.md): presentation, effects/audio, menus and other detail gaps retain their owning contracts until implemented or compared.

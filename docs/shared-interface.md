@@ -74,6 +74,32 @@ native/manual/input/audio/retail checks ran. [MODLOG](../MODLOG.md#2026-10-10--j
 owns receipts. This replaces E113's explicitly pending gift route; its historical
 description remains unchanged.
 
+## Normal modal frontend integration
+
+E125 replaces the normal flat Options/profile/notice/gameplay panels and the
+earlier gift layout with source-informed owned dialog/button/edit/check/slider
+art. [Modal ownership](modal-batch-303-307.md#exclusive-ownership) reserves five
+adapters; root joins their actual consumers at `008eadb`. Parent supplies one
+dim layer and collects native characters only for the active modal. Higher
+Help/Story/Hall owners suspend capture and drawing beneath them; closing input
+does not leak into retained gameplay. Existing finished saver routes stay intact.
+
+Profile changes still use the existing manager after checkpoint admission;
+real errors retain the modal for retry. Settings use the current backend/save/
+rollback transaction and exact opening/previous-value feedback. Quit exits only
+after a successful checkpoint. Pause and nested Quit have independent lifetimes;
+Help and Menu preserve existing pause/session ownership. Gameplay requests
+revalidate phase, payload and admission against the session. Adventure/TT Game
+Over keeps its counter; Challenge loss keeps immediate Continue. Gifts retain
+the live manager confirmation boundary described above. No adapter owns a
+second ledger, writer, simulation clock or schema.
+
+The [completion record](modal-batch-303-307.md#completion-and-joined-verification) owns
+checked source/artifact identities,72 focused control/writer/transaction tests,
+released Done tracking and preserved failures. All five source transfers are closed.
+This source acceptance leaves native/retail pixel, audible and human feel
+comparison unperformed under the human ordinary-gameplay plan.
+
 ## Source and verification boundaries
 
 Installed PB05 remains authoritative. [BR08–11](binary-recovery.md#br08--menus-profiles-and-options) owns the primary profile/menu/options/score outline and explicit gaps. Pinned W1 `f919b3c241cfd611c547f1653fb3514f500f761b` supplies `ProfileMgr`, `OptionsDialog`, `HighScoreMgr`, `GameSelector`, `FishSongMgr`, `GameObject`, `Board` and `InterludeScreen` behavior as secondary evidence. [Provenance](provenance.md) owns licenses and adaptations. No upstream source file, proprietary asset or raw decompiler output is tracked.
