@@ -6,6 +6,11 @@ commits pushed to main as work is verified. E124 starts from clean main
 `ae9c114117ceeef63ae248ffc91e92a612b28c85`. Existing behavior, current37 save
 schema and the human gameplay policy remain the contracts.
 
+All five engineering outcomes are integrated, checked and pushed at `17286a4`;
+all source transfers are closed. Actionables#298-302 remain Ready/unclaimed
+because of the recorded claim-tool failure. The completion below distinguishes
+actual engineering from unavailable tracking.
+
 ## Exclusive ownership
 
 | Actionable | Complete outcome | Worker-owned maintained files |
@@ -112,3 +117,66 @@ Resolution and qualifying validation, completes and releases its claim after
 that confirmation. Prepared reports remain preparation until checks run.
 Retain private failures/artifacts. Tests establish the stated engineering
 contracts, not retail fidelity, measured FPS or full gameplay acceptance.
+
+## Completion and joined verification
+
+All five new chats/worktrees completed their owned changes and safely
+fetched/reconciled/pushed main without force. Root verified every core commit
+as an ancestor of source integration `17286a4ebab8f60efdbb2a1f7caa29039e1afb22`.
+Workers returned `app.rs`, `cli.rs` and `profiles.rs` ownership before root's
+shared consumer joins. Worktrees are clean, their validation processes exited,
+and private evidence is retained; no native or shared-service lease was used.
+
+| Actionable | Owned core commit / report head | Checked outcome and owning report |
+|---|---|---|
+| #298 | `9911271` / `5c7732a` | Shared allocation-free `BitmapFont::for_each_glyph`; ten placement/font checks. [Font report](refactor-font-rendering.md) |
+| #299 | `d751865` / `3297c62` | Shared current-session admission, direct profile decode, current37/profile3 preserved;18 focused checks including two formerly panicking malformed-save diagnostics. [Codec report](refactor-save-codec.md) |
+| #300 | `7c4dfcb` / `7c4dfcb` | Existing writer moved unchanged; settings joins included; nine tests passed before/after, persistent denial retains old bytes and recovers after reader release. [Persistence report](refactor-persistence.md) |
+| #301 | `b360b05` / `eaeca5b` | Matching geometry/style helpers used by VT and Records;19 focused checks. [UI report](refactor-ui-primitives.md) |
+| #302 | `d033190` / `1443dd0` | Concrete input, modal pause and song state with explicit transitions;11 new contracts and19 existing regressions passed. [Runtime-state report](refactor-runtime-state.md) |
+
+Root integration `17286a4` routes normal `RenderedFont::text` and clipped Help
+`font_text` through shared glyph placement. Both retain their existing draw,
+atlas bounds and clipping behavior. Application centered labels/main buttons
+and fallback buttons call the shared UI helpers with the original arithmetic,
+baseline, colors and draw order. CLI keeps a compatibility re-export of
+`persistence::write_json`; Profiles calls persistence directly. Every production
+join is present, not deferred to module compilation. No saver source was edited.
+
+Root executed these final joined checks on `3297c62` plus the four now-committed
+consumer files (`app.rs`, `app/help_runtime.rs`, `cli.rs`, `profiles.rs`):
+
+| Check | Exact command / result |
+|---|---|
+| Format | `cargo fmt --all -- --check` — Passed |
+| Strict lint | `cargo clippy --locked --offline -j 2 --lib --bins --tests -- -D warnings` — Passed |
+| Font | `cargo test --locked --offline -j 2 --test fonts` —10 Passed |
+| UI | `cargo test --locked --offline -j 2 --test ui_primitives` —7 Passed |
+| Writer | `cargo test --locked --offline -j 2 --test checkpoint_writer` —9 Passed |
+| Joined checkpoints | `cargo test --locked --offline -j 2 --lib cli::checkpoint_tests::` —8 Passed; serial measurement benchmark ignored |
+| Release | `cargo build --locked --offline -j 2 --release` — Passed |
+| Workflow | `scripts/Test-Workflow.ps1`, validated/executed through the host PowerShell wrapper — Passed,35 required files/101 documents |
+
+Total joined tests:34 passed, one ignored. Earlier worker contracts remain
+valid for unchanged owned inputs; root did not repeat unrelated broad suites
+or unneeded timing measurements. Toolchain: Rust1.95.0
+`59807616e1fa2540724bfbac14d7976d7e4a3860`, Cargo1.95.0, Windows MSVC;
+locked/offline dependencies and the existing read-only libopenmpt0.8.9 package.
+Root used a private target
+`.scratch/runtime/refactor-batch-298-302-root-target`, two Cargo jobs, and
+unchanged release settings.
+
+Private receipts `.scratch/coordination/refactor-joined-before.json` and
+`refactor-joined-after.json` match all92 maintained Rust/Cargo inputs through
+the joined checks; `refactor-publish-source.json` records identical hashes
+after Git reconciliation and remote-main readback. Release game EXE:
+`.scratch/runtime/refactor-batch-298-302-root-target/release/turbofish-deluxe.exe`,
+SHA256 `90ABB50B042E878FC515C161E79EC8DFB8362028CE07D5588AC2B091DE8056E7`.
+Later central-record edits change no checked build input. No launcher artifact
+was replaced and no game was launched.
+
+Final scoped Actionables readback: all five tasks Ready version6, unclaimed.
+The unavailable-tool fallback is still the exact tracking limitation; no Done
+or In progress state is invented. Ordinary gameplay remains human-owned.
+These checks establish the stated code/transaction/layout/state contracts,
+not native playability, FPS, audible output, retail fidelity or human feel.

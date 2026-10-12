@@ -2,6 +2,44 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-11 — Complete five integrated code-quality refactors
+
+E124 used five explicitly authorized new chats/worktrees with disjoint source
+ownership. Core commits `9911271`, `d751865`, `7c4dfcb`, `b360b05` and `d033190`
+were reconciled and pushed without force. Shared font placement removes both
+renderers' repeated pen/kerning loops; profile decoding admits current sessions
+directly without the byte round trip; persistence owns the existing bounded
+writer; UI helpers share matching geometry/drawing; concrete runtime state owns
+capture cancellation, Help pause restoration and fish-song bookkeeping. Root
+joined normal/Help font consumers, matching application buttons, the CLI writer
+compatibility re-export and direct profile storage in `17286a4`. All worker
+source transfers are closed. The [completion record](docs/refactor-batch-298-302.md#completion-and-joined-verification)
+links five owning reports and exact integration/verification identities.
+
+Worker focused contracts passed, including the two formerly panicking
+malformed-current-save diagnostics. Root's final formatting, strict lib/bin/test
+Clippy,34 font/UI/writer/checkpoint tests and locked/offline release build passed;
+one serial timing benchmark remained ignored. All92 maintained Rust/Cargo
+inputs matched before/after and after Git reconciliation, and all five core
+commits are ancestors of pushed main. Release EXE SHA
+`90ABB50B042E878FC515C161E79EC8DFB8362028CE07D5588AC2B091DE8056E7`.
+Workflow checks passed35 required files/101 documents. Current37/profile3,
+Windows retry/publication, drawing order and mode/clock contracts remain intact.
+
+Corrected worker naming, fixture metadata and compile assumptions remain in
+their owning reports with private failure logs retained. Root's first font
+patch context did not match and changed nothing; the reread bounded patch
+passed. A read-only lookup used a nonexistent `Check-Workflow.ps1`; the actual
+`Test-Workflow.ps1` ran successfully. No native game process, original
+installation, real/frozen/earned save or shared service was changed.
+
+Final scoped Actionables readbacks remain #298-302 Ready version6/unclaimed.
+The [recorded claim failure](docs/refactor-batch-298-302.md#recorded-tracking-tool-failure)
+and workflow unavailable-tool fallback prevent a tracking-complete claim;
+engineering is complete separately. Preserve closed worktrees/evidence and
+reconcile tracking after service recovery. Human ordinary gameplay/reporting
+remains current; no autonomous scenario or old heartbeat resumes.
+
 ## 2026-10-11 — Dispatch refactors and record unavailable tracking
 
 Five new chats/worktrees are active for #298-302; root pushed the ownership

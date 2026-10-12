@@ -1,18 +1,23 @@
 # Current handoff
 
-Updated: 2026-10-11, America/Phoenix. **E124 / Actionables#298-302: five new code-quality chats/worktrees active.** The [refactor contract](docs/refactor-batch-298-302.md) owns exact transfers and root joins. Actionables claims currently fail in installed task-detail decoding; scoped records remain Ready/unclaimed. Authorized engineering uses the workflow's unavailable-tool fallback, with actual code/check completion tracked separately. Earlier#292-297 are complete and their workers stay closed. Ordinary gameplay remains human-owned; autonomous scenarios and coordinator heartbeat remain stopped. Screensaver work is excluded and finished code is preserved. Real/frozen/earned saves, E80 and genuine earning06 remain untouched; retail/audio/human fidelity stays pending where unobserved.
+Updated: 2026-10-11, America/Phoenix. **E124 / Actionables#298-302: all five code-quality refactors integrated and pushed.** The [completion record](docs/refactor-batch-298-302.md#completion-and-joined-verification) owns checked commits, closed source transfers and final production joins. Actionables claims failed in installed task-detail decoding; scoped records remain Ready version6/unclaimed, separate from completed engineering. Earlier#292-297 are complete and their workers stay closed. Ordinary gameplay remains human-owned; autonomous scenarios and coordinator heartbeat remain stopped. Screensaver work is excluded and finished code is preserved. Real/frozen/earned saves, E80 and genuine earning06 remain untouched; retail/audio/human fidelity stays pending where unobserved.
 
 ## Current increment
 
-**E124 — bounded code-quality batch, starting:** Actionables#298-302 are created
-and researched to Ready. The user authorized one new chat/worktree per cleanup,
-parallel implementation and coherent pushes to main. The [refactor contract](docs/refactor-batch-298-302.md)
-reserves font layout, current-format decoding, persistence, UI primitives and
-normal-game runtime-state ownership. Root owns module registration and shared
-consumer joins after the CLI/application transfers close. No implementation or
-acceptance result is claimed yet. Human gameplay and paused automation remain
-current; schemas, assets, saved lineages and excluded screensaver work stay
-preserved.
+**E124 — bounded code-quality batch, engineering complete:** Five new
+chats/worktrees pushed shared glyph layout, direct current-format save admission,
+checkpoint persistence, reusable UI primitives and concrete input/modal/audio
+runtime state. Root joined normal/Help text, application button consumers and
+CLI/profile storage at `17286a4`. The [completion record](docs/refactor-batch-298-302.md#completion-and-joined-verification)
+links each owned commit and report. Final formatting, strict lib/bin/test lint,
+34 focused font/UI/writer/checkpoint tests and locked/offline release build
+passed. One serial timing benchmark remained ignored. All92 maintained
+Rust/Cargo inputs match the checked build; every owned core commit is an
+ancestor of pushed main. Worker checks cover affected codec and state
+contracts; the two malformed-current-save diagnostics formerly panicking now
+pass. Current37/profile3 and publication semantics are preserved. Actionables
+#298-302 remain Ready version6/unclaimed under the recorded unavailable-tool
+fallback; no tracking completion is claimed. Human gameplay policy is unchanged.
 
 **E123 — optimized launch/loading/active VT batch, complete:** Actionables#295-297 are Done with qualifying Passed evidence and released claims. Three new managed chats/worktrees implemented optimized normal launch, bounded Title loading batches and lightweight active VT refresh/input; owned commits `f3a6738`, `cbf03b8`, `9817545` safely reconcile on main at `d64e0cc`. [Performance](docs/performance.md#launch-loading-and-active-virtual-tank-results) links eleven launcher, twenty loading/clock and seventeen active UI checks, exact state/event/pixel/trace equivalence and serial offline measurements. Normal/20-fish fixture ticks measure about16x faster in release; fast synthetic185/140-task loading uses21/16 yields;20-fish Fish Setup adapter26.312us becomes6.228us. Joined format, strict lib/bin/test-target lint and actual default release staging passed. Root matched all102 build sources,117 source/artifact checks, nine selected report hashes and all three owned ancestors; the [contract](docs/performance-batch-295-297.md#completion-and-joined-verification) owns exact receipt/EXE identities. These results establish no native FPS/startup/retail/human-feel claim. Human gameplay and paused automation policy remain current.
 
@@ -57,6 +62,17 @@ Current29 [Stanley/cursor2](docs/extra-pets.md#current29-implementation-checkpoi
 [A31: Tank 4-1](docs/adventure-4-1.md) is the latest native-accepted stage, committed `38c65be9ad439a727b2e7e1b1401db928b8e55f6` (E76/E78). Its frozen bundle, reports and genuine earned saves remain preserved.
 
 ## Current build verification
+
+**E124 — final joined refactor gate:** Source `17286a4ebab8f60efdbb2a1f7caa29039e1afb22`
+matches the92 input hashes captured at `3297c62` plus the four recorded root
+consumer joins. Formatting, strict lib/bin/test Clippy,34 selected tests and
+`cargo build --locked --offline -j 2 --release` passed on Rust/Cargo1.95 MSVC.
+Private release EXE SHA`90ABB50B042E878FC515C161E79EC8DFB8362028CE07D5588AC2B091DE8056E7`;
+the [completion record](docs/refactor-batch-298-302.md#completion-and-joined-verification)
+owns exact commands, artifact/receipt paths and scope. Final workflow checks
+passed35 required files/101 documents. Later central-record changes affect no
+build input. No native launch, launcher-artifact replacement or live-save check
+ran; human gameplay remains the acceptance path.
 
 **E122 — integrated offline performance gate:** [Checkpoint build identity](docs/performance-checkpoints.md#build-identity-and-focused-checks) identifies checked source `a45114d07e7adbd5e084d77beb81352f0a6073be` plus report-only changes, Rust1.95 MSVC, locked/offline dependencies, opt2/debug0/no-LTO dev profile and worker-local target. Four exact affected score/projection/denial regressions, formatting, strict lib/bin/test-target Clippy and normal-bin build passed. Integrated EXE SHA`43B62B673420BE61C6A4E12ED2D2B56C42D33F7C386A927EA3B0F82B19B0D3BD`; receipts remain in the checkpoint worktree's `.scratch/performance/294`. Root's private `batch-292-294/verify-integrated-source.ps1` confirmed seven current source/fixture/Cargo.lock hashes and all three owned ancestors. Later report/central-record edits affect no checked source. Normal launcher artifacts retain their previous handoff; no game/native or live-save check ran.
 
@@ -178,7 +194,7 @@ These maintenance checks retain historical records; they do not establish Tank4-
 
 ## Ownership
 
-Root owns synthesis, integration, central records and final decisions. The [E123 contract](docs/performance-batch-295-297.md) closes source transfers for #295 launcher, #296 Title loading and #297 active VT views; root owns their final joined verification. Earlier#292-294 source transfers are closed and contributions checked on main; preserve all private build/fixture evidence. Ordinary gameplay is human-owned; no autonomous native lease is active. Other engineering retains single-primary ownership. A35 code ownership is closed in its [contract](docs/adventure-4-5.md#integration-and-checks). The broad recovery and table below retain historical ownership:
+Root owns synthesis, integration, central records and final decisions. The [E124 completion](docs/refactor-batch-298-302.md#completion-and-joined-verification) closes all five refactor source transfers with production joins checked and pushed. The [E123 contract](docs/performance-batch-295-297.md) closes source transfers for #295 launcher, #296 Title loading and #297 active VT views. Earlier#292-294 source transfers are closed and contributions checked on main; preserve all private build/fixture evidence. Ordinary gameplay is human-owned; no autonomous native lease is active. Other engineering retains single-primary ownership. A35 code ownership is closed in its [contract](docs/adventure-4-5.md#integration-and-checks). The broad recovery and table below retain historical ownership:
 
 | Owner | Responsibility |
 |---|---|
@@ -193,6 +209,7 @@ Completed performance worktrees retain separate Cargo targets and disposable off
 
 | ID | Class / current scope | Evidence |
 |---|---|---|
+| E124 | Observed focused offline contracts and joined lint/release build; native unrun | [Refactor completion](docs/refactor-batch-298-302.md#completion-and-joined-verification), five linked reports and current integrated build identity above |
 | E122 | Observed offline equivalence/measurements and integrated focused checks; native unrun | [Performance index](docs/performance.md#frame-profile-and-checkpoint-results), linked profile/VT/checkpoint reports and current integrated build identity above |
 | E120 | Observed focused publication tests/lint/build; native correction not accepted | Build identity above; [Windows publication design](docs/DESIGN.md#windows-checkpoint-publication), [A66 attempts/probes/startup handoff](docs/playtests/2026-10-10-mode-continuation-a66-01.md) |
 | E79 | Observed A32 build gate; reviewed rules, native pending | Identities above; [A32 contract](docs/adventure-4-2.md), [PB59-63 primary ledger](docs/behavior-contract.md#tank4-2-primary-ledger), [design](docs/DESIGN.md#second-tank4-integration), [provenance](docs/provenance.md) |
@@ -204,13 +221,13 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 
 Current next action:
 
-0. Complete the authorized [E124 refactors](docs/refactor-batch-298-302.md) in five
-new disjoint chats/worktrees; join production callers, run affected offline
-checks, and commit/push coherent changes. Root owns central records and final
-joined verification. Earlier workers and native scenarios remain stopped.
+0. E124 engineering is complete and pushed. Preserve the five closed worktrees,
+reports and private evidence. Reconcile #298-302 tracking only after its claim
+tool recovers; Ready/unclaimed remains the exact current tracker state. No
+refactor worker or native scenario needs dispatch.
 
 1. Human launches normally with the [startup command](docs/playtests/2026-10-10-mode-continuation-a66-01.md#default-profile-and-human-launch-handoff), plays and reports issues. No accelerated/muted/fixture flags are needed. Omit `--new-game` on later runs to resume. Do not inspect or stop the human session for automated testing.
-2. Root resolves reported issues and concrete remaining gaps from [compatibility](docs/compatibility.md). Completed #292-297 work, joined checks and evidence stay preserved without redispatch. Do not restart A66 or the four prepared outcome lanes; preserve all their work and failed receipts. No repeated intake or legacy migration.
+2. Root resolves reported issues and concrete remaining gaps from [compatibility](docs/compatibility.md). Completed #292-302 engineering, joined checks and evidence stay preserved without redispatch. Do not restart A66 or the four prepared outcome lanes; preserve all their work and failed receipts. No repeated intake or legacy migration.
 3. Preserve E80 and genuine current17 earning06 unchanged. The old A32 egg/Amp/selector endpoint and other native scenarios remain unperformed historical acceptance, not a mandate to play through them automatically. [Relax](docs/sandbox.md#contract)'s retail activation remains unknown.
 4. Keep inaccessible retail comparison, audible output where unobserved, and human feel/fidelity explicitly pending. Record actual human feedback separately from agent checks; build/unit results do not establish full gameplay acceptance or completion.
 

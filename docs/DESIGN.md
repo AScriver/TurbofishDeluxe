@@ -450,8 +450,11 @@ controllers and publication policy remain contracts. The [refactor ownership
 record](refactor-batch-298-302.md) reserves disjoint files and explicit root joins
 before implementation; it owns the worker interfaces and validation boundary.
 Root registers new modules and joins shared CLI/application consumers after
-their exclusive transfers close. Focused offline checks preserve these
-engineering contracts; ordinary gameplay remains human-owned.
+their exclusive transfers close. All five transfers are now closed and those
+production joins are checked and pushed at `17286a4`. The [completion record](refactor-batch-298-302.md#completion-and-joined-verification)
+owns exact checks, release identity and the separate unavailable-tracking
+limitation. Focused offline checks preserve these engineering contracts;
+ordinary gameplay remains human-owned.
 
 ## Title and illustrated-screen integration
 
