@@ -158,6 +158,6 @@ impl SettingsSave {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        crate::cli::write_json(path, self)
+        crate::persistence::write_json(path, self)
     }
 }

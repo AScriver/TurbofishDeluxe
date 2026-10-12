@@ -34,6 +34,16 @@ pub struct GlyphRect {
     pub height: i32,
 }
 
+/// One atlas rectangle at its unscaled destination, in font-layer draw order.
+/// Texture selection and clipping remain the renderer's responsibility.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlyphPlacement {
+    pub layer_index: usize,
+    pub source: GlyphRect,
+    pub x: f32,
+    pub y: f32,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Glyph {
     pub advance: i32,
@@ -107,6 +117,41 @@ pub struct BitmapFont {
 }
 
 impl BitmapFont {
+    /// Visit drawable glyphs in layer order without allocating a layout buffer.
+    ///
+    /// Each layer restarts at `x`. Missing glyphs do not advance; glyphs without
+    /// rectangles still advance and apply kerning to the next input character.
+    /// Clipping must not change these advances. This is the existing unscaled
+    /// draw path; it does not apply point size, ascent padding or line spacing.
+    pub fn for_each_glyph(
+        &self,
+        text: &str,
+        x: f32,
+        baseline: f32,
+        mut visit: impl FnMut(GlyphPlacement),
+    ) {
+        for (layer_index, layer) in self.layers.iter().enumerate() {
+            let mut pen = x;
+            let mut characters = text.chars().peekable();
+            while let Some(character) = characters.next() {
+                if let Some(glyph) = layer.glyphs.get(&character) {
+                    if let Some(source) = glyph.rect {
+                        visit(GlyphPlacement {
+                            layer_index,
+                            source,
+                            x: pen + glyph.offset_x as f32,
+                            y: baseline - (layer.ascent - glyph.offset_y) as f32,
+                        });
+                    }
+                    pen += (glyph.advance + layer.spacing) as f32;
+                    if let Some(next) = characters.peek() {
+                        pen += layer.kerning.get(&(character, *next)).copied().unwrap_or(0) as f32;
+                    }
+                }
+            }
+        }
+    }
+
     pub fn load(game_dir: impl AsRef<Path>, script_stem: &str) -> Result<Self, FontError> {
         let root = fs::canonicalize(game_dir.as_ref()).map_err(|source| FontError::Io {
             path: game_dir.as_ref().to_owned(),

@@ -2,6 +2,22 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-11 — Dispatch refactors and record unavailable tracking
+
+Five new chats/worktrees are active for #298-302; root pushed the ownership
+contract at `5af49c5` and compile-safe persistence/UI module registrations at
+`a55f50a`. Contract workflow validation passed35 required files/96 documents;
+scaffold formatting and whitespace passed. Each worker's claim transaction
+failed and rolled back; scoped records remain Ready version6/unclaimed. A
+single read-only log check identified installed Actionables task-detail schema
+rejection at `activity[1].type`, correlation
+`7765257a-9a7b-451d-9ecf-2b5ac440c80d`. The [contract](docs/refactor-batch-298-302.md#recorded-tracking-tool-failure)
+records the explicit unavailable-tool fallback and corrected `tests/fonts.rs`
+ownership. Authorized source implementation proceeds; no claim or tracking
+completion is invented. No shared service, database or installed release was
+modified, and no denied claim was retried. Root still owns final production
+joins and checks; no completed-refactor claim yet.
+
 ## 2026-10-11 — Start five bounded code-quality refactors
 
 Created Actionables#298-302 from the user-approved cleanup audit and prepared

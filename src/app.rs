@@ -5,7 +5,7 @@ use crate::{
     bonus::{BonusResult, BonusState, PurchaseReceipt, ShellKind, ShellState},
     cli::{self, Options},
     fish_pet::FishPetKind,
-    fish_songs::{FishSongPlayer, SongCatalog},
+    fish_songs::SongCatalog,
     font::BitmapFont,
     help::{HelpController, HelpExit, HelpReturn, demo::HelpAction},
     install::{self, InstallIdentity},
@@ -24,10 +24,10 @@ use crate::{
         VirtualPetAction,
     },
     story::StoryCatalog,
-    timing::{InputPress, StepClock, wall_deadline_reached},
+    timing::{StepClock, wall_deadline_reached},
     ultra::UltraPose,
     virtual_tank::{
-        FishSize as VirtualFishSize, NamedFish, StoreProduct, VirtualCoinKind, VirtualFishKind,
+        FishSize as VirtualFishSize, StoreProduct, VirtualCoinKind, VirtualFishKind,
         VirtualFoodKind,
     },
 };
@@ -65,6 +65,9 @@ mod records_runtime;
 mod tank_selection_runtime;
 use menu_runtime::MenuRuntime;
 use records_runtime::RecordsRuntime;
+#[path = "app/runtime_state.rs"]
+mod runtime_state;
+use runtime_state::{FishSongRuntime, InputCapture, ModalPause};
 #[path = "app/shell_gift_runtime.rs"]
 mod shell_gift_runtime;
 #[path = "app/virtual_input_runtime.rs"]
@@ -6152,17 +6155,11 @@ pub async fn run(
     let mut screensaver_claim_error = None::<String>;
     // Keep the thread power policy alive until preview closes; Drop restores it.
     let mut _screensaver_power_guard = None::<MonitorPowerGuard>;
-    let mut pending_actions = Vec::new();
-    let mut paused = false;
-    let mut hatch_pointer_owned = false;
-    let mut hatch_background_down = false;
-    let mut feed_press_at = None::<(InputPress, Option<(i32, i32)>)>;
-    let mut held_feed_at = None::<InputPress>;
-    let mut held_fire_at = None::<InputPress>;
+    let mut input_capture = InputCapture::default();
+    let mut pause = ModalPause::default();
     let mut healing_warning_until_tick = None::<u64>;
     let mut selector_ui = SelectorUi::default();
     let mut help = HelpController::new();
-    let mut help_restore_paused = None::<bool>;
     let story_catalog = match StoryCatalog::load(&game_root.join(&identity.executable)) {
         Ok(catalog) => Some(catalog),
         Err(error) => {
@@ -6206,14 +6203,7 @@ pub async fn run(
             None
         }
     };
-    let mut song_player = FishSongPlayer::default();
-    let mut singing_feeds = HashMap::<u16, u8>::new();
-    let mut pending_song_ticks = None::<u8>;
-    let mut pending_song_kind = None::<NamedFish>;
-    let mut song_sequence = 0_usize;
-    let mut song_id = 0_i32;
-    let mut song_title = String::new();
-    let mut song_title_until = 0.0_f64;
+    let mut songs = FishSongRuntime::default();
     let mut interlude = None::<InterludeController>;
     let mut finale = None::<FinaleRuntime>;
     let focus_window = match OwnWindow::capture_active() {
@@ -6260,7 +6250,7 @@ pub async fn run(
                 .current()
                 .is_some_and(|entry| entry.session.phase == AdventurePhase::HelpScreen)
             && help.view().is_none()
-            && !pending_actions.contains(&Action::Continue)
+            && !input_capture.pending_actions.contains(&Action::Continue)
         {
             help.open_instructions(HelpReturn::Selector);
         }
@@ -6448,7 +6438,7 @@ pub async fn run(
                 }
                 if is_key_pressed(KeyCode::Escape) && !modal && focused {
                     inputs.push(crate::tank_selection::TankInput::Cancel);
-                    pending_actions.push(Action::OpenMenu);
+                    input_capture.pending_actions.push(Action::OpenMenu);
                 }
                 for input in inputs {
                     match tank_selection_runtime::input(controller, &presentation, input) {
@@ -6464,7 +6454,7 @@ pub async fn run(
                                 if let Some(action) =
                                     tank_selection_runtime::action_for_intent(intent)
                                 {
-                                    pending_actions.push(action);
+                                    input_capture.pending_actions.push(action);
                                 } else if intent == crate::tank_selection::TankIntent::Stories {
                                     ui_command = Some(UiCommand::Stories);
                                 }
@@ -6491,12 +6481,8 @@ pub async fn run(
             || hall_was_active
             || gift_active_frame;
         if let Some(exit) = help_exit {
-            match exit {
-                HelpExit::Continue => pending_actions.push(Action::Continue),
-                HelpExit::ReturnTo(HelpReturn::PausedTank) => {
-                    paused = help_restore_paused.take().unwrap_or(true);
-                }
-                HelpExit::ReturnTo(HelpReturn::Selector) => {}
+            if let Some(action) = pause.finish_help(exit) {
+                input_capture.pending_actions.push(action);
             }
             clock.clear_backlog();
             ui_active = true;
@@ -6523,11 +6509,8 @@ pub async fn run(
                             chooser = None;
                             virtual_pets = None;
                             virtual_screensaver_open = false;
-                            paused = false;
-                            pending_actions.clear();
-                            feed_press_at = None;
-                            held_feed_at = None;
-                            held_fire_at = None;
+                            pause.resume_mode();
+                            input_capture.cancel_queued_input();
                             clock.clear_backlog();
                             ui_active = true;
                             Ok(false)
@@ -6624,7 +6607,7 @@ pub async fn run(
                                         .reinitialize(options.seed ^ 0x0050_5245_5649_4557);
                                     preview_clock.clear_backlog();
                                     clock.clear_backlog();
-                                    song_player.pause((get_time() * 1000.0) as u64);
+                                    songs.pause((get_time() * 1000.0) as u64);
                                     ui_active = true;
                                     Ok(false)
                                 }
@@ -6687,18 +6670,14 @@ pub async fn run(
                         bubbles.reinitialize(options.seed);
                         preview_bubbles.clear();
                         if let Some(owner) = music.as_ref() {
-                            let _ = owner.stop_song(song_id);
+                            let _ = owner.stop_song(songs.current_song_id());
                         }
-                        song_player.clear();
-                        singing_feeds.clear();
-                        pending_song_ticks = None;
-                        pending_song_kind = None;
-                        song_title.clear();
+                        songs.reset_profile();
                         interlude = None;
                         finale = None;
                         interlude_clock.clear_backlog();
                         help = HelpController::new();
-                        help_restore_paused = None;
+                        pause.reset_profile();
                         story_browser_open = false;
                         screensaver_preview = None;
                         _screensaver_power_guard = None;
@@ -6715,12 +6694,9 @@ pub async fn run(
                         virtual_screensaver_open = false;
                         gift = None;
                         ui_resource_error = None;
-                        paused = false;
-                        pending_actions.clear();
+                        input_capture.pending_actions.clear();
                         clock.clear_backlog();
-                        feed_press_at = None;
-                        held_feed_at = None;
-                        held_fire_at = None;
+                        input_capture.cancel_holds();
                         entry_code = EntryCode::default();
                         if let Some(entry) = profiles.current() {
                             start_session_tick = entry.session.ticks;
@@ -6861,7 +6837,7 @@ pub async fn run(
                     );
                     clock.clear_backlog();
                     if frontend_transitioned || virtual_modal_frame || !virtual_ui.active() {
-                        pending_actions.clear();
+                        input_capture.pending_actions.clear();
                         break;
                     }
                 }
@@ -6888,7 +6864,7 @@ pub async fn run(
                             interlude.as_ref(),
                             startup_menu_open,
                         ),
-                        paused && !startup_menu_open,
+                        pause.is_paused() && !startup_menu_open,
                     );
                 }
                 next_frame().await;
@@ -6997,20 +6973,17 @@ pub async fn run(
                 AdventurePhase::GameSelector | AdventurePhase::HelpScreen
             )
         {
-            help_restore_paused = Some(paused);
-            paused = true;
+            pause.enter_help();
             help.open_pages(HelpReturn::PausedTank);
             help_active_frame = true;
             ui_active = true;
             clock.clear_backlog();
-            feed_press_at = None;
-            held_feed_at = None;
-            held_fire_at = None;
+            input_capture.cancel_holds();
         }
         let mut story_interlude_input = None::<Action>;
         if let AdventurePhase::ChallengeInterlude { story, .. } = session.phase {
             records.sync_challenge_story(session, story);
-            if !paused && !ui_active {
+            if !pause.is_paused() && !ui_active {
                 for intent in records.input_story_frame(
                     &presentation,
                     session,
@@ -7040,7 +7013,7 @@ pub async fn run(
                     };
                     if let Some(action) = action {
                         story_interlude_input = Some(action.clone());
-                        pending_actions.push(action);
+                        input_capture.pending_actions.push(action);
                     }
                 }
             }
@@ -7059,7 +7032,7 @@ pub async fn run(
         }
         if let (Some(controller), Some(runtime)) = (interlude.as_mut(), finale.as_mut()) {
             let has_focus = focus_window.as_ref().is_none_or(OwnWindow::has_focus);
-            if paused || ui_active || !has_focus {
+            if pause.is_paused() || ui_active || !has_focus {
                 interlude_clock.clear_backlog();
             } else {
                 interlude_clock.add_frame(get_frame_time(), false);
@@ -7070,9 +7043,11 @@ pub async fn run(
                 }
             }
         }
-        if session.phase == AdventurePhase::SandboxPlaying && !paused {
+        if session.phase == AdventurePhase::SandboxPlaying && !pause.is_paused() {
             while let Some(character) = get_char_pressed() {
-                pending_actions.push(Action::SandboxKeyChar { character });
+                input_capture
+                    .pending_actions
+                    .push(Action::SandboxKeyChar { character });
             }
         }
         if !ui_owned_input
@@ -7082,26 +7057,30 @@ pub async fn run(
         {
             if matches!(session.phase, AdventurePhase::VirtualPurchaseConfirm { .. }) {
                 let now_seconds = wall_seconds();
-                pending_actions.push(Action::VirtualConfirmPurchase {
-                    accept: false,
-                    now_seconds,
-                    day_start_seconds: now_seconds / 86_400 * 86_400,
-                });
+                input_capture
+                    .pending_actions
+                    .push(Action::VirtualConfirmPurchase {
+                        accept: false,
+                        now_seconds,
+                        day_start_seconds: now_seconds / 86_400 * 86_400,
+                    });
             } else if let AdventurePhase::VirtualFishSaleConfirm { id } = session.phase {
-                pending_actions.push(Action::VirtualSellFish {
+                input_capture.pending_actions.push(Action::VirtualSellFish {
                     id,
                     accept: false,
                     now_seconds: wall_seconds(),
                 });
             } else if matches!(session.phase, AdventurePhase::VirtualBackdropSaleConfirm) {
-                pending_actions.push(Action::VirtualSellBackdrop { accept: false });
+                input_capture
+                    .pending_actions
+                    .push(Action::VirtualSellBackdrop { accept: false });
             } else if matches!(session.phase, AdventurePhase::VirtualRename { .. }) {
-                pending_actions.push(Action::OpenMenu);
+                input_capture.pending_actions.push(Action::OpenMenu);
             } else if matches!(
                 session.phase,
                 AdventurePhase::VirtualStore | AdventurePhase::VirtualSetup
             ) {
-                pending_actions.push(Action::Continue);
+                input_capture.pending_actions.push(Action::Continue);
             } else if matches!(
                 session.phase,
                 AdventurePhase::TimeTrialPrestoDialog { .. }
@@ -7109,9 +7088,9 @@ pub async fn run(
                     | AdventurePhase::ChallengePrestoDialog { .. }
                     | AdventurePhase::SandboxPrestoDialog { .. }
                     | AdventurePhase::VirtualPrestoDialog { .. }
-            ) && !paused
+            ) && !pause.is_paused()
             {
-                pending_actions.push(Action::PrestoCancel);
+                input_capture.pending_actions.push(Action::PrestoCancel);
             } else if matches!(
                 session.phase,
                 AdventurePhase::BonusResults { ref result } if result.purchase.confirming
@@ -7128,14 +7107,14 @@ pub async fn run(
                         .and_then(|run| run.result.as_ref())
                         .is_some_and(|result| result.purchase.confirming))
             {
-                pending_actions.push(Action::ConfirmBonusPurchase { accept: false });
+                input_capture
+                    .pending_actions
+                    .push(Action::ConfirmBonusPurchase { accept: false });
             } else {
-                paused = !paused;
+                pause.toggle();
             }
             clock.clear_backlog();
-            feed_press_at = None;
-            held_feed_at = None;
-            held_fire_at = None;
+            input_capture.cancel_holds();
         }
         let button_height = presentation.images["IMAGE_MAINBUTTON"].height();
         let menu_rect = if matches!(
@@ -7153,7 +7132,7 @@ pub async fn run(
         } else {
             Rect::new(525.0, 3.0, 101.0, 29.0)
         };
-        if !paused && !ui_active && !ui_owned_input {
+        if !pause.is_paused() && !ui_active && !ui_owned_input {
             let current_name = match &session.phase {
                 AdventurePhase::VirtualPurchaseConfirm { name, .. }
                 | AdventurePhase::VirtualRename { name, .. } => Some(name.clone()),
@@ -7172,7 +7151,7 @@ pub async fn run(
                     }
                 }
                 if name != original {
-                    pending_actions.push(match session.phase {
+                    input_capture.pending_actions.push(match session.phase {
                         AdventurePhase::VirtualRename { .. } => Action::VirtualSetRename { name },
                         _ => Action::VirtualSetPurchaseName { name },
                     });
@@ -7191,12 +7170,14 @@ pub async fn run(
                     | AdventurePhase::ChallengePrestoDialog { .. }
                     | AdventurePhase::SandboxPrestoDialog { .. }
                     | AdventurePhase::VirtualPrestoDialog { .. }
-            ) && !paused
+            ) && !pause.is_paused()
             {
                 if let Some(pet) =
                     presto_choice_at_pointer(&session.progress.unlocked_pets, pointer)
                 {
-                    pending_actions.push(Action::PrestoPress { pet });
+                    input_capture
+                        .pending_actions
+                        .push(Action::PrestoPress { pet });
                 }
             } else if (menu_rect.contains(pointer)
                 && matches!(
@@ -7223,10 +7204,8 @@ pub async fn run(
                 menu = Some(MenuRuntime::new(options.seed ^ menu_epoch, &assets));
                 ui_active = true;
                 clock.clear_backlog();
-                feed_press_at = None;
-                held_feed_at = None;
-                held_fire_at = None;
-            } else if !paused {
+                input_capture.cancel_holds();
+            } else if !pause.is_paused() {
                 let action = match session.phase {
                     AdventurePhase::VirtualTank => {
                         let now_seconds = wall_seconds();
@@ -7632,11 +7611,7 @@ pub async fn run(
                         Action::Continue
                     }
                     AdventurePhase::Hatch { .. } | AdventurePhase::TankFourFinaleHatch { .. } => {
-                        hatch_pointer_owned = true;
-                        hatch_background_down = is_mouse_button_down(MouseButton::Left);
-                        Action::HatchHold {
-                            down: hatch_background_down,
-                        }
+                        input_capture.begin_hatch_hold(is_mouse_button_down(MouseButton::Left))
                     }
                     AdventurePhase::FirstTankRescue
                         if Rect::new(186.0, 295.0, 264.0, button_height).contains(pointer) =>
@@ -7844,7 +7819,7 @@ pub async fn run(
                     });
                     let gus_click =
                         gus_initial_attempt.then_some((pointer.x as i32, pointer.y as i32));
-                    feed_press_at = Some((clock.press(get_time()), gus_click));
+                    input_capture.feed_press_at = Some((clock.press(get_time()), gus_click));
                 }
                 if matches!(action, Action::Click { .. })
                     && pointer.y > 40.0
@@ -7857,9 +7832,9 @@ pub async fn run(
                                 || !board.missiles.is_empty())
                     })
                 {
-                    held_fire_at = Some(clock.press(get_time()));
+                    input_capture.held_fire_at = Some(clock.press(get_time()));
                 }
-                pending_actions.push(action);
+                input_capture.pending_actions.push(action);
             }
         }
         if !ui_active && is_mouse_button_released(MouseButton::Left) {
@@ -7870,18 +7845,15 @@ pub async fn run(
                     | AdventurePhase::ChallengePrestoDialog { .. }
                     | AdventurePhase::SandboxPrestoDialog { .. }
                     | AdventurePhase::VirtualPrestoDialog { .. }
-            ) && !paused
+            ) && !pause.is_paused()
             {
-                pending_actions.push(Action::PrestoRelease {
+                input_capture.pending_actions.push(Action::PrestoRelease {
                     pet: presto_choice_at_pointer(&session.progress.unlocked_pets, pointer),
                 });
             }
-            hatch_pointer_owned = false;
-            feed_press_at = None;
-            held_feed_at = None;
-            held_fire_at = None;
+            input_capture.release_left();
         }
-        if !paused
+        if !pause.is_paused()
             && !ui_active
             && is_mouse_button_pressed(MouseButton::Right)
             && matches!(
@@ -7893,7 +7865,7 @@ pub async fn run(
                     | AdventurePhase::VirtualTank
             )
         {
-            pending_actions.push(Action::RightClick {
+            input_capture.pending_actions.push(Action::RightClick {
                 x: pointer.x,
                 y: pointer.y,
             });
@@ -7902,14 +7874,13 @@ pub async fn run(
             session.phase,
             AdventurePhase::Hatch { .. } | AdventurePhase::TankFourFinaleHatch { .. }
         ) {
-            let held = hatch_pointer_owned && is_mouse_button_down(MouseButton::Left);
-            if held != hatch_background_down {
-                pending_actions.push(Action::HatchHold { down: held });
-                hatch_background_down = held;
+            if let Some(action) =
+                input_capture.update_hatch_hold(is_mouse_button_down(MouseButton::Left))
+            {
+                input_capture.pending_actions.push(action);
             }
         } else {
-            hatch_pointer_owned = false;
-            hatch_background_down = false;
+            input_capture.leave_hatch();
         }
         let enter_continues = matches!(
             session.phase,
@@ -7930,15 +7901,15 @@ pub async fn run(
                 | AdventurePhase::PetSelection { .. }
         ) || matches!(session.phase, AdventurePhase::GameOver { updates } | AdventurePhase::TimeTrialGameOver { updates } if updates > 30)
             || matches!(session.phase, AdventurePhase::BonusResults { ref result } if result.updates >= 30);
-        if !paused
+        if !pause.is_paused()
             && !ui_active
             && story_interlude_input.is_none()
             && is_key_pressed(KeyCode::Enter)
             && enter_continues
         {
-            pending_actions.push(Action::Continue);
+            input_capture.pending_actions.push(Action::Continue);
         }
-        if !paused
+        if !pause.is_paused()
             && !ui_active
             && session.phase == AdventurePhase::AdventureFinaleInterlude
             && is_key_pressed(KeyCode::Enter)
@@ -7946,9 +7917,9 @@ pub async fn run(
             if let Some(controller) = interlude.as_mut() {
                 let _ = controller.back_to_menu();
             }
-            pending_actions.push(Action::OpenMenu);
+            input_capture.pending_actions.push(Action::OpenMenu);
         }
-        if !paused
+        if !pause.is_paused()
             && !ui_active
             && matches!(
                 session.phase,
@@ -7957,14 +7928,21 @@ pub async fn run(
             )
         {
             if is_key_pressed(KeyCode::Y) || is_key_pressed(KeyCode::Enter) {
-                pending_actions.push(Action::ConfirmPetSelection { accept: true });
+                input_capture
+                    .pending_actions
+                    .push(Action::ConfirmPetSelection { accept: true });
             } else if is_key_pressed(KeyCode::N) {
-                pending_actions.push(Action::ConfirmPetSelection { accept: false });
+                input_capture
+                    .pending_actions
+                    .push(Action::ConfirmPetSelection { accept: false });
             }
         }
         let save_requested = !ui_active && is_key_pressed(KeyCode::S);
         let mut exit_requested = is_quit_requested()
-            || (paused && !help_active_frame && !story_active_frame && is_key_pressed(KeyCode::Q))
+            || (pause.is_paused()
+                && !help_active_frame
+                && !story_active_frame
+                && is_key_pressed(KeyCode::Q))
             || wall_deadline_reached(elapsed, options.quit_after);
         let mut events = frontend_events;
         let mut event_stamps = Vec::new();
@@ -7986,13 +7964,13 @@ pub async fn run(
                     interlude.as_ref(),
                     startup_menu_open,
                 ),
-                paused && !startup_menu_open,
+                pause.is_paused() && !startup_menu_open,
             );
         }
         if save_requested || exit_requested {
             // Inputs already accepted by this window belong to the checkpoint.
             // Apply them without inventing an extra simulation tick on save/exit.
-            let accepted_events = session.apply_actions(&pending_actions);
+            let accepted_events = session.apply_actions(&input_capture.pending_actions);
             if options.test_speed > 1 {
                 stamp_events(
                     &mut event_stamps,
@@ -8003,15 +7981,11 @@ pub async fn run(
                 );
             }
             events.extend(accepted_events);
-            pending_actions.clear();
-            if feed_press_at.is_some_and(|(_, gus_click)| arms_held_feed(&events, gus_click))
-                && is_mouse_button_down(MouseButton::Left)
-            {
-                held_feed_at = feed_press_at.take().map(|(pressed_at, _)| pressed_at);
-            }
+            input_capture.pending_actions.clear();
+            input_capture.arm_held_feed(&events, is_mouse_button_down(MouseButton::Left));
         }
         if !exit_requested {
-            clock.add_frame(get_frame_time(), paused || ui_active);
+            clock.add_frame(get_frame_time(), pause.is_paused() || ui_active);
             while clock.step_due() {
                 if options.test_speed > 1
                     && wall_deadline_reached(get_time() - started, options.quit_after)
@@ -8019,7 +7993,7 @@ pub async fn run(
                     exit_requested = true;
                     // This frame's accepted input is checkpointed without a
                     // fabricated simulation step, as for a normal exit.
-                    let accepted_events = session.apply_actions(&pending_actions);
+                    let accepted_events = session.apply_actions(&input_capture.pending_actions);
                     stamp_events(
                         &mut event_stamps,
                         &accepted_events,
@@ -8028,7 +8002,7 @@ pub async fn run(
                         "accepted_actions",
                     );
                     events.extend(accepted_events);
-                    pending_actions.clear();
+                    input_capture.pending_actions.clear();
                     break;
                 }
                 if help_active_frame
@@ -8042,7 +8016,7 @@ pub async fn run(
                 {
                     // Reading screens are app-lived; even a paused Board update would
                     // advance durable ticks or modal timers.
-                } else if paused || ui_active {
+                } else if pause.is_paused() || ui_active {
                     session.paused_step();
                 } else {
                     let before_fish_hunger: HashMap<_, _> =
@@ -8057,12 +8031,12 @@ pub async fn run(
                         } else {
                             HashMap::new()
                         };
-                    let mut step_actions = std::mem::take(&mut pending_actions);
-                    let pressed_feed = feed_press_at.is_some()
+                    let mut step_actions = std::mem::take(&mut input_capture.pending_actions);
+                    let pressed_feed = input_capture.feed_press_at.is_some()
                         && step_actions
                             .iter()
                             .any(|action| matches!(action, Action::Click { .. }));
-                    if let Some(press_at) = held_feed_at
+                    if let Some(press_at) = input_capture.held_feed_at
                         && is_mouse_button_down(MouseButton::Left)
                         && matches!(
                             session.phase,
@@ -8083,7 +8057,7 @@ pub async fn run(
                             elapsed_ms: clock.held_elapsed_ms(press_at, get_time()),
                         });
                     }
-                    if let Some(press_at) = held_fire_at
+                    if let Some(press_at) = input_capture.held_fire_at
                         && is_mouse_button_down(MouseButton::Left)
                         && matches!(
                             session.phase,
@@ -8142,96 +8116,13 @@ pub async fn run(
                                 .get(&fish.id)
                                 .is_some_and(|old| fish.hunger > *old + 1)
                             {
-                                let count = singing_feeds.entry(fish.id).or_default();
-                                *count = count.wrapping_add(1);
-                                if (*count).is_multiple_of(5) && !song_player.busy() {
-                                    pending_song_ticks = Some(5);
-                                    pending_song_kind = fish.properties.named;
-                                }
+                                songs.record_feed(fish.id, fish.properties.named);
                             }
                         }
-                        if let Some(left) = pending_song_ticks.as_mut() {
-                            *left = left.saturating_sub(1);
-                            if *left == 0 {
-                                pending_song_ticks = None;
-                                if let Some(catalog) = song_catalog.as_ref() {
-                                    let special = pending_song_kind.take();
-                                    let eligible: Vec<_> = catalog
-                                        .songs()
-                                        .iter()
-                                        .filter(|song| {
-                                            if song.property("test").is_some() {
-                                                return false;
-                                            }
-                                            match special {
-                                                Some(NamedFish::Kilgore) => {
-                                                    song.property("kilgore").is_some()
-                                                }
-                                                Some(NamedFish::Ludwig) => {
-                                                    !song.is_long()
-                                                        && (song.property("beethoven").is_some()
-                                                            || song
-                                                                .property("beethovenrare")
-                                                                .is_some())
-                                                }
-                                                Some(NamedFish::Santa) => {
-                                                    !song.is_long()
-                                                        && (song.property("santa").is_some()
-                                                            || song.property("santarare").is_some())
-                                                }
-                                                _ => {
-                                                    !song.is_long()
-                                                        && song.property("beethovenrare").is_none()
-                                                        && song.property("santarare").is_none()
-                                                }
-                                            }
-                                        })
-                                        .collect();
-                                    if let Some(song) =
-                                        eligible.get(song_sequence % eligible.len().max(1))
-                                    {
-                                        let selected = if song_sequence % 5 == 4 {
-                                            song.property("short")
-                                                .and_then(|stem| {
-                                                    catalog.songs().iter().find(|candidate| {
-                                                        candidate.is_long()
-                                                            && candidate.property("long")
-                                                                == Some(stem)
-                                                    })
-                                                })
-                                                .unwrap_or(*song)
-                                        } else {
-                                            *song
-                                        };
-                                        song_sequence += 1;
-                                        song_id = song_id.saturating_add(1);
-                                        let applause = selected.is_long()
-                                            && !matches!(
-                                                special,
-                                                Some(NamedFish::Kilgore | NamedFish::Santa)
-                                            );
-                                        if song_player
-                                            .start(
-                                                selected,
-                                                song_id,
-                                                (get_time() * 1000.0) as u64,
-                                                applause,
-                                            )
-                                            .is_ok()
-                                        {
-                                            song_title = selected
-                                                .property("title")
-                                                .unwrap_or(&selected.file_name)
-                                                .to_owned();
-                                            if selected.is_long() {
-                                                song_title.push_str(" (extended)");
-                                            }
-                                            song_title_until = get_time() + 5.0;
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        songs.advance_pending(
+                            song_catalog.as_ref().map(SongCatalog::songs),
+                            get_time,
+                        );
                     }
                     if let Some(owner) = music.as_mut() {
                         owner.sync_cue(
@@ -8241,18 +8132,14 @@ pub async fn run(
                                 interlude.as_ref(),
                                 startup_menu_open,
                             ),
-                            paused && !startup_menu_open,
+                            pause.is_paused() && !startup_menu_open,
                         );
                     }
                     phase_transitioned |= previous_phase != std::mem::discriminant(&session.phase);
-                    if feed_press_at
-                        .is_some_and(|(_, gus_click)| arms_held_feed(&step_events, gus_click))
-                        && is_mouse_button_down(MouseButton::Left)
-                    {
-                        held_feed_at = feed_press_at.take().map(|(pressed_at, _)| pressed_at);
-                    }
+                    input_capture
+                        .arm_held_feed(&step_events, is_mouse_button_down(MouseButton::Left));
                     if pressed_feed {
-                        feed_press_at = None;
+                        input_capture.feed_press_at = None;
                     }
                     if step_events.iter().any(|event| {
                         matches!(
@@ -8267,9 +8154,7 @@ pub async fn run(
                         session.phase,
                         AdventurePhase::Playing | AdventurePhase::ChallengePlaying
                     ) {
-                        feed_press_at = None;
-                        held_feed_at = None;
-                        held_fire_at = None;
+                        input_capture.cancel_holds();
                     }
                     if options.test_speed > 1 {
                         stamp_events(
@@ -8282,7 +8167,7 @@ pub async fn run(
                     }
                     events.extend(step_events);
                 }
-                clock.consume_step(paused || ui_active);
+                clock.consume_step(pause.is_paused() || ui_active);
                 if phase_transitioned
                     || events.iter().any(|event| {
                         matches!(
@@ -8392,22 +8277,20 @@ pub async fn run(
             music_reports.extend(play_bubble_sound(&presentation, music.as_ref()));
         }
         let song_now_ms = (get_time() * 1000.0) as u64;
-        if paused || ui_active || session.phase != AdventurePhase::VirtualTank {
-            song_player.pause(song_now_ms);
-        } else {
-            song_player.resume(song_now_ms);
-            for command in song_player.advance(song_now_ms) {
-                if let (Some(owner), Some(bytes)) = (
-                    music.as_ref(),
-                    presentation.sounds.get(command.sample.sound_id()),
-                ) && let Some(report) = owner.play_tone(
-                    bytes.clone(),
-                    command.song_id,
-                    command.pitch_semitones,
-                    command.gain,
-                ) {
-                    music_reports.push(report);
-                }
+        for command in songs.advance_frame(
+            song_now_ms,
+            !pause.is_paused() && !ui_active && session.phase == AdventurePhase::VirtualTank,
+        ) {
+            if let (Some(owner), Some(bytes)) = (
+                music.as_ref(),
+                presentation.sounds.get(command.sample.sound_id()),
+            ) && let Some(report) = owner.play_tone(
+                bytes.clone(),
+                command.song_id,
+                command.pitch_semitones,
+                command.gain,
+            ) {
+                music_reports.push(report);
             }
         }
         if let Some(owner) = music.as_mut() {
@@ -8418,7 +8301,7 @@ pub async fn run(
                     interlude.as_ref(),
                     startup_menu_open,
                 ),
-                paused && !startup_menu_open,
+                pause.is_paused() && !startup_menu_open,
             );
             music_reports.extend(owner.drain_reports());
             if let Some(reason) = owner.unavailable() {
@@ -8440,7 +8323,13 @@ pub async fn run(
             } else {
                 elapsed
             };
-            evidence.record(&events, &event_stamps, session, evidence_elapsed, paused)?;
+            evidence.record(
+                &events,
+                &event_stamps,
+                session,
+                evidence_elapsed,
+                pause.is_paused(),
+            )?;
             evidence.record_music(&music_reports, evidence_elapsed, session)?;
         }
         if exit_requested {
@@ -8477,7 +8366,7 @@ pub async fn run(
         {
             presentation.draw(
                 session,
-                paused,
+                pause.is_paused(),
                 pointer,
                 healing_warning_until_tick,
                 finale.as_ref().zip(interlude.as_ref()),
@@ -8496,8 +8385,10 @@ pub async fn run(
         {
             ui_resource_error.get_or_insert_with(|| error.to_string());
         }
-        if session.phase == AdventurePhase::VirtualTank && get_time() < song_title_until {
-            draw_text(&song_title, 24.0, 105.0, 20.0, YELLOW);
+        if session.phase == AdventurePhase::VirtualTank
+            && let Some(title) = songs.title(get_time())
+        {
+            draw_text(title, 24.0, 105.0, 20.0, YELLOW);
         }
         let draw_selector = startup_menu_open || session.phase == AdventurePhase::GameSelector;
         if let Some(entry) = profiles.current() {
@@ -8685,7 +8576,7 @@ pub async fn run(
     }
     if let (Some(evidence), Some(current)) = (evidence.as_mut(), profiles.current()) {
         let session = &current.session;
-        evidence.record(&[], &[], session, get_time() - started, paused)?;
+        evidence.record(&[], &[], session, get_time() - started, pause.is_paused())?;
         cli::write_json(
             &evidence.root.join("final.local.json"),
             &serde_json::json!({"session":session,"game_after":after,"elapsed_seconds":get_time()-started,"session_elapsed_seconds":session.ticks.saturating_sub(start_session_tick) as f64 * f64::from(TICK_MS) / 1000.0,"test_speed":options.test_speed,"time_mode":options.time_mode(),"game_unchanged":true}),

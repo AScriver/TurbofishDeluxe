@@ -6,6 +6,7 @@ use crate::app::{
     Presentation,
     help_runtime::{fill, font_text, image, image_box, outline},
 };
+use crate::ui;
 use crate::virtual_ui::{
     ButtonView, Cel, DialogView, FishDetails, FishManagementView, FontId, ImageId, Layer,
     ProductPreview, Rect as UiRect, SCREEN, SetupView, Sprite, StoreView,
@@ -602,20 +603,14 @@ impl Renderer<'_> {
             .unwrap_or(1)
             .max(1) as f32;
         let line_height = (height + 2.0).max(ascent + 2.0);
-        let mut baseline = bounds.y
-            + ascent
-            + if centered {
-                ((bounds.height - line_height * lines.len() as f32) / 2.0).max(0.0)
-            } else {
-                0.0
-            };
+        let mut baseline =
+            ui::text_block_baseline(rect(bounds), ascent, line_height, lines.len(), centered);
         for line in &lines {
-            let x = bounds.x
-                + if centered {
-                    ((bounds.width - measure(line).unwrap_or(bounds.width)) / 2.0).max(0.0)
-                } else {
-                    0.0
-                };
+            let x = if centered {
+                ui::centered_text_x_clamped(rect(bounds), measure(line).unwrap_or(bounds.width))
+            } else {
+                bounds.x + 0.0
+            };
             font_text(font, line, x, baseline, color, rect(bounds));
             baseline += line_height;
             if baseline - ascent >= bounds.y + bounds.height {
@@ -629,12 +624,8 @@ fn rect(value: UiRect) -> Rect {
     Rect::new(value.x, value.y, value.width, value.height)
 }
 fn inset(value: UiRect, amount: f32) -> UiRect {
-    UiRect::new(
-        value.x + amount,
-        value.y + amount,
-        (value.width - 2.0 * amount).max(0.0),
-        (value.height - 2.0 * amount).max(0.0),
-    )
+    let bounds = ui::inset(rect(value), amount);
+    UiRect::new(bounds.x, bounds.y, bounds.w, bounds.h)
 }
 fn whole(image: ImageId, bounds: UiRect, layer: Layer) -> Sprite {
     Sprite {
