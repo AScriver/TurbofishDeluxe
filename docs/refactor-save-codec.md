@@ -115,3 +115,15 @@ process, live/frozen/earned save, service, database or paused automation was
 accessed for testing. Actionables readback remains **Ready version6, unclaimed**
 under the documented tracking failure; engineering verification is separate from
 a tracker completion claim.
+
+### Reconciled contribution
+
+The owned implementation is `d7518654c430e8e67cc2d5a33b7ba26f1e7a995d`.
+Main's other four lane contributions and central tracking notes were fetched and
+merged cleanly as `0afc4a2e8bf4047a4c5390e079beeff15c55f76b`. The three owned
+Rust source digests above remain unchanged. On that reconciled tree,
+`cargo fmt --all -- --check` and
+`cargo check --locked --offline --package turbofish-deluxe --lib --bin turbofish-deluxe --test persistence`
+both passed. No unaffected test filter was repeated. This is compile support for
+the reconciled contribution before root's shared joins; it does not replace the
+identified earlier EXE or claim the final joined batch is verified.
