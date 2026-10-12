@@ -23,6 +23,7 @@ pub mod interlude;
 pub mod invasion;
 pub mod larva;
 pub mod missile;
+pub mod modal;
 pub mod music;
 pub mod niko;
 pub mod oscar;

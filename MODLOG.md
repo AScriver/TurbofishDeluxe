@@ -4,6 +4,14 @@ Newest entries first. Update triggers and evidence rules are authoritative in [A
 
 ## 2026-10-11 — Start five modal frontend completion lanes
 
+Root subsequently added registered shared modal input/capture/focus controls
+and owned-art drawing. Six control contracts, formatting and strict
+lib/bin/core-test lint passed in a private bounded target; source pin and seven
+installed resource-ID declarations were read back. All five new Inbox claims
+succeeded and reached In progress. The [shared checkpoint](docs/modal-batch-303-307.md#shared-core-checkpoint)
+owns exact commands/source facts and still-pending screen/parent joins. No
+native game or real save was touched.
+
 Created Actionables#303-307 from the user-authorized unfinished-modal audit:
 Options/pause, profile forms, Quit/information, gameplay prompts and shell gifts.
 The [modal contract](docs/modal-batch-303-307.md) reserves exact disjoint new

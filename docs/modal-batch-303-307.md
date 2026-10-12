@@ -1,5 +1,30 @@
 # Modal frontend completion batch
 
+## Shared core checkpoint
+
+The five ordinary Inbox claims succeeded and reached In progress. Root's
+`src/modal.rs` and `src/app/modal_runtime.rs` implement the reserved API;
+`src/lib.rs` and the parent resource list register them. Screen/pure-model
+registration remains root-owned at each handoff. A temporary private-module
+dead-code allowance exists only until the actual adapters join the painter.
+Six shared control contracts passed, including captured release/one emission,
+drag-off, disabled/removed targets, focus/cancel retirement, enabled keyboard
+traversal and empty/all-disabled input. Formatting and strict lib/bin/core-test
+lint passed; no broad suite or native run. Exact checked commands are
+`cargo test --locked --offline -j 2 --test modal_controls` and
+`cargo clippy --locked --offline -j 2 --lib --bin turbofish-deluxe --test modal_controls -- -D warnings`.
+
+Source W1 readback matches the registered pin. `WinFishCommon.cpp:14-71,88-96`
+supports default fonts/colors, three horizontal button states, +1px pressed
+translation/-2px label offset and owned checked/unchecked images.
+`MoneyDialog.cpp:55-59` supports edit-box art. Installed owned
+`properties/resources.xml:47-49,97-100` declares dialog/button/edit/check/slider
+assets. Rendering uses the existing project image-box and clipped font helpers;
+parent owns one dim layer. Root slider bounds are the whole widget; thumb left
+is `x + value * max(width - thumb_width, 0)`. Controllers must align drag/value
+geometry with that rule or report a narrow layout correction. Source-informed
+art/control composition is not observed retail pixel/native acceptance.
+
 E125 starts from clean main `a4897097e0d79083f459cd259d4bd41d6506b42c`.
 The user explicitly requested Actionables for unfinished modal screens,
 implementation in new parallel chats/worktrees where independent, and all

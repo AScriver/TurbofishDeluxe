@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-10-11, America/Phoenix. **E124 / Actionables#298-302: all five code-quality refactors integrated and pushed.** The [completion record](docs/refactor-batch-298-302.md#completion-and-joined-verification) owns checked commits, closed source transfers and final production joins. Actionables claims failed in installed task-detail decoding; scoped records remain Ready version6/unclaimed, separate from completed engineering. Earlier#292-297 are complete and their workers stay closed. Ordinary gameplay remains human-owned; autonomous scenarios and coordinator heartbeat remain stopped. Screensaver work is excluded and finished code is preserved. Real/frozen/earned saves, E80 and genuine earning06 remain untouched; retail/audio/human fidelity stays pending where unobserved.
+Updated: 2026-10-11, America/Phoenix. **E125 / Actionables#303-307: five modal frontend chats/worktrees active and claimed.** The [modal contract](docs/modal-batch-303-307.md) owns source interfaces/resources and root production joins. E124 engineering is complete; its five tracking records remain Ready/unclaimed after the separate prepared-record claim failure. Earlier workers stay closed. Ordinary gameplay remains human-owned; autonomous scenarios and coordinator heartbeat remain stopped. Screensaver work is excluded and finished code is preserved. Real/frozen/earned saves, E80 and genuine earning06 remain untouched; retail/audio/human fidelity stays pending where unobserved.
 
 ## Current increment
 
@@ -10,8 +10,13 @@ The user authorized new parallel chats/worktrees and checked commits pushed to
 main. The [modal contract](docs/modal-batch-303-307.md) reserves disjoint source,
 shared owned-art/control interfaces and root-owned production joins before
 dispatch. Use ordinary Inbox claim/research flow; no prepared-record retry.
-No new modal implementation or native result is claimed yet. Human gameplay,
-current37/profile3, saver exclusion and saved lineages remain unchanged.
+All five ordinary Inbox claims succeeded and tasks reached In progress. Root's
+shared owned-art drawing/control core passed six release/focus/disabled/cancel
+contracts, formatting and strict lib/bin/core-test lint. Installed resource
+metadata resolves all seven shared image IDs; W1 pin readback matches. Screen
+adapters and parent joins are still in progress; no completed modal/native
+result is claimed. Human gameplay, current37/profile3, saver exclusion and
+saved lineages remain unchanged.
 
 **E124 — bounded code-quality batch, engineering complete:** Five new
 chats/worktrees pushed shared glyph layout, direct current-format save admission,

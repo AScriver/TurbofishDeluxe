@@ -68,6 +68,9 @@ use records_runtime::RecordsRuntime;
 #[path = "app/runtime_state.rs"]
 mod runtime_state;
 use runtime_state::{FishSongRuntime, InputCapture, ModalPause};
+#[path = "app/modal_runtime.rs"]
+#[allow(dead_code)] // Removed when the bounded screen adapters join these functions.
+mod modal_runtime;
 #[path = "app/shell_gift_runtime.rs"]
 mod shell_gift_runtime;
 #[path = "app/virtual_input_runtime.rs"]
@@ -99,6 +102,7 @@ fn presentation_image_ids() -> Vec<&'static str> {
     ids.extend(records_runtime::HALL_IMAGES.map(|image| image.resource_key()));
     ids.extend_from_slice(virtual_runtime::REQUIRED_IMAGE_IDS);
     ids.extend_from_slice(shell_gift_runtime::REQUIRED_IMAGE_IDS);
+    ids.extend_from_slice(modal_runtime::REQUIRED_IMAGE_IDS);
     ids.sort_unstable();
     ids.dedup();
     ids
