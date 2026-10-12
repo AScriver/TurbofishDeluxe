@@ -186,47 +186,30 @@ fn draw_clipped_font(
     tint: Color,
     clip: [i32; 4],
 ) {
-    let characters: Vec<_> = text.chars().collect();
-    for (layer, atlas) in font.metrics.layers.iter().zip(&font.atlases) {
-        let mut pen = x;
-        for (index, character) in characters.iter().enumerate() {
-            if let Some(glyph) = layer.glyphs.get(character) {
-                if let Some(rect) = glyph.rect {
-                    let source = Rect::new(
-                        rect.x as f32,
-                        rect.y as f32,
-                        rect.width as f32,
-                        rect.height as f32,
-                    );
-                    let glyph_x = pen + glyph.offset_x as f32;
-                    let glyph_y = baseline - (layer.ascent - glyph.offset_y) as f32;
-                    if let Some((draw_x, draw_y, source)) =
-                        crop_source(glyph_x, glyph_y, source, clip, false)
-                    {
-                        draw_texture_ex(
-                            atlas,
-                            draw_x,
-                            draw_y,
-                            tint,
-                            DrawTextureParams {
-                                source: Some(source),
-                                dest_size: Some(vec2(source.w, source.h)),
-                                ..Default::default()
-                            },
-                        );
-                    }
-                }
-                pen += (glyph.advance + layer.spacing) as f32;
-                if let Some(next) = characters.get(index + 1) {
-                    pen += layer
-                        .kerning
-                        .get(&(*character, *next))
-                        .copied()
-                        .unwrap_or(0) as f32;
-                }
-            }
+    font.metrics.for_each_glyph(text, x, baseline, |glyph| {
+        let Some(atlas) = font.atlases.get(glyph.layer_index) else {
+            return;
+        };
+        let source = Rect::new(
+            glyph.source.x as f32,
+            glyph.source.y as f32,
+            glyph.source.width as f32,
+            glyph.source.height as f32,
+        );
+        if let Some((draw_x, draw_y, source)) = crop_source(glyph.x, glyph.y, source, clip, false) {
+            draw_texture_ex(
+                atlas,
+                draw_x,
+                draw_y,
+                tint,
+                DrawTextureParams {
+                    source: Some(source),
+                    dest_size: Some(vec2(source.w, source.h)),
+                    ..Default::default()
+                },
+            );
         }
-    }
+    });
 }
 
 fn draw_finale_sprite(presentation: &Presentation, sprite: &FinaleSprite, clip: [i32; 4]) {

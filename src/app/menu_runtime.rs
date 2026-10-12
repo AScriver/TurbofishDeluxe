@@ -590,53 +590,35 @@ fn draw_line(
     let Some(clip) = intersection(rect(draw.paint.clip), Rect::new(0.0, 0.0, 640.0, 480.0)) else {
         return;
     };
-    let characters: Vec<_> = text.chars().collect();
-    for (layer, atlas) in font.metrics.layers.iter().zip(&font.atlases) {
-        let mut pen = x;
-        for (index, character) in characters.iter().enumerate() {
-            if let Some(glyph) = layer.glyphs.get(character) {
-                if let Some(glyph_rect) = glyph.rect {
-                    let source = Rect::new(
-                        glyph_rect.x as f32,
-                        glyph_rect.y as f32,
-                        glyph_rect.width as f32,
-                        glyph_rect.height as f32,
-                    );
-                    let destination = Rect::new(
-                        pen + glyph.offset_x as f32,
-                        baseline - (layer.ascent - glyph.offset_y) as f32,
-                        source.w,
-                        source.h,
-                    );
-                    if let Some(clipped) = intersection(destination, clip) {
-                        draw_texture_ex(
-                            atlas,
-                            clipped.x,
-                            clipped.y,
-                            color,
-                            DrawTextureParams {
-                                source: Some(Rect::new(
-                                    source.x + clipped.x - destination.x,
-                                    source.y + clipped.y - destination.y,
-                                    clipped.w,
-                                    clipped.h,
-                                )),
-                                ..Default::default()
-                            },
-                        );
-                    }
-                }
-                pen += (glyph.advance + layer.spacing) as f32;
-                if let Some(next) = characters.get(index + 1) {
-                    pen += layer
-                        .kerning
-                        .get(&(*character, *next))
-                        .copied()
-                        .unwrap_or(0) as f32;
-                }
-            }
+    font.metrics.for_each_glyph(text, x, baseline, |glyph| {
+        let Some(atlas) = font.atlases.get(glyph.layer_index) else {
+            return;
+        };
+        let source = Rect::new(
+            glyph.source.x as f32,
+            glyph.source.y as f32,
+            glyph.source.width as f32,
+            glyph.source.height as f32,
+        );
+        let destination = Rect::new(glyph.x, glyph.y, source.w, source.h);
+        if let Some(clipped) = intersection(destination, clip) {
+            draw_texture_ex(
+                atlas,
+                clipped.x,
+                clipped.y,
+                color,
+                DrawTextureParams {
+                    source: Some(Rect::new(
+                        source.x + clipped.x - destination.x,
+                        source.y + clipped.y - destination.y,
+                        clipped.w,
+                        clipped.h,
+                    )),
+                    ..Default::default()
+                },
+            );
         }
-    }
+    });
     if draw.underline {
         let width = font.metrics.measure_width(text).unwrap_or(0).max(0) as f32;
         if let Some(line) = intersection(Rect::new(x, baseline + 1.0, width, 1.0), clip) {

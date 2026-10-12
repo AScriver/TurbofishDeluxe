@@ -6,16 +6,17 @@ eight ordered outcomes, baseline evidence and checks. #311 is committed as
 `c7b06fe`; its isolated baseline has901 passing tests. #312 is committed as
 `8f80305` with33 focused passes. #313 is committed as `587b6b6` with covered
 pending-money persistence checks. #314 is committed as `2ec1a62` with44 focused
-passes. #315 is committed as `f270e92` with139 codec passes. #316 routes applause
-through effects and preserves tone validation; all12 focused checks pass.
+passes. #315 is committed as `f270e92` with139 codec passes. #316 is committed
+as `88fbea5` with12 song/music passes. #317 removes duplicate clipped glyph
+layout; all27 focused checks pass.
 Formatting, strict lint, build and workflow precede
 commit. All eight Actionables were created/prepared;
-#311-316 claims failed and remain Ready/unclaimed under the recorded
+#311-317 claims failed and remain Ready/unclaimed under the recorded
 unavailable-tool fallback. Root owns edits. No gameplay,
 live saves, owned install, launcher staging or unrelated work is authorized here.
 Earlier increments and human/retail/audio acceptance limits below remain.
 Work is isolated on `ascriver/rust-review-fixes` after concurrent guppy tests
-appeared in the original checkout. Next: #317 existing glyph layout reuse.
+appeared in the original checkout. Next: #318 compact inventory digests.
 
 Updated: 2026-10-12, America/Phoenix. **E130 development-save compatibility removed; E128 targeted guppy observation complete.** [Follow-up evidence](docs/playtests/2026-10-12-guppy-turn-motion-followup.md) verifies release401da21 and four full-update probes with zero added turn-start delay. A human-authorized isolated1x run reproduces movement before pronounced body rotation;85 sampled turn states match the recovered frame rule. The original also starts animation before integrating reversed motion, and early authored poses remain close to the starting profile. No extra start delay or further runtime defect was established; retail playback timing and human acceptance remain open. All four owned test processes are closed. E128's mirror correction and Actionable#310 Done remain historical. E129's unrelated source edits are preserved; turn probes/captures identify the retained E128 build. E127/#309, E126/#308 and E125/#303-307 remain complete and preserved. E124 engineering is complete with its separately recorded Ready/unclaimed tracking limitation. Earlier source transfers/workers remain closed. Ordinary gameplay remains human-owned; autonomous scenarios and heartbeat remain stopped. Screensaver work stays excluded. Original/project live saves, E80, genuine earning06 and normal-launch artifacts remain untouched; full retail/audio/human acceptance stays pending where unobserved.
 

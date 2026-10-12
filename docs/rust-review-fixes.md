@@ -35,8 +35,8 @@ any later main changes.
 | 3 | #313 | Covered pending-money debt admission | Committed `587b6b6` |
 | 4 | #314 | Required nullable `last_laser` | Committed `2ec1a62` |
 | 5 | #315 | Remove proven duplicate schema inventories | Committed `f270e92` |
-| 6 | #316 | Deliver applause through the effect path | Checked; commit follows |
-| 7 | #317 | Reuse existing glyph layout for clipped text | Pending |
+| 6 | #316 | Deliver applause through the effect path | Committed `88fbea5` |
+| 7 | #317 | Reuse existing glyph layout for clipped text | Checked; commit follows |
 | 8 | #318 | Retain installation digests instead of buffers | Pending |
 
 All eight tracking records were created and researched/prepared to Ready. The
@@ -138,6 +138,23 @@ All12 focused song/music checks, formatting, strict lint, compilation, isolated
 build and workflow pass. Audible playback remains untested. #316's non-retryable
 claim failed without mutation, correlation `c3a5c92a-a53d-4724-b20a-0f22131c9b71`;
 inspection confirms Ready version6, unclaimed. No gameplay or live saves used.
+
+## Clipped text layout
+
+Menu, finale and tank selection drawing reuse `BitmapFont::for_each_glyph`.
+Remove three `Vec<char>` allocations and their duplicate pen/kerning loops;
+net50 source lines removed. Existing layer order, independent advances,
+rectangle-less/missing/Unicode glyph behavior and floating-point positions
+come from the already tested walker. Checked atlas lookup skips missing layers
+as the previous zip did. Caller clipping, texture parameters and underline
+remain unchanged. No trait, renderer layer or new test abstraction is added.
+
+All27 existing font/layout checks pass, as do formatting, strict lint,
+compilation, isolated build and workflow. The attempted library `font::tests`
+filter matched zero and supplies no coverage; all ten font integration tests ran.
+Native pixels/rendering remain untested. #317's non-retryable claim failed
+without mutation, correlation `04af7c59-507d-4e9b-9bba-73dfd04f0028`; inspection
+confirms Ready version6, unclaimed. No gameplay or live saves used.
 
 ## Required nullable laser state
 

@@ -2,6 +2,17 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Reuse glyph layout in clipped renderers (#317)
+
+`src/app/menu_runtime.rs`, `finale_runtime.rs` and `tank_selection_runtime.rs`
+reuse the existing allocation-free font walker, removing three character buffers
+and50 net lines of pen/kerning logic. Checked atlas access, clipping, texture
+parameters and underline behavior remain. All27 existing font/layout checks,
+strict lint and compilation pass; formatting/build/workflow precede commit.
+Native rendering, gameplay/live saves/install were not tested. #317 remains
+Ready/unclaimed after claim failure; [batch record](docs/rust-review-fixes.md)
+owns exact evidence and limits. Next: #318.
+
 ## 2026-10-12 — Route fish-song applause through effects (#316)
 
 `src/app.rs` uses `MusicOwner::play_song_command` in `src/music.rs` to route
