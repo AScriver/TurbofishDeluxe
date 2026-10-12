@@ -2,6 +2,10 @@
 
 Product scope: [requirements](requirements.md). Current evidence and environment: [STATUS](../STATUS.md). Implementation is authorized through the full runtime scope. Recovered rules are authoritative in [behavior contract](behavior-contract.md).
 
+Historical milestone sections below retain their identified source scopes.
+Current next actions in STATUS supersede their old implementation/native-run
+directions; completed systems and reports are not a new acceptance backlog.
+
 The user directed continued reversing and implementation on2026-10-09 and the whole completion sweep on2026-10-10. The2026-10-11 [verification plan](requirements.md#acceptance-and-working-style) supersedes the autonomous native backlog: the human plays normally and reports issues. Actionables#292-297 are Done with source changes on main; the [performance contract](performance-batch-295-297.md) retains their bounded parallel ownership and final verification. Root owns synthesis and integration. Other engineering retains single-primary ownership. Keep independently grounded regressions and necessary focused checks. Actual gameplay remains required before a playability claim; unperformed acceptance remains pending without repeated agent launches. Preserve stopped game-written saves and frozen identities; do not manufacture earned progression.
 
 The committed [remaining-runtime map](binary-recovery.md) owns BR01–12 main behavior outlines and exact follow-ups across all remaining families. A36/Tank5-1, [A37](presto.md)/[Time Trial](time-trial.md), completed replay and current31 [bonus-pet purchases/fourth slot](extra-pets.md) have frozen code checkpoints. Close materially blocking details before each increment; defer other refinements with exact references. Preserve atomic validated project writes even where retail error handling is weaker, and keep unknown Relax entry/offline ageing/repeated-result behavior explicit until recovered.
@@ -133,7 +137,10 @@ further screensaver work following the user's2026-10-10 instruction. Retain
 already integrated code/checkpoints without removing normal VT/profile features
 or adding saver packaging, fixtures or acceptance work. Continue the game sweep.
 
-Continue automatically through these dependency-aware outcomes, preserving the active Challenge increment and all earned/frozen work:
+Use this dependency order for concrete remaining implementation gaps and
+reported defects, preserving completed systems and all earned/frozen work.
+The [coverage checklist](compatibility.md) distinguishes implemented code from
+unperformed acceptance; current next actions belong to [STATUS](../STATUS.md).
 
 1. Complete Challenge entry, economy, waves, results, loss destination and persistence.
 2. Integrate Virtual Tank, store, special fish, properties, offline load behavior, capacity and remaining unlock consumers, including the cursor5 offer required for Sandbox admission.
@@ -306,7 +313,14 @@ Persist the truthful failed Board in GameOver under the existing atomic project-
 
 The user requested faster gameplay tests on 2026-10-09. Add an opt-in integer `--test-speed` factor from 1 through 8; default gameplay remains exactly 1. This is an engineering bound, not a recovered original-game setting. Acceleration requires explicit isolated project saves, evidence output and muted audio. Run identity, telemetry, manifests, report drafts and captures must identify the factor and distinguish wall elapsed time from fixed-step session time. Speed is transient process configuration, never a saved gameplay field.
 
-The user subsequently directed future automated tests to use faster speeds. New automated native gameplay scenarios explicitly select 8x; use 4x when their input/polling cannot keep up and record the reason. Adapt the scenario to the chosen factor instead of repeating long 1x exploration. Explicit 1x remains for required normal-speed acceptance and checks whose purpose is normal timing, presentation/audio or retail comparison. Record that purpose in the scenario. Ordinary gameplay and helper API defaults stay 1x for existing callers/frozen bundles; the automated workflow supplies the accelerated option explicitly. Fixed-step unit tests and build checks need no speed option.
+The later 2026-10-11 verification plan stops autonomous gameplay scenarios and
+assigns ordinary play to the human. Speed guidance applies only to a subsequent
+explicitly authorized targeted native reproduction: select 8x with muted audio,
+isolated saves/evidence, a wall deadline and owned-process cleanup. Use 4x only
+with a recorded input/polling reason. Explicit 1x remains for normal timing,
+presentation/audio or retail comparison with that purpose recorded. Ordinary
+gameplay and helper API defaults stay 1x for existing callers/frozen bundles.
+Fixed-step unit tests and build checks need no speed option.
 
 Retain the 28ms simulation update and ordinary game rules, RNG, transaction order and transition barriers. Apply the existing 200ms wall-frame clamp before the factor. Keep global pause at 1x and reset backlog/held input as before. Accelerated held-input age advances with each consumed fixed step; the default path retains its wall-clock behavior. Quit deadlines remain wall-based and are checked within accelerated batches.
 

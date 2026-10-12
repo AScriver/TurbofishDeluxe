@@ -2,6 +2,33 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Reconcile README and current documentation
+
+Audit clean main `97febdd` against the launcher, current profile/session formats,
+publication/audio/guppy call sites and checked [joined review](docs/rust-review-fixes.md#combined-completion).
+README now describes implemented systems and recorded acceptance separately,
+links recent review/modal/save/turn changes, uses normal resume in its launch
+example and explains intentional `--new-game` reset. Preserved screensaver and
+accelerated tooling are qualified by current scope and human-owned gameplay.
+
+STATUS links the latest joined build instead of presenting E127 as current,
+and reconciles the historical Time Trial fixture failure with #311's repair.
+Update [coverage](docs/compatibility.md) for current persistence, guppy, audio,
+chooser and review changes; [Time Trial](docs/time-trial.md#later-verification-corrections)
+links the actual corrected test. [DESIGN](docs/DESIGN.md#completion-sweep) makes
+old milestone directions historical and applies speed guidance only to a later
+explicitly authorized targeted reproduction. Completed reports remain intact;
+requirements, provenance and runtime code are unchanged.
+
+Checks: the host validator executes `scripts/Test-Workflow.ps1`; parser and
+automatic-variable validation, all 115 documents' local links/anchors,
+35 required files, 45 allowed and 37 excluded paths pass. `git diff --check`
+passes. These are documentation-only checks; the recorded 912-pass Rust suite
+was not rerun. No game, audio device, owned installation, live save or
+normal-launch artifact was inspected or changed. No workItemId was supplied;
+Actionables was not updated. Next: commit the reviewed documentation locally;
+ordinary gameplay and unobserved retail/audio/human acceptance remain pending.
+
 ## 2026-10-12 — Repair Actionables claims and close #311–318
 
 Actionables commit `e365424` accepts its legitimate `agent-bulk-prepared` audit

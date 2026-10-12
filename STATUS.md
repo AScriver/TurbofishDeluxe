@@ -14,10 +14,27 @@ both histories remain intact. Original claim failures remain historical.
 No gameplay, live saves, owned installation, audio device or normal-launch
 artifact is used. Earlier human/retail/audio acceptance limits below remain.
 
-Updated: 2026-10-12, America/Phoenix. **E130 development-save compatibility removed; E128 targeted guppy observation complete.** [Follow-up evidence](docs/playtests/2026-10-12-guppy-turn-motion-followup.md) verifies release401da21 and four full-update probes with zero added turn-start delay. A human-authorized isolated1x run reproduces movement before pronounced body rotation;85 sampled turn states match the recovered frame rule. The original also starts animation before integrating reversed motion, and early authored poses remain close to the starting profile. No extra start delay or further runtime defect was established; retail playback timing and human acceptance remain open. All four owned test processes are closed. E128's mirror correction and Actionable#310 Done remain historical. E129's unrelated source edits are preserved; turn probes/captures identify the retained E128 build. E127/#309, E126/#308 and E125/#303-307 remain complete and preserved. E124 engineering is complete with its separately recorded Ready/unclaimed tracking limitation. Earlier source transfers/workers remain closed. Ordinary gameplay remains human-owned; autonomous scenarios and heartbeat remain stopped. Screensaver work stays excluded. Original/project live saves, E80, genuine earning06 and normal-launch artifacts remain untouched; full retail/audio/human acceptance stays pending where unobserved.
-Updated: 2026-10-12, America/Phoenix. **E131 Adventure-guppy wall-turn correction checked.** [Boundary evidence](docs/guppy-turn-boundaries.md) reproduces an extra ordinary-fish post-animation bounce that the original common tail does not perform. Ordinary and warded guppies now share the binary-derived clamp/ease/animate/move order; the fixed turn clock is preserved. Three new boundary regressions become green; affected lint, persistence and an isolated build pass. The broader library run retains one independently reproduced baseline Time Trial fixture failure. E128 food/speed/normal-speed observations remain historical and did not cover this wall defect. Human wall-turn acceptance and retail playback remain open. E130/E129 save cleanup and all earlier closed transfers remain preserved. Ordinary gameplay stays human-owned; autonomous scenarios, heartbeat and screensaver work remain stopped. Live saves, E80, genuine earning06, retained builds and normal-launch artifacts stay untouched.
+The current source checkpoint is joined `7e43925`, followed by tracking-only
+`97febdd`. E129–E131 and E128's targeted observations remain recorded below.
+The Time Trial fixture failure retained by E131 is now repaired by #311 and
+passes in the joined suite. Earlier source transfers and workers remain closed;
+E124 retains its separately recorded Ready/unclaimed tracking limitation.
+Ordinary gameplay stays human-owned, autonomous scenarios and heartbeat remain
+stopped, and further screensaver work stays excluded. Full retail/audio/human
+acceptance remains pending where unobserved.
 
 ## Current increment
+
+**Joined Rust review corrections / #311–318, complete:** The final-candidate
+Time Trial fixture, all-profile Sandbox checkpoint projection, covered-money
+admission, required nullable laser field, save object-shape checks, fish-song
+applause dispatch, shared clipped glyph layout and digest-only installation
+inventory are checked and committed. The [owning review record](docs/rust-review-fixes.md)
+owns exact commits, failed approaches, joined verification and terminal tracking
+readback. The joined source includes E131; all 912 non-ignored tests pass.
+Native gameplay, audible output and retail fidelity are not established by this
+offline batch. The documentation review reconciles the entry point and current
+coverage with this source; it does not rerun the Rust suite.
 
 **E131 / Actionable#319 — ordinary guppy wall-turn correction:** Fresh-context
 independent static review confirms that PB05 clamps coordinates and eases
@@ -27,10 +44,11 @@ test published the wrong mirror while still in Swim. One shared motion tail
 corrects that order and preserves the existing warded behavior and turn clock.
 Six binary guppy checks, three warded matches, the existing pulse check and one
 affected persistence case pass; formatting, strict affected lint and an isolated
-debug build pass. Expanded library verification has688 passing checks, six
+debug build pass. Original E131 library verification had688 passing checks, six
 ignored and one failing Time Trial admission fixture; the exact failure also
 occurs in a disposable clean02a2951 baseline before fish update. [Owning record](docs/guppy-turn-boundaries.md#correction-and-verification)
-preserves failures, primary addresses, source/build identity and limits. No
+preserves failures, primary addresses, source/build identity and limits. #311
+subsequently repairs that fixture; the joined review suite above passes. No
 native run occurred for this changed build. All122 source inputs/139 identity
 rows and workflow/whitespace pass. #319 is Done version9 with qualifying Passed
 validation and released claim, read back. Human wall-turn timing and retail
@@ -199,6 +217,15 @@ Current29 [Stanley/cursor2](docs/extra-pets.md#current29-implementation-checkpoi
 [A31: Tank 4-1](docs/adventure-4-1.md) is the latest native-accepted stage, committed `38c65be9ad439a727b2e7e1b1401db928b8e55f6` (E76/E78). Its frozen bundle, reports and genuine earned saves remain preserved.
 
 ## Current build verification
+
+**Latest joined source — `7e43925`:** The [combined review check](docs/rust-review-fixes.md#combined-completion)
+includes E131 and all eight fixes, with 912 tests passing, zero failing and
+11 ignored across 16 executables. Formatting, strict workspace/all-target Clippy,
+locked/offline compilation and isolated debug build pass. The owning record
+identifies the supporting executable, toolchain, native package and external
+storage. Tracking-only `97febdd` and this documentation pass do not change Rust
+inputs or refresh normal-launch artifacts. Earlier identities below remain
+historical for their identified source and frozen builds.
 
 **E127 — accepted chooser gate:** Pushed source `e90df05` matches all122 worker
 build inputs and148 preserved checked artifact rows. Eight focused tests,
@@ -385,7 +412,8 @@ Completed performance worktrees retain separate Cargo targets and disposable off
 
 | ID | Class / current scope | Evidence |
 |---|---|---|
-| E131 | Binary-derived boundary order; three baseline boundary failures corrected; affected checks/lint/build pass; one unrelated full-library failure reproduced on clean baseline; native pending | [Guppy wall-turn correction](docs/guppy-turn-boundaries.md), PB05 address ledger, private baseline control and identified supporting build |
+| Review #311–318 | Reproduced offline defects and source-supported simplifications; joined912-pass suite/format/lint/build; all Done/released; no native acceptance | [Review completion](docs/rust-review-fixes.md#combined-completion) and [tracking readback](docs/rust-review-fixes.md#tracking-completion-after-claim-repair), preserving E131 and both histories |
+| E131 | Binary-derived boundary order; three baseline boundary failures corrected; affected checks/lint/build pass; historical Time Trial fixture failure subsequently repaired by #311; native pending | [Guppy wall-turn correction](docs/guppy-turn-boundaries.md), PB05 address ledger, private baseline control and [joined review](docs/rust-review-fixes.md#combined-completion) |
 | E130 | Reproduced remaining development-save acceptance paths;118 unique persistence and one affected library case pass after focused corrections; build/lint pass; native unrun | [Current-only codec cleanup](docs/refactor-save-codec.md#remaining-development-save-compatibility), identified private supporting build and preserved failure logs |
 | E128 follow-up | Human-reported motion/pose gap reproduced in authorized isolated1x pixels/state; binary-derived animation-before-motion order; four offline full-update probes find zero added delay;85 sampled turn states match; retail comparison pending | [Motion/pose follow-up](docs/playtests/2026-10-12-guppy-turn-motion-followup.md), retained E128 library and identified normal-release bundle; all owned PIDs closed |
 | E128 | Binary-derived guppy clock/mirror; reproduced three wrong-mirror assertions and corrected four focused offline checks; native feel pending | [Guppy turnaround](docs/fish-turn-animation.md), PB76, identified isolated build |
@@ -412,8 +440,9 @@ E131/#319 corrects the separately reproduced wall-turn defect; the human can
 rebuild normally and compare Adventure guppies at both walls. E128/#310 and its
 food/speed observation remain checked historical work. No timer-speed adjustment
 is supported by current binary evidence. Retail playback and human timing
-acceptance remain pending; no additional autonomous run is scheduled. The
-existing Time Trial fixture failure is recorded without changing unrelated code.
+acceptance remain pending; no additional autonomous run is scheduled. #311–318
+are complete; #311 repairs the historical Time Trial fixture failure without
+changing production admission, and the joined suite passes all 912 tests.
 E129 cleanup is complete separately.
 
 0. The [renewed necessary-fix audit](docs/necessary-fixes.md#renewed-necessary-fix-audit) is complete with no new verified normal-play finding or Actionable. #309 is complete, checked and pushed through its [completion and bounded clean follow-up](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit); Done version12/released with closed source ownership. #308 is complete, checked and pushed; Done version12/released. E125 is complete and pushed; #303-307 are Done with released claims. Preserve
@@ -440,6 +469,6 @@ Recorded Windows `10.0.26200.0`, PowerShell 7.6.6, Git 2.54.0.windows.1. Origina
 
 ## Setup verification
 
-[Archived setup checks](docs/history/2026-10-09-status-a32.md#setup-verification) and [failed approaches](docs/history/2026-10-09-status-a32.md#attempted-approaches-and-failures) retain their original scope. A66 helper and corrected driver parser/automatic-variable checks passed without script execution. Workflow-only checks passed35 required files/86 documents/972 links/320 anchors/45 included/37 excluded/189 eligible files. No Cargo/unit suite or second native attempt followed the A66 receipt correction. Current results are recorded in [MODLOG](MODLOG.md). No workItemId was supplied; Actionables was not updated.
+[Archived setup checks](docs/history/2026-10-09-status-a32.md#setup-verification) and [failed approaches](docs/history/2026-10-09-status-a32.md#attempted-approaches-and-failures) retain their original scope. A66 parser/automatic-variable and workflow results are historical; later Rust/build checks belong to the joined review record above. Current documentation-check results are recorded in [MODLOG](MODLOG.md). No workItemId was supplied for this documentation review; Actionables was not updated.
 
 Completed detail and former next-step directions belong to the [closed handoff snapshot](docs/history/2026-10-09-status-a32.md), [MODLOG](MODLOG.md) and linked playtest records. Keep this file focused on the active increment.
