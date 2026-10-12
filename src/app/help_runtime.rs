@@ -284,43 +284,25 @@ pub(super) fn font_text(
     color: Color,
     clip: Rect,
 ) {
-    let characters: Vec<_> = text.chars().collect();
-    for (layer, atlas) in font.metrics.layers.iter().zip(&font.atlases) {
-        let mut pen = x;
-        for (index, character) in characters.iter().enumerate() {
-            if let Some(glyph) = layer.glyphs.get(character) {
-                if let Some(bounds) = glyph.rect {
-                    let source = Rect::new(
-                        bounds.x as f32,
-                        bounds.y as f32,
-                        bounds.width as f32,
-                        bounds.height as f32,
-                    );
-                    image(
-                        atlas,
-                        source,
-                        Rect::new(
-                            pen + glyph.offset_x as f32,
-                            baseline - (layer.ascent - glyph.offset_y) as f32,
-                            source.w,
-                            source.h,
-                        ),
-                        clip,
-                        color,
-                        false,
-                    );
-                }
-                pen += (glyph.advance + layer.spacing) as f32;
-                if let Some(next) = characters.get(index + 1) {
-                    pen += layer
-                        .kerning
-                        .get(&(*character, *next))
-                        .copied()
-                        .unwrap_or(0) as f32;
-                }
-            }
-        }
-    }
+    font.metrics.for_each_glyph(text, x, baseline, |glyph| {
+        let Some(atlas) = font.atlases.get(glyph.layer_index) else {
+            return;
+        };
+        let source = Rect::new(
+            glyph.source.x as f32,
+            glyph.source.y as f32,
+            glyph.source.width as f32,
+            glyph.source.height as f32,
+        );
+        image(
+            atlas,
+            source,
+            Rect::new(glyph.x, glyph.y, source.w, source.h),
+            clip,
+            color,
+            false,
+        );
+    });
 }
 
 fn draw_command(presentation: &Presentation, draw: &HelpDraw) {

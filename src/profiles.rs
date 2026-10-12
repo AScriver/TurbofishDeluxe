@@ -218,7 +218,7 @@ impl Profiles {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        cli::write_json(path, self)
+        crate::persistence::write_json(path, self)
     }
 
     /// The normal writer holds its project lease. Snapshot the cumulative bank,

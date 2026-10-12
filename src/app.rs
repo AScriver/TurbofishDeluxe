@@ -511,39 +511,26 @@ impl RenderedFont {
     }
 
     fn text(&self, text: &str, x: f32, baseline: f32, color: Color) {
-        let characters: Vec<_> = text.chars().collect();
-        for (layer, atlas) in self.metrics.layers.iter().zip(&self.atlases) {
-            let mut pen = x;
-            for (index, character) in characters.iter().enumerate() {
-                if let Some(glyph) = layer.glyphs.get(character) {
-                    if let Some(rect) = glyph.rect {
-                        draw_texture_ex(
-                            atlas,
-                            pen + glyph.offset_x as f32,
-                            baseline - (layer.ascent - glyph.offset_y) as f32,
-                            color,
-                            DrawTextureParams {
-                                source: Some(Rect::new(
-                                    rect.x as f32,
-                                    rect.y as f32,
-                                    rect.width as f32,
-                                    rect.height as f32,
-                                )),
-                                ..Default::default()
-                            },
-                        );
-                    }
-                    pen += (glyph.advance + layer.spacing) as f32;
-                    if let Some(next) = characters.get(index + 1) {
-                        pen += layer
-                            .kerning
-                            .get(&(*character, *next))
-                            .copied()
-                            .unwrap_or(0) as f32;
-                    }
-                }
-            }
-        }
+        self.metrics.for_each_glyph(text, x, baseline, |glyph| {
+            let Some(atlas) = self.atlases.get(glyph.layer_index) else {
+                return;
+            };
+            draw_texture_ex(
+                atlas,
+                glyph.x,
+                glyph.y,
+                color,
+                DrawTextureParams {
+                    source: Some(Rect::new(
+                        glyph.source.x as f32,
+                        glyph.source.y as f32,
+                        glyph.source.width as f32,
+                        glyph.source.height as f32,
+                    )),
+                    ..Default::default()
+                },
+            );
+        });
     }
 }
 
@@ -2544,7 +2531,12 @@ impl Presentation {
     fn centered_text(&self, font: &str, text: &str, baseline: f32, color: Color) {
         let rendered = &self.fonts[font];
         let width = rendered.metrics.measure_width(text).unwrap_or(0) as f32;
-        rendered.text(text, 320.0 - width / 2.0, baseline, color);
+        rendered.text(
+            text,
+            crate::ui::centered_label_x(320.0, width),
+            baseline,
+            color,
+        );
     }
 
     // Tile a source image's thirds so its corners keep their original size.
@@ -2614,7 +2606,7 @@ impl Presentation {
         let width = rendered.metrics.measure_width(label).unwrap_or(0) as f32;
         rendered.text(
             label,
-            destination.x + (destination.w - width) / 2.0,
+            crate::ui::centered_text_x(destination, width),
             destination.y + destination.h * 0.72,
             Color::from_rgba(255, 240, 0, 255),
         );
@@ -5323,15 +5315,7 @@ impl Default for SelectorUi {
 }
 
 fn ui_button(rect: Rect, label: &str) {
-    draw_rectangle(
-        rect.x,
-        rect.y,
-        rect.w,
-        rect.h,
-        Color::new(0.05, 0.2, 0.26, 0.96),
-    );
-    draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 1.0, YELLOW);
-    draw_text(label, rect.x + 8.0, rect.y + rect.h * 0.7, 18.0, WHITE);
+    crate::ui::fallback_button(rect, label);
 }
 
 fn help_input(
