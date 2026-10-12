@@ -4,6 +4,16 @@ Updated: 2026-10-11, America/Phoenix. **E123 / Actionables#295-297 are complete,
 
 ## Current increment
 
+**E124 — bounded code-quality batch, starting:** Actionables#298-302 are created
+and researched to Ready. The user authorized one new chat/worktree per cleanup,
+parallel implementation and coherent pushes to main. The [refactor contract](docs/refactor-batch-298-302.md)
+reserves font layout, current-format decoding, persistence, UI primitives and
+normal-game runtime-state ownership. Root owns module registration and shared
+consumer joins after the CLI/application transfers close. No implementation or
+acceptance result is claimed yet. Human gameplay and paused automation remain
+current; schemas, assets, saved lineages and excluded screensaver work stay
+preserved.
+
 **E123 — optimized launch/loading/active VT batch, complete:** Actionables#295-297 are Done with qualifying Passed evidence and released claims. Three new managed chats/worktrees implemented optimized normal launch, bounded Title loading batches and lightweight active VT refresh/input; owned commits `f3a6738`, `cbf03b8`, `9817545` safely reconcile on main at `d64e0cc`. [Performance](docs/performance.md#launch-loading-and-active-virtual-tank-results) links eleven launcher, twenty loading/clock and seventeen active UI checks, exact state/event/pixel/trace equivalence and serial offline measurements. Normal/20-fish fixture ticks measure about16x faster in release; fast synthetic185/140-task loading uses21/16 yields;20-fish Fish Setup adapter26.312us becomes6.228us. Joined format, strict lib/bin/test-target lint and actual default release staging passed. Root matched all102 build sources,117 source/artifact checks, nine selected report hashes and all three owned ancestors; the [contract](docs/performance-batch-295-297.md#completion-and-joined-verification) owns exact receipt/EXE identities. These results establish no native FPS/startup/retail/human-feel claim. Human gameplay and paused automation policy remain current.
 
 E122 / Actionables#292-294 and E121/#289 are complete; E120's human ordinary-gameplay handoff remains current. Older increment entries retain historical next-run plans; the current `Next action` section supersedes them.
@@ -193,6 +203,11 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 ## Next action
 
 Current next action:
+
+0. Complete the authorized [E124 refactors](docs/refactor-batch-298-302.md) in five
+new disjoint chats/worktrees; join production callers, run affected offline
+checks, and commit/push coherent changes. Root owns central records and final
+joined verification. Earlier workers and native scenarios remain stopped.
 
 1. Human launches normally with the [startup command](docs/playtests/2026-10-10-mode-continuation-a66-01.md#default-profile-and-human-launch-handoff), plays and reports issues. No accelerated/muted/fixture flags are needed. Omit `--new-game` on later runs to resume. Do not inspect or stop the human session for automated testing.
 2. Root resolves reported issues and concrete remaining gaps from [compatibility](docs/compatibility.md). Completed #292-297 work, joined checks and evidence stay preserved without redispatch. Do not restart A66 or the four prepared outcome lanes; preserve all their work and failed receipts. No repeated intake or legacy migration.

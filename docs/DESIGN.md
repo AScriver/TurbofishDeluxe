@@ -441,6 +441,18 @@ The 2026-10-09 tooling request adds maintained PowerShell generators for build i
 
 A run manifest consumes one explicit telemetry directory plus a build receipt and optional scenario/save inputs; it must retain incomplete/malformed runs and executable/install mismatches. No directory count, matching hash or generated template establishes behavioral acceptance. Artifact checks compare captured bytes, and optional source-set readback detects added/deleted/changed inputs without treating a commit of unchanged bytes as a changed build. Generated reports use the maintained template, disclose local-only evidence, and leave behavior/discrepancy/visual/audio/human judgments to reviewers. Outputs never overwrite existing records or write into the owned installation. Current A32 acceptance is identified in STATUS. Commands and schema limits belong in [evidence tooling](evidence-tooling.md).
 
+## Bounded code-quality extraction
+
+E124 / Actionables#298-302 extracts shared font placement, current-format save
+admission, checkpoint storage, matching UI primitives and cohesive normal-game
+runtime state. Existing observable ordering, current37 schema, domain mode
+controllers and publication policy remain contracts. The [refactor ownership
+record](refactor-batch-298-302.md) reserves disjoint files and explicit root joins
+before implementation; it owns the worker interfaces and validation boundary.
+Root registers new modules and joins shared CLI/application consumers after
+their exclusive transfers close. Focused offline checks preserve these
+engineering contracts; ordinary gameplay remains human-owned.
+
 ## Title and illustrated-screen integration
 
 The title uses an independent1x UI clock and real successful resource/backend task counts. Seven bootstrap textures are decoded/uploaded once and reused; the final overlay combines owned title RGB with mask alpha locally. Quit/deadline applies during loading and Start. Ordinary Start preserves the selected saved session while the incoming transient main-menu adapter takes over routing; it must not discard in-progress mode/Board state. Saver loading auto-finishes into its clone, while embedded/configuration previews omit the interactive title. Help demos and the finale use transient source-model render plans with owned fonts/art, clipped draw state and caller-owned focus/update clocks. Native/visual/audio acceptance remains deferred; compile readiness does not prove source pixel/timing fidelity.

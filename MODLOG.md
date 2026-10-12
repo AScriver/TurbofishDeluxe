@@ -2,6 +2,17 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-11 — Start five bounded code-quality refactors
+
+Created Actionables#298-302 from the user-approved cleanup audit and prepared
+them to Ready with source findings and focused validation plans. The user
+explicitly authorized new parallel chats/worktrees and coherent commits pushed
+to main. The [E124 contract](docs/refactor-batch-298-302.md) reserves disjoint
+files, unchanged font/save/UI/runtime contracts, private offline resources,
+root-owned shared joins and exact push/lifecycle rules before dispatch. Root
+keeps current-format schema and human gameplay policy intact. No native run,
+new source study, tooling installation or implementation result is claimed.
+
 ## 2026-10-11 — Complete optimized launch, loading and active Virtual Tank
 
 E123 / Actionables#295-297 are Done with qualifying Passed evidence and released claims. Three new managed chats/worktrees implemented exact disjoint ownership: `f3a6738` selects the existing release profile for normal launcher builds while supporting explicit Development and existing Release callers; `cbf03b8` batches real resource progress under an8ms cooperative work budget; `9817545` separates active UI advancement/control input from full presentation allocation. Each worker fetched/reconciled main and pushed owned changes without force. Source/report integration reached `d64e0cc`; all source transfers and serial timing leases are closed. The [performance index](docs/performance.md#launch-loading-and-active-virtual-tank-results) links the three owning reports.
