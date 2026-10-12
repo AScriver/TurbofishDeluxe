@@ -2,6 +2,34 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Correct guppy boundary order before turnaround
+
+The human asks whether the remaining turn issue can be fixed. Earlier fixtures
+stayed away from walls. Fresh independent PB05 instruction review and three
+new red full-update regressions establish an additional ordinary-fish bounce
+after animation; it can publish the destination mirror while still in Swim.
+Original Rust now shares the existing binary-derived warded common motion tail:
+coordinate clamps, outward VX easing, animation, facing and integration. The
+signed20-count turn clock, sprite projection, coin order and save schemas stay
+unchanged. [Owning boundary record](docs/guppy-turn-boundaries.md) retains exact
+addresses, fixture scope, baseline failures and identified supporting build.
+
+Six binary guppy checks, three warded matches, the existing turn/eat/growth pulse
+and one affected persistence check pass. Formatting, strict affected lib/bin/test
+lint and a locked/offline debug build pass. The broader library run returns688
+passed, six ignored and one Time Trial admission-fixture failure at `adventure.rs:4352`;
+an unchanged disposable02a2951 checkout independently reproduces it before fish
+update. The first finish runner stops there; its corrected continuation preserves
+the failure and executes only remaining checks. No unrelated source is changed.
+
+All122 source inputs and139 identity rows match; workflow114 documents/1149
+links/416 anchors and whitespace pass. #319 is Done version9 with qualifying
+Passed validation and released claim, read back. Root owns code/tests/central records;
+the bounded Investigator edits no tracked file or runtime state. All scripts use
+the host parser/automatic-variable validator. No game is launched and no human
+process, live save, retained build or normal-launch artifact is accessed. Human
+wall-turn comparison and retail timing acceptance remain pending.
+
 ## 2026-10-12 — Check guppy turn clock against movement speed
 
 The human suggested that turns might miss a movement-speed factor. Fresh target
