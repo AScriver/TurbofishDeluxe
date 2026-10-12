@@ -15,7 +15,6 @@
 //!   entire frame, including closing frames. Pause underlying UI/simulation.
 //! - Project the parent's single normalized `ModalInput` with
 //!   `ShellGiftInput::from_modal`, retaining optional wheel/Page/Ctrl+A fields.
-//!   Legacy `poll` also collects once, only while this adapter owns input.
 //!   `view`, `input` and `draw` rebuild production views. Parent dims once.
 //! - On `Confirm`, outside a live session borrow and under the normal writer
 //!   lease, call `confirmation_dialog().unwrap().confirm(&mut profiles, path)`.
@@ -246,50 +245,6 @@ impl ShellGiftInput {
             end: self.key(KeyCode::End),
             text: self.text.clone(),
         }
-    }
-
-    /// Call only while this modal owns input. Drains the character queue even
-    /// when suspended, preventing delayed text after focus/modality changes.
-    #[allow(
-        dead_code,
-        reason = "Temporary compatibility until root's normalized-input join"
-    )]
-    pub(super) fn poll(pointer: Vec2, focused: bool, blocked_by_modal: bool) -> Self {
-        let control = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl);
-        let mut input = Self::from_modal(ModalInput {
-            pointer,
-            focused,
-            pressed: is_mouse_button_pressed(MouseButton::Left),
-            released: is_mouse_button_released(MouseButton::Left),
-            down: is_mouse_button_down(MouseButton::Left),
-            ..ModalInput::default()
-        });
-        input.blocked_by_modal = blocked_by_modal;
-        input.wheel = mouse_wheel().1;
-        input.keys = get_keys_pressed().into_iter().collect();
-        input.shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
-        input.control = control;
-        while let Some(character) = get_char_pressed() {
-            if focused && !blocked_by_modal && !control && !character.is_control() {
-                if input.text.len() + character.len_utf8() <= MAX_AMOUNT_TEXT_BYTES {
-                    input.text.push(character);
-                } else {
-                    input.text_overflow = true;
-                }
-            }
-        }
-        if focused
-            && !blocked_by_modal
-            && control
-            && input.key(KeyCode::V)
-            && let Some(paste) = macroquad::miniquad::window::clipboard_get()
-        {
-            input.text_overflow = paste.len() > MAX_AMOUNT_TEXT_BYTES;
-            if !input.text_overflow {
-                input.text = paste;
-            }
-        }
-        input
     }
 
     fn key(&self, key: KeyCode) -> bool {
@@ -718,14 +673,19 @@ impl ShellGiftRuntime {
         let gift = &view.gift;
         draw_panel(presentation, layout.panel);
         draw_title(presentation, gift.title, layout.title);
-        draw_body(
+        label(
             presentation,
+            BODY_FONT,
             &format!(
-                "From {}: {} shells",
-                gift.donor_name.as_deref().unwrap_or("[missing profile]"),
-                gift.donor_shell_balance.unwrap_or(0)
+                "{} | From {}",
+                gift.donor_shell_balance.map_or_else(
+                    || "Balance unavailable".into(),
+                    |balance| format!("{balance} shells")
+                ),
+                gift.donor_name.as_deref().unwrap_or("[missing profile]")
             ),
             layout.donor,
+            INK,
             false,
         );
         draw_body(
