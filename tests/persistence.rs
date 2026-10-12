@@ -26,6 +26,252 @@ fn historical_envelope(save: cli::ProjectSave) -> serde_json::Value {
     value
 }
 
+mod current_codec {
+    use super::*;
+    use serde_json::{Value, json};
+    use turbofish_deluxe::{adventure::GameMode, profiles::Profiles};
+
+    fn profile_value(session: Value) -> Value {
+        let mut profiles = Profiles::new("Codec fixture", 0x299).unwrap();
+        let entry = profiles.current_mut().unwrap();
+        entry.screensaver_generation = "00000000000000000000000000000299".into();
+        entry.screensaver_claimed = 17;
+        entry.screensaver_scene_consumed = 23;
+        let mut value = serde_json::to_value(profiles).unwrap();
+        value["entries"][0]["session"] = session;
+        value
+    }
+
+    fn standalone_bytes(session: &Value) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "format_version": cli::SAVE_FORMAT_VERSION,
+            "session": session,
+        }))
+        .unwrap()
+    }
+
+    fn both_reject(session: &Value) {
+        assert!(cli::decode_save(&standalone_bytes(session)).is_err());
+        assert!(
+            Profiles::decode(&serde_json::to_vec(&profile_value(session.clone())).unwrap())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn valid_sessions_decode_identically_in_standalone_and_profiles() {
+        let fresh = AdventureSession::new(0x299);
+        let mut playing = fresh.clone();
+        for _ in 0..7 {
+            playing.step(&[]);
+        }
+        let mut trial = vert_session();
+        trial.select_mode(GameMode::TimeTrial, 1_000, 0).unwrap();
+        trial.apply_actions(&[Action::SelectTimeTrialTank { tank: 1 }, Action::Continue]);
+        assert_eq!(trial.phase, AdventurePhase::TimeTrialPlaying);
+        for _ in 0..7 {
+            trial.step(&[]);
+        }
+        let mut retained = trial.clone();
+        retained.select_mode(GameMode::Adventure, 1_000, 0).unwrap();
+        assert!(retained.retained_time_trial.is_some());
+
+        for session in [fresh, playing, trial, retained] {
+            session.validate().unwrap();
+            let expected = serde_json::to_value(&session).unwrap();
+            let standalone = cli::decode_save(&standalone_bytes(&expected)).unwrap();
+            let profile = profile_value(expected.clone());
+            let profiles = Profiles::decode(&serde_json::to_vec(&profile).unwrap()).unwrap();
+            assert_eq!(serde_json::to_value(standalone).unwrap(), expected);
+            assert_eq!(
+                serde_json::to_value(&profiles.current().unwrap().session).unwrap(),
+                expected
+            );
+            assert_eq!(serde_json::to_value(profiles).unwrap(), profile);
+        }
+    }
+
+    #[test]
+    fn missing_defaulted_and_nullable_fields_return_errors_in_both_containers() {
+        let current = serde_json::to_value(second_stage_session()).unwrap();
+        for path in [
+            "/progress/first_stage_best_seconds",
+            "/progress/later_stage_best_seconds",
+            "/progress/pet_capacity",
+            "/progress/selected_pets",
+            "/progress/shell_balance",
+            "/progress/cyrax_attempts",
+            "/progress/adventure_completed",
+            "/progress/stories/seen_mask",
+            "/board/stinky/0/combat_id",
+            "/board/fish/0/cannot_be_eaten_ticks",
+            "/board/upgrades",
+            "/retained_adventure",
+            "/retained_time_trial",
+            "/retained_challenge",
+            "/virtual_seed",
+        ] {
+            let mut missing = current.clone();
+            let (parent, field) = path.rsplit_once('/').unwrap();
+            assert!(
+                missing
+                    .pointer_mut(parent)
+                    .unwrap()
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(field)
+                    .is_some(),
+                "fixture field {path}"
+            );
+            both_reject(&missing);
+        }
+    }
+
+    #[test]
+    fn malformed_shapes_and_invalid_state_reject_in_every_profile_entry() {
+        for session in [Value::Null, json!([]), json!("session")] {
+            both_reject(&session);
+        }
+        let current = serde_json::to_value(second_stage_session()).unwrap();
+        for (path, malformed) in [
+            ("/mode", json!(false)),
+            ("/ticks", json!(-1)),
+            ("/progress/shell_balance", json!(u32::MAX)),
+            ("/board/stinky", json!({})),
+            ("/board/fish/0/x", json!("position")),
+            ("/retained_adventure", json!({})),
+        ] {
+            let mut invalid = current.clone();
+            *invalid.pointer_mut(path).unwrap() = malformed;
+            both_reject(&invalid);
+        }
+
+        let mut profiles = profile_value(current);
+        let mut second = profiles["entries"][0].clone();
+        second["id"] = json!(2);
+        second["name"] = json!("Second fixture");
+        second["screensaver_generation"] = json!("00000000000000000000000000000300");
+        second["session"]["progress"]
+            .as_object_mut()
+            .unwrap()
+            .remove("shell_balance");
+        profiles["next_id"] = json!(3);
+        profiles["entries"].as_array_mut().unwrap().push(second);
+        assert!(Profiles::decode(&serde_json::to_vec(&profiles).unwrap()).is_err());
+    }
+
+    #[test]
+    fn historical_future_and_malformed_envelopes_remain_rejected() {
+        let session = serde_json::to_value(AdventureSession::new(0x299)).unwrap();
+        let mut standalone: Value = serde_json::from_slice(&standalone_bytes(&session)).unwrap();
+        for version in 0..cli::SAVE_FORMAT_VERSION {
+            standalone["format_version"] = json!(version);
+            let error = cli::decode_save(&serde_json::to_vec(&standalone).unwrap()).unwrap_err();
+            assert!(error.to_string().contains("before format thirty-seven"));
+        }
+        for version in [
+            json!(38),
+            json!(u64::MAX),
+            json!(37.0),
+            json!("37"),
+            json!(null),
+        ] {
+            standalone["format_version"] = version;
+            assert!(cli::decode_save(&serde_json::to_vec(&standalone).unwrap()).is_err());
+        }
+        standalone.as_object_mut().unwrap().remove("format_version");
+        assert!(cli::decode_save(&serde_json::to_vec(&standalone).unwrap()).is_err());
+        assert!(cli::decode_save(b"{\"format_version\":37,").is_err());
+
+        let mut profile = profile_value(session);
+        for version in [
+            json!(0),
+            json!(1),
+            json!(2),
+            json!(4),
+            json!("3"),
+            json!(null),
+        ] {
+            profile["format_version"] = version;
+            assert!(Profiles::decode(&serde_json::to_vec(&profile).unwrap()).is_err());
+        }
+        profile.as_object_mut().unwrap().remove("format_version");
+        assert!(Profiles::decode(&serde_json::to_vec(&profile).unwrap()).is_err());
+        assert!(Profiles::decode(b"{\"format_version\":3,").is_err());
+    }
+
+    #[test]
+    fn profile_fallback_and_saver_metadata_remain_unchanged() {
+        let expected = profile_value(serde_json::to_value(AdventureSession::new(0x299)).unwrap());
+        for current in [json!(null), json!(0), json!(999)] {
+            let mut dangling = expected.clone();
+            dangling["current_id"] = current;
+            let decoded = Profiles::decode(&serde_json::to_vec(&dangling).unwrap()).unwrap();
+            assert_eq!(serde_json::to_value(decoded).unwrap(), expected);
+        }
+        let mut empty = expected;
+        empty["entries"] = json!([]);
+        empty["current_id"] = json!(999);
+        let decoded = Profiles::decode(&serde_json::to_vec(&empty).unwrap()).unwrap();
+        assert_eq!(decoded.current_id, None);
+        assert!(decoded.entries.is_empty());
+    }
+
+    #[test]
+    fn current_load_and_profile_adoption_preserve_original_standalone_bytes() {
+        let directory = std::env::current_dir()
+            .unwrap()
+            .join(".scratch/refactor/299/fixtures")
+            .join(format!(
+                "load-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("adventure.json");
+        let options = cli::Options {
+            game_dir: None,
+            save_dir: directory.clone(),
+            evidence_dir: None,
+            seed: 0x299,
+            new_game: false,
+            inspect_assets: false,
+            quit_after: None,
+            muted: true,
+            test_speed: 1,
+            screensaver: None,
+        };
+        let expected = serde_json::to_value(AdventureSession::new(0x299)).unwrap();
+        let bytes = format!(
+            "  {}\n",
+            String::from_utf8(standalone_bytes(&expected)).unwrap()
+        )
+        .into_bytes();
+        fs::write(&path, &bytes).unwrap();
+        assert_eq!(
+            serde_json::to_value(cli::load_session(&options).unwrap()).unwrap(),
+            expected
+        );
+        let profiles = cli::load_profiles(&options).unwrap();
+        assert_eq!(
+            serde_json::to_value(&profiles.current().unwrap().session).unwrap(),
+            expected
+        );
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert!(!directory.join("profiles.json").exists());
+
+        let historical = b"{\"format_version\":1,\"state\":null}\n";
+        fs::write(&path, historical).unwrap();
+        assert!(cli::load_session(&options).is_err());
+        assert!(cli::load_profiles(&options).is_err());
+        assert_eq!(fs::read(&path).unwrap(), historical);
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
 #[test]
 fn current_time_trial_envelope_and_actor_form_fields_are_explicit() {
     let session = vert_session();

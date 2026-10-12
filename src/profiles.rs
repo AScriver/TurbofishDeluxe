@@ -7,7 +7,7 @@
 use crate::{
     adventure::{AdventurePhase, AdventureSession},
     bonus::MAX_SHELL_BALANCE,
-    cli::{self, SAVE_FORMAT_VERSION},
+    cli,
     highscores::{GlobalScores, ScoreEntry, ScoreKind as GlobalScoreKind},
     screensaver_bank::{BankKey, ScreensaverBank, ScreensaverSceneLease},
     sim::Event,
@@ -29,6 +29,7 @@ const MAX_SAVER_CLAIM: u64 = 100_000;
 pub struct ProfileEntry {
     pub id: u64,
     pub name: String,
+    #[serde(deserialize_with = "deserialize_current_session")]
     pub session: AdventureSession,
     /// Separate profile incarnation; rename preserves it and recreation does not.
     pub screensaver_generation: String,
@@ -36,6 +37,14 @@ pub struct ProfileEntry {
     pub screensaver_claimed: u64,
     /// Saved with scene adoption or rejection so a pending scene cannot replay.
     pub screensaver_scene_consumed: u64,
+}
+
+fn deserialize_current_session<'de, D>(deserializer: D) -> Result<AdventureSession, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    cli::decode_current_session(value).map_err(serde::de::Error::custom)
 }
 
 impl ProfileEntry {
@@ -174,26 +183,14 @@ impl Profiles {
         Ok(())
     }
 
-    /// Current-only decoder. Each nested session goes through the existing
-    /// current-format field guard before Serde can fill an omitted old field.
+    /// Current-only decoder. Each entry directly admits its session through the
+    /// shared codec before Serde can fill an omitted historical field.
     pub fn decode(bytes: &[u8]) -> Result<Self, Box<dyn Error>> {
         let value: serde_json::Value = serde_json::from_slice(bytes)?;
         if value.get("format_version").and_then(|v| v.as_u64())
             != Some(u64::from(PROFILE_FORMAT_VERSION))
         {
             return Err("unsupported profile format".into());
-        }
-        let entries = value
-            .get("entries")
-            .and_then(|v| v.as_array())
-            .ok_or("profile entries missing")?;
-        for entry in entries {
-            let session = entry.get("session").ok_or("profile session missing")?;
-            let current = serde_json::json!({
-                "format_version": SAVE_FORMAT_VERSION,
-                "session": session,
-            });
-            cli::decode_save(&serde_json::to_vec(&current)?)?;
         }
         let mut profiles: Self = serde_json::from_value(value)?;
         // A removed current user falls back to the first remaining profile.
