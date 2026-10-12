@@ -2,6 +2,25 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Finish renewed necessary-fix audit without a new defect
+
+The user's renewed continuation prompted three bounded independent source
+reviews at clean main `2426b3ba87c315a5a5b7d3ab39c2051062f59b6d`.
+Adventure actor removal/death/progression and audio resource/settings ownership
+yielded no necessary candidate. Independent falsification rejected the proposed
+same-frame Sandbox entry-character leak: the selector drains Macroquad's
+character queue before EntryCode key handling. Distinct delayed platform events
+remain unobserved, not a verified defect. The [audit](docs/necessary-fixes.md#renewed-necessary-fix-audit)
+owns the claim ledger and scope limits; ignored coordination records preserve
+root adjudication. No new Actionable, implementation chat or source change.
+
+Only central Markdown records change. Workflow, whitespace and unchanged E127
+source/executable identity are checked for publication. Existing regression
+contracts were inspected; no Cargo/test/native/audio run was repeated. Human
+gameplay remains the next source of observed issues. Completed engineering,
+lineages and source transfers remain preserved; heartbeat/native lanes remain
+closed. A fresh verified finding receives a scoped Actionable before edits.
+
 ## 2026-10-12 — Correct chooser dispatch and finish the bounded necessary-fix pass
 
 Actionable#309 source/report `e90df05` is pushed to main and joined in root's

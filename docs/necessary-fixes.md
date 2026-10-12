@@ -1,5 +1,36 @@
 # Necessary correctness fixes
 
+## Renewed necessary-fix audit
+
+On2026-10-12 the user requested another pass until no necessary finding remains.
+This bounded pass inspected clean main
+`2426b3ba87c315a5a5b7d3ab39c2051062f59b6d`. Three distinct source reviews
+found no new verified normal-play defect; no Actionable or implementation chat
+was created. Root owns these records and all source paths remain unchanged.
+
+| Claim | Evidence and adjudication | Outcome |
+|---|---|---|
+| N1: Adventure actor removal, death and progression | `sim.rs::update_objects` and removal loops retain the shifted index; inactive guppies cannot die twice, corpse expiry removes the retained record and revival allocates a fresh ID. `invasion.rs` removes dead threats before reward; completion also waits for missiles. `adventure.rs` checks survivors before object updates, so final death is recognized on the next step, as its rescue regression explicitly expects. | Strongly source-supported; no additional necessary candidate |
+| N2: Audio resource and settings ownership | `music.rs::MusicOwner` owns its bounded worker queues and joins on Drop; the worker owns output/module/effect lifetimes. App cue/pause changes use the existing atomic request; settings changes validate and roll back on save failure. `--mute` skips audio-owner creation and required decode failures prevent partial Title readiness. | Strongly source-supported; no additional necessary candidate |
+| N3: Selector entry character leaking into Sandbox | The proposed same-frame final `a` leak is falsified: `app/menu_runtime.rs:321` drains Macroquad characters before `app.rs:6968` checks EntryCode keys. Pinned Macroquad0.4.16 `input.rs::get_char_pressed` consumes that queue. The later Sandbox collector at `app.rs:7815` cannot consume the same character again. | Source-supported counter-evidence; no fix dispatched |
+
+The actor review covered normal Adventure death/removal/update order, not every
+mode interaction. The audio review did not establish a serious consequence or
+ordinary valid-asset trigger for documented nonfatal device/module failure;
+automatic device recovery is not an established requirement. The Sandbox review
+does not prove whether a platform can deliver a distinct delayed character on a
+later frame; that remains unknown rather than a verified ordinary-play defect.
+No synthetic scenario was promoted into a necessary fix.
+
+This is source inspection, with existing relevant regression contracts inspected
+but no new test, Cargo gate, native game or audio run. Records-only workflow and
+whitespace checks accompany publication; the accepted E127 source/executable
+identity is checked unchanged. Earlier focused test/build results remain usable
+for those unchanged bytes. Human gameplay and unobserved native/retail/audio
+fidelity remain pending. This closes this bounded pass, not all possible bugs.
+Reported issues or new concrete evidence can start a fresh scoped Actionable.
+Completed workers, native lanes and heartbeat remain closed.
+
 ## Tank chooser dispatch correction
 
 E127 / Actionable#309 starts from clean main

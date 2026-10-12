@@ -1,8 +1,16 @@
 # Current handoff
 
-Updated: 2026-10-12, America/Phoenix. **E127 / Actionable#309: Time Trial/Challenge chooser dispatch complete, checked and pushed; Done version12 with released claim.** The [completion and follow-up audit](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit) owns joined identity and closes source ownership; no additional necessary fix was found in the bounded pass. E126/#308 and E125/#303-307 remain Done/released and preserved in their completion records. The user authorizes subsequent necessary fixes through new Actionables and independent new chats/worktrees. E124 engineering is complete; its five tracking records remain Ready/unclaimed after the separate prepared-record claim failure. Earlier workers stay closed. Ordinary gameplay remains human-owned; autonomous scenarios and coordinator heartbeat remain stopped. Screensaver work is excluded and finished code is preserved. Real/frozen/earned saves, E80 and genuine earning06 remain untouched; retail/audio/human fidelity stays pending where unobserved.
+Updated: 2026-10-12, America/Phoenix. **Renewed bounded audit: no new verified necessary normal-play fix.** The [fresh audit](docs/necessary-fixes.md#renewed-necessary-fix-audit) records Adventure actor lifecycle, audio ownership and the falsified Sandbox entry-character concern at clean source `2426b3b`; no new Actionable or implementation chat followed. E127 / Actionable#309 remains complete, checked and pushed; Done version12 with released claim. Its [completion](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit) owns joined identity and closed source ownership. E126/#308 and E125/#303-307 remain Done/released and preserved in their completion records. The user authorizes subsequent necessary fixes through new Actionables and independent new chats/worktrees. E124 engineering is complete; its five tracking records remain Ready/unclaimed after the separate prepared-record claim failure. Earlier workers stay closed. Ordinary gameplay remains human-owned; autonomous scenarios and coordinator heartbeat remain stopped. Screensaver work is excluded and finished code is preserved. Real/frozen/earned saves, E80 and genuine earning06 remain untouched; retail/audio/human fidelity stays pending where unobserved.
 
 ## Current increment
+
+**Renewed necessary-fix audit, complete:** Three bounded independent source
+reviews found no new verified normal-play defect in Adventure actor lifecycle,
+audio ownership or Sandbox entry-character handling. The selector drains the
+character queue before checking its entry keys, falsifying the proposed same-frame
+Sandbox leak. [Audit evidence and limits](docs/necessary-fixes.md#renewed-necessary-fix-audit)
+remain source-only; no tests/builds/native scenarios or saves were run. Source
+bytes remain E127's accepted identity. No new task or implementation was dispatched.
 
 **E127 / Actionable#309 — necessary tank chooser dispatch fix, complete:**
 Source `e90df05` applies Time Trial/Challenge Select/Menu/Escape before the
@@ -302,7 +310,7 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 
 Current next action:
 
-0. #309 is complete, checked and pushed through its [completion and bounded clean follow-up](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit); Done version12/released with closed source ownership. No additional necessary fix is established by this pass. #308 is complete, checked and pushed; Done version12/released. E125 is complete and pushed; #303-307 are Done with released claims. Preserve
+0. The [renewed necessary-fix audit](docs/necessary-fixes.md#renewed-necessary-fix-audit) is complete with no new verified normal-play finding or Actionable. #309 is complete, checked and pushed through its [completion and bounded clean follow-up](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit); Done version12/released with closed source ownership. #308 is complete, checked and pushed; Done version12/released. E125 is complete and pushed; #303-307 are Done with released claims. Preserve
 all closed modal/refactor worktrees, reports and private evidence. E124's
 #298-302 retain their separately recorded Ready/unclaimed tooling limitation;
 do not retry that route or resume completed workers.
