@@ -60,7 +60,7 @@ mod current_codec {
         retained.select_mode(GameMode::Adventure, 1_000, 0).unwrap();
         assert!(retained.retained_time_trial.is_some());
 
-        for session in [fresh, playing, trial, retained] {
+        for session in [fresh, playing, trial, retained, second_stage_session()] {
             session.validate().unwrap();
             let expected = serde_json::to_value(&session).unwrap();
             let standalone = cli::decode_save(&standalone_bytes(&expected)).unwrap();
@@ -76,25 +76,82 @@ mod current_codec {
     }
 
     #[test]
-    fn current_containers_preserve_serialized_legacy_origin_tags() {
-        let mut session = serde_json::to_value(second_stage_session()).unwrap();
+    fn current_containers_reject_retired_resume_origin_tags() {
+        let current = serde_json::to_value(second_stage_session()).unwrap();
+        let mut session = current.clone();
         session["board"]["stinky"][0]["origin"] = json!("LegacyV2Resume");
+        both_reject(&session);
         for origin in ["LegacyV3Resume", "LegacyV4Resume", "LegacyV5Resume"] {
+            let mut session = current.clone();
             session["board"]["invasion"]["origin"] = json!(origin);
-            let standalone = cli::decode_save(&standalone_bytes(&session)).unwrap();
-            let profiles =
-                Profiles::decode(&serde_json::to_vec(&profile_value(session.clone())).unwrap())
-                    .unwrap();
-            assert_eq!(serde_json::to_value(standalone).unwrap(), session);
-            assert_eq!(
-                serde_json::to_value(&profiles.current().unwrap().session).unwrap(),
-                session
-            );
+            both_reject(&session);
         }
     }
 
     #[test]
-    fn missing_defaulted_and_nullable_fields_return_errors_in_both_containers() {
+    fn raw_current_session_requires_persisted_fields_without_backfill() {
+        let current = serde_json::to_value(second_stage_session()).unwrap();
+        let decoded: AdventureSession = serde_json::from_value(current.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), current);
+        for path in [
+            "/progress/pet_capacity",
+            "/progress/selected_pets",
+            "/progress/shell_balance",
+            "/progress/cyrax_attempts",
+            "/progress/adventure_completed",
+            "/board/fish/0/cannot_be_eaten_ticks",
+            "/board/pets",
+            "/board/weapon_strength",
+            "/board/upgrades",
+        ] {
+            let mut missing = current.clone();
+            let (parent, field) = path.rsplit_once('/').unwrap();
+            assert!(
+                missing
+                    .pointer_mut(parent)
+                    .unwrap()
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(field)
+                    .is_some(),
+                "fixture field {path}"
+            );
+            assert!(
+                serde_json::from_value::<AdventureSession>(missing.clone()).is_err(),
+                "raw session accepted missing field {path}"
+            );
+            both_reject(&missing);
+        }
+    }
+
+    #[test]
+    fn current_pet_food_timer_is_required_and_round_trips() {
+        let mut session = tank_three_session(&[PetKind::Zorf]);
+        session.board.as_mut().unwrap().fish_pets[0].food_timer = 23;
+        session.validate().unwrap();
+        let current = serde_json::to_value(session).unwrap();
+        let standalone = cli::decode_save(&standalone_bytes(&current)).unwrap();
+        let profiles =
+            Profiles::decode(&serde_json::to_vec(&profile_value(current.clone())).unwrap())
+                .unwrap();
+        assert_eq!(serde_json::to_value(standalone).unwrap(), current);
+        assert_eq!(
+            serde_json::to_value(&profiles.current().unwrap().session).unwrap(),
+            current
+        );
+
+        let mut missing = current;
+        missing["board"]["fish_pets"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("food_timer")
+            .unwrap();
+        both_reject(&missing);
+        assert!(serde_json::from_value::<AdventureSession>(missing).is_err());
+    }
+
+    #[test]
+    fn missing_required_and_nullable_fields_return_errors_in_both_containers() {
         let current = serde_json::to_value(second_stage_session()).unwrap();
         for path in [
             "/progress/first_stage_best_seconds",
@@ -169,7 +226,11 @@ mod current_codec {
         for version in 0..cli::SAVE_FORMAT_VERSION {
             standalone["format_version"] = json!(version);
             let error = cli::decode_save(&serde_json::to_vec(&standalone).unwrap()).unwrap_err();
-            assert!(error.to_string().contains("before format thirty-seven"));
+            assert!(
+                error
+                    .to_string()
+                    .contains("Unsupported project save version")
+            );
         }
         for version in [
             json!(38),
@@ -220,10 +281,10 @@ mod current_codec {
     }
 
     #[test]
-    fn current_load_and_profile_adoption_preserve_original_standalone_bytes() {
+    fn profiles_load_only_manager_and_leave_standalone_files_untouched() {
         let directory = std::env::current_dir()
             .unwrap()
-            .join(".scratch/refactor/299/fixtures")
+            .join(".scratch/current-save-only/fixtures")
             .join(format!(
                 "load-{}-{}",
                 std::process::id(),
@@ -234,7 +295,7 @@ mod current_codec {
             ));
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join("adventure.json");
-        let options = cli::Options {
+        let mut options = cli::Options {
             game_dir: None,
             save_dir: directory.clone(),
             evidence_dir: None,
@@ -246,7 +307,12 @@ mod current_codec {
             test_speed: 1,
             screensaver: None,
         };
-        let expected = serde_json::to_value(AdventureSession::new(0x299)).unwrap();
+        let mut session = AdventureSession::new(0x299);
+        for _ in 0..7 {
+            session.step(&[]);
+        }
+        let expected = serde_json::to_value(&session).unwrap();
+        let fresh = serde_json::to_value(AdventureSession::new(options.seed)).unwrap();
         let bytes = format!(
             "  {}\n",
             String::from_utf8(standalone_bytes(&expected)).unwrap()
@@ -260,7 +326,7 @@ mod current_codec {
         let profiles = cli::load_profiles(&options).unwrap();
         assert_eq!(
             serde_json::to_value(&profiles.current().unwrap().session).unwrap(),
-            expected
+            fresh
         );
         assert_eq!(fs::read(&path).unwrap(), bytes);
         assert!(!directory.join("profiles.json").exists());
@@ -268,7 +334,40 @@ mod current_codec {
         let historical = b"{\"format_version\":1,\"state\":null}\n";
         fs::write(&path, historical).unwrap();
         assert!(cli::load_session(&options).is_err());
-        assert!(cli::load_profiles(&options).is_err());
+        assert_eq!(
+            serde_json::to_value(
+                &cli::load_profiles(&options)
+                    .unwrap()
+                    .current()
+                    .unwrap()
+                    .session
+            )
+            .unwrap(),
+            fresh
+        );
+        assert_eq!(fs::read(&path).unwrap(), historical);
+
+        let manager = Profiles::from_session("Current profile", session).unwrap();
+        let profile_path = directory.join("profiles.json");
+        let profile_bytes = serde_json::to_vec(&manager).unwrap();
+        fs::write(&profile_path, &profile_bytes).unwrap();
+        assert_eq!(
+            serde_json::to_value(cli::load_profiles(&options).unwrap()).unwrap(),
+            serde_json::to_value(manager).unwrap()
+        );
+        options.new_game = true;
+        assert_eq!(
+            serde_json::to_value(
+                &cli::load_profiles(&options)
+                    .unwrap()
+                    .current()
+                    .unwrap()
+                    .session
+            )
+            .unwrap(),
+            fresh
+        );
+        assert_eq!(fs::read(&profile_path).unwrap(), profile_bytes);
         assert_eq!(fs::read(&path).unwrap(), historical);
         fs::remove_dir_all(directory).unwrap();
     }
@@ -333,9 +432,11 @@ fn current_time_trial_purchase_and_board_continuation_survive_decode() {
     session.board = None;
     session.phase = AdventurePhase::GameSelector;
     session.validate().unwrap();
+    assert!(session.time_trial_tank_available(1));
+    assert!(!session.time_trial_tank_available(3));
     session.apply_actions(&[
         Action::PlayTimeTrial,
-        Action::SelectTimeTrialTank { tank: 3 },
+        Action::SelectTimeTrialTank { tank: 1 },
         Action::TogglePet {
             pet: PetKind::Stinky,
         },
@@ -431,7 +532,7 @@ fn current_tank_five_other_pets_have_canonical_arrays_and_reject_duplicate_roste
             cli::decode_save(&serde_json::to_vec(&old_shape).unwrap())
                 .unwrap_err()
                 .to_string()
-                .contains("Option-shaped OtherPet saves"),
+                .contains("Unsupported project save version"),
             "{field}"
         );
     }

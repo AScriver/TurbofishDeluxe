@@ -44,28 +44,20 @@ pub struct AdventureProgress {
     pub tank: u8,
     pub level: u8,
     pub unlocked_pets: Vec<PetKind>,
-    #[serde(default = "default_pet_capacity")]
     pub pet_capacity: u8,
     /// Committed profile flags. Candidates live in the selection phase until
     /// Continue copies them here, before any fewer-pet confirmation.
-    #[serde(default)]
     pub selected_pets: Vec<PetKind>,
-    #[serde(default)]
     pub shell_balance: u32,
-    /// Missing on old format-two saves: their completed board was discarded,
-    /// so its active time cannot be reconstructed from the session clock.
-    #[serde(default)]
+    /// Active time of the first completed board, absent until completion.
     pub first_stage_best_seconds: Option<u64>,
-    #[serde(default)]
     pub later_stage_best_seconds: Vec<StageBestTime>,
     /// Tank 5 HighScoreMgr records the highest number of physical pet
     /// survivors; elapsed time remains a separate stage diagnostic.
     pub tank5_best_survivors: Option<u32>,
     /// Retail profile+54, incremented only by a qualifying failed finale.
-    #[serde(default)]
     pub cyrax_attempts: u32,
     /// Guards the ordinary first-completion award across saves and re-entry.
-    #[serde(default)]
     pub adventure_completed: bool,
     /// Profile completion count survives the replay cursor and per-run
     /// Cyrax-attempt reset (PB05 profile+50 versus +54).
@@ -410,11 +402,8 @@ pub struct AdventureSession {
     pub board: Option<AdventureState>,
     pub phase: AdventurePhase,
     pub ticks: u64,
-    #[serde(default)]
     pub mode: GameMode,
-    #[serde(default)]
     pub time_trial_scores: TimeTrialScores,
-    #[serde(default)]
     pub time_trial: Option<TimeTrialRun>,
     pub challenge_scores: ChallengeScores,
     #[serde(deserialize_with = "Option::<ChallengeRun>::deserialize")]

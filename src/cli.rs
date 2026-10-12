@@ -238,19 +238,12 @@ pub fn decode_save(bytes: &[u8]) -> Result<AdventureSession, Box<dyn Error>> {
 }
 
 fn decode_save_value(mut value: serde_json::Value) -> Result<AdventureSession, Box<dyn Error>> {
-    match value
+    if value
         .get("format_version")
         .and_then(serde_json::Value::as_u64)
+        != Some(u64::from(SAVE_FORMAT_VERSION))
     {
-        Some(version) if version == u64::from(SAVE_FORMAT_VERSION) => {}
-        Some(version) if version < u64::from(SAVE_FORMAT_VERSION) => {
-            return Err(
-                "Project saves before format thirty-seven lack retained mode scenes".into(),
-            );
-        }
-        _ => {
-            return Err("Unsupported project save version; original saves are not imported".into());
-        }
+        return Err("Unsupported project save version; original saves are not imported".into());
     }
     let session = value
         .get_mut("session")
@@ -259,7 +252,7 @@ fn decode_save_value(mut value: serde_json::Value) -> Result<AdventureSession, B
     decode_current_session(session)
 }
 
-/// Admit the current session shape before Serde can fill historical defaults.
+/// Admit the current session shape, including required nullable fields.
 /// Both standalone envelopes and profile entries use this direct decoder.
 pub(crate) fn decode_current_session(
     value: serde_json::Value,
@@ -1147,9 +1140,7 @@ pub fn load_session(options: &Options) -> Result<AdventureSession, Box<dyn Error
     decode_save(&std::fs::read(path)?)
 }
 
-/// Profiles are the current runtime owner. A pre-profile project save is
-/// adopted only when it already has the exact current session format; no
-/// historical reconstruction or write to adventure.json occurs here.
+/// Profiles are the runtime owner; standalone saves are not adopted.
 pub fn load_profiles(options: &Options) -> Result<Profiles, Box<dyn Error>> {
     let profiles_path = options.save_dir.join("profiles.json");
     if profiles_path.exists() {
@@ -1162,19 +1153,6 @@ pub fn load_profiles(options: &Options) -> Result<Profiles, Box<dyn Error>> {
             }
         }
         return Ok(profiles);
-    }
-    let old_path = options.save_dir.join("adventure.json");
-    if !options.new_game && old_path.exists() {
-        let bytes = std::fs::read(old_path)?;
-        let value: serde_json::Value = serde_json::from_slice(&bytes)?;
-        if value
-            .get("format_version")
-            .and_then(serde_json::Value::as_u64)
-            != Some(u64::from(SAVE_FORMAT_VERSION))
-        {
-            return Err("Existing adventure save is not the current project format".into());
-        }
-        return Ok(Profiles::from_session("Player", decode_save_value(value)?)?);
     }
     Ok(Profiles::new("Player", options.seed)?)
 }

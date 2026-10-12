@@ -209,3 +209,89 @@ comparison and the separate guppy motion/pose follow-up remain outside this
 cleanup. No work item was supplied and this chat had no owned claim;
 Actionables was not updated. Concurrent follow-up documentation is preserved
 and excluded from this cleanup commit.
+
+## Remaining development-save compatibility
+
+On 2026-10-12 the user requested removal of any remaining logic supporting old
+development saves. The code baseline is main
+`1fa5deb155b9d36f01f9ebf99bb70dbce60fead9`; concurrent guppy documentation was
+subsequently committed separately as `e0a64a8`. An independent read-only
+Investigator mapped persistent defaults and their callers; root owns the
+implementation, evidence ledger, tests and final decision.
+
+Twelve production files remove48 persistent Serde defaults, five default-only
+helper functions, four retired resume-origin enum variants, the automatic
+`adventure.json` adoption branch and its normal-startup ledger exception.
+Standalone admission now uses one exact current-version check. Normal startup
+reads only current `profiles.json`, starting fresh if it is absent. Current
+standalone APIs remain available for project tooling. Serialized session37 and
+profile3 fields, current actor constructors, profile selection fallback, atomic
+publication and completed screensaver behavior remain. Retired migration tags
+inside otherwise current containers are rejected rather than reconstructed.
+The `default_pet_capacity` helper still initializes real new sessions; it stays.
+The sole remaining Serde default is on `Event::FoodDropped.potion`, observation
+data outside the save graph. Explicit nullable-key admission checks stay.
+
+### Checks and recorded failures
+
+Three user-contract regressions fail against the baseline: raw missing-field
+backfill, retired-origin acceptance and orphaned standalone adoption. Five
+other selected codec tests pass. The first full persistence run then has114
+passes and four failures. Two new fixtures were wrong: raw Serde's implicit
+optional `combat_id` omission is distinct from an explicit default, and a
+nonzero Zorf timer was assigned to an Itchy. A subsequent raw-field check also
+exposes an invented fixture key `food_level`; root rechecks the actual Board
+fields and replaces it with the persisted `pets` roster.
+
+The two older failures reproduce independently on an archive of unchanged
+baseline source: the Time Trial fixture selects locked tank3 from Adventure2-1,
+and the OtherPet test expects an obsolete format22 error before the existing
+current-only gate. Their assertions now select available tank1 and require the
+current unsupported-version error, preserving state continuation, duplicate
+roster and malformed-shape coverage. No gameplay gate was weakened.
+
+| Executed command | Result |
+|---|---|
+| `cargo fmt --all -- --check` | Passed |
+| `cargo clippy --locked --offline -p turbofish-deluxe --lib --bin turbofish-deluxe --tests -- -D warnings` | Passed |
+| `cargo test --locked --offline -p turbofish-deluxe --test persistence -- --nocapture` | Initial114 passed,4 failed; only the four affected assertions/fixtures changed afterward |
+| `cargo test --locked --offline -p turbofish-deluxe --test persistence <filter> -- --exact --nocapture`, four filters below | All four repaired cases passed;118 unique persistence cases now have passing evidence |
+| `cargo test --locked --offline -p turbofish-deluxe --lib sim::tests::second_stage_stinky_has_live_spawn_state_and_persisted_origin -- --exact --nocapture` | 1 passed |
+| `cargo build --locked --offline -p turbofish-deluxe --bin turbofish-deluxe` | Passed, isolated supporting build |
+
+The four exact persistence filters:
+
+```text
+current_codec::raw_current_session_requires_persisted_fields_without_backfill
+current_codec::current_pet_food_timer_is_required_and_round_trips
+current_time_trial_purchase_and_board_continuation_survive_decode
+current_tank_five_other_pets_have_canonical_arrays_and_reject_duplicate_roster
+```
+
+Total:119 unique regression cases have passing evidence. The114 unaffected
+passes remain current; the later changes affect only four test bodies and
+comments. Current containers retain full round-trip coverage, including a
+nonzero Zorf food timer whose omission now rejects. PowerShell parser and
+automatic-variable validation pass. Failed logs and the root claim ledger
+remain in ignored `.scratch/current-save-only`.
+Workflow and whitespace checks pass:112 documents,1139 links,412 anchors,
+45 allowed-path checks and37 excluded-path checks. Failed disposable fixtures
+were cleaned up; all compiler/test processes completed.
+
+Final checks use Rust/Cargo1.95.0, MSVC x86_64, default features, unoptimized
+dev/test profiles without debug info, incremental disabled and two jobs. Cached
+libopenmpt0.8.9 supplies linking/loading. The initial test run reused the earlier
+private compiler cache; final and unchanged-baseline checks use separate copied
+targets. Normal-launch artifacts are unchanged. The final supporting EXE
+SHA-256 is `8b9987bace62782abe070a3cd02c906216ada8f32837b0c6117eb899cf8569ec`;
+the122-input source digest is
+`f7758447642332df0ffd0e3b55e12ac8109213549c30a4c3c7621f3f214c922c`.
+Exact source/toolchain/configuration identity is retained in
+`.scratch/current-save-only/final-identity.local.json`.
+
+No native gameplay, live/original/earned save, human process or original
+installation was accessed. Existing files are preserved; only disposable
+test fixtures were written. No new reference material or license scope is used.
+Human gameplay, retail/audio comparison and the separate guppy observations
+remain outside this cleanup. No work item was supplied and the scoped mine
+list was empty; Actionables was not updated.

@@ -134,7 +134,6 @@ pub enum ShotResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WeakSylvester {
     pub id: u64,
-    #[serde(default)] // Only pre-format-5 project saves omit the variant.
     pub kind: SylvesterKind,
     pub x: f64,
     pub y: f64,

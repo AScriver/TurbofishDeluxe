@@ -2,6 +2,26 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Remove remaining development-save compatibility
+
+The user requested removal of backward compatibility for old development saves.
+Forty-eight persistent Serde defaults, five default-only helpers, four retired
+resume tags and automatic standalone-save adoption are removed. Normal startup
+uses current `profiles.json`; absent profiles start fresh without reading
+`adventure.json`. Current serialized fields, current constructors and atomic
+checkpoint behavior remain. Requirements, design and README record this scope.
+
+Three expected baseline regressions establish the removed acceptance paths.
+The broader persistence run exposes two new fixture mistakes, one subsequent
+fixture-key mistake and two independently reproduced stale test assertions.
+Their focused corrections pass without changing gameplay admission. All118
+unique persistence cases plus one affected library case have passing evidence;
+formatting, strict lint and an isolated build pass. The [owning codec record](docs/refactor-save-codec.md#remaining-development-save-compatibility)
+owns exact commands, failures, build/source identity and limits. Existing
+guppy documentation and its concurrent commit are preserved. No native game,
+live save, original installation or normal-launch artifact is touched. No work
+item was supplied; Actionables was not updated.
+
 ## 2026-10-12 — Observe guppy motion and turn poses at normal speed
 
 The human explicitly authorized a targeted native reproduction after the

@@ -1,8 +1,19 @@
 # Current handoff
 
-Updated: 2026-10-12, America/Phoenix. **E129 cleanup complete; E128 targeted guppy observation complete.** [Follow-up evidence](docs/playtests/2026-10-12-guppy-turn-motion-followup.md) verifies release401da21 and four full-update probes with zero added turn-start delay. A human-authorized isolated1x run reproduces movement before pronounced body rotation;85 sampled turn states match the recovered frame rule. The original also starts animation before integrating reversed motion, and early authored poses remain close to the starting profile. No extra start delay or further runtime defect was established; retail playback timing and human acceptance remain open. All four owned test processes are closed. E128's mirror correction and Actionable#310 Done remain historical. E129's unrelated source edits are preserved; turn probes/captures identify the retained E128 build. E127/#309, E126/#308 and E125/#303-307 remain complete and preserved. E124 engineering is complete with its separately recorded Ready/unclaimed tracking limitation. Earlier source transfers/workers remain closed. Ordinary gameplay remains human-owned; autonomous scenarios and heartbeat remain stopped. Screensaver work stays excluded. Original/project live saves, E80, genuine earning06 and normal-launch artifacts remain untouched; full retail/audio/human acceptance stays pending where unobserved.
+Updated: 2026-10-12, America/Phoenix. **E130 development-save compatibility removed; E128 targeted guppy observation complete.** [Follow-up evidence](docs/playtests/2026-10-12-guppy-turn-motion-followup.md) verifies release401da21 and four full-update probes with zero added turn-start delay. A human-authorized isolated1x run reproduces movement before pronounced body rotation;85 sampled turn states match the recovered frame rule. The original also starts animation before integrating reversed motion, and early authored poses remain close to the starting profile. No extra start delay or further runtime defect was established; retail playback timing and human acceptance remain open. All four owned test processes are closed. E128's mirror correction and Actionable#310 Done remain historical. E129's unrelated source edits are preserved; turn probes/captures identify the retained E128 build. E127/#309, E126/#308 and E125/#303-307 remain complete and preserved. E124 engineering is complete with its separately recorded Ready/unclaimed tracking limitation. Earlier source transfers/workers remain closed. Ordinary gameplay remains human-owned; autonomous scenarios and heartbeat remain stopped. Screensaver work stays excluded. Original/project live saves, E80, genuine earning06 and normal-launch artifacts remain untouched; full retail/audio/human acceptance stays pending where unobserved.
 
 ## Current increment
+
+**E130 — remaining development-save compatibility removed:**48 persistent
+Serde defaults, five default-only helpers, four retired migration tags and
+automatic standalone-save adoption are removed. Normal startup uses current
+profile3 only; current standalone tooling retains session37. Existing files
+stay untouched. All118 unique persistence checks plus one affected library
+check have passing evidence; formatting, strict lint and an isolated build
+pass. [Owning record](docs/refactor-save-codec.md#remaining-development-save-compatibility)
+owns baseline failures, fixture corrections, exact identity and limits. No work
+item was supplied; Actionables was not updated. E129 and the concurrent E128
+guppy observation remain historical and preserved; no native game ran here.
 
 **E129 — requested dead legacy-save cleanup, complete:** Nine reconstruction
 functions and the production legacy wrapper/error type are removed. Twelve
@@ -333,6 +344,7 @@ Completed performance worktrees retain separate Cargo targets and disposable off
 
 | ID | Class / current scope | Evidence |
 |---|---|---|
+| E130 | Reproduced remaining development-save acceptance paths;118 unique persistence and one affected library case pass after focused corrections; build/lint pass; native unrun | [Current-only codec cleanup](docs/refactor-save-codec.md#remaining-development-save-compatibility), identified private supporting build and preserved failure logs |
 | E128 follow-up | Human-reported motion/pose gap reproduced in authorized isolated1x pixels/state; binary-derived animation-before-motion order; four offline full-update probes find zero added delay;85 sampled turn states match; retail comparison pending | [Motion/pose follow-up](docs/playtests/2026-10-12-guppy-turn-motion-followup.md), retained E128 library and identified normal-release bundle; all owned PIDs closed |
 | E128 | Binary-derived guppy clock/mirror; reproduced three wrong-mirror assertions and corrected four focused offline checks; native feel pending | [Guppy turnaround](docs/fish-turn-animation.md), PB76, identified isolated build |
 | E127 | Reproduced original extracted chooser gate; eight corrected offline regressions and matched production join; native unrun | [Chooser completion and bounded follow-up](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit), linked worker report and accepted build identity |
@@ -349,6 +361,10 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 ## Next action
 
 Current next action:
+
+E130's requested compatibility removal is complete. Future save changes keep
+current-only admission; older development files are preserved without import
+or reconstruction. Normal gameplay stays human-owned.
 
 E128/#310 remains checked and closed. The authorized targeted observation is
 complete and reproduces the motion/pose gap without finding an extra turn-start

@@ -32,7 +32,6 @@ pub struct ClydeState {
     pub vy: f64,
     pub target_vx: f64,
     pub frame: u8,
-    #[serde(default)]
     pub presto_form: Option<PrestoForm>,
     movement_state: u8,
     movement_timer: u8,

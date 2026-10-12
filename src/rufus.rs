@@ -40,7 +40,6 @@ pub struct RufusState {
     pub animation_ticks: u8,
     pub frame: u8,
     pub ancillary_ticks: u16,
-    #[serde(default)]
     pub presto_form: Option<PrestoForm>,
 }
 

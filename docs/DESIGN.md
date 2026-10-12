@@ -78,6 +78,21 @@ owns final joined verification. Synthetic scheduling and adapter/profile
 measurements retain their scope; native startup/FPS and human feel remain
 unmeasured by this work.
 
+## Current save admission
+
+On 2026-10-12 the user requested removing remaining development-save
+compatibility. Only current standalone format37 and profile format3 are
+supported. Remove persistent Serde missing-field defaults and retired resume
+origin variants; retain explicit current nullable-field validation and all
+current emitted fields. Normal startup reads only `profiles.json`, creating a
+fresh manager when it is absent, without adopting an orphaned `adventure.json`.
+Standalone current-session APIs remain available for current-format tooling.
+Current constructors, checkpoint transactions and completed screensaver code
+remain. Existing save files and historical reports are preserved. A current
+container carrying a retired migration tag is rejected rather than repaired.
+The [codec cleanup record](refactor-save-codec.md#remaining-development-save-compatibility)
+owns verification and any actual failures.
+
 ## Windows checkpoint publication
 
 A66's normal-speed Menu resume published the resumed profile, then the process

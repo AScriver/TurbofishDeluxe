@@ -106,10 +106,8 @@ fn prepare() -> Result<(), Box<dyn Error>> {
     } else {
         None
     };
-    // An existing manager owns its ledger, even when empty. An existing
-    // adventure.json without a manager is an import, not a fresh ledger.
-    let fresh_manager = !profiles_path.exists()
-        && (options.new_game || !options.save_dir.join("adventure.json").exists());
+    // An existing manager owns its ledger, even when empty.
+    let fresh_manager = !profiles_path.exists();
     let mut profiles = cli::load_profiles(&options)?;
     if screensaver.is_none() {
         if fresh_manager {

@@ -38,7 +38,6 @@ pub struct RhubarbState {
     pub turn_ticks: i8,
     pub specialty_ticks: u8,
     pub frame: u8,
-    #[serde(default)]
     pub presto_form: Option<PrestoForm>,
 }
 

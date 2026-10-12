@@ -19,12 +19,6 @@ pub const NIKO_TANK4_Y: i32 = 185;
 /// W1 OtherTypePet.cpp background-6 default; primary anchor is not closed.
 pub const NIKO_TANK5_X: i32 = 160;
 pub const NIKO_TANK5_Y: i32 = 176;
-const fn tank1_x() -> i32 {
-    NIKO_X
-}
-const fn tank1_y() -> i32 {
-    NIKO_Y
-}
 pub const PEARL_VALUE: i32 = 250;
 pub const PEARL_SIZE: i32 = 72;
 
@@ -42,14 +36,11 @@ pub enum NikoEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NikoState {
     pub owner_id: u64,
-    #[serde(default = "tank1_x")]
     pub anchor_x: i32,
-    #[serde(default = "tank1_y")]
     pub anchor_y: i32,
     pub x: f64,
     pub y: f64,
     pub vy: f64,
-    #[serde(default)]
     pub presto_form: Option<PrestoForm>,
     pub cycle: u16,
     pub pearl_taken: bool,

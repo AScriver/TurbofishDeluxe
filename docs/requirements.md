@@ -10,6 +10,12 @@ Game logic and simulation execute in Rust. General-purpose graphics, audio, and 
 
 The user's 2026-10-08 clarification removes legacy-save compatibility from scope. Support the current project-save format; do not add migrations or historical-state reconstruction for future milestones. Preserve existing implementation, commits and earned test saves. Any explicitly prepared development fixture must retain its source and prove exactly which neutral schema fields changed; it is not evidence of product save compatibility. Original-save import is not required.
 
+On 2026-10-12 the user requested removal of remaining development-save
+compatibility. Normal startup uses only the current profile manager, with no
+automatic standalone-save adoption. Remove historical missing-field backfill
+and retired migration tags; preserve current serialized fields and existing
+save files. Current-format standalone APIs remain available for project tooling.
+
 On2026-10-10 the user removed screensaver work from completion scope and directed
 already completed work to remain. Preserve merged saver/configuration/preview/
 bank/host code, saved metadata and existing checkpoints. Do not schedule further

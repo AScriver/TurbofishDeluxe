@@ -85,14 +85,6 @@ fn amp_reward_limit(victims: usize) -> usize {
     }
 }
 
-const fn first_stage_egg_price() -> i32 {
-    EGG_PRICE
-}
-
-const fn initial_weapon_strength() -> u8 {
-    2
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PetKind {
     Stinky,
@@ -166,7 +158,6 @@ pub(crate) struct PrestoActorView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StinkyOrigin {
     StageStart,
-    LegacyV2Resume,
 }
 
 /// Live first Adventure pet. The source stores motion and animation on the
@@ -351,7 +342,6 @@ pub struct Fish {
     pub coin_threshold: u16,
     pub walter: crate::walter::WalterImpact,
     pub alive: bool,
-    #[serde(default)]
     pub cannot_be_eaten_ticks: u8,
     speed_mod: f32,
     movement_state: u8,
@@ -516,19 +506,12 @@ pub struct Food {
     pub picked_up: bool,
     pub ineligible_ticks: u8,
     pub removal_ticks: u8,
-    #[serde(default)]
     pub quality: u8,
-    #[serde(default)]
     pub direction: u8,
-    #[serde(default)]
     pub vx: f32,
-    #[serde(default)]
     pub vy: f32,
-    #[serde(default = "initial_food_animation_period")]
     pub animation_period: u8,
-    #[serde(default)]
     pub free_from_zorf: bool,
-    #[serde(default)]
     pub nimbus_rising: bool,
 }
 
@@ -536,10 +519,6 @@ pub struct Food {
 pub enum FoodType {
     Ordinary,
     Nostradamus,
-}
-
-const fn initial_food_animation_period() -> u8 {
-    3
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1512,25 +1491,17 @@ pub struct AdventureState {
     pub victory: bool,
     pub guppy_unlocked: bool,
     pub egg_unlocked: bool,
-    #[serde(default)]
     pub oscar_unlocked: bool,
     pub starcatcher_unlocked: bool,
     pub grubber_unlocked: bool,
     pub gekko_unlocked: bool,
     pub breeder_unlocked: bool,
-    #[serde(default)]
     pub ultra_unlocked: bool,
-    #[serde(default)]
     pub weapon_unlocked: bool,
-    #[serde(default = "initial_weapon_strength")]
     pub weapon_strength: u8,
-    #[serde(default)]
     pub potion_unlocked: bool,
-    #[serde(default)]
     pub potion_armed: bool,
-    #[serde(default = "first_stage_egg_price")]
     pub egg_price: i32,
-    #[serde(default)]
     pub time_trial: bool,
     #[serde(deserialize_with = "Option::<ChallengeShop>::deserialize")]
     pub challenge_shop: Option<ChallengeShop>,
@@ -1540,16 +1511,13 @@ pub struct AdventureState {
     /// The won Board keeps cash during replay bonus; shell income is separate.
     pub bonus_active: bool,
     pub bonus_tally: u32,
-    #[serde(default)]
     pub pets: Vec<PetKind>,
-    #[serde(default)]
     pub stinky: Vec<StinkyState>,
     pub clyde: Vec<ClydeState>,
     pub rufus: Vec<RufusState>,
     pub rhubarb: Vec<RhubarbState>,
     pub missiles: Vec<ClassicMissile>,
     pub fish: Vec<Fish>,
-    #[serde(default)]
     pub oscars: Vec<OscarState>,
     pub starcatchers: Vec<StarcatcherState>,
     pub dead_starcatchers: Vec<DeadStarcatcher>,
@@ -1559,16 +1527,11 @@ pub struct AdventureState {
     pub dead_gekkos: Vec<DeadGekko>,
     pub breeders: Vec<BreederState>,
     pub dead_breeders: Vec<DeadBreeder>,
-    #[serde(default)]
     pub ultras: Vec<UltraState>,
-    #[serde(default)]
     pub dead_ultras: Vec<DeadUltra>,
     pub larvae: Vec<LarvaState>,
-    #[serde(default)]
     pub fish_pets: Vec<FishPetState>,
-    #[serde(default)]
     pub punch_sound_cooldown: u8,
-    #[serde(default)]
     pub dead_oscars: Vec<DeadOscar>,
     pub dead_fish: Vec<DeadFish>,
     pub food: Vec<Food>,
@@ -1576,13 +1539,9 @@ pub struct AdventureState {
     pub bomb_shots: Vec<BombShot>,
     pub notes: Vec<NoteState>,
     pub tutorial: TutorialState,
-    #[serde(default)]
     pub upgrades: FoodUpgrades,
-    #[serde(default)]
     pub invasion: Option<Invasion1_2>,
-    #[serde(default)]
     pub niko: Vec<NikoState>,
-    #[serde(default)]
     pub pearls: Vec<NikoPearl>,
     next_id: u64,
     rng_state: u64,
@@ -13817,7 +13776,7 @@ mod tests {
 
     #[test]
     fn second_stage_stinky_has_live_spawn_state_and_persisted_origin() {
-        let mut state = AdventureState::new_second_stage(0x7788);
+        let state = AdventureState::new_second_stage(0x7788);
         let pet = state.stinky.first().unwrap();
         assert!((105.0..370.0).contains(&pet.x));
         assert_eq!(
@@ -13835,18 +13794,13 @@ mod tests {
                 .iter()
                 .all(|fish| !fish.beginner && fish.food_ate == 2)
         );
-        // Origin tags remain part of current saves even after reconstruction
-        // helpers are removed. Loading must preserve the saved actor verbatim.
-        for origin in [StinkyOrigin::StageStart, StinkyOrigin::LegacyV2Resume] {
-            state.stinky[0].origin = origin;
-            let restored: AdventureState =
-                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-            assert_eq!(restored.stinky[0].origin, origin);
-            assert_eq!(
-                serde_json::to_value(restored).unwrap(),
-                serde_json::to_value(&state).unwrap()
-            );
-        }
+        let restored: AdventureState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(restored.stinky[0].origin, StinkyOrigin::StageStart);
+        assert_eq!(
+            serde_json::to_value(restored).unwrap(),
+            serde_json::to_value(&state).unwrap()
+        );
     }
 
     #[test]

@@ -106,8 +106,7 @@ impl Profiles {
         Self::from_session(name, AdventureSession::new(seed))
     }
 
-    /// Adopt an already loaded current project session as the first profile.
-    /// The caller decides whether/when that current save is superseded.
+    /// Create a manager around a complete current project session.
     pub fn from_session(name: &str, session: AdventureSession) -> Result<Self, String> {
         if !valid_name(name) {
             return Err("profile name is empty".into());
@@ -183,8 +182,8 @@ impl Profiles {
         Ok(())
     }
 
-    /// Current-only decoder. Each entry directly admits its session through the
-    /// shared codec before Serde can fill an omitted historical field.
+    /// Current-only decoder. Each entry admits required session fields through
+    /// the shared codec, including explicit nullable keys.
     pub fn decode(bytes: &[u8]) -> Result<Self, Box<dyn Error>> {
         let value: serde_json::Value = serde_json::from_slice(bytes)?;
         if value.get("format_version").and_then(|v| v.as_u64())

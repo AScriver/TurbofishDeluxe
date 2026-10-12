@@ -20,13 +20,6 @@ use crate::bilaterus::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InvasionOrigin {
     StageStart,
-    /// Initial state synthesized for a pre-invasion-field version-3 save.
-    /// Old board ticks do not reveal how much of the invasion timer elapsed.
-    LegacyV3Resume,
-    /// Synthesized timer for an old format-4 stage-3 board without a wave.
-    LegacyV4Resume,
-    /// Synthesized Balrog timer for a pre-format-6 stage-4 board.
-    LegacyV5Resume,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -261,7 +254,6 @@ impl LaserEffect {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeadAlienEffect {
-    #[serde(default)] // Pre-format-6 corpses were weak or strong Sylvester.
     pub kind: SylvesterKind,
     pub x: f64,
     pub y: f64,

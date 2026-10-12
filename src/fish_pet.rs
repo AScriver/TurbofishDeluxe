@@ -229,7 +229,6 @@ pub struct FishPetState {
     pub turn_ticks: i8,
     pub birth_timer: u16,
     pub birth_threshold: u16,
-    #[serde(default)]
     pub food_timer: i32,
     pub coin_timer: u16,
     /// PB65 uses signed DWORDs. These are independent of other pets' clocks.
@@ -265,7 +264,6 @@ pub struct FishPetState {
     #[serde(deserialize_with = "Option::<Glove>::deserialize")]
     pub glove: Option<Glove>,
     /// The actor owns the source +238 cooldown and transformed-form flag.
-    #[serde(default)]
     pub presto_form: Option<PrestoForm>,
     /// Prior widget coordinates published before this pet's own movement.
     pub published_x: i32,
