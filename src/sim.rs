@@ -3584,7 +3584,7 @@ impl AdventureState {
     fn validate_challenge_counters(&self) -> Result<(), String> {
         let tank = self.tank;
         let has = |pets: PetKind| self.pets.contains(&pets);
-        if self.balance < 0
+        if self.available_funds() < 0
             || self.upgrades.quality > 2
             || !(1..=9).contains(&self.upgrades.quantity)
             || !self.upgrades.quality_unlocked
@@ -4024,7 +4024,7 @@ impl AdventureState {
             || self.rng_state == 0
             || self.eggs != 0
             || self.victory
-            || self.balance < 0
+            || self.available_funds() < 0
             || !self.egg_unlocked
             || self.egg_price < crate::time_trial::TIME_TRIAL_EGG_PRICE
             || self.egg_price > crate::time_trial::TIME_TRIAL_MAX_EGG_PRICE

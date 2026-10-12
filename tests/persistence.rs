@@ -42,6 +42,160 @@ mod current_codec {
         );
     }
 
+    fn covered_pending_money_purchase(mode: GameMode) {
+        use turbofish_deluxe::{
+            larva::{LARVA_VALUE, LarvaState},
+            niko::{NikoPearl, PEARL_VALUE, PearlPhase},
+            sim::{Coin, CoinKind, Event},
+        };
+
+        // Prepared completed profile, not earned progression or retail evidence.
+        let mut fixture = prepared_tank_five_session(0);
+        fixture.progress.level = 2;
+        fixture.progress.adventure_completed = true;
+        fixture.progress.adventure_completions = 1;
+        fixture.progress.challenge_completed = [true, true, false, false];
+        fixture.challenge_scores.personal_best = [Some(100), Some(100), None, None];
+        fixture.progress.unlocked_pets.push(PetKind::Presto);
+        fixture.board = None;
+        fixture.phase = AdventurePhase::GameSelector;
+        fixture.validate().unwrap();
+        let actions = if mode == GameMode::TimeTrial {
+            [
+                Action::PlayTimeTrial,
+                Action::SelectTimeTrialTank { tank: 3 },
+            ]
+        } else {
+            [
+                Action::PlayChallenge,
+                Action::SelectChallengeTank { tank: 3 },
+            ]
+        };
+        fixture.apply_actions(&actions);
+        fixture.apply_actions(&[
+            Action::TogglePet { pet: PetKind::Niko },
+            Action::TogglePet {
+                pet: PetKind::Stinky,
+            },
+            Action::TogglePet {
+                pet: PetKind::Itchy,
+            },
+            Action::Continue,
+        ]);
+        assert_eq!(fixture.mode, mode);
+        assert!(matches!(
+            fixture.phase,
+            AdventurePhase::TimeTrialPlaying | AdventurePhase::ChallengePlaying
+        ));
+        fixture.validate().unwrap();
+
+        for pending in 0..3 {
+            let mut value = serde_json::to_value(&fixture).unwrap();
+            let id = value["board"]["next_id"].as_u64().unwrap();
+            value["board"]["next_id"] = (id + 1).into();
+            let mut session: AdventureSession = serde_json::from_value(value).unwrap();
+            let board = session.board.as_mut().unwrap();
+            let amount = match pending {
+                0 => {
+                    board.coins.push(Coin {
+                        id,
+                        x: 200.0,
+                        y: 200.0,
+                        kind: CoinKind::Gold,
+                        frame: 0,
+                        animation_ticks: 0,
+                        hazard_age_ticks: 0,
+                        collecting: true,
+                        bottom_ticks: 0,
+                        fade_ticks: 0,
+                        penta_rising: false,
+                    });
+                    CoinKind::Gold.value()
+                }
+                1 => {
+                    let mut pearl = NikoPearl::spawn(id, board.niko[0].owner_id, 200, 200);
+                    pearl.phase = PearlPhase::Collecting;
+                    board.pearls.push(pearl);
+                    PEARL_VALUE
+                }
+                _ => {
+                    let mut larva = LarvaState::spawn(id, 200, 200, &mut || 47);
+                    larva.mouse_visible = true;
+                    assert!(larva.try_pick_up());
+                    board.larvae.push(larva);
+                    LARVA_VALUE
+                }
+            };
+            board.balance = board.egg_price - 10;
+            session.validate().unwrap();
+            let events = session.step(&[Action::BuyEgg]);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::TimeTrialPetAcquired { .. } | Event::ChallengeEggBought { .. }
+            )));
+            let board = session.board.as_ref().unwrap();
+            assert_eq!((board.balance, board.available_funds()), (-10, amount - 10));
+            session.validate().unwrap();
+
+            let expected = serde_json::to_value(&session).unwrap();
+            let mut standalone = cli::decode_save(&standalone_bytes(&expected)).unwrap();
+            let profiles = Profiles::from_session("Covered debt", session.clone()).unwrap();
+            let root = temporary_root("covered-debt");
+            let path = root.join("profiles.json");
+            profiles.save(&path).unwrap();
+            let reopened = Profiles::decode(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(
+                serde_json::to_value(&reopened.current().unwrap().session).unwrap(),
+                expected
+            );
+            fs::remove_dir_all(root).unwrap();
+
+            let mut uncovered = expected.clone();
+            uncovered["board"]["coins"] = json!([]);
+            uncovered["board"]["pearls"] = json!([]);
+            uncovered["board"]["larvae"] = json!([]);
+            both_reject(&uncovered);
+
+            let mut credits = 0;
+            for _ in 0..32 {
+                let events = session.step(&[]);
+                assert_eq!(
+                    serde_json::to_value(standalone.step(&[])).unwrap(),
+                    serde_json::to_value(&events).unwrap()
+                );
+                assert_eq!(
+                    serde_json::to_value(&standalone).unwrap(),
+                    serde_json::to_value(&session).unwrap()
+                );
+                session.validate().unwrap();
+                credits += events
+                    .iter()
+                    .filter(|event| {
+                        matches!(event,
+                            Event::CoinCredited { coin_id, .. } if *coin_id == id
+                        ) || matches!(event,
+                            Event::PearlCredited { pearl_id, .. } if *pearl_id == id
+                        ) || matches!(event,
+                            Event::LarvaCredited { larva_id, .. } if *larva_id == id
+                        )
+                    })
+                    .count();
+            }
+            assert_eq!(credits, 1);
+            assert_eq!(session.board.as_ref().unwrap().balance, amount - 10);
+        }
+    }
+
+    #[test]
+    fn covered_time_trial_pending_money_reopens_and_settles_once() {
+        covered_pending_money_purchase(GameMode::TimeTrial);
+    }
+
+    #[test]
+    fn covered_challenge_pending_money_reopens_and_settles_once() {
+        covered_pending_money_purchase(GameMode::Challenge);
+    }
+
     #[test]
     fn valid_sessions_decode_identically_in_standalone_and_profiles() {
         let fresh = AdventureSession::new(0x299);

@@ -31,8 +31,8 @@ any later main changes.
 | Order | Actionable | Outcome | Engineering |
 |---|---|---|---|
 | 1 | #311 | Valid final-candidate Time Trial fixture | Committed `c7b06fe` |
-| 2 | #312 | All-entry Sandbox publication projection | Checked; commit follows |
-| 3 | #313 | Covered pending-money debt admission | Pending |
+| 2 | #312 | All-entry Sandbox publication projection | Committed `8f80305` |
+| 3 | #313 | Covered pending-money debt admission | Checked; commit follows |
 | 4 | #314 | Required nullable `last_laser` | Pending |
 | 5 | #315 | Remove proven duplicate schema inventories | Pending |
 | 6 | #316 | Deliver applause through the effect path | Pending |
@@ -103,3 +103,22 @@ tests and supplies no coverage. Strict lint, formatting, isolated build and
 workflow pass. A bounded adversarial source review found no uncovered mutation
 between score publication and the skip, and confirmed final timestamp rollback.
 No gameplay, live save or audio device was used.
+
+## Covered pending money
+
+Time Trial and Challenge validation now reject negative `available_funds`,
+matching their existing purchase contract, rather than rejecting negative cash
+before claimed collectibles arrive. No collection or purchase timing changes.
+Two synthetic persistence regressions exercise coins, pearls and larvae in both
+modes, saving/reopening profiles and standalone sessions, rejecting uncovered
+debt, comparing the next32 updates, and requiring exactly one arrival credit.
+Each corrected fixture reproduced its mode's old validation rejection. Initial
+Challenge fixture attempts also failed admission (pet confirmation, earlier tank
+completion and matching score prerequisites); these fixture failures are retained
+in the external logs and are not production evidence.
+
+Both regressions pass. Existing claimed-money, Time Trial and Challenge suites
+also passed during focused verification. Formatting, strict lint, compilation,
+isolated build and workflow pass. #313's claim failed without mutation,
+correlation `d2d57eb1-bf92-43ef-a446-5a2ef172be32`; inspection confirms Ready
+version6, unclaimed. No gameplay or live saves were used.

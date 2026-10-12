@@ -2,6 +2,19 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Admit covered pending-money debt in both modes (#313)
+
+Two predicates in `src/sim.rs` now validate available funds, preserving the
+existing purchase and delayed-credit contract. `tests/persistence.rs` adds two
+regressions covering all three pending collectible kinds, real profile writes,
+standalone decoding, uncovered-debt rejection and exact next-update/one-credit
+behavior. Corrected fixtures reproduced both old mode rejections; failed initial
+Challenge admission fixtures remain in external logs. Both tests and the existing
+affected suites pass. Formatting, strict lint and compilation pass; isolated
+build/workflow are checked before commit. #313 remains Ready/unclaimed after a
+non-retryable claim error; [batch record](docs/rust-review-fixes.md) owns details.
+No gameplay/live saves/install were used. Next: commit, then #314.
+
 ## 2026-10-12 — Project every profile at the publication boundary (#312)
 
 `src/profiles.rs` owns the durable all-entry Sandbox projection; ordinary state
