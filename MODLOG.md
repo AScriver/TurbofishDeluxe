@@ -2,6 +2,20 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Reserve necessary Time Trial and Challenge chooser dispatch fix
+
+Repeated bounded source review found one normal-play join defect: every tank
+chooser frame owns UI input and pauses fixed-step dispatch, while accepted
+Select/Menu/Escape actions remain in that fixed-step queue. Normal selection is
+starved; exit/deadline can flush stale selections. Created Actionable#309 before
+implementation and reserved its exact normal-game joins/tests/report in the
+[contract](docs/necessary-fixes.md#tank-chooser-dispatch-correction). This finding
+is source-supported; native reproduction is unrun and ordinary gameplay remains
+human-owned. No additional concrete finding was promoted from save admission or
+Virtual Tank/store/gift accounting. Completed transfers remain closed. Next:
+new implementation chat/worktree, offline red/green checks, joined push, then
+repeat the necessary-fix pass.
+
 ## 2026-10-12 — Close necessary checkpoint fix and Actionable 308
 
 Worker `f75ad30` and actual root observer joins `89dd0e2` are pushed to main.

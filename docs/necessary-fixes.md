@@ -1,5 +1,44 @@
 # Necessary correctness fixes
 
+## Tank chooser dispatch correction
+
+E127 / Actionable#309 starts from clean main
+`fdd3b67de2a7802769b7afef5434d8a65528196b`. A new bounded source pass found
+that Time Trial and Challenge chooser actions are queued while every chooser
+frame sets `ui_owned_input`, hence `ui_active`. The normal fixed-step queue drain
+cannot run; Select, Menu and Escape remain pending until exit/deadline can flush
+them. This is strongly source-supported by `app.rs`'s chooser handler and fixed
+step branch, not a native gameplay observation. The domain and chooser model
+already implement these actions; their actual parent dispatch is the defect.
+
+| Owner | Exact maintained paths and responsibility |
+|---|---|
+| New #309 worker | `src/app.rs` (normal-game chooser collection/dispatch and focused regressions only), `src/app/tank_selection_runtime.rs` (narrow production-called offline dispatch boundary if needed), new `docs/chooser-dispatch.md`: fix the actual join and check both modes |
+| Root | `AGENTS.md`, `STATUS.md`, `MODLOG.md`, this contract and ignored coordination/evidence; final source integration, build acceptance and tracking readback |
+
+The worker is the sole source editor for this correction. Preserve concurrent
+changes and all closed transfers. Dispatch accepted chooser actions once before
+the UI pause gate, without a fabricated simulation tick. Keep production Session
+eligibility authoritative, focused/overlay blocking, whole closing-frame input
+ownership and existing pause/clock/save policies. Do not route arbitrary pending
+gameplay through a modal or retain a chooser click for later exit. A helper's
+passing tests alone are insufficient: the actual loop must call it.
+
+Reproduce the original dispatch starvation with an isolated offline harness,
+then check eligible/locked selection, Menu/Escape, both modes, blocked input,
+one-time consumption and unchanged Session/Board clocks. Run focused tests,
+formatting, strict affected lint and a locked/offline normal-bin build. Use only
+worker-owned caches/temporary fixtures and restore any temporary registration
+before publication. Keep failed evidence. Commit only owned files, reconcile and
+push main without force/reset/stash, then await root's joined acceptance before
+normal Actionables Done/release. No native game/window/audio run, real/live save
+inspection, original installation mutation or saver work is part of this task.
+
+The save-admission pass found only a manually supplied maximum-tick overflow
+candidate with no normal-play reachability; it was not promoted to a necessary
+fix. Virtual Tank/store/gift accounting inspection found no additional concrete
+normal-play defect in this pass. Repeat the bounded audit after #309 is joined.
+
 ## Completion
 
 Actionable#308 is terminal Done version12 with qualifying Passed validation and

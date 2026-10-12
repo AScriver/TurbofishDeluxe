@@ -4,6 +4,14 @@ Updated: 2026-10-12, America/Phoenix. **E126 / Actionable#308: checkpoint error 
 
 ## Current increment
 
+**E127 / Actionable#309 — necessary tank chooser dispatch fix, reserved:** A
+bounded source pass confirmed Time Trial/Challenge Select/Menu/Escape actions
+remain queued behind the parent UI pause gate. The [contract](docs/necessary-fixes.md#tank-chooser-dispatch-correction)
+reserves normal chooser source joins/tests/report to one new worker; root owns
+central records and final acceptance. No fix or native observation is claimed
+yet. Completed #308 and all earlier workers remain closed; ordinary gameplay
+stays human-owned. Reaudit after checked integration and push.
+
 **E126 — necessary checkpoint error fix, complete:** New worker
 source `f75ad30` preserves contextual I/O identity; root joins both optional
 observation consumers to the helper. Four actual observer regressions and ten
