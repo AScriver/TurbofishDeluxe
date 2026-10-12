@@ -15,6 +15,79 @@ const VIEW_WIDTH: f32 = 640.0;
 const VIEW_HEIGHT: f32 = 480.0;
 const MASK_X: u32 = 384;
 const MASK_Y: u32 = 388;
+const LOADING_BURST_SECONDS: f64 = 0.008;
+
+/// Pure between-task schedule. Waiting for a frame is UI time, not work in the
+/// next burst. Task counts and the Title clock remain independent of rendering.
+struct LoadingSchedule {
+    total_tasks: u64,
+    completed_tasks: u64,
+    burst_started_at: f64,
+    ui_updated_at: f64,
+    app_started_at: f64,
+    quit_after: Option<f64>,
+}
+
+impl LoadingSchedule {
+    fn new(total_tasks: u64, now: f64, app_started_at: f64, quit_after: Option<f64>) -> Self {
+        Self {
+            total_tasks,
+            completed_tasks: TitleImage::ALL.len() as u64,
+            burst_started_at: now,
+            ui_updated_at: now,
+            app_started_at,
+            quit_after,
+        }
+    }
+
+    fn check_deadline(&self, now: f64, quit_requested: bool) -> Result<(), Box<dyn Error>> {
+        if quit_requested || wall_deadline_reached(now - self.app_started_at, self.quit_after) {
+            Err("title startup canceled before gameplay or saver entry".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn report(&self, status: LoadingStatus) -> LoadingReport {
+        LoadingReport {
+            completed_tasks: self.completed_tasks,
+            total_tasks: self.total_tasks,
+            status,
+        }
+    }
+
+    fn task_completed(
+        &mut self,
+        title: &mut TitleScreen,
+        now: f64,
+        quit_requested: bool,
+    ) -> Result<bool, Box<dyn Error>> {
+        self.check_deadline(now, quit_requested)?;
+        let completed = self
+            .completed_tasks
+            .checked_add(1)
+            .filter(|completed| *completed <= self.total_tasks)
+            .ok_or("title loader reported more tasks than planned")?;
+        title.report_loading(LoadingReport {
+            completed_tasks: completed,
+            total_tasks: self.total_tasks,
+            status: LoadingStatus::Running,
+        })?;
+        self.completed_tasks = completed;
+        // Flush the last completion even when the entire load fits one burst.
+        Ok(completed == self.total_tasks || now - self.burst_started_at >= LOADING_BURST_SECONDS)
+    }
+
+    fn frame_seconds(&mut self, now: f64) -> f32 {
+        let elapsed = (now - self.ui_updated_at).max(0.0);
+        self.ui_updated_at = now;
+        elapsed as f32
+    }
+
+    fn resume_after_yield(&mut self, now: f64) {
+        self.burst_started_at = now;
+    }
+}
 
 #[derive(Clone)]
 struct LoadedImage {
@@ -29,12 +102,9 @@ pub(super) struct TitleRuntime {
     title: TitleScreen,
     images: HashMap<&'static str, LoadedImage>,
     masked_title: Texture2D,
-    total_tasks: u64,
-    completed_tasks: u64,
+    loading: LoadingSchedule,
     clock: StepClock,
     pending_finish: Option<FinishTarget>,
-    app_started_at: f64,
-    quit_after: Option<f64>,
     ui_evidence: Option<super::UiEvidence>,
 }
 
@@ -108,12 +178,9 @@ impl TitleRuntime {
             title,
             images,
             masked_title,
-            total_tasks,
-            completed_tasks: TitleImage::ALL.len() as u64,
+            loading: LoadingSchedule::new(total_tasks, get_time(), app_started_at, quit_after),
             clock: StepClock::new(1),
             pending_finish: None,
-            app_started_at,
-            quit_after,
             ui_evidence: None,
         })
     }
@@ -137,7 +204,7 @@ impl TitleRuntime {
                 "Title",
                 Some(&self.title.view()),
                 None,
-                get_time() - self.app_started_at,
+                get_time() - self.loading.app_started_at,
             )?;
         }
         Ok(())
@@ -152,51 +219,34 @@ impl TitleRuntime {
     }
 
     pub(super) fn check_deadline(&self) -> Result<(), Box<dyn Error>> {
-        if is_quit_requested()
-            || wall_deadline_reached(get_time() - self.app_started_at, self.quit_after)
-        {
-            Err("title startup canceled before gameplay or saver entry".into())
-        } else {
-            Ok(())
-        }
+        self.loading.check_deadline(get_time(), is_quit_requested())
     }
 
     /// Call only after one real required task completed successfully. Drawing
     /// and frame yielding are cooperative; no sleep or fabricated task count.
     pub(super) async fn task_completed(&mut self) -> Result<(), Box<dyn Error>> {
-        self.check_deadline()?;
-        let completed = self.completed_tasks.saturating_add(1);
-        if completed > self.total_tasks {
-            return Err("title loader reported more tasks than planned".into());
+        if self
+            .loading
+            .task_completed(&mut self.title, get_time(), is_quit_requested())?
+        {
+            self.draw_and_yield().await?;
         }
-        self.title.report_loading(LoadingReport {
-            completed_tasks: completed,
-            total_tasks: self.total_tasks,
-            status: LoadingStatus::Running,
-        })?;
-        self.completed_tasks = completed;
-        self.draw_and_yield().await
+        Ok(())
     }
 
     /// Caller asserts all required resources/backends are usable. Model
     /// rejects any incomplete task plan before admitting the Start button.
     pub(super) fn succeed(&mut self) -> Result<(), Box<dyn Error>> {
         self.check_deadline()?;
-        self.title.report_loading(LoadingReport {
-            completed_tasks: self.completed_tasks,
-            total_tasks: self.total_tasks,
-            status: LoadingStatus::Succeeded,
-        })?;
+        self.title
+            .report_loading(self.loading.report(LoadingStatus::Succeeded))?;
         Ok(())
     }
 
     /// Terminal failure: title can neither start nor later be marked ready.
     pub(super) fn fail(&mut self) -> Result<(), Box<dyn Error>> {
-        self.title.report_loading(LoadingReport {
-            completed_tasks: self.completed_tasks,
-            total_tasks: self.total_tasks,
-            status: LoadingStatus::Failed,
-        })?;
+        self.title
+            .report_loading(self.loading.report(LoadingStatus::Failed))?;
         Ok(())
     }
 
@@ -204,16 +254,22 @@ impl TitleRuntime {
     /// 1x 28 ms clock and never advances the gameplay session.
     pub(super) async fn draw_and_yield(&mut self) -> Result<(), Box<dyn Error>> {
         self.check_deadline()?;
-        self.clock.add_frame(get_frame_time(), false);
+        self.advance_clock();
+        self.draw_and_observe()?;
+        next_frame().await;
+        self.loading.resume_after_yield(get_time());
+        self.check_deadline()
+    }
+
+    fn advance_clock(&mut self) {
+        self.clock
+            .add_frame(self.loading.frame_seconds(get_time()), false);
         while self.clock.step_due() {
             self.clock.consume_step(false);
             if let Some(TitleEvent::Finished(target)) = self.title.advance() {
                 self.pending_finish = Some(target);
             }
         }
-        self.draw_and_observe()?;
-        next_frame().await;
-        self.check_deadline()
     }
 
     /// Ordinary title waits for captured Start release; saver auto-finishes
@@ -262,12 +318,9 @@ impl TitleRuntime {
             {
                 return Ok(target);
             }
-            self.clock.add_frame(get_frame_time(), false);
-            while self.clock.step_due() {
-                self.clock.consume_step(false);
-                if let Some(TitleEvent::Finished(target)) = self.title.advance() {
-                    return Ok(target);
-                }
+            self.advance_clock();
+            if let Some(target) = self.pending_finish.take() {
+                return Ok(target);
             }
             self.draw_and_observe()?;
             next_frame().await;
@@ -422,4 +475,255 @@ fn compose_title_mask(
     let texture = Texture2D::from_rgba8(u16::try_from(width)?, u16::try_from(height)?, &pixels);
     texture.set_filter(FilterMode::Linear);
     Ok(texture)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::title_screen::TitleError;
+
+    fn fixture(
+        total: u64,
+        now: f64,
+        app_start: f64,
+        limit: Option<f64>,
+    ) -> (LoadingSchedule, TitleScreen) {
+        // Synthetic metadata; no textures, assets, window or game process.
+        let bar = Dimensions {
+            width: 280,
+            height: 40,
+        };
+        let mut title = TitleScreen::new(
+            TitleMode::Application,
+            640,
+            TitleAssets {
+                title_page: Dimensions {
+                    width: 640,
+                    height: 480,
+                },
+                loader_bar: bar,
+                loader_bar_over: bar,
+                loading_label: Dimensions {
+                    width: 100,
+                    height: 40,
+                },
+                play_label: bar,
+                stinky: Dimensions {
+                    width: 800,
+                    height: 160,
+                },
+                title_page_mask: Dimensions {
+                    width: 300,
+                    height: 100,
+                },
+            },
+        )
+        .unwrap();
+        let schedule = LoadingSchedule::new(total, now, app_start, limit);
+        title
+            .report_loading(schedule.report(LoadingStatus::Running))
+            .unwrap();
+        (schedule, title)
+    }
+
+    #[test]
+    fn fast_completions_update_counts_immediately_and_flush_only_at_end() {
+        let (mut schedule, mut title) = fixture(192, 0.0, 0.0, None);
+        for completed in 8..=192 {
+            assert_eq!(
+                schedule.task_completed(&mut title, 0.0, false).unwrap(),
+                completed == 192
+            );
+            assert_eq!(
+                schedule.report(LoadingStatus::Running).completed_tasks,
+                completed
+            );
+            assert_eq!(schedule.report(LoadingStatus::Running).total_tasks, 192);
+            assert_eq!(
+                title.view().loading.progress().unwrap(),
+                completed as f64 / 192.0
+            );
+            assert!(!title.can_start());
+        }
+    }
+
+    #[test]
+    fn wall_budget_yields_at_boundary_and_waiting_does_not_spend_next_burst() {
+        let (mut schedule, mut title) = fixture(20, 0.0, 0.0, None);
+        assert!(
+            !schedule
+                .task_completed(&mut title, 0.007_999, false)
+                .unwrap()
+        );
+        assert!(schedule.task_completed(&mut title, 0.008, false).unwrap());
+        // A deliberately slow frame wait must not make the next cheap task yield.
+        schedule.resume_after_yield(1.0);
+        assert!(!schedule.task_completed(&mut title, 1.001, false).unwrap());
+        assert!(schedule.task_completed(&mut title, 1.125, false).unwrap());
+    }
+
+    #[test]
+    fn quit_and_application_deadline_abort_even_before_burst_is_due() {
+        let (mut schedule, mut title) = fixture(20, 11.99, 10.0, Some(2.0));
+        assert!(!schedule.task_completed(&mut title, 11.991, false).unwrap());
+        let before = title.view();
+        assert!(schedule.task_completed(&mut title, 11.992, true).is_err());
+        assert_eq!(schedule.completed_tasks, 8);
+        assert_eq!(title.view(), before);
+        assert!(schedule.task_completed(&mut title, 12.0, false).is_err());
+        assert_eq!(schedule.completed_tasks, 8);
+        assert_eq!(title.view(), before);
+        // This is also the post-yield check: no new task is necessary to abort.
+        assert!(schedule.check_deadline(12.0, false).is_err());
+        assert!(schedule.check_deadline(11.993, true).is_err());
+    }
+
+    #[test]
+    fn callbacks_do_not_tick_title_and_draws_count_work_and_wait_once() {
+        let (mut schedule, mut title) = fixture(200, 0.0, 0.0, None);
+        let mut clock = StepClock::new(1);
+        for task in 1..=100 {
+            schedule
+                .task_completed(&mut title, f64::from(task) / 2048.0, false)
+                .unwrap();
+        }
+        assert!(!clock.step_due());
+        assert_eq!(title.view().displayed_fill, 0);
+        clock.add_frame(schedule.frame_seconds(0.0625), false);
+        let mut ticks = 0;
+        while clock.step_due() {
+            clock.consume_step(false);
+            title.advance();
+            ticks += 1;
+        }
+        assert_eq!(ticks, 2); // floor(62.5 / 28), independent of 100 callbacks.
+        assert_eq!(title.view().displayed_fill, 3); // Existing 1,2,3 fill contract.
+        assert_eq!(schedule.frame_seconds(0.0625), 0.0);
+        schedule.resume_after_yield(0.078125);
+        clock.add_frame(schedule.frame_seconds(0.09375), false);
+        while clock.step_due() {
+            clock.consume_step(false);
+            title.advance();
+            ticks += 1;
+        }
+        assert_eq!(ticks, 3); // floor(93.75 / 28), including work and frame wait.
+        assert_eq!(title.view().displayed_fill, 6);
+    }
+
+    #[test]
+    fn title_stall_keeps_existing_one_x_clock_clamp() {
+        let (mut schedule, _) = fixture(20, 0.0, 0.0, None);
+        let mut clock = StepClock::new(1);
+        clock.add_frame(schedule.frame_seconds(10.0), false);
+        let mut ticks = 0;
+        while clock.step_due() {
+            clock.consume_step(false);
+            ticks += 1;
+        }
+        assert_eq!(ticks, 7); // floor(200 / 28), not 10 s or accelerated time.
+        assert_eq!(schedule.frame_seconds(10.0), 0.0);
+    }
+
+    #[test]
+    fn running_full_counts_and_incomplete_success_cannot_admit_start() {
+        let (mut schedule, mut title) = fixture(9, 0.0, 0.0, None);
+        schedule.task_completed(&mut title, 0.0, false).unwrap();
+        let before = title.view();
+        assert_eq!(
+            title.report_loading(schedule.report(LoadingStatus::Succeeded)),
+            Err(TitleError::IncompleteSuccess)
+        );
+        assert_eq!(title.view(), before);
+        assert!(schedule.task_completed(&mut title, 0.0, false).unwrap());
+        for _ in 0..200 {
+            title.advance();
+        }
+        assert!(!title.can_start());
+        assert_eq!(title.pointer_press(181.0, 416.0), None);
+        title
+            .report_loading(schedule.report(LoadingStatus::Succeeded))
+            .unwrap();
+        // Source model permits readiness only after the independent UI update.
+        assert!(!title.can_start());
+        title.advance();
+        assert!(title.can_start());
+        assert_eq!(
+            title.pointer_press(181.0, 416.0),
+            Some(TitleEvent::StartPressed)
+        );
+        assert_eq!(
+            title.pointer_release(181.0, 416.0),
+            Some(TitleEvent::Finished(FinishTarget::GameSelector))
+        );
+    }
+
+    #[test]
+    fn failure_is_terminal_and_rejected_completion_keeps_last_valid_counts() {
+        let (mut schedule, mut title) = fixture(9, 0.0, 0.0, None);
+        schedule.task_completed(&mut title, 0.0, false).unwrap();
+        title
+            .report_loading(schedule.report(LoadingStatus::Failed))
+            .unwrap();
+        let failed = title.view();
+        assert!(schedule.task_completed(&mut title, 0.0, false).is_err());
+        assert_eq!(schedule.completed_tasks, 8);
+        assert_eq!(title.view(), failed);
+        assert_eq!(
+            title.report_loading(LoadingReport {
+                completed_tasks: 9,
+                total_tasks: 9,
+                status: LoadingStatus::Succeeded
+            }),
+            Err(TitleError::LoadingAlreadyFailed)
+        );
+        for _ in 0..200 {
+            title.advance();
+        }
+        assert_eq!(title.view(), failed);
+        assert!(!title.can_start());
+    }
+
+    #[test]
+    fn excess_completion_is_rejected_atomically() {
+        let (mut schedule, mut title) = fixture(8, 0.0, 0.0, None);
+        assert!(schedule.task_completed(&mut title, 0.0, false).unwrap());
+        let before = title.view();
+        assert!(schedule.task_completed(&mut title, 0.0, false).is_err());
+        assert_eq!(schedule.completed_tasks, 8);
+        assert_eq!(title.view(), before);
+    }
+
+    fn synthetic_yields(tasks: u64, work_seconds: f64) -> usize {
+        let (mut schedule, mut title) = fixture(tasks + 7, 0.0, 0.0, None);
+        let mut now = 0.0;
+        let mut yields = 0;
+        for _ in 0..tasks {
+            now += work_seconds;
+            if schedule.task_completed(&mut title, now, false).unwrap() {
+                schedule.frame_seconds(now);
+                yields += 1;
+                now += 1.0 / 60.0; // Fake presentation wait; no real sleep.
+                schedule.resume_after_yield(now);
+            }
+        }
+        assert_eq!(schedule.completed_tasks, tasks + 7);
+        title
+            .report_loading(schedule.report(LoadingStatus::Succeeded))
+            .unwrap();
+        yields
+    }
+
+    #[test]
+    fn synthetic_resource_schedules_reduce_yields_and_keep_slow_control() {
+        for (tasks, burst_yields) in [(185, 21), (140, 16)] {
+            // 1/1024 s = 0.9765625 ms; nine tasks cross the 8 ms budget.
+            let actual = synthetic_yields(tasks, 1.0 / 1024.0);
+            assert_eq!(actual, burst_yields);
+            assert_eq!(synthetic_yields(tasks, 0.0), 1);
+            assert_eq!(synthetic_yields(tasks, 1.0 / 64.0), tasks as usize);
+            println!(
+                "synthetic loading tasks={tasks} before_yields={tasks} after_yields={actual} instant_after=1 slow_after={tasks}"
+            );
+        }
+    }
 }
