@@ -200,6 +200,14 @@ Tool identities, invocation constraints, and the distinction between fresh check
 
 ## New work and adaptations
 
+E128's human follow-up reuses the already registered PB05 ordinary Fish Update
+instructions at004f6970 and inspects the owned installed smallturn.gif read-only.
+The [motion/pose report](playtests/2026-10-12-guppy-turn-motion-followup.md) owns
+the binary call-order, asset identity, retained-build probe and later authorized
+isolated1x observation. Raw captures remain private; the retail executable was
+not launched. No new source, license boundary, raw binary export or proprietary
+Git content is introduced.
+
 E128/#310 studies the already registered PB05 Steam250752 payload's ordinary
 Fish animation/draw slots and the existing W1 Fish.cpp crosswalk for the human
 Adventure-guppy turnaround report. [Turnaround](fish-turn-animation.md) owns

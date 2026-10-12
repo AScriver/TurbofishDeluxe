@@ -2,6 +2,38 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Observe guppy motion and turn poses at normal speed
+
+The human explicitly authorized a targeted native reproduction after the
+offline follow-up. An isolated frozen401da21 release, fresh Adventure1-1,
+seed21,1x timing and muted audio reproduces motion before pronounced body
+rotation in both directions. All85 sampled nonzero turn states match the
+recovered timer/frame rule. Independent read-only pixel/state inspection finds
+gradual sampled poses. No extra animation-start delay or new runtime defect
+was established; the earlier correction changes mirroring, not that motion/pose
+relationship. [Owning report](docs/playtests/2026-10-12-guppy-turn-motion-followup.md#authorized-native-observation)
+records build identity, paired frames, bounds, failures and limits.
+
+The first attempt stopped after Windows denied focus; two later attempts ended
+after focus loss, including the human's switch to ChatGPT. The harness closed
+those games through owned cleanup, rather than observing a runtime crash.
+Run04 captured69 frames/53 paired states and three normal food clicks without
+focus loss. All four owned processes exited unforced; final run exit0, close
+error null, installation unchanged. Original/default saves and the human game
+were untouched. Retail visual/wall-clock comparison, audio and human timing
+acceptance remain unmeasured. No runtime source changed, no new Actionable was
+created, and #310 remains historical Done. E129's concurrent unrelated cleanup
+is preserved; these observations identify the retained E128 build.
+
+Documentation-only verification passes the maintained workflow in a disposable
+1fa5deb checkout plus the four owned notes:112 documents/1135 links/408 anchors,
+with parser/automatic-variable and whitespace checks. Native receipt/digest and
+four absent owned PIDs match. The whole-tree workflow initially stops at an
+unrelated in-progress DESIGN compatibility anchor; that work is preserved.
+The first isolated wrapper call rejects positional `-Path` before the workflow;
+named parameter splatting corrects it. The report owns exact commands/scope.
+No Rust check is claimed for the concurrently changing source tree.
+
 ## 2026-10-12 — Remove dead legacy-save scaffolding
 
 The user requested cleanup after a read-only audit. Nine reconstruction
@@ -19,6 +51,27 @@ owns exact commands, preserved failure logs, source/build identity and limits.
 Protected-source/reference checks pass; no live save, human game or
 normal-launch artifact was accessed. Concurrent guppy follow-up notes remain
 preserved separately. No work item was supplied; Actionables was not updated.
+
+## 2026-10-12 — Follow up guppy motion before visible turning
+
+The human reports unchanged turn feel after rebuilding and clarifies that motion
+changes before the flip seems to begin. The latest prescribed release is sealed
+at401da21 with the E128 source identity;16 artifact checks pass. Retained primary
+Fish Update instructions call animation before integrating the new velocity.
+Read-only owned turn-sheet inspection shows early poses close to the initial
+profile. Four actual Board-update probes on the retained E128 library start
+Turn/frame0 on the first opposite motion update, including zero-speed crossings.
+No additional delay or necessary runtime defect was established.
+
+Two initial source-identity guards stopped before the probe as concurrent
+unrelated legacy-save edits changed five inputs. Their diagnostic scope is
+recorded; the completed probe uses the checked historical build and preserves
+those edits. Parser/automatic-variable checks and17 supporting artifact checks
+pass. [Owning follow-up](docs/playtests/2026-10-12-guppy-turn-motion-followup.md)
+records exact identities, results and limits. At this initial offline pass, no
+native game, live save or human process was used; no new runtime build or runtime
+change was made. E128/#310 stays historical Done, and Actionables was not updated.
+The later authorized normal-speed observation is recorded in the newer entry.
 
 ## 2026-10-12 — Correct Adventure guppy turn sprite mirroring
 

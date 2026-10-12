@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-10-12, America/Phoenix. **E128 — reported Adventure guppy turnaround corrected and checked.** [Turnaround evidence](docs/fish-turn-animation.md) records the installed binary's matching frame clock and the early sprite-mirror mismatch; both live guppy layers now hold the starting mirror until the turn ends. Actionable#310 is Done version10 with qualifying Passed validation and released claim, read back. Four focused checks, formatting, strict affected lint, isolated identified build, workflow/whitespace and139-row source/artifact readback passed; human feel comparison is pending. E127/#309, E126/#308 and E125/#303-307 remain complete and preserved. E124 engineering is complete with its separately recorded Ready/unclaimed tracking limitation. Earlier source transfers/workers remain closed. Ordinary gameplay remains human-owned; autonomous scenarios and heartbeat remain stopped. Screensaver work stays excluded. Original/project live saves, E80, genuine earning06 and normal-launch artifacts remain untouched; full retail/audio/human acceptance stays pending where unobserved.
+Updated: 2026-10-12, America/Phoenix. **E129 cleanup complete; E128 targeted guppy observation complete.** [Follow-up evidence](docs/playtests/2026-10-12-guppy-turn-motion-followup.md) verifies release401da21 and four full-update probes with zero added turn-start delay. A human-authorized isolated1x run reproduces movement before pronounced body rotation;85 sampled turn states match the recovered frame rule. The original also starts animation before integrating reversed motion, and early authored poses remain close to the starting profile. No extra start delay or further runtime defect was established; retail playback timing and human acceptance remain open. All four owned test processes are closed. E128's mirror correction and Actionable#310 Done remain historical. E129's unrelated source edits are preserved; turn probes/captures identify the retained E128 build. E127/#309, E126/#308 and E125/#303-307 remain complete and preserved. E124 engineering is complete with its separately recorded Ready/unclaimed tracking limitation. Earlier source transfers/workers remain closed. Ordinary gameplay remains human-owned; autonomous scenarios and heartbeat remain stopped. Screensaver work stays excluded. Original/project live saves, E80, genuine earning06 and normal-launch artifacts remain untouched; full retail/audio/human acceptance stays pending where unobserved.
 
 ## Current increment
 
@@ -13,7 +13,21 @@ completed screensaver code, live saves and normal-launch artifacts stay
 preserved. [Owning cleanup record](docs/refactor-save-codec.md#dead-legacy-save-cleanup)
 records exact checks, initial failures, source/build identity and limits.
 No work item was supplied; Actionables was not updated. The concurrent guppy
-motion/pose follow-up below remains separate and open.
+motion/pose follow-up below remains separately recorded.
+
+**E128 motion/pose follow-up:** The human reports turns look unchanged after the
+normal rebuild and says the animation appears to start after direction changes.
+The latest release receipt matches E128's source identity and current artifact.
+Primary Update instructions place animation before position integration. Four
+isolated full-update food-turn probes on the retained E128 library find zero
+extra update delay in both directions, including a zero-speed crossing. Owned
+turn-sheet inspection explains the initial silhouette hold. The later authorized
+isolated1x run captures gradual turn poses while movement has already reversed;
+85 sampled turn states match the binary-derived rule. [Report](docs/playtests/2026-10-12-guppy-turn-motion-followup.md)
+records source-guard/focus failures, build identity, paired pixels/state and
+unforced cleanup of all four attempts. The visible symptom is observed locally;
+retail wall-clock/visual comparison and human acceptance remain pending. No
+additional runtime change or Actionables mutation occurred.
 
 **E128 / Actionable#310 — Adventure guppy turnaround:** The human narrowed the
 reported timing issue to Adventure guppies. Fresh read-only PB05 instructions
@@ -319,6 +333,7 @@ Completed performance worktrees retain separate Cargo targets and disposable off
 
 | ID | Class / current scope | Evidence |
 |---|---|---|
+| E128 follow-up | Human-reported motion/pose gap reproduced in authorized isolated1x pixels/state; binary-derived animation-before-motion order; four offline full-update probes find zero added delay;85 sampled turn states match; retail comparison pending | [Motion/pose follow-up](docs/playtests/2026-10-12-guppy-turn-motion-followup.md), retained E128 library and identified normal-release bundle; all owned PIDs closed |
 | E128 | Binary-derived guppy clock/mirror; reproduced three wrong-mirror assertions and corrected four focused offline checks; native feel pending | [Guppy turnaround](docs/fish-turn-animation.md), PB76, identified isolated build |
 | E127 | Reproduced original extracted chooser gate; eight corrected offline regressions and matched production join; native unrun | [Chooser completion and bounded follow-up](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit), linked worker report and accepted build identity |
 | E126 | Observed isolated Windows reader-lock failures and corrected actual optional-observer recovery; native unrun | [Joined checkpoint](docs/necessary-fixes.md#joined-checkpoint-for-actionable-308), writer report and current frozen build identity above |
@@ -335,8 +350,11 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 
 Current next action:
 
-E128/#310 is checked and closed. Human compares the corrected guppy turn during normal Adventure play;
-no timer-speed adjustment is supported by current binary evidence.
+E128/#310 remains checked and closed. The authorized targeted observation is
+complete and reproduces the motion/pose gap without finding an extra turn-start
+delay. No timer-speed adjustment is supported by current binary evidence.
+Retail playback comparison and human timing acceptance remain pending; no
+additional autonomous run is scheduled. E129 cleanup is complete separately.
 
 0. The [renewed necessary-fix audit](docs/necessary-fixes.md#renewed-necessary-fix-audit) is complete with no new verified normal-play finding or Actionable. #309 is complete, checked and pushed through its [completion and bounded clean follow-up](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit); Done version12/released with closed source ownership. #308 is complete, checked and pushed; Done version12/released. E125 is complete and pushed; #303-307 are Done with released claims. Preserve
 all closed modal/refactor worktrees, reports and private evidence. E124's
