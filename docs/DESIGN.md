@@ -2,7 +2,7 @@
 
 Product scope: [requirements](requirements.md). Current evidence and environment: [STATUS](../STATUS.md). Implementation is authorized through the full runtime scope. Recovered rules are authoritative in [behavior contract](behavior-contract.md).
 
-The user directed continued reversing and implementation on2026-10-09 and the whole completion sweep on2026-10-10. The2026-10-11 [verification plan](requirements.md#acceptance-and-working-style) supersedes the autonomous native backlog: the human plays normally and reports issues. The new [performance contract](performance-batch-295-297.md) reserves Actionables#295-297 for three parallel chats/worktrees; earlier#292-294 are complete. Root owns synthesis and integration. Other engineering retains single-primary ownership. Keep independently grounded regressions and necessary focused checks. Actual gameplay remains required before a playability claim; unperformed acceptance remains pending without repeated agent launches. Preserve stopped game-written saves and frozen identities; do not manufacture earned progression.
+The user directed continued reversing and implementation on2026-10-09 and the whole completion sweep on2026-10-10. The2026-10-11 [verification plan](requirements.md#acceptance-and-working-style) supersedes the autonomous native backlog: the human plays normally and reports issues. Actionables#292-297 are Done with source changes on main; the [performance contract](performance-batch-295-297.md) retains their bounded parallel ownership and final verification. Root owns synthesis and integration. Other engineering retains single-primary ownership. Keep independently grounded regressions and necessary focused checks. Actual gameplay remains required before a playability claim; unperformed acceptance remains pending without repeated agent launches. Preserve stopped game-written saves and frozen identities; do not manufacture earned progression.
 
 The committed [remaining-runtime map](binary-recovery.md) owns BR01–12 main behavior outlines and exact follow-ups across all remaining families. A36/Tank5-1, [A37](presto.md)/[Time Trial](time-trial.md), completed replay and current31 [bonus-pet purchases/fourth slot](extra-pets.md) have frozen code checkpoints. Close materially blocking details before each increment; defer other refinements with exact references. Preserve atomic validated project writes even where retail error handling is weaker, and keep unknown Relax entry/offline ageing/repeated-result behavior explicit until recovered.
 
@@ -46,6 +46,37 @@ serial timing receipts and retained slower controls. Root verified that current
 source matches the final integrated lint/build inputs instead of repeating
 passing Cargo checks. These results establish the stated offline behavior;
 ordinary human gameplay and unobserved native/FPS/fidelity remain separate.
+
+## Optimized launch, loading and active Virtual Tank
+
+Actionables#295-297 implement the next three source-confirmed costs. Normal
+launch selects Cargo's existing release profile; `-Development` explicitly
+selects debug and existing `-Release` callers remain supported. Profile
+selection precedes side effects, and the launcher retains native preflight,
+exact argument forwarding and unchanged-source build association.
+
+Real resource loading batches completed tasks until an8ms cooperative wall-work
+budget is reached before yielding. A synchronous task may exceed that budget;
+yielding occurs between caller-owned operations. Successful tasks retain exact counts; each task and
+yield boundary checks cancellation/deadlines, and failure/incomplete state
+cannot enable Start. Loading/Start uses elapsed monotonic wall time for the
+separate1x28ms Title clock, once per draw, retaining the200ms stall clamp.
+Final progress flushes even when the work finishes before the budget expires.
+
+Active VT refresh and input advance interaction, finance and feedback without
+constructing discarded full presentation views. Input and view share current
+geometry/availability; roster input borrows sorted records. The focused idle
+adapter path constructs one full draw view instead of five. Existing behaviorful
+`view` callers remain compatible, and captures still use fresh snapshots and
+the original target across modal changes. No persistent cache, new saved field,
+parent-loop edit, schema change or gameplay-clock change follows.
+
+The [performance index](performance.md#launch-loading-and-active-virtual-tank-results)
+links the exact focused checks, output equivalence and offline timings. All
+source/report commits are on main; the [batch contract](performance-batch-295-297.md#completion-and-joined-verification)
+owns final joined verification. Synthetic scheduling and adapter/profile
+measurements retain their scope; native startup/FPS and human feel remain
+unmeasured by this work.
 
 ## Windows checkpoint publication
 

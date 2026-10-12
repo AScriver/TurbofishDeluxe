@@ -64,3 +64,67 @@ live saves and all frozen/earned lineages remain untouched. No native game or
 screensaver scenario is dispatched. Old runtime workers and the coordinator
 heartbeat remain paused. The complete runtime and unobserved fidelity remain
 open; these tasks establish only their stated engineering outcomes.
+
+## Completion and joined verification
+
+All three work items are Done with qualifying Passed validation and released
+claims. Each worker fetched/reconciled main in its own worktree and pushed
+owned maintained files without force. Root fast-forwarded source/report main
+to `d64e0ccb87d41aba03f48a616d801068d832868b`.
+
+| Actionable | Owned commit | Owning report |
+|---|---|---|
+| #295 | `f3a67389d25cb19e73dafa23d1b1bbaca0ec4a02` | [Launcher](performance-launcher.md) |
+| #296 | `cbf03b8cd5b1b2a76848bafccedeb1806bc07dab` | [Loading](performance-loading.md) |
+| #297 | `981754523799aa60523fd20a9304ecca6d15c8f0` | [Active Virtual Tank](performance-active-virtual.md) |
+
+The three source transfers are closed. Serial timing leases are released and
+all measurement processes exited. Private worktrees, receipts, binaries and
+failed experiments remain preserved. No further source edit or benchmark is
+assigned to these lanes.
+
+Final joined formatting, strict lib/bin/test-target Clippy and an actual default
+release launcher `-Offline -PrepareOnly` build passed in #295's retained
+worktree/target. The gate used Rust/Cargo1.95 MSVC, locked/offline dependencies,
+release thin-LTO/codegen1, no profile/Rust/target overrides, jobs2 and the
+read-only pinned libopenmpt package. No game, focused regression or benchmark
+was rerun. Worker source and all four frozen old artifacts remained byte-exact;
+all build/compiler processes exited and its checkout stayed clean.
+
+Exact commands, with worker-local environment/package setup, were:
+
+```text
+cargo fmt --all -- --check
+cargo clippy --locked --offline -p turbofish-deluxe --lib --bin turbofish-deluxe --tests -- -D warnings
+scripts/Start-TurbofishDeluxe.ps1 -Offline -PrepareOnly -NativePackageDirectory C:/Code/TurbofishDeluxe/.scratch/native/libopenmpt-0.8.9/package -BuildIdentityPath .scratch/performance/295/joined-295-297.local.json
+```
+
+Strict Clippy completed in50.96seconds; actual default release compilation
+completed in2m34s against retained dependencies. These are command durations,
+not startup or gameplay timings. The quiet format command exited zero and is
+recorded in the gate receipt, with no separate format log.
+
+| Joined identity | SHA-256 |
+|---|---|
+| Unchanged source fingerprint,102 build inputs | `b3655ff3f897b95b4405a363a7e170b89e0ed407b68168935aad072da45452c5` |
+| Actual default release EXE,7,880,192bytes | `16E6BC6F00EA47A70F0E0DE24067F593B791F8C467D27137F3FDB4939DA29E6E` |
+| Launcher-success build identity | `106AE2532578001582EC71625EC8632B47ED0A95B09E35D6790EAA540F514F70` |
+| Complete117-check worker readback | `EF4159614DBD598529EB38212DE7ADFC02128D53943BDABFC3D88CEE8855C30F` |
+| Joined gate receipt | `57319EDDEDC1BE721600CE5CF9561D4E7DC72683351FC6B03A7AE7FE8D7173AE` |
+
+Private receipts are `.scratch/performance/295/joined-295-297.local.json`,
+`joined-295-297-readback.local.json` and `joined-gate-01.local.json` in the
+launcher worktree. The associated identity inventories staged DLLs/notices,
+toolchain/environment, source and executable; association is
+`launcher-success-with-unchanged-inputs`. Pre-join build identities remain
+historical, while unchanged domain/asset measurements keep their stated scope.
+
+Root's validated private `.scratch/coordination/verify-performance-join.ps1`
+matched its entire102-file source inventory,117 worker source/artifact rows,
+nine selected report source/dependency hashes and all three owned ancestors.
+The worker additionally matched twelve report hashes, including unchanged
+Title model/clock and Cargo.toml. Root's result is
+`.scratch/coordination/joined-readback-295-297.local.json`. Central records change
+no checked build input. Read-only tracker reconciliation confirmed Done versions
+10/9/10 for #295/#296/#297, all with null claims. Root retains central-record
+publication ownership; human gameplay and paused automation policy remain current.

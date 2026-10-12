@@ -1,10 +1,31 @@
 # Offline runtime performance
 
-The subsequent [current-source audit](performance-audit-2026-10-11.md) ranks
-optimized normal builds, batched loader progress and repeated active VT views.
-It includes fresh offline component timings and a conservative loading-frame
-count. Those follow-ups are recommendations; no further runtime change or FPS
-gain is claimed.
+The [current-source audit](performance-audit-2026-10-11.md) identified optimized
+normal builds, batched loader progress and repeated active VT views. Its three
+follow-ups are implemented as Actionables#295-297, each Done with owned source
+and reports pushed to main under the [batch contract](performance-batch-295-297.md).
+
+## Launch, loading and active Virtual Tank results
+
+Three new managed chats/worktrees implemented disjoint source changes and
+preserved concurrent main history. The owning reports retain complete source,
+fixture/build identities, actual commands, failed preparations and scope limits:
+
+| Actionable | Implemented change | Offline result and owning report |
+|---|---|---|
+| #295 | Default launcher uses release; explicit `-Development` and existing `-Release` work | Normal/20-fish tick medians1.821/15.228us become0.115/0.902us, about16x; synthetic PNG/mask1.463ms becomes0.911ms,1.61x. Full state/event/pixel outputs match across real profiles. [Launcher](performance-launcher.md) owns eleven shim contracts and actual profile builds. |
+| #296 | Batch real resource progress with an8ms cooperative work budget, retaining exact counts and separate Title clock | Fast fake-clock schedules185/140 tasks use21/16 yields; instant schedules use one, slow controls are unchanged. Twenty focused loading/Title/clock checks pass. [Loading](performance-loading.md) separates synthetic counts from unmeasured native startup. |
+| #297 | Advance active UI/control input without repeated full views | Twenty-fish Fish Setup26.312us becomes6.228us,4.22x; Store9.021us becomes3.466us and Tank Setup5.697us becomes2.304us. All six measured medians improve; complete1,511,915-byte state/view/request traces match. [Active Virtual Tank](performance-active-virtual.md) owns seventeen focused cases and all nine-sample ranges. |
+
+Both timing lanes ran serially after heavy preparation stopped. These are
+identified offline fixture results; they establish no native FPS, startup wall
+time or retail/human-feel improvement. Joined formatting, strict lib/bin/test-target
+Clippy and an actual default release `-Offline -PrepareOnly` build passed on
+source/report main `d64e0cc`. Root matched all102 build inputs,117 source/artifact
+checks and all three owned ancestors. The [completion record](performance-batch-295-297.md#completion-and-joined-verification)
+owns exact receipts, flags and digests. Matching focused source hashes preserve
+the lane checks without another unit/benchmark run. Human gameplay and all
+real/frozen/earned saves remain untouched.
 
 ## Frame, profile and checkpoint results
 
