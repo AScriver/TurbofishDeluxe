@@ -11,9 +11,45 @@ pub fn write_json(
     let pending = path.with_extension("pending");
     let bytes = serde_json::to_vec_pretty(value)?;
     std::fs::write(&pending, bytes)?;
-    publish_checkpoint(&pending, path)
-        .map_err(|error| format!("Cannot publish checkpoint {}: {error}", path.display()))?;
+    publish_checkpoint(&pending, path).map_err(|source| PublicationError {
+        path: path.to_path_buf(),
+        source,
+    })?;
     Ok(())
+}
+
+#[derive(Debug)]
+struct PublicationError {
+    path: std::path::PathBuf,
+    source: std::io::Error,
+}
+
+impl std::fmt::Display for PublicationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Cannot publish checkpoint {}: {}",
+            self.path.display(),
+            self.source
+        )
+    }
+}
+
+impl Error for PublicationError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Inspect direct or contextual I/O failures without losing their OS identity.
+/// Callers retain responsibility for deciding which failures may be deferred.
+pub fn io_error<'a>(mut error: &'a (dyn Error + 'static)) -> Option<&'a std::io::Error> {
+    loop {
+        if let Some(failure) = error.downcast_ref::<std::io::Error>() {
+            return Some(failure);
+        }
+        error = error.source()?;
+    }
 }
 
 fn publish_checkpoint(pending: &std::path::Path, path: &std::path::Path) -> std::io::Result<()> {

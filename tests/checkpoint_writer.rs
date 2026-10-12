@@ -7,7 +7,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 use turbofish_deluxe::{
-    persistence::write_json,
+    persistence::{io_error, write_json},
     settings::{GameSettings, SETTINGS_FORMAT_VERSION, SettingsSave},
 };
 
@@ -23,7 +23,7 @@ struct FixtureDirectory {
 impl FixtureDirectory {
     fn new(label: &str) -> Self {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(".scratch/refactor-persistence/fixtures/checkpoint-writer");
+            .join(".scratch/checkpoint-error-context/fixtures/writer");
         fs::create_dir_all(&root).unwrap();
         let root = root.canonicalize().unwrap();
         let path = root.join(format!(
@@ -84,6 +84,7 @@ fn serialization_failure_leaves_current_and_existing_pending_bytes_unchanged() {
     let error = write_json(&path, &FailingSerialization).unwrap_err();
 
     assert!(error.downcast_ref::<serde_json::Error>().is_some());
+    assert!(io_error(error.as_ref()).is_none());
     assert_eq!(error.to_string(), "fixture serialization failure");
     assert_eq!(fs::read(&path).unwrap(), OLD_GENERATION);
     assert_eq!(fs::read(&pending).unwrap(), b"prior pending bytes");
@@ -101,6 +102,10 @@ fn failed_pending_write_preserves_current_and_reports_io_error() {
     let error = write_json(&path, &serde_json::json!({ "tick": 2 })).unwrap_err();
 
     assert!(error.downcast_ref::<std::io::Error>().is_some());
+    assert!(std::ptr::eq(
+        io_error(error.as_ref()).unwrap(),
+        error.downcast_ref::<std::io::Error>().unwrap()
+    ));
     assert_eq!(fs::read(&path).unwrap(), OLD_GENERATION);
     assert_eq!(
         fs::read(pending.join("marker")).unwrap(),
@@ -116,7 +121,7 @@ fn writer_does_not_create_missing_parent_directories() {
     let error = write_json(&path, &serde_json::json!({ "tick": 2 })).unwrap_err();
 
     assert_eq!(
-        error.downcast_ref::<std::io::Error>().unwrap().kind(),
+        io_error(error.as_ref()).unwrap().kind(),
         std::io::ErrorKind::NotFound
     );
     assert!(!path.parent().unwrap().exists());
@@ -136,6 +141,12 @@ fn publication_failure_retains_pending_and_destination_with_path_context() {
             .to_string()
             .starts_with(&format!("Cannot publish checkpoint {}: ", path.display()))
     );
+    let source = error
+        .source()
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
+        .unwrap();
+    assert!(std::ptr::eq(io_error(error.as_ref()).unwrap(), source));
     assert_eq!(fs::read(path.join("marker")).unwrap(), b"unrelated bytes");
     assert_eq!(
         fs::read(path.with_extension("pending")).unwrap(),
@@ -188,6 +199,42 @@ fn invalid_settings_leave_current_and_pending_bytes_unchanged() {
     );
     assert_eq!(fs::read(&path).unwrap(), OLD_GENERATION);
     assert_eq!(fs::read(&pending).unwrap(), b"prior pending bytes");
+}
+
+#[derive(Debug)]
+struct FixtureErrorContext(Box<dyn std::error::Error>);
+
+impl std::fmt::Display for FixtureErrorContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "fixture context: {}", self.0)
+    }
+}
+
+impl std::error::Error for FixtureErrorContext {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref())
+    }
+}
+
+#[test]
+fn io_error_inspects_direct_and_nested_sources_without_inventing_os_codes() {
+    for raw_code in [5, 32, 33] {
+        let direct = std::io::Error::from_raw_os_error(raw_code);
+        assert!(std::ptr::eq(io_error(&direct).unwrap(), &direct));
+        let expected_kind = direct.kind();
+        let contextual = FixtureErrorContext(Box::new(FixtureErrorContext(Box::new(direct))));
+        let underlying = io_error(&contextual).unwrap();
+        assert_eq!(underlying.kind(), expected_kind);
+        assert_eq!(underlying.raw_os_error(), Some(raw_code));
+    }
+
+    let unclassified = std::io::Error::new(std::io::ErrorKind::Interrupted, "fixture interruption");
+    let underlying = io_error(&unclassified).unwrap();
+    assert!(std::ptr::eq(underlying, &unclassified));
+    assert_eq!(underlying.kind(), std::io::ErrorKind::Interrupted);
+    assert_eq!(underlying.raw_os_error(), None);
+    assert!(io_error(&std::fmt::Error).is_none());
+    assert!(io_error(&FixtureErrorContext(Box::new(std::fmt::Error))).is_none());
 }
 
 #[cfg(windows)]
@@ -253,7 +300,18 @@ fn persistent_windows_denial_is_bounded_preserves_old_and_recovers() {
     );
     assert_eq!(fs::read(&path).unwrap(), OLD_GENERATION);
     assert_eq!(fs::read(&pending).unwrap(), NEW_GENERATION);
-    eprintln!("persistent Windows denial elapsed: {elapsed:?}");
+    eprintln!(
+        "persistent Windows denial elapsed: {elapsed:?}; raw OS error: {:?}; kind: {:?}",
+        original_error.raw_os_error(),
+        original_error.kind()
+    );
+    let source = error
+        .source()
+        .and_then(|source| source.downcast_ref::<std::io::Error>())
+        .expect("publication error must retain its original I/O source");
+    assert_eq!(source.kind(), original_error.kind());
+    assert_eq!(source.raw_os_error(), original_error.raw_os_error());
+    assert!(std::ptr::eq(io_error(error.as_ref()).unwrap(), source));
 
     drop(reader);
     write_json(&path, &serde_json::json!({ "tick": 3 })).unwrap();
