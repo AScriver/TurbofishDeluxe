@@ -1,18 +1,19 @@
 # Current handoff
 
-Updated: 2026-10-12, America/Phoenix. **E125 / Actionables#303-307: modal frontends complete, integrated and pushed; all five tasks Done with released claims.** The [completion record](docs/modal-batch-303-307.md#completion-and-joined-verification) owns checked source/build identities and closed transfers. The user authorizes subsequent necessary fixes through new Actionables and independent new chats/worktrees. E124 engineering is complete; its five tracking records remain Ready/unclaimed after the separate prepared-record claim failure. Earlier workers stay closed. Ordinary gameplay remains human-owned; autonomous scenarios and coordinator heartbeat remain stopped. Screensaver work is excluded and finished code is preserved. Real/frozen/earned saves, E80 and genuine earning06 remain untouched; retail/audio/human fidelity stays pending where unobserved.
+Updated: 2026-10-12, America/Phoenix. **E126 / Actionable#308: checkpoint error preservation and both actual observer joins complete/pushed; Done version12 with released claim.** The [completion record](docs/necessary-fixes.md#completion) closes this transfer and owns checked evidence. E125/#303-307 are also Done/released and preserved in their [record](docs/modal-batch-303-307.md#completion-and-joined-verification). The user authorizes subsequent necessary fixes through new Actionables and independent new chats/worktrees. E124 engineering is complete; its five tracking records remain Ready/unclaimed after the separate prepared-record claim failure. Earlier workers stay closed. Ordinary gameplay remains human-owned; autonomous scenarios and coordinator heartbeat remain stopped. Screensaver work is excluded and finished code is preserved. Real/frozen/earned saves, E80 and genuine earning06 remain untouched; retail/audio/human fidelity stays pending where unobserved.
 
 ## Current increment
 
-**E126 — necessary checkpoint error fix, joined and checked:** New worker
+**E126 — necessary checkpoint error fix, complete:** New worker
 source `f75ad30` preserves contextual I/O identity; root joins both optional
 observation consumers to the helper. Four actual observer regressions and ten
 matched writer contracts passed, including lock/defer/recovery and fatal invalid
 destinations. Formatting, strict affected lint, locked/offline debug build and
 all122 input/139 source-artifact readbacks passed. The [joined checkpoint](docs/necessary-fixes.md#joined-checkpoint-for-actionable-308)
-owns independent red results, exact identity, sources and boundaries. #308 is
-still In progress with its worker claim until pushed source/final acceptance
-and normal completion are read back. No native game/live-save run occurred.
+owns independent red results, exact identity, sources and boundaries. Actual
+root joins are pushed at `89dd0e2`; #308 is terminal Done version12 with
+qualifying Passed validation and released claim, read back after final
+acceptance. Its source transfer is closed. No native game/live-save run occurred.
 
 **E125 — modal frontend completion, complete:** Actionables#303-307 are Done
 with qualifying Passed validation and released claims, read back at versions
@@ -249,6 +250,8 @@ These maintenance checks retain historical records; they do not establish Tank4-
 
 ## Ownership
 
+E126/#308's writer/test/report transfer is closed in its [completion](docs/necessary-fixes.md#completion); root's actual observer joins are checked and pushed. No engineering worker is currently assigned.
+
 Root owns synthesis, integration, central records and final decisions. The [E125 completion](docs/modal-batch-303-307.md#completion-and-joined-verification) closes all five modal source transfers with actual production joins checked and pushed. The [E124 completion](docs/refactor-batch-298-302.md#completion-and-joined-verification) closes all five refactor source transfers. The [E123 contract](docs/performance-batch-295-297.md) closes source transfers for #295 launcher, #296 Title loading and #297 active VT views. Earlier#292-294 source transfers are closed; preserve all private build/fixture evidence. Ordinary gameplay is human-owned; no autonomous native lease is active. Subsequent necessary fixes require new scoped Actionables, exact ownership reservations and independent new chats/worktrees where useful. Completed workers and the heartbeat remain closed. A35 code ownership is closed in its [contract](docs/adventure-4-5.md#integration-and-checks). The broad recovery and table below retain historical ownership:
 
 | Owner | Responsibility |
@@ -278,7 +281,7 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 
 Current next action:
 
-0. Implement/check #308 through the [reserved contract](docs/necessary-fixes.md#checkpoint-publication-error-identity), including root's actual observation joins. E125 is complete and pushed; #303-307 are Done with released claims. Preserve
+0. #308 is complete, checked and pushed through its [completion record](docs/necessary-fixes.md#completion); Done version12/released. E125 is complete and pushed; #303-307 are Done with released claims. Preserve
 all closed modal/refactor worktrees, reports and private evidence. E124's
 #298-302 retain their separately recorded Ready/unclaimed tooling limitation;
 do not retry that route or resume completed workers.

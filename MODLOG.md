@@ -2,6 +2,25 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Close necessary checkpoint fix and Actionable 308
+
+Worker `f75ad30` and actual root observer joins `89dd0e2` are pushed to main.
+Root accepted14 focused writer/observer contracts, formatting, strict affected
+lint, identified locked/offline debug build and122 input/139 source-artifact
+matches. #308 is terminal Done version12 with qualifying Passed validation and
+released claim, independently read back. Its exact source transfer is closed;
+completed worktree, frozen build, failed red runs and tracking history remain.
+The [completion](docs/necessary-fixes.md#completion) owns exact evidence and
+boundaries. E125/#303-307 also remain Done/released and source-complete.
+
+The bounded pass found one verified necessary defect; no speculative follow-up
+was dispatched. Subsequent confirmed findings/human reports use new Actionables,
+new independent chats/worktrees and checked commits/pushes under explicit
+ownership. Human gameplay and saves remain untouched; old workers/native lanes/
+heartbeat and excluded saver work remain closed. No native/full-runtime/retail/
+audio acceptance is claimed. Final workflow/whitespace and unchanged artifact
+readback check these record changes before publication.
+
 ## 2026-10-12 — Join and verify checkpoint observer error recovery
 
 New #308 worker source `f75ad30` preserves destination context and original

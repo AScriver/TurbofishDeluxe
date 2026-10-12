@@ -1,5 +1,22 @@
 # Necessary correctness fixes
 
+## Completion
+
+Actionable#308 is terminal Done version12 with qualifying Passed validation and
+released claim, read back on2026-10-12. Worker source
+`f75ad305a342d1d1148db136810bb27359fca974` and root's actual observer joins
+`89dd0e23bab1d1ade56feb4d90c0fc49a2399b6d` are pushed to main. The identified
+source/artifact bytes and14 focused checks below are accepted; the writer/test/
+report transfer is closed. Keep the completed worktree/private evidence and all
+failed/Partial tracking history. Root resumes shared ownership.
+
+The bounded necessary-fix pass confirmed this one source/host mismatch; no
+additional independently verified fix was dispatched. Future confirmed defects
+or human reports get new Actionables and fresh disjoint ownership before
+implementation. Completed workers, old native lanes and heartbeat remain closed.
+Human ordinary gameplay continues; full-runtime/retail/audio acceptance is not
+claimed by this completed correctness increment.
+
 ## Joined checkpoint for Actionable 308
 
 Checked worker source `f75ad305a342d1d1148db136810bb27359fca974` is fetched
@@ -41,8 +58,8 @@ MSVC, default dev profile and locked/offline native dependencies identify this
 build. Receipt associates f75ad30 plus root's recorded dirty app join; subsequent
 commit/central-record changes do not change those input bytes.
 
-Source transfers stay assigned until the joined source publication and normal
-qualifying Actionables completion/release are read back. No native, audible,
+The [completion](#completion) records published joins and normal qualifying
+Actionables Done/release readback. No native, audible,
 retail, FPS, human-feel or full-runtime acceptance follows from these offline
 checks. All uniquely contained disposable locks/fixtures were released/removed;
 human processes/saves, original install, frozen/earned lineages and excluded
