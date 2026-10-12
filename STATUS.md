@@ -1,8 +1,21 @@
 # Current handoff
 
-Updated: 2026-10-12, America/Phoenix. **Renewed bounded audit: no new verified necessary normal-play fix.** The [fresh audit](docs/necessary-fixes.md#renewed-necessary-fix-audit) records Adventure actor lifecycle, audio ownership and the falsified Sandbox entry-character concern at clean source `2426b3b`; no new Actionable or implementation chat followed. E127 / Actionable#309 remains complete, checked and pushed; Done version12 with released claim. Its [completion](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit) owns joined identity and closed source ownership. E126/#308 and E125/#303-307 remain Done/released and preserved in their completion records. The user authorizes subsequent necessary fixes through new Actionables and independent new chats/worktrees. E124 engineering is complete; its five tracking records remain Ready/unclaimed after the separate prepared-record claim failure. Earlier workers stay closed. Ordinary gameplay remains human-owned; autonomous scenarios and coordinator heartbeat remain stopped. Screensaver work is excluded and finished code is preserved. Real/frozen/earned saves, E80 and genuine earning06 remain untouched; retail/audio/human fidelity stays pending where unobserved.
+Updated: 2026-10-12, America/Phoenix. **E128 — reported Adventure guppy turnaround corrected and checked.** [Turnaround evidence](docs/fish-turn-animation.md) records the installed binary's matching frame clock and the early sprite-mirror mismatch; both live guppy layers now hold the starting mirror until the turn ends. Actionable#310 is Done version10 with qualifying Passed validation and released claim, read back. Four focused checks, formatting, strict affected lint, isolated identified build, workflow/whitespace and139-row source/artifact readback passed; human feel comparison is pending. E127/#309, E126/#308 and E125/#303-307 remain complete and preserved. E124 engineering is complete with its separately recorded Ready/unclaimed tracking limitation. Earlier source transfers/workers remain closed. Ordinary gameplay remains human-owned; autonomous scenarios and heartbeat remain stopped. Screensaver work stays excluded. Original/project live saves, E80, genuine earning06 and normal-launch artifacts remain untouched; full retail/audio/human acceptance stays pending where unobserved.
 
 ## Current increment
+
+**E128 / Actionable#310 — Adventure guppy turnaround:** The human narrowed the
+reported timing issue to Adventure guppies. Fresh read-only PB05 instructions
+confirm the existing signed20-count/frame cadence but show that the authored
+turn sheet retains its starting mirror through every nonzero timer state.
+Rust previously used the new velocity direction immediately. Both guppy draw
+layers now use a derived sprite projection, preserving simulation and saves.
+Three expected red failures become3/3 green; the existing turn/eat/growth test
+passes. Formatting, strict affected lib/bin/test lint and an isolated debug build
+pass. [Owning report](docs/fish-turn-animation.md#correction-and-verification)
+records exact binary/source/build identity, checks and limits. Workflow/whitespace
+and all122 source/139 identity rows pass. #310 is Done version10 with qualifying
+Passed validation and released claim, read back. No native run occurred.
 
 **Renewed necessary-fix audit, complete:** Three bounded independent source
 reviews found no new verified normal-play defect in Adventure actor lifecycle,
@@ -295,6 +308,7 @@ Completed performance worktrees retain separate Cargo targets and disposable off
 
 | ID | Class / current scope | Evidence |
 |---|---|---|
+| E128 | Binary-derived guppy clock/mirror; reproduced three wrong-mirror assertions and corrected four focused offline checks; native feel pending | [Guppy turnaround](docs/fish-turn-animation.md), PB76, identified isolated build |
 | E127 | Reproduced original extracted chooser gate; eight corrected offline regressions and matched production join; native unrun | [Chooser completion and bounded follow-up](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit), linked worker report and accepted build identity |
 | E126 | Observed isolated Windows reader-lock failures and corrected actual optional-observer recovery; native unrun | [Joined checkpoint](docs/necessary-fixes.md#joined-checkpoint-for-actionable-308), writer report and current frozen build identity above |
 | E125 | Observed focused offline modal/writer contracts and joined lint/release build; native unrun | [Modal completion](docs/modal-batch-303-307.md#completion-and-joined-verification), five linked reports and current integrated build identity above |
@@ -309,6 +323,9 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 ## Next action
 
 Current next action:
+
+E128/#310 is checked and closed. Human compares the corrected guppy turn during normal Adventure play;
+no timer-speed adjustment is supported by current binary evidence.
 
 0. The [renewed necessary-fix audit](docs/necessary-fixes.md#renewed-necessary-fix-audit) is complete with no new verified normal-play finding or Actionable. #309 is complete, checked and pushed through its [completion and bounded clean follow-up](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit); Done version12/released with closed source ownership. #308 is complete, checked and pushed; Done version12/released. E125 is complete and pushed; #303-307 are Done with released claims. Preserve
 all closed modal/refactor worktrees, reports and private evidence. E124's

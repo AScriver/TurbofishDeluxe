@@ -1110,7 +1110,7 @@ impl Presentation {
                     80.0,
                     80.0,
                 )),
-                fish.facing_right,
+                fish.sprite_facing_right(),
                 fish.growth_scale(),
                 if fish.size == FishSize::Star {
                     155.0 / 255.0
@@ -1131,7 +1131,7 @@ impl Presentation {
                         80.0,
                         80.0,
                     )),
-                    fish.facing_right,
+                    fish.sprite_facing_right(),
                     1.0,
                     200.0 / 255.0,
                 );

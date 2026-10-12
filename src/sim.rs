@@ -364,6 +364,21 @@ pub struct Fish {
 }
 
 impl Fish {
+    /// Horizontal mirror used by the live fish sprite, including its turn sheet.
+    pub fn sprite_facing_right(&self) -> bool {
+        // PB76: the turn sheet starts in the old direction; its signed timer
+        // selects the mirror until the animation returns to swimming/eating.
+        if self.turn_ticks > 0 {
+            true
+        } else if self.turn_ticks < 0 || self.vx < 0.0 {
+            false
+        } else if self.vx as i32 == 0 {
+            self.previous_vx >= 0.0
+        } else {
+            true
+        }
+    }
+
     pub fn sprite_pose(&self) -> FishPose {
         if self.turn_ticks != 0 {
             FishPose::Turn
@@ -13724,6 +13739,66 @@ mod tests {
             }
         )));
         assert_eq!(state.balance, 235);
+    }
+
+    fn assert_binary_guppy_turn(previous_vx: f32, vx: f32, starting_mirror: bool) {
+        let mut state = AdventureState::new_adventure(21);
+        let fish = &mut state.fish[0];
+        fish.previous_vx = previous_vx;
+        fish.vx = vx;
+        fish.facing_right = vx > 0.0;
+        fish.turn_ticks = 0;
+        fish.eating_ticks = 0;
+        fish.swim_counter = 0;
+
+        // PB76: installed Fish animation selects these frames after decrementing
+        // its signed 20-count timer; Draw holds the starting mirror until zero.
+        let frames = [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9];
+        for (step, expected_frame) in frames.into_iter().enumerate() {
+            AdventureState::advance_animation(fish);
+            assert_eq!(fish.turn_ticks.abs(), 19 - step as i8);
+            assert_eq!(fish.frame, expected_frame, "turn step {step}");
+            assert_eq!(fish.sprite_pose(), FishPose::Turn);
+            assert_eq!(
+                fish.sprite_facing_right(),
+                starting_mirror,
+                "turn step {step}"
+            );
+        }
+        AdventureState::advance_animation(fish);
+        assert_eq!(fish.turn_ticks, 0);
+        assert_eq!(fish.sprite_pose(), FishPose::Swim);
+        assert_eq!(fish.frame, 0);
+        assert_eq!(fish.sprite_facing_right(), vx > 0.0);
+    }
+
+    #[test]
+    fn binary_guppy_left_to_right_turn_holds_starting_sprite_mirror() {
+        assert_binary_guppy_turn(-1.0, 1.0, false);
+    }
+
+    #[test]
+    fn binary_guppy_right_to_left_turn_holds_starting_sprite_mirror() {
+        assert_binary_guppy_turn(1.0, -1.0, true);
+    }
+
+    #[test]
+    fn binary_guppy_swim_mirror_retains_direction_at_zero_speed() {
+        let mut state = AdventureState::new_adventure(21);
+        let fish = &mut state.fish[0];
+        fish.turn_ticks = 0;
+        for (vx, previous_vx, expected_mirror) in [
+            (0.0, -1.0, false),
+            (0.0, 1.0, true),
+            (0.5, -1.0, false),
+            (-0.5, 1.0, false),
+            (1.0, -1.0, true),
+        ] {
+            fish.vx = vx;
+            fish.previous_vx = previous_vx;
+            fish.facing_right = vx >= 0.0;
+            assert_eq!(fish.sprite_facing_right(), expected_mirror);
+        }
     }
 
     #[test]

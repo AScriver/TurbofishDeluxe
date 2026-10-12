@@ -200,6 +200,14 @@ Tool identities, invocation constraints, and the distinction between fresh check
 
 ## New work and adaptations
 
+E128/#310 studies the already registered PB05 Steam250752 payload's ordinary
+Fish animation/draw slots and the existing W1 Fish.cpp crosswalk for the human
+Adventure-guppy turnaround report. [Turnaround](fish-turn-animation.md) owns
+exact addresses, freshly checked target hashes and private receipt identities.
+Original Rust sprite projection and regressions adapt the independently checked
+functional rules; no binary, source body, asset or raw export enters Git.
+The existing source/license boundaries apply; native feel remains unperformed.
+
 E116 reuses PB05 identity and registered W1 `SimFishScreen.cpp` tables/consumers
 to recover three actual pointer tables and selected indexed-load instructions.
 [Owned biography recovery](virtual-ui.md#owned-biography-pointer-table-recovery)

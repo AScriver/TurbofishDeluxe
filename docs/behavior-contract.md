@@ -25,6 +25,17 @@ W1 paths below are relative to `source/WinFish/`, except the framework entry. Or
 
 ## Primary binary findings
 
+**PB76 — Adventure guppy turn clock and sprite mirror, binary-derived.** The
+freshly identified PB05 payload's Fish table`00597d54+164`→`004de840` sets a
+signed20-count turn timer on a strict velocity sign change and decrements it
+before choosing frames. Its19 visible states use frames0-8 twice and9 once;
+the20th update resumes another pose. Table`+68`→`004e4a90` keeps the old sprite
+mirror through the turn, then uses current/retained velocity at timer zero.
+The existing Rust clock matches; its immediate velocity-based sprite mirror
+does not. [Guppy turnaround](fish-turn-animation.md#turn-frame-clock-and-facing)
+owns exact instructions, target/receipt identities, the focused correction and
+limits. Nominal28ms arithmetic is not observed retail cadence or human acceptance.
+
 These are static observations of the installed executable/payload identified in STATUS, using Ghidra12.1.4 at image base0x00400000. Raw analysis stays under ignored `private/ghidra/` and `.scratch/runtime/investigator/`. Only the explicitly supported fields/callers are confirmed; they do not establish all B01–B11 or live retail behavior.
 
 | ID | Binary-derived finding | Exact evidence / limit |

@@ -2,6 +2,34 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Correct Adventure guppy turn sprite mirroring
+
+Human feedback narrowed the turnaround timing issue to Adventure guppies.
+Fresh read-only installed-payload instructions confirm the existing signed20-count
+clock and19 visible frame states, but the draw routine holds the starting sprite
+mirror until timer zero. Both current guppy draw layers instead mirrored to new
+velocity immediately. Actionable#310 records the verified finding before edits;
+[PB76 and the owning report](docs/fish-turn-animation.md) preserve addresses,
+fresh target hashes and raw private receipt identities.
+
+Original Rust `Fish::sprite_facing_right` now derives that mirror from existing
+turn/velocity fields; base/additive callers both consume it. Frame cadence,
+movement, stored state and other species/modes are unchanged. Three independent
+binary-contract assertions fail against the original projection and pass after
+correction; the existing turn/eat/growth test also passes. Initial formatting
+failed on one new assertion's layout; only that layout changed, final formatting
+passed, and affected lint/build were rechecked against final source. Strict
+lib/bin/test lint and isolated locked/offline debug build passed. The report owns
+the122-input source digest and supporting executable/receipt identity.
+
+Workflow/whitespace and all122 source/139 identity rows passed; Actionable#310
+is Done version10 with qualifying Passed validation and a released claim,
+read back. Original install,
+human process, live/frozen/earned saves and normal-launch artifacts stay untouched.
+No native or retail wall-clock/pixel comparison ran; corrected human feel remains
+pending. The broad prior audit remains historical rather than proof about this
+newly reported issue.
+
 ## 2026-10-12 — Finish renewed necessary-fix audit without a new defect
 
 The user's renewed continuation prompted three bounded independent source
