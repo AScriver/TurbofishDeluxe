@@ -39,6 +39,61 @@ candidate with no normal-play reachability; it was not promoted to a necessary
 fix. Virtual Tank/store/gift accounting inspection found no additional concrete
 normal-play defect in this pass. Repeat the bounded audit after #309 is joined.
 
+## Tank chooser completion and follow-up audit
+
+Actionable#309's engineering is accepted at pushed main
+`e90df055a5bfbcaa40b211d9e9bbad0a4121b1c5`. Root fetched and fast-forwarded
+the clean checkout, reviewed the actual normal-loop dispatch and matched the
+committed inputs to the checked worker build. Actionable#309 is terminal Done
+version12 with qualifying Passed validation and a released claim, read back on
+2026-10-12. Its exact source/test/report transfer is closed; root resumes ownership
+of those paths. The [worker report](chooser-dispatch.md)
+owns original extracted-gate red evidence, eight focused regressions, exact
+commands, failed test compilation, cleanup and the evidence limits. All earlier
+source transfers remain closed.
+
+The actual chooser now collects Select/Menu/Escape in its frame-local vector and
+calls the production Session dispatcher before the UI pause gate. Eligibility
+remains authoritative in Session; a first transition consumes the remaining
+frame. Focus, selector panels, normal modals, pause and earlier closing-frame
+owners block input. Events and transitions join existing clock/input/checkpoint
+handling, while whole-frame ownership prevents the same input from reaching the
+destination. No simulation tick is invented and no gameplay queue is flushed
+through the chooser.
+
+Root's private `.scratch/coordination/necessary-309-root-acceptance.local.json`
+records122 matched maintained build inputs,148 matched worker artifact rows and
+17 preserved E126 artifact rows. All five successful worker validation receipts
+identify the same source set before/after: eight focused tests, formatting,
+strict lib/bin/test lint, locked/offline normal debug build and workflow. Root's
+workflow and whitespace checks also passed. Unchanged Cargo checks were reused
+instead of rerun. The normal-launch artifact was not replaced.
+
+| Accepted identity | Value |
+|---|---|
+| Source set | `f3ad1057978dae2f5e148274730039dfe8da9141760b442a50d1352791b1c9e0` |
+| Frozen worker receipt ID | `13caf58e3dd2a03e4c403e56325bbb7df2ab4e47559c1016b67cafae4a699e22` |
+| Frozen normal-game EXE SHA-256 | `6ce06ab8be581547f0749b36fe7edd17d137d63972500028c284d8242641bc6b` |
+
+The bounded follow-up audit found no additional necessary normal-play fix.
+The earlier save-admission and Virtual Tank/store/gift reviews remain usable
+because those sources did not change. The neighboring UI-owner review checked
+the actual selector, VT picker, gameplay modal and Challenge-interlude joins:
+the first three apply their transitions before their respective barrier; the
+interlude does not raise the earlier `ui_active` gate. They do not reproduce this
+queue-starvation mechanism. Root reviewed the final chooser join, eligibility,
+blocking, first-transition consumption and existing save/transition consumers;
+temporary red registration is absent. The manually supplied maximum-tick
+candidate still lacks normal-play reachability and receives no new Actionable.
+
+This pass establishes one corrected join and no further verified finding in
+its bounded scope. It is not a bug-free or full-runtime completion claim.
+Native gameplay, retail/audio comparison and human judgment remain unrun where
+unobserved; ordinary gameplay remains human-owned. Preserve previous workers,
+all failed evidence, frozen builds and E80/earned saves. Future human reports or
+new verified defects get scoped Actionables and fresh ownership; no idle worker
+or heartbeat is started just to repeat this clean pass.
+
 ## Completion
 
 Actionable#308 is terminal Done version12 with qualifying Passed validation and

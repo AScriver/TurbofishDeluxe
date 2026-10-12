@@ -1,16 +1,20 @@
 # Current handoff
 
-Updated: 2026-10-12, America/Phoenix. **E126 / Actionable#308: checkpoint error preservation and both actual observer joins complete/pushed; Done version12 with released claim.** The [completion record](docs/necessary-fixes.md#completion) closes this transfer and owns checked evidence. E125/#303-307 are also Done/released and preserved in their [record](docs/modal-batch-303-307.md#completion-and-joined-verification). The user authorizes subsequent necessary fixes through new Actionables and independent new chats/worktrees. E124 engineering is complete; its five tracking records remain Ready/unclaimed after the separate prepared-record claim failure. Earlier workers stay closed. Ordinary gameplay remains human-owned; autonomous scenarios and coordinator heartbeat remain stopped. Screensaver work is excluded and finished code is preserved. Real/frozen/earned saves, E80 and genuine earning06 remain untouched; retail/audio/human fidelity stays pending where unobserved.
+Updated: 2026-10-12, America/Phoenix. **E127 / Actionable#309: Time Trial/Challenge chooser dispatch complete, checked and pushed; Done version12 with released claim.** The [completion and follow-up audit](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit) owns joined identity and closes source ownership; no additional necessary fix was found in the bounded pass. E126/#308 and E125/#303-307 remain Done/released and preserved in their completion records. The user authorizes subsequent necessary fixes through new Actionables and independent new chats/worktrees. E124 engineering is complete; its five tracking records remain Ready/unclaimed after the separate prepared-record claim failure. Earlier workers stay closed. Ordinary gameplay remains human-owned; autonomous scenarios and coordinator heartbeat remain stopped. Screensaver work is excluded and finished code is preserved. Real/frozen/earned saves, E80 and genuine earning06 remain untouched; retail/audio/human fidelity stays pending where unobserved.
 
 ## Current increment
 
-**E127 / Actionable#309 — necessary tank chooser dispatch fix, reserved:** A
-bounded source pass confirmed Time Trial/Challenge Select/Menu/Escape actions
-remain queued behind the parent UI pause gate. The [contract](docs/necessary-fixes.md#tank-chooser-dispatch-correction)
-reserves normal chooser source joins/tests/report to one new worker; root owns
-central records and final acceptance. No fix or native observation is claimed
-yet. Completed #308 and all earlier workers remain closed; ordinary gameplay
-stays human-owned. Reaudit after checked integration and push.
+**E127 / Actionable#309 — necessary tank chooser dispatch fix, complete:**
+Source `e90df05` applies Time Trial/Challenge Select/Menu/Escape before the
+parent UI pause gate, preserves higher input owners and consumes the frame
+after its first transition. Eight focused regressions, formatting, strict
+affected lint and a locked/offline debug build passed. Root matched all122
+source inputs,148 worker artifact rows and17 preserved E126 artifact rows,
+reviewed the production join and found no additional necessary fix in the
+bounded follow-up. The [completion record](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit)
+owns exact identity and limits. Done version12, qualifying Passed validation and
+released claim were read back; source ownership is closed and no further work
+is assigned. No native run or save access occurred.
 
 **E126 — necessary checkpoint error fix, complete:** New worker
 source `f75ad30` preserves contextual I/O identity; root joins both optional
@@ -98,7 +102,15 @@ Current29 [Stanley/cursor2](docs/extra-pets.md#current29-implementation-checkpoi
 
 ## Current build verification
 
-**E126 — final joined observer/writer gate:** Worker source `f75ad30` plus root's
+**E127 — accepted chooser gate:** Pushed source `e90df05` matches all122 worker
+build inputs and148 preserved checked artifact rows. Eight focused tests,
+formatting, strict lib/bin/test lint and the locked/offline normal debug build
+passed with Rust/Cargo1.95 MSVC. The [accepted identity](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit)
+owns the frozen receipt/EXE hashes and root readback. No normal-launch artifact
+replacement, native game run or live-save inspection occurred. E126's17 frozen
+artifact rows below still match; its source identity is historical after E127.
+
+**E126 — preserved historical observer/writer gate:** Worker source `f75ad30` plus root's
 recorded dirty `app.rs` joins matches source digest
 `1fc42c5db070331c525754f6d3407b38b8ed9b583a69b3c85692c7b76fbff37c`.
 Four actual observer tests and ten worker writer cases passed; formatting,
@@ -258,7 +270,7 @@ These maintenance checks retain historical records; they do not establish Tank4-
 
 ## Ownership
 
-E126/#308's writer/test/report transfer is closed in its [completion](docs/necessary-fixes.md#completion); root's actual observer joins are checked and pushed. No engineering worker is currently assigned.
+E127/#309's exact source/test/report transfer is closed under its [completion record](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit); Done version12/released was read back after joined acceptance. Root resumes ownership of these paths and owns final records/decisions. E126/#308's writer/test/report transfer remains closed; root's actual observer joins are checked and pushed. No engineering worker is currently assigned.
 
 Root owns synthesis, integration, central records and final decisions. The [E125 completion](docs/modal-batch-303-307.md#completion-and-joined-verification) closes all five modal source transfers with actual production joins checked and pushed. The [E124 completion](docs/refactor-batch-298-302.md#completion-and-joined-verification) closes all five refactor source transfers. The [E123 contract](docs/performance-batch-295-297.md) closes source transfers for #295 launcher, #296 Title loading and #297 active VT views. Earlier#292-294 source transfers are closed; preserve all private build/fixture evidence. Ordinary gameplay is human-owned; no autonomous native lease is active. Subsequent necessary fixes require new scoped Actionables, exact ownership reservations and independent new chats/worktrees where useful. Completed workers and the heartbeat remain closed. A35 code ownership is closed in its [contract](docs/adventure-4-5.md#integration-and-checks). The broad recovery and table below retain historical ownership:
 
@@ -275,6 +287,7 @@ Completed performance worktrees retain separate Cargo targets and disposable off
 
 | ID | Class / current scope | Evidence |
 |---|---|---|
+| E127 | Reproduced original extracted chooser gate; eight corrected offline regressions and matched production join; native unrun | [Chooser completion and bounded follow-up](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit), linked worker report and accepted build identity |
 | E126 | Observed isolated Windows reader-lock failures and corrected actual optional-observer recovery; native unrun | [Joined checkpoint](docs/necessary-fixes.md#joined-checkpoint-for-actionable-308), writer report and current frozen build identity above |
 | E125 | Observed focused offline modal/writer contracts and joined lint/release build; native unrun | [Modal completion](docs/modal-batch-303-307.md#completion-and-joined-verification), five linked reports and current integrated build identity above |
 | E124 | Observed focused offline contracts and joined lint/release build; native unrun | [Refactor completion](docs/refactor-batch-298-302.md#completion-and-joined-verification), five linked reports and current integrated build identity above |
@@ -289,7 +302,7 @@ Installed binaries remain authoritative; WinFish is secondary. Tests alone do no
 
 Current next action:
 
-0. #308 is complete, checked and pushed through its [completion record](docs/necessary-fixes.md#completion); Done version12/released. E125 is complete and pushed; #303-307 are Done with released claims. Preserve
+0. #309 is complete, checked and pushed through its [completion and bounded clean follow-up](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit); Done version12/released with closed source ownership. No additional necessary fix is established by this pass. #308 is complete, checked and pushed; Done version12/released. E125 is complete and pushed; #303-307 are Done with released claims. Preserve
 all closed modal/refactor worktrees, reports and private evidence. E124's
 #298-302 retain their separately recorded Ready/unclaimed tooling limitation;
 do not retry that route or resume completed workers.

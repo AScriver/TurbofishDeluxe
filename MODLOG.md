@@ -2,6 +2,37 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Correct chooser dispatch and finish the bounded necessary-fix pass
+
+Actionable#309 source/report `e90df05` is pushed to main and joined in root's
+clean checkout. Time Trial/Challenge chooser Select/Menu/Escape now dispatch
+through Session before the UI pause gate, with eligibility, focus, higher modal
+owners and closing-frame ownership preserved. The first transition consumes
+the rest of the frame; returned events use existing transition/checkpoint joins.
+The [completion record](docs/necessary-fixes.md#tank-chooser-completion-and-follow-up-audit)
+owns exact source/build identity and the bounded follow-up.
+
+The original extracted-loop harness reproduced four expected immediate-action
+failures and two stale exit-flush witnesses. Eight corrected focused regressions,
+formatting, strict lib/bin/test lint and locked/offline normal debug build passed.
+Root matched122 source inputs,148 worker artifact rows, five successful
+unchanged-source check receipts and17 preserved E126 artifact rows; workflow
+and whitespace passed. Failed private-field test compilation remains recorded;
+the test now checks serialized state without changing production visibility.
+Worker turns hit model-capacity errors during finalization; saved checks and
+publication survived, and the same chat continued with settings unchanged.
+Passed unchanged Cargo gates were reused. Actionable#309 is Done version12 with
+qualifying Passed validation and released claim, read back after root acceptance.
+The exact source/test/report transfer is closed and root resumes ownership.
+
+Save admission, Virtual Tank/store/gift accounting, neighboring UI-owner joins
+and the corrected production chooser yielded no additional necessary normal-play
+finding in this bounded pass. No speculative tasks, idle workers or heartbeat
+were started. Original install, normal launcher artifacts, human game processes
+and live/frozen/earned saves remain untouched. Screensaver work stays excluded.
+Human gameplay continues; unobserved retail/audio/native fidelity is pending.
+New verified defects or reported issues receive scoped Actionables before edits.
+
 ## 2026-10-12 — Reserve necessary Time Trial and Challenge chooser dispatch fix
 
 Repeated bounded source review found one normal-play join defect: every tank
