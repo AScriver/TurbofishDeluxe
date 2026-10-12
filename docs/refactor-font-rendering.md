@@ -90,7 +90,7 @@ was changed or inspected for testing.
 | `src/font.rs` | `6DBF68B5A9374F69C9AD44147EBD6B42DD5C6B7E2A75FEB5A60E02EE08B5564B` |
 | `tests/fonts.rs` | `E5323E181E07227B71286979F21476B646A68A3B01FA3F1F2067E32DC99C5C09` |
 | `Cargo.lock` | `1643FD7BE00AF38DB3DA764BE8E0C03CFC427EE368DCAAB7EF17A49B187F153F` |
-| Private debug `turbofish-deluxe.exe` | `5AE8DF65C40CDA1695BB552132BBAA8386822E9FD5C36E1B008A4ACF51BF0BC2` |
+| Pre-reconciliation debug executable, historical digest | `5AE8DF65C40CDA1695BB552132BBAA8386822E9FD5C36E1B008A4ACF51BF0BC2` |
 | `lint-01.log` | `8A16756F8DF42CA76FF8B229F687D7B76ABBAF215837FB4B8796001063FBEA57` |
 | `tests-01.log` | `3D6CAFC14210CCD0A447D5B7BAE1C3B6A540586978FE453463DE3E92367D06BB` |
 | `build-01.log` | `52F9B17FB347A996475D657F25F62A33B21231AE32D6375DA7D69AA57455232E` |
@@ -99,6 +99,22 @@ was changed or inspected for testing.
 `format-01.log` is empty because both formatting commands succeeded silently.
 No compilation, lint, font-test or build failure occurred. The tracking failure
 below is retained separately.
+
+### Main reconciliation
+
+The owned core commit is `9911271` (`refactor(font): share bitmap glyph
+placement`). A non-rewriting merge from `origin/main` produced
+`d0acdd43e4edf6c2843b2d2a451c6ed0b9308602`, retaining root's tracking exception
+and #300's persistence contribution `7c4dfcb`. Both checked font/test hashes
+remained exact; their tests and lint were not repeated. Since that merge changes
+another production module, the locked/offline binary build above ran once more
+and passed on the reconciled tree. The rebuilt executable SHA-256 is
+`782D06A4EB937BCF0768215F8AA27F781407CC37D1CF9A17A617838E6C0D9253`;
+`build-02.log` SHA-256 is
+`A541F2058A62BA99F5B737C91349C486A960DED68AE5D236462669CBAFC8DDE3`.
+The private debug target now holds this later executable; the first build's
+digest and log remain historical. Neither build contains root's pending
+normal/Help renderer joins.
 
 ## Tracking limitation and remaining integration
 
