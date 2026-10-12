@@ -87,11 +87,80 @@ Root-facing adapter is `app::gameplay_modal_runtime::GameplayModalRuntime`:
 
 Handled phases: Adventure/Challenge pet confirmation, Adventure first-fish
 rescue, all three invasion tip kinds in Adventure/Time Trial/Challenge, and
-Adventure/Time Trial Game Over. The ordinary pet-selection screen, TT immediate
-pet acceptance, Challenge results/loss, hatch, Presto, saver and other UI remain
+Adventure/Time Trial Game Over and immediate Challenge-loss Game Over. The
+ordinary pet-selection screen, TT immediate pet acceptance, Challenge results,
+hatch, Presto, saver and other UI remain
 with their existing owners. Root retains all pause/time, Board/session events,
 admission and checkpoint gates. Public adapter methods are `pub(super)` for the
 actual parent joins.
+
+## Challenge loss follow-up
+
+Root identified the still-flat `ChallengeLost` Game Over during its production
+join review. This is the same requested modal category; the initial `66f70da`
+source handoff had excluded it. The bounded extension keeps the existing shared
+Game Over view/control geometry and requires no new adapter API or resource.
+`GameplayModalState::from_session` now projects `ChallengeLost` as
+`GameplayMode::Challenge` / `GameplayPrompt::GameOver`, with failed-board tank
+and level and immediate enabled Continue. Source authority at `befdb53` is
+`adventure.rs:2647-2661,3473-3482,3885-3893`: loss occurs on the failed Board's
+next update, `Action::Continue` has no update-delay guard, and dismissal drops
+the Challenge run/Board and returns to GameSelector without a reward. These are
+observed current Rust contracts; no additional retail-source study was needed.
+
+Root adds only `ChallengeLost` to its existing gameplay-modal painter/input
+route and removes that flat modal painter/direct Continue dispatch. Challenge
+results and full mode panels remain outside this assignment. Root's prior
+Game Over admission logic must retain the immediate Challenge case, separate
+from Adventure/TT `updates > 30`.
+
+One new disposable in-memory domain regression enters Challenge Tank 3 through
+the existing actions, opens loss after clearing fixture fish, and verifies
+immediate enabled Continue, Challenge/3/5 identity even when Adventure progress
+is 1/1, unchanged session clock/progress/scores and the existing menu transition.
+The affected projection coverage now includes ChallengeLost and continues to
+exclude ChallengeResults. The original
+`check-01` source hashes/results below remain historical for their exact inputs.
+
+The first follow-up attempt, private `check-02` at `befdb53` plus this three-file
+diff, failed with `error[E0432]: unresolved import turbofish_deluxe::sim::GameMode`.
+The new test named the wrong module; `GameMode` is defined in `adventure.rs`.
+Corrected the import to `turbofish_deluxe::adventure::GameMode`; no runtime rule
+or API changed. The runner restored parent registrations after failure; the
+failed log and exact source digests remain in the private attempt. A report
+patch also missed its context and changed nothing before a bounded correction.
+Corrected verification passed in private `check-03` on 2026-10-11
+America/Phoenix (2026-10-12 UTC), at `befdb53` plus the owned model/test/report
+diff. Necessary affected checks only:
+
+```text
+cargo fmt --all --check
+cargo test --locked --offline --jobs 2 --test gameplay_modal challenge_loss_admits_immediate_continue_with_failed_board_identity_and_no_reward
+cargo test --locked --offline --jobs 2 --test gameplay_modal session_projection_covers_only_reserved_prompts_and_keeps_mode_tip_and_selection
+cargo clippy --locked --offline --jobs 2 --lib --bin turbofish-deluxe --test gameplay_modal -- -D warnings
+cargo build --locked --offline --jobs 2 --bin turbofish-deluxe
+```
+
+Both targeted cases passed (one new, one affected; 11 unrelated cases filtered
+in each run). Format, strict lint and supporting debug build passed. The
+unchanged three adapter cases and other initial contracts were not rerun;
+their unaffected evidence remains historical/current for unchanged behavior.
+Temporary own-module registrations restored byte-for-byte; the runtime adapter
+source is unchanged and its public API still uses the existing generic Game
+Over view. No process, real save, installation or live input/audio was used.
+
+Follow-up source/artifact hashes are recorded below before publication. Root
+still owns actual ChallengeLost painter/input removal and joined acceptance;
+this source extension does not establish native or retail fidelity.
+
+| Follow-up checked input/artifact | SHA-256 |
+|---|---|
+| `src/gameplay_modal.rs` | `DAF60FA1FEEC3F94C241DEBFD0B8A4121E66F77423453924E930C9B0BFE3C98E` |
+| `tests/gameplay_modal.rs` | `C12B5050A359316C9913C9A6CD56427D781DB2A1248723EEC27B1C47A69B393E` |
+| Supporting debug executable | `27AD902F841FE11064F2220D4E0032144CAE8D833B4944D6B85441BB583393B2` |
+
+The adapter retains its original `950F0BC2...D3A104BA` identity below. Seed,
+toolchain and private target/native-library configuration are unchanged.
 
 ## Verification
 
@@ -143,7 +212,7 @@ unperformed; supporting source checks establish no playability claim.
 
 ## Failures and cleanup
 
-No compilation, test, lint or build failure occurred. One report-edit patch
+Initial `check-01` had no compilation, test, lint or build failure. One report-edit patch
 failed to match its expected context and changed nothing; the narrower corrected
 patch succeeded. Read-only lookups for absent `rust-toolchain.toml`,
 `tests/ui.rs` and host `Get-NumberedContent.ps1` produced path errors; actual

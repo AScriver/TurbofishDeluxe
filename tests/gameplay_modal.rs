@@ -3,7 +3,7 @@
 
 use macroquad::prelude::{Rect, Vec2};
 use turbofish_deluxe::{
-    adventure::{AdventurePhase, AdventureSession},
+    adventure::{AdventurePhase, AdventureSession, GameMode},
     gameplay_modal::{
         GameplayModal, GameplayModalAction, GameplayModalFeedback, GameplayModalState,
         GameplayMode, GameplayPrompt,
@@ -81,6 +81,7 @@ fn session_projection_covers_only_reserved_prompts_and_keeps_mode_tip_and_select
             AdventurePhase::TimeTrialGameOver { updates: 31 },
             GameplayMode::TimeTrial,
         ),
+        (AdventurePhase::ChallengeLost, GameplayMode::Challenge),
     ];
     for (phase, expected_mode) in cases {
         let projected = state(phase.clone());
@@ -133,7 +134,7 @@ fn session_projection_covers_only_reserved_prompts_and_keeps_mode_tip_and_select
             tank: 1,
             selected: vec![],
         },
-        AdventurePhase::ChallengeLost,
+        AdventurePhase::ChallengeResults,
     ] {
         session.phase = phase;
         assert!(GameplayModalState::from_session(&session).is_none());
@@ -457,4 +458,66 @@ fn admitted_game_over_intent_returns_to_menu_and_preserves_existing_progress() {
             .count(),
         1
     );
+}
+
+#[test]
+fn challenge_loss_admits_immediate_continue_with_failed_board_identity_and_no_reward() {
+    // Disposable in-memory unlock fixture: existing domain entry/loss actions
+    // produce the phase; no persisted or earned profile is read or changed.
+    let mut session = AdventureSession::new(42);
+    session.board = None;
+    session.phase = AdventurePhase::GameSelector;
+    session.progress.adventure_completed = true;
+    session.progress.challenge_completed = [true, true, false, false];
+    session.progress.unlocked_pets = vec![
+        PetKind::Stinky,
+        PetKind::Niko,
+        PetKind::Itchy,
+        PetKind::Prego,
+    ];
+    session.apply_actions(&[
+        Action::PlayChallenge,
+        Action::SelectChallengeTank { tank: 3 },
+        Action::TogglePet {
+            pet: PetKind::Stinky,
+        },
+        Action::TogglePet { pet: PetKind::Niko },
+        Action::TogglePet {
+            pet: PetKind::Itchy,
+        },
+        Action::Continue,
+    ]);
+    assert_eq!(session.phase, AdventurePhase::ChallengePlaying);
+    session.board.as_mut().unwrap().fish.clear();
+    let progress = session.progress.clone();
+    session.step(&[]);
+    assert_eq!(session.phase, AdventurePhase::ChallengeLost);
+    let tick = session.ticks;
+    let snapshot = GameplayModalState::from_session(&session).unwrap();
+    assert_eq!(
+        (snapshot.mode, snapshot.tank, snapshot.level),
+        (GameplayMode::Challenge, 3, 5)
+    );
+    assert_eq!((session.progress.tank, session.progress.level), (1, 1));
+    assert_eq!(snapshot.prompt, GameplayPrompt::GameOver);
+    assert!(snapshot.can_accept);
+    let mut modal = GameplayModal::new(1, snapshot.clone(), 34.0);
+    assert!(modal.view().buttons[0].control.enabled);
+    let intent = modal.input(&accept()).unwrap();
+    assert_eq!(modal.action_for(&intent, &snapshot), Some(Action::Continue));
+    let events = session.apply_actions(&[modal.action_for(&intent, &snapshot).unwrap()]);
+    assert_eq!(session.ticks, tick);
+    assert_eq!(session.phase, AdventurePhase::GameSelector);
+    assert_eq!(session.mode, GameMode::Adventure);
+    assert!(session.board.is_none() && session.challenge.is_none());
+    assert_eq!(session.progress, progress);
+    assert_eq!(session.challenge_scores.personal_best[2], None);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, Event::GameSelectorOpened { .. }))
+            .count(),
+        1
+    );
+    assert!(GameplayModalState::from_session(&session).is_none());
 }

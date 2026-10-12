@@ -108,6 +108,11 @@ impl GameplayModalState {
                 GameplayPrompt::GameOver,
                 *updates > 30,
             ),
+            // Challenge owns immediate loss dismissal; unlike Adventure/TT,
+            // this phase has no delayed-update counter to project.
+            AdventurePhase::ChallengeLost => {
+                (GameplayMode::Challenge, GameplayPrompt::GameOver, true)
+            }
             _ => return None,
         };
         Some(Self {
