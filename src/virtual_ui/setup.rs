@@ -1,5 +1,13 @@
 use super::*;
 
+const SETTINGS: [Setting; 5] = [
+    Setting::FishNames,
+    Setting::Bubbulator,
+    Setting::AlienAttractor,
+    Setting::DropShells,
+    Setting::ShowHungry,
+];
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SettingView {
     pub setting: Setting,
@@ -34,79 +42,41 @@ pub struct SetupController {
 }
 
 impl SetupController {
-    pub fn view(&mut self, snapshot: &VirtualUiSnapshot, clock: UiClock) -> SetupView {
+    pub const SCREENSAVER_ENTRY_BOUNDS: Rect = Rect::new(80.0, 320.0, 186.0, 36.0);
+
+    /// Advance clocks/captures without building backdrop and setting views.
+    pub fn advance(&mut self, snapshot: &VirtualUiSnapshot, clock: UiClock) {
         self.interaction.advance(snapshot, clock);
+    }
+
+    pub fn view(&mut self, snapshot: &VirtualUiSnapshot, clock: UiClock) -> SetupView {
+        self.advance(snapshot, clock);
         let tank = snapshot.tank();
         let owned_count = tank.owned_backdrops.iter().filter(|owned| **owned).count();
         let valid_backdrop = tank.owned_backdrops.get(usize::from(tank.backdrop)) == Some(&true);
-        // With one backdrop the source wraps to itself; disable the no-op as a UI policy.
-        let navigate = valid_backdrop && owned_count > 1;
-        let controls = vec![
-            self.interaction.button(
-                snapshot,
-                Control::PreviousBackdrop,
-                Rect::new(74.0, 274.0, 65.0, 32.0),
-                "Prev",
-                navigate,
-                ButtonStyle::Left,
-            ),
-            self.interaction.button(
-                snapshot,
-                Control::NextBackdrop,
-                Rect::new(204.0, 274.0, 65.0, 32.0),
-                "Next",
-                navigate,
-                ButtonStyle::Right,
-            ),
-            self.interaction.button(
-                snapshot,
-                Control::SellBackdrop,
-                Rect::new(137.0, 274.0, 70.0, 32.0),
-                "Sell",
-                can_sell_backdrop(snapshot, tank.backdrop),
-                ButtonStyle::Center,
-            ),
-            self.interaction.button(
-                snapshot,
-                Control::ReturnToTank,
-                Rect::new(225.0, 420.0, 186.0, 36.0),
-                "Return to Tank",
-                true,
-                ButtonStyle::Dialog,
-            ),
-        ];
+        let controls = control_specs(snapshot)
+            .into_iter()
+            .map(|spec| spec.view(&self.interaction, snapshot))
+            .collect();
         let mut unavailable_devices = Vec::new();
-        let settings = [
-            Setting::FishNames,
-            Setting::Bubbulator,
-            Setting::AlienAttractor,
-            Setting::DropShells,
-            Setting::ShowHungry,
-        ]
-        .into_iter()
-        .enumerate()
-        .filter_map(|(row, setting)| {
-            if !setting.available(tank) {
-                unavailable_devices.push(setting);
-                return None;
-            }
-            let mut button = self.interaction.button(
-                snapshot,
-                Control::Setting(setting),
-                Rect::new(340.0, 140.0 + row as f32 * 45.0, 46.0, 45.0),
-                setting_label(setting),
-                true,
-                ButtonStyle::Checkbox,
-            );
-            button.checked = Some(setting.value(&tank.settings));
-            Some(SettingView {
-                label_bounds: Rect::new(390.0, button.bounds.y + 5.0, 220.0, 40.0),
-                setting,
-                button,
-                guidance: setting_guidance(setting),
+        let settings = SETTINGS
+            .into_iter()
+            .enumerate()
+            .filter_map(|(row, setting)| {
+                let Some(spec) = setting_spec(snapshot, row, setting) else {
+                    unavailable_devices.push(setting);
+                    return None;
+                };
+                let mut button = spec.view(&self.interaction, snapshot);
+                button.checked = Some(setting.value(&tank.settings));
+                Some(SettingView {
+                    label_bounds: Rect::new(390.0, button.bounds.y + 5.0, 220.0, 40.0),
+                    setting,
+                    button,
+                    guidance: setting_guidance(setting),
+                })
             })
-        })
-        .collect();
+            .collect();
         let guidance = match self.interaction.hover {
             Some(Control::Setting(setting)) => setting_guidance(setting),
             Some(Control::PreviousBackdrop | Control::NextBackdrop) => {
@@ -142,7 +112,7 @@ impl SetupController {
             controls,
             settings,
             unavailable_devices,
-            screensaver_entry_bounds: Rect::new(80.0, 320.0, 186.0, 36.0),
+            screensaver_entry_bounds: Self::SCREENSAVER_ENTRY_BOUNDS,
             guidance,
             guidance_bounds: Rect::new(60.0, 45.0, 520.0, 48.0),
             guidance_font: FontId::Body,
@@ -156,13 +126,22 @@ impl SetupController {
         clock: UiClock,
         input: &UiInput,
     ) -> Option<UiIntent> {
-        let view = self.view(snapshot, clock);
-        let mut buttons = view.controls;
-        buttons.extend(view.settings.iter().map(|setting| setting.button.clone()));
-        if let Some(dialog) = &view.dialog {
-            buttons.extend_from_slice(&dialog.buttons);
-        }
-        let control = self.interaction.activate(snapshot, input, &buttons);
+        self.advance(snapshot, clock);
+        let controls = control_specs(snapshot).map(|spec| spec.input(&self.interaction, snapshot));
+        let settings: [_; SETTINGS.len()] = std::array::from_fn(|row| {
+            setting_spec(snapshot, row, SETTINGS[row])
+                .map(|spec| spec.input(&self.interaction, snapshot))
+        });
+        let dialog = dialog_specs(snapshot)
+            .map(|specs| specs.map(|spec| spec.input(&self.interaction, snapshot)));
+        let control = self.interaction.activate(
+            snapshot,
+            input,
+            controls
+                .into_iter()
+                .chain(settings.into_iter().flatten())
+                .chain(dialog.into_iter().flatten()),
+        );
         if !clock.focused {
             return None;
         }
@@ -181,6 +160,53 @@ impl SetupController {
             _ => None,
         }
     }
+}
+
+fn control_specs(snapshot: &VirtualUiSnapshot) -> [ButtonSpec; 4] {
+    let tank = snapshot.tank();
+    // With one backdrop the source wraps to itself; disable the no-op as a UI policy.
+    let navigate = tank.owned_backdrops.get(usize::from(tank.backdrop)) == Some(&true)
+        && tank.owned_backdrops.iter().filter(|owned| **owned).count() > 1;
+    [
+        ButtonSpec {
+            control: Control::PreviousBackdrop,
+            bounds: Rect::new(74.0, 274.0, 65.0, 32.0),
+            text: "Prev",
+            available: navigate,
+            style: ButtonStyle::Left,
+        },
+        ButtonSpec {
+            control: Control::NextBackdrop,
+            bounds: Rect::new(204.0, 274.0, 65.0, 32.0),
+            text: "Next",
+            available: navigate,
+            style: ButtonStyle::Right,
+        },
+        ButtonSpec {
+            control: Control::SellBackdrop,
+            bounds: Rect::new(137.0, 274.0, 70.0, 32.0),
+            text: "Sell",
+            available: can_sell_backdrop(snapshot, tank.backdrop),
+            style: ButtonStyle::Center,
+        },
+        ButtonSpec {
+            control: Control::ReturnToTank,
+            bounds: Rect::new(225.0, 420.0, 186.0, 36.0),
+            text: "Return to Tank",
+            available: true,
+            style: ButtonStyle::Dialog,
+        },
+    ]
+}
+
+fn setting_spec(snapshot: &VirtualUiSnapshot, row: usize, setting: Setting) -> Option<ButtonSpec> {
+    setting.available(snapshot.tank()).then(|| ButtonSpec {
+        control: Control::Setting(setting),
+        bounds: Rect::new(340.0, 140.0 + row as f32 * 45.0, 46.0, 45.0),
+        text: setting_label(setting),
+        available: true,
+        style: ButtonStyle::Checkbox,
+    })
 }
 
 fn setting_label(setting: Setting) -> &'static str {

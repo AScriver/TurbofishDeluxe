@@ -12,6 +12,7 @@ const SLOT_RECTS: [Rect; STORE_SLOTS] = [
     Rect::new(525.0, 38.0, 98.0, 140.0),
     Rect::new(489.0, 339.0, 121.0, 100.0),
 ];
+const RETURN_BOUNDS: Rect = Rect::new(6.0, 440.0, 113.0, 34.0);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoreSlotView {
@@ -59,15 +60,16 @@ impl StoreController {
         }
     }
 
-    pub fn view(&mut self, snapshot: &VirtualUiSnapshot, clock: UiClock) -> StoreView {
+    /// Advance feedback and captures without allocating product presentation data.
+    pub fn advance(&mut self, snapshot: &VirtualUiSnapshot, clock: UiClock) {
         let elapsed = self.interaction.advance(snapshot, clock);
         self.purchase_feedback_ticks = self.purchase_feedback_ticks.saturating_sub(elapsed);
+    }
+
+    pub fn view(&mut self, snapshot: &VirtualUiSnapshot, clock: UiClock) -> StoreView {
+        self.advance(snapshot, clock);
         let slots = SLOT_RECTS.iter().enumerate().map(|(slot, bounds)| {
-            let target = OfferTarget::capture(snapshot.tank(), slot);
-            let state = target.as_ref().map_or(OfferState::Unavailable, |target|
-                offer_state(snapshot, target));
-            let sold = snapshot.tank.stock.as_ref().is_some_and(|stock| stock.bought[slot]);
-            let state = if sold { OfferState::Sold } else { state };
+            let (target, state) = slot_state(snapshot, slot);
             let style = match slot { 0..=2 => ButtonStyle::StoreLeft,
                 3..=6 => ButtonStyle::StoreTop, _ => ButtonStyle::StoreRight };
             let modal_selected = matches!(snapshot.dialog, Some(PendingDialog::Purchase { ref target, .. })
@@ -143,7 +145,7 @@ impl StoreController {
             return_button: self.interaction.button(
                 snapshot,
                 Control::ReturnToTank,
-                Rect::new(6.0, 440.0, 113.0, 34.0),
+                RETURN_BOUNDS,
                 "Back",
                 true,
                 ButtonStyle::Dialog,
@@ -168,7 +170,7 @@ impl StoreController {
         clock: UiClock,
         input: &UiInput,
     ) -> Option<UiIntent> {
-        let view = self.view(snapshot, clock);
+        self.advance(snapshot, clock);
         if !clock.focused || snapshot.external_block {
             return None;
         }
@@ -177,12 +179,27 @@ impl StoreController {
             self.interaction.hover = None;
             return None;
         }
-        let mut buttons: Vec<_> = view.slots.iter().map(|slot| slot.button.clone()).collect();
-        buttons.push(view.return_button);
-        if let Some(dialog) = &view.dialog {
-            buttons.extend_from_slice(&dialog.buttons);
-        }
-        let control = self.interaction.activate(snapshot, input, &buttons);
+        let slots: [_; STORE_SLOTS] = std::array::from_fn(|slot| {
+            self.interaction.control(
+                snapshot,
+                Control::StoreSlot(slot),
+                SLOT_RECTS[slot],
+                slot_state(snapshot, slot).1 == OfferState::Available,
+            )
+        });
+        let back = self
+            .interaction
+            .control(snapshot, Control::ReturnToTank, RETURN_BOUNDS, true);
+        let dialog = dialog_specs(snapshot)
+            .map(|specs| specs.map(|spec| spec.input(&self.interaction, snapshot)));
+        let control = self.interaction.activate(
+            snapshot,
+            input,
+            slots
+                .into_iter()
+                .chain(std::iter::once(back))
+                .chain(dialog.into_iter().flatten()),
+        );
         if !clock.focused {
             return None;
         }
@@ -194,6 +211,23 @@ impl StoreController {
         }
         None
     }
+}
+
+fn slot_state(snapshot: &VirtualUiSnapshot, slot: usize) -> (Option<OfferTarget>, OfferState) {
+    let target = OfferTarget::capture(snapshot.tank(), slot);
+    let state = if snapshot
+        .tank
+        .stock
+        .as_ref()
+        .is_some_and(|stock| stock.bought[slot])
+    {
+        OfferState::Sold
+    } else {
+        target.as_ref().map_or(OfferState::Unavailable, |target| {
+            offer_state(snapshot, target)
+        })
+    };
+    (target, state)
 }
 
 fn product_guidance(product: &StoreProduct) -> String {

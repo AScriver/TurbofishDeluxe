@@ -56,7 +56,8 @@ pub struct FishController {
 }
 
 impl FishController {
-    pub fn view(&mut self, snapshot: &VirtualUiSnapshot, clock: UiClock) -> FishManagementView {
+    /// Advance captures and finance timing without constructing presentation data.
+    pub fn advance(&mut self, snapshot: &VirtualUiSnapshot, clock: UiClock) {
         let elapsed = self.interaction.advance(snapshot, clock);
         let finance = self.interaction.hover == Some(Control::SellSelected)
             || matches!(snapshot.dialog, Some(PendingDialog::FishSale { .. }));
@@ -66,13 +67,18 @@ impl FishController {
         } else {
             (self.finance_alpha - change).max(0.0)
         };
+    }
+
+    pub fn view(&mut self, snapshot: &VirtualUiSnapshot, clock: UiClock) -> FishManagementView {
+        self.advance(snapshot, clock);
+        let finance = self.interaction.hover == Some(Control::SellSelected)
+            || matches!(snapshot.dialog, Some(PendingDialog::FishSale { .. }));
         let fish = roster(snapshot);
         let selected = snapshot.selected();
         let rows = (0..crate::virtual_tank::BUBBULATOR_CAPACITY)
             .map(|position| {
-                let column = position / 5;
-                let x = [25.0, 119.0, 425.0, 519.0][column];
-                let bounds = Rect::new(x, 41.0 + (position % 5) as f32 * 83.0, 90.0, 83.0);
+                let bounds = row_bounds(position);
+                let x = bounds.x;
                 let target = fish.get(position).cloned();
                 // Empty slots have no routable fish ID; their disabled control is never activated.
                 let control = Control::Fish(target.as_ref().map_or(u16::MAX, |fish| fish.0.id));
@@ -116,57 +122,10 @@ impl FishController {
             })
             .collect();
         let any_shown = fish.iter().any(|fish| fish.0.shown);
-        let bulk_control = if any_shown {
-            Control::HideAll
-        } else {
-            Control::ShowAll
-        };
-        let selected_shown = selected.as_ref().is_none_or(|fish| fish.0.shown);
-        let sale_enabled = selected
-            .as_ref()
-            .is_some_and(|fish| snapshot.sale_value(&fish.0).is_some());
-        let controls = vec![
-            self.interaction.button(
-                snapshot,
-                bulk_control,
-                Rect::new(500.0, 4.0, 100.0, 30.0),
-                if any_shown { "Hide All" } else { "Show All" },
-                !fish.is_empty(),
-                ButtonStyle::Main,
-            ),
-            self.interaction.button(
-                snapshot,
-                Control::ToggleSelected,
-                Rect::new(225.0, 390.0, 58.0, 30.0),
-                if selected_shown { "Hide" } else { "Show" },
-                selected.is_some(),
-                ButtonStyle::Left,
-            ),
-            self.interaction.button(
-                snapshot,
-                Control::RenameSelected,
-                Rect::new(281.0, 390.0, 74.0, 30.0),
-                "Rename",
-                selected.is_some(),
-                ButtonStyle::Center,
-            ),
-            self.interaction.button(
-                snapshot,
-                Control::SellSelected,
-                Rect::new(353.0, 390.0, 65.0, 30.0),
-                "Sell",
-                sale_enabled,
-                ButtonStyle::Right,
-            ),
-            self.interaction.button(
-                snapshot,
-                Control::ReturnToTank,
-                Rect::new(218.0, 428.0, 206.0, 36.0),
-                "Return to Tank",
-                true,
-                ButtonStyle::Dialog,
-            ),
-        ];
+        let controls = control_specs(snapshot, any_shown, !fish.is_empty())
+            .into_iter()
+            .map(|spec| spec.view(&self.interaction, snapshot))
+            .collect();
         let details = selected.map(|target| {
             let fish = &target.0;
             FishDetails {
@@ -221,13 +180,33 @@ impl FishController {
         clock: UiClock,
         input: &UiInput,
     ) -> Option<UiIntent> {
-        let view = self.view(snapshot, clock);
-        let mut buttons = view.controls;
-        buttons.extend(view.rows.iter().map(|row| row.button.clone()));
-        if let Some(dialog) = &view.dialog {
-            buttons.extend_from_slice(&dialog.buttons);
-        }
-        let control = self.interaction.activate(snapshot, input, &buttons);
+        self.advance(snapshot, clock);
+        let fish = roster_records(snapshot);
+        let controls = control_specs(
+            snapshot,
+            fish.iter().any(|fish| fish.shown),
+            !fish.is_empty(),
+        )
+        .map(|spec| spec.input(&self.interaction, snapshot));
+        let rows: [_; crate::virtual_tank::BUBBULATOR_CAPACITY] = std::array::from_fn(|position| {
+            let target = fish.get(position);
+            self.interaction.control(
+                snapshot,
+                Control::Fish(target.map_or(u16::MAX, |fish| fish.id)),
+                row_bounds(position),
+                target.is_some_and(|fish| fish_record(snapshot.tank(), fish.id) == Some(*fish)),
+            )
+        });
+        let dialog = dialog_specs(snapshot)
+            .map(|specs| specs.map(|spec| spec.input(&self.interaction, snapshot)));
+        let control = self.interaction.activate(
+            snapshot,
+            input,
+            controls
+                .into_iter()
+                .chain(rows)
+                .chain(dialog.into_iter().flatten()),
+        );
         if !clock.focused {
             return None;
         }
@@ -253,6 +232,61 @@ impl FishController {
             _ => None,
         }
     }
+}
+
+fn row_bounds(position: usize) -> Rect {
+    Rect::new(
+        [25.0, 119.0, 425.0, 519.0][position / 5],
+        41.0 + (position % 5) as f32 * 83.0,
+        90.0,
+        83.0,
+    )
+}
+
+fn control_specs(snapshot: &VirtualUiSnapshot, any_shown: bool, any_fish: bool) -> [ButtonSpec; 5] {
+    let selected = snapshot.selected_record();
+    let selected_shown = selected.is_none_or(|fish| fish.shown);
+    [
+        ButtonSpec {
+            control: if any_shown {
+                Control::HideAll
+            } else {
+                Control::ShowAll
+            },
+            bounds: Rect::new(500.0, 4.0, 100.0, 30.0),
+            text: if any_shown { "Hide All" } else { "Show All" },
+            available: any_fish,
+            style: ButtonStyle::Main,
+        },
+        ButtonSpec {
+            control: Control::ToggleSelected,
+            bounds: Rect::new(225.0, 390.0, 58.0, 30.0),
+            text: if selected_shown { "Hide" } else { "Show" },
+            available: selected.is_some(),
+            style: ButtonStyle::Left,
+        },
+        ButtonSpec {
+            control: Control::RenameSelected,
+            bounds: Rect::new(281.0, 390.0, 74.0, 30.0),
+            text: "Rename",
+            available: selected.is_some(),
+            style: ButtonStyle::Center,
+        },
+        ButtonSpec {
+            control: Control::SellSelected,
+            bounds: Rect::new(353.0, 390.0, 65.0, 30.0),
+            text: "Sell",
+            available: selected.is_some_and(|fish| snapshot.sale_value(fish).is_some()),
+            style: ButtonStyle::Right,
+        },
+        ButtonSpec {
+            control: Control::ReturnToTank,
+            bounds: Rect::new(218.0, 428.0, 206.0, 36.0),
+            text: "Return to Tank",
+            available: true,
+            style: ButtonStyle::Dialog,
+        },
+    ]
 }
 
 fn trait_labels(properties: FishProperties) -> Vec<&'static str> {

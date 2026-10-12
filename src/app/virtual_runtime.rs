@@ -146,6 +146,40 @@ pub(super) struct NavigationButton {
     pub button: ButtonView,
 }
 
+struct NavigationEntry {
+    navigation: Navigation,
+    text: &'static str,
+    bounds: Rect,
+}
+
+const CLOSE_NAVIGATION: [NavigationEntry; 1] = [NavigationEntry {
+    navigation: Navigation::CloseUnavailableDialog,
+    text: "Cancel",
+    bounds: Rect::new(245.0, 310.0, 150.0, 38.0),
+}];
+const FISH_NAVIGATION: [NavigationEntry; 1] = [NavigationEntry {
+    navigation: Navigation::TankSetup,
+    text: "Tank Setup",
+    bounds: Rect::new(8.0, 4.0, 135.0, 30.0),
+}];
+const TANK_NAVIGATION: [NavigationEntry; 3] = [
+    NavigationEntry {
+        navigation: Navigation::FishSetup,
+        text: "Fish Setup",
+        bounds: Rect::new(8.0, 4.0, 135.0, 30.0),
+    },
+    NavigationEntry {
+        navigation: Navigation::PetChooser,
+        text: "Pets",
+        bounds: Rect::new(498.0, 4.0, 130.0, 30.0),
+    },
+    NavigationEntry {
+        navigation: Navigation::ScreensaverSettings,
+        text: "Screensaver",
+        bounds: SetupController::SCREENSAVER_ENTRY_BOUNDS,
+    },
+];
+
 pub(super) struct RuntimeView {
     pub content: PageView,
     pub navigation: Vec<NavigationButton>,
@@ -159,26 +193,30 @@ struct ChromeInteraction {
 }
 
 impl ChromeInteraction {
-    fn input(&mut self, input: &UiInput, buttons: &[NavigationButton]) -> Option<Navigation> {
+    fn input(
+        &mut self,
+        input: &UiInput,
+        buttons: &[NavigationEntry],
+        enabled: bool,
+    ) -> Option<Navigation> {
         let hit = |point: Point| {
             buttons
                 .iter()
                 .rev()
-                .find(|entry| entry.button.bounds.contains(point))
+                .find(|entry| entry.bounds.contains(point))
         };
         match input {
             UiInput::PointerMove(point) => self.hover = hit(*point).map(|entry| entry.navigation),
             UiInput::PointerDown(point) => {
                 self.hover = hit(*point).map(|entry| entry.navigation);
                 self.down = hit(*point)
-                    .filter(|entry| entry.button.enabled)
+                    .filter(|_| enabled)
                     .map(|entry| entry.navigation);
             }
             UiInput::PointerUp(point) => {
                 self.hover = hit(*point).map(|entry| entry.navigation);
                 let held = self.down.take()?;
-                if hit(*point).is_some_and(|entry| entry.button.enabled && entry.navigation == held)
-                {
+                if hit(*point).is_some_and(|entry| enabled && entry.navigation == held) {
                     return Some(held);
                 }
             }
@@ -285,7 +323,7 @@ impl VirtualRuntime {
         self.request_pending = false;
         // Advance the active controller even during focus loss/external modals;
         // its existing clock policy clears captures and excludes unattended time.
-        let _ = self.view();
+        let _ = self.advance();
     }
 
     pub(super) fn active(&self) -> bool {
@@ -300,6 +338,17 @@ impl VirtualRuntime {
             PendingDialog::Purchase { name, .. } | PendingDialog::Rename { name, .. } => Some(name),
             _ => None,
         }
+    }
+
+    fn advance(&mut self) -> Option<()> {
+        let snapshot = self.snapshot.as_ref()?;
+        let clock = self.clock?;
+        match self.page? {
+            Page::Store => self.store.advance(snapshot, clock),
+            Page::FishSetup => self.fish.advance(snapshot, clock),
+            Page::TankSetup => self.setup.advance(snapshot, clock),
+        }
+        Some(())
     }
 
     pub(super) fn view(&mut self) -> Option<RuntimeView> {
@@ -322,7 +371,7 @@ impl VirtualRuntime {
             dialog.buttons[0].enabled = false;
         }
         Some(RuntimeView {
-            navigation: self.navigation_buttons(&content),
+            navigation: self.navigation_buttons(),
             content,
             dialog_issue: self.dialog_issue,
         })
@@ -340,8 +389,10 @@ impl VirtualRuntime {
         if self.dialog_issue.is_some() && matches!(input, UiInput::Cancel | UiInput::Submit) {
             return self.navigate(Navigation::CloseUnavailableDialog);
         }
-        let navigation = self.view()?.navigation;
-        if let Some(target) = self.chrome.input(input, &navigation) {
+        self.advance()?;
+        let navigation = self.navigation_entries();
+        let enabled = self.navigation_enabled();
+        if let Some(target) = self.chrome.input(input, navigation, enabled) {
             return self.navigate(target);
         }
         if self.dialog_issue.is_some() {
@@ -401,11 +452,12 @@ impl VirtualRuntime {
         if self.request_pending {
             return None;
         }
-        if !self
-            .view()?
-            .navigation
-            .iter()
-            .any(|entry| entry.navigation == target && entry.button.enabled)
+        self.advance()?;
+        if !self.navigation_enabled()
+            || !self
+                .navigation_entries()
+                .iter()
+                .any(|entry| entry.navigation == target)
         {
             return None;
         }
@@ -444,79 +496,53 @@ impl VirtualRuntime {
         self.chrome = ChromeInteraction::default();
     }
 
-    fn navigation_buttons(&self, content: &PageView) -> Vec<NavigationButton> {
+    fn navigation_entries(&self) -> &'static [NavigationEntry] {
         let Some(page) = self.page else {
-            return Vec::new();
+            return &[];
         };
-        let enabled = self.clock.is_some_and(|clock| clock.focused)
-            && !self.caller_blocked
-            && self.pending.is_none()
-            && self.dialog_issue.is_none();
-        let entries = if self.dialog_issue.is_some() {
-            vec![(
-                Navigation::CloseUnavailableDialog,
-                "Cancel",
-                Rect::new(245.0, 310.0, 150.0, 38.0),
-            )]
+        if self.dialog_issue.is_some() {
+            &CLOSE_NAVIGATION
         } else {
             match page {
-                Page::Store => Vec::new(),
-                Page::FishSetup => vec![(
-                    Navigation::TankSetup,
-                    "Tank Setup",
-                    Rect::new(8.0, 4.0, 135.0, 30.0),
-                )],
-                Page::TankSetup => {
-                    let PageView::Setup(setup) = content else {
-                        return Vec::new();
-                    };
-                    vec![
-                        (
-                            Navigation::FishSetup,
-                            "Fish Setup",
-                            Rect::new(8.0, 4.0, 135.0, 30.0),
-                        ),
-                        (
-                            Navigation::PetChooser,
-                            "Pets",
-                            Rect::new(498.0, 4.0, 130.0, 30.0),
-                        ),
-                        (
-                            Navigation::ScreensaverSettings,
-                            "Screensaver",
-                            setup.screensaver_entry_bounds,
-                        ),
-                    ]
-                }
+                Page::Store => &[],
+                Page::FishSetup => &FISH_NAVIGATION,
+                Page::TankSetup => &TANK_NAVIGATION,
             }
-        };
-        entries
-            .into_iter()
-            .map(|(navigation, text, bounds)| {
-                let enabled = if navigation == Navigation::CloseUnavailableDialog {
-                    self.clock.is_some_and(|clock| clock.focused) && !self.caller_blocked
-                } else {
-                    enabled
-                };
-                NavigationButton {
-                    navigation,
+        }
+    }
+
+    fn navigation_enabled(&self) -> bool {
+        self.clock.is_some_and(|clock| clock.focused)
+            && !self.caller_blocked
+            && (self.dialog_issue.is_some() || self.pending.is_none())
+    }
+
+    fn navigation_buttons(&self) -> Vec<NavigationButton> {
+        let enabled = self.navigation_enabled();
+        self.navigation_entries()
+            .iter()
+            .map(|entry| {
+                let mut button = NavigationButton {
+                    navigation: entry.navigation,
                     button: ButtonView {
                         // Navigation has its own typed routing, never this placeholder control.
                         control: Control::ReturnToTank,
-                        bounds,
-                        text: text.to_owned(),
+                        bounds: entry.bounds,
+                        text: entry.text.to_owned(),
                         font: FontId::Body,
                         available: true,
                         enabled,
-                        hovered: enabled && self.chrome.hover == Some(navigation),
-                        pressed: enabled
-                            && self.chrome.down == Some(navigation)
-                            && self.chrome.hover == Some(navigation),
+                        hovered: false,
+                        pressed: false,
                         selected: false,
                         style: ButtonStyle::Dialog,
                         checked: None,
                     },
-                }
+                };
+                button.button.hovered = enabled && self.chrome.hover == Some(button.navigation);
+                button.button.pressed =
+                    enabled && self.chrome.down == Some(button.navigation) && button.button.hovered;
+                button
             })
             .collect()
     }
@@ -951,6 +977,466 @@ mod tests {
         println!(
             "A293 equivalence state_sha256={}",
             sha256(state(&mut lazy).as_bytes())
+        );
+    }
+
+    #[test]
+    #[ignore = "offline timing only; run with the coordinator's serial timing lease"]
+    fn measure_active_refresh_input_views() {
+        const ITERATIONS: u64 = 20_000;
+        for count in [1, 20] {
+            let tank = fixture(count);
+            let bytes = serde_json::to_vec(&tank).unwrap();
+            for page in [Page::Store, Page::FishSetup, Page::TankSetup] {
+                let phase = if page == Page::Store {
+                    AdventurePhase::VirtualStore
+                } else {
+                    AdventurePhase::VirtualSetup
+                };
+                let mut runtime = VirtualRuntime {
+                    profile_id: Some(1),
+                    setup_page: Some(page),
+                    ..VirtualRuntime::default()
+                };
+                let frame = |runtime: &mut VirtualRuntime, ticks| {
+                    let capture =
+                        || VirtualUiSnapshot::capture(black_box(&tank), 100_000, NOW, true);
+                    runtime.refresh(1, black_box(&phase), capture, clock(ticks), DAY);
+                    assert!(
+                        black_box(runtime.input(black_box(&UiInput::PointerMove(Point {
+                            x: 320.0,
+                            y: 470.0,
+                        }))))
+                        .is_none()
+                    );
+                    runtime.refresh(1, black_box(&phase), capture, clock(ticks), DAY);
+                    drop(black_box(runtime.view().unwrap()));
+                };
+                for ticks in 0..100 {
+                    frame(&mut runtime, ticks);
+                }
+                let mut samples = Vec::new();
+                for sample in 0..9 {
+                    let start = Instant::now();
+                    for offset in 0..ITERATIONS {
+                        frame(black_box(&mut runtime), 100 + sample * ITERATIONS + offset);
+                    }
+                    samples.push(start.elapsed().as_secs_f64() * 1_000_000.0 / ITERATIONS as f64);
+                }
+                assert_eq!(bytes, serde_json::to_vec(&tank).unwrap());
+                println!(
+                    "A297 timing fish={count} page={page:?} samples_us={samples:?} fixture_sha256={} state_sha256={}",
+                    sha256(&bytes),
+                    sha256(state(&mut runtime).as_bytes())
+                );
+            }
+        }
+    }
+
+    fn refresh_clock(
+        runtime: &mut VirtualRuntime,
+        tank: &VirtualTankState,
+        phase: &AdventurePhase,
+        clock: UiClock,
+        blocked: bool,
+    ) {
+        runtime.refresh(
+            1,
+            phase,
+            || {
+                let mut snapshot = VirtualUiSnapshot::capture(tank, 100_000, NOW, true);
+                snapshot.external_block = blocked;
+                snapshot
+            },
+            clock,
+            DAY,
+        );
+    }
+
+    #[test]
+    fn active_refresh_preserves_finance_and_feedback_clocks() {
+        let tank = fixture(1);
+        let mut runtime = VirtualRuntime::default();
+        let phase = AdventurePhase::VirtualSetup;
+        refresh_clock(&mut runtime, &tank, &phase, clock(0), false);
+        runtime.navigate(Navigation::FishSetup).unwrap();
+        refresh_clock(&mut runtime, &tank, &phase, clock(0), false);
+        runtime.input(&UiInput::PointerMove(Point { x: 360.0, y: 400.0 }));
+        refresh_clock(&mut runtime, &tank, &phase, clock(4), false);
+        let finance = |runtime: &mut VirtualRuntime| {
+            let PageView::Fish(view) = runtime.view().unwrap().content else {
+                panic!("Fish page")
+            };
+            view.selected.unwrap().finance_alpha
+        };
+        assert_eq!(finance(&mut runtime), 0.5); // Explicit eight-tick fade contract.
+        assert_eq!(finance(&mut runtime), 0.5); // Repeated same-clock draw is idempotent.
+        refresh_clock(
+            &mut runtime,
+            &tank,
+            &phase,
+            UiClock {
+                ticks: 100,
+                focused: false,
+            },
+            false,
+        );
+        assert_eq!(finance(&mut runtime), 0.5);
+        refresh_clock(&mut runtime, &tank, &phase, clock(120), false);
+        assert_eq!(finance(&mut runtime), 0.5); // Unattended time is excluded.
+        refresh_clock(&mut runtime, &tank, &phase, clock(124), false);
+        assert_eq!(finance(&mut runtime), 0.0); // Focus loss cleared hover.
+
+        refresh_clock(
+            &mut runtime,
+            &tank,
+            &AdventurePhase::VirtualStore,
+            clock(0),
+            false,
+        );
+        runtime.purchase_result(&PurchaseResult::Accessory { price: 20_000 });
+        refresh_clock(
+            &mut runtime,
+            &tank,
+            &AdventurePhase::VirtualStore,
+            clock(105),
+            false,
+        );
+        let speech = |runtime: &mut VirtualRuntime| {
+            let PageView::Store(view) = runtime.view().unwrap().content else {
+                panic!("Store page")
+            };
+            view.speech
+        };
+        assert_eq!(
+            speech(&mut runtime).as_deref(),
+            Some("Purchase complete. Your tank inventory is updated.")
+        );
+        runtime.input(&UiInput::PointerMove(Point { x: 210.0, y: 60.0 }));
+        assert!(speech(&mut runtime).is_none()); // 108 - 105 elapsed - 3 pointer movement.
+        runtime.input(&UiInput::PointerMove(Point { x: 210.0, y: 60.0 }));
+        refresh_clock(
+            &mut runtime,
+            &tank,
+            &AdventurePhase::VirtualStore,
+            clock(120),
+            false,
+        );
+        assert!(speech(&mut runtime).is_none()); // Guidance waits strictly more than 15 ticks.
+        refresh_clock(
+            &mut runtime,
+            &tank,
+            &AdventurePhase::VirtualStore,
+            clock(121),
+            false,
+        );
+        assert!(speech(&mut runtime).is_some());
+        assert_eq!(tank, fixture(1));
+    }
+
+    #[test]
+    fn active_purchase_day_rejects_original_dialog_without_retargeting() {
+        let tank = fixture(1);
+        let mut runtime = VirtualRuntime::default();
+        refresh(&mut runtime, &tank, &AdventurePhase::VirtualStore);
+        runtime
+            .input(&UiInput::Activate(Control::StoreSlot(3)))
+            .unwrap();
+        let phase = AdventurePhase::VirtualPurchaseConfirm {
+            cycle: DAY,
+            slot: 3,
+            price: 25,
+            name: "Pearl".into(),
+        };
+        runtime.refresh(
+            1,
+            &phase,
+            || VirtualUiSnapshot::capture(&tank, 100_000, NOW, true),
+            clock(11),
+            DAY + 1,
+        );
+        let original = runtime.pending.clone();
+        let PageView::Store(view) = runtime.view().unwrap().content else {
+            panic!("Store page")
+        };
+        let dialog = view.dialog.unwrap();
+        assert!(dialog.stale);
+        assert!(!dialog.buttons[0].enabled);
+        assert!(runtime.input(&UiInput::Submit).is_none());
+        assert_eq!(runtime.pending, original);
+        assert!(matches!(
+            runtime.input(&UiInput::Cancel).unwrap().kind,
+            RequestKind::Session {
+                intent: UiIntent::DismissDialog,
+                ..
+            }
+        ));
+    }
+
+    fn trace_input(
+        transcript: &mut String,
+        runtime: &mut VirtualRuntime,
+        label: &str,
+        input: &UiInput,
+    ) -> Option<RuntimeRequest> {
+        transcript.push_str(&format!("{label} before={}\n", state(runtime)));
+        let request = runtime.input(input);
+        transcript.push_str(&format!(
+            "{label} input={input:?} request={request:?} after={}\n",
+            state(runtime)
+        ));
+        request
+    }
+
+    #[test]
+    fn active_complete_state_view_request_trace() {
+        let mut transcript = String::new();
+        for count in [1, 20] {
+            let mut tank = fixture(count);
+            let bytes = serde_json::to_vec(&tank).unwrap();
+            transcript.push_str(&format!("fish={count} fixture_sha256={}\n", sha256(&bytes)));
+            let mut runtime = VirtualRuntime::default();
+            let store = AdventurePhase::VirtualStore;
+            let point = Point { x: 210.0, y: 60.0 };
+            refresh_clock(&mut runtime, &tank, &store, clock(10), false);
+            assert!(
+                trace_input(
+                    &mut transcript,
+                    &mut runtime,
+                    "hover",
+                    &UiInput::PointerMove(point)
+                )
+                .is_none()
+            );
+            assert!(
+                trace_input(
+                    &mut transcript,
+                    &mut runtime,
+                    "press",
+                    &UiInput::PointerDown(point)
+                )
+                .is_none()
+            );
+            refresh_clock(
+                &mut runtime,
+                &tank,
+                &store,
+                UiClock {
+                    ticks: 20,
+                    focused: false,
+                },
+                false,
+            );
+            assert!(
+                trace_input(
+                    &mut transcript,
+                    &mut runtime,
+                    "lost focus",
+                    &UiInput::PointerUp(point)
+                )
+                .is_none()
+            );
+            refresh_clock(&mut runtime, &tank, &store, clock(30), false);
+            assert!(
+                trace_input(
+                    &mut transcript,
+                    &mut runtime,
+                    "restored focus",
+                    &UiInput::PointerUp(point)
+                )
+                .is_none()
+            );
+            runtime.input(&UiInput::PointerDown(point));
+            refresh_clock(&mut runtime, &tank, &store, clock(31), true);
+            assert!(
+                trace_input(
+                    &mut transcript,
+                    &mut runtime,
+                    "external modal",
+                    &UiInput::PointerUp(point)
+                )
+                .is_none()
+            );
+            refresh_clock(&mut runtime, &tank, &store, clock(32), false);
+            assert!(
+                trace_input(
+                    &mut transcript,
+                    &mut runtime,
+                    "modal closed",
+                    &UiInput::PointerUp(point)
+                )
+                .is_none()
+            );
+            runtime.input(&UiInput::PointerDown(point));
+            assert_eq!(
+                trace_input(
+                    &mut transcript,
+                    &mut runtime,
+                    "released offer",
+                    &UiInput::PointerUp(point)
+                )
+                .is_some(),
+                count == 1 // Full tank keeps its legitimate capacity rejection.
+            );
+            assert!(
+                trace_input(
+                    &mut transcript,
+                    &mut runtime,
+                    "request pending",
+                    &UiInput::Submit
+                )
+                .is_none()
+            );
+            if count == 1 {
+                let purchase = AdventurePhase::VirtualPurchaseConfirm {
+                    cycle: DAY,
+                    slot: 3,
+                    price: 25,
+                    name: "Pearl".into(),
+                };
+                refresh_clock(&mut runtime, &tank, &purchase, clock(33), false);
+                assert_eq!(
+                    trace_input(
+                        &mut transcript,
+                        &mut runtime,
+                        "edit name",
+                        &UiInput::EditName("Jade".into())
+                    )
+                    .is_some(),
+                    count == 1
+                );
+                refresh_clock(&mut runtime, &tank, &purchase, clock(34), false);
+                assert!(
+                    trace_input(&mut transcript, &mut runtime, "confirm", &UiInput::Submit)
+                        .is_some()
+                );
+                tank.stock.as_mut().unwrap().cycle += 1;
+                refresh_clock(&mut runtime, &tank, &purchase, clock(35), false);
+                assert!(
+                    trace_input(
+                        &mut transcript,
+                        &mut runtime,
+                        "stale offer",
+                        &UiInput::Submit
+                    )
+                    .is_none()
+                );
+            }
+            refresh_clock(&mut runtime, &tank, &store, clock(36), false);
+            runtime.purchase_result(&PurchaseResult::Accessory { price: 20_000 });
+            assert!(
+                trace_input(
+                    &mut transcript,
+                    &mut runtime,
+                    "purchase feedback",
+                    &UiInput::PointerMove(point)
+                )
+                .is_none()
+            );
+            let setup = AdventurePhase::VirtualSetup;
+            refresh_clock(&mut runtime, &tank, &setup, clock(40), false);
+            transcript.push_str(&format!(
+                "navigation request={:?}\n",
+                runtime.navigate(Navigation::FishSetup)
+            ));
+            refresh_clock(&mut runtime, &tank, &setup, clock(41), false);
+            trace_input(
+                &mut transcript,
+                &mut runtime,
+                "finance hover",
+                &UiInput::PointerMove(Point { x: 360.0, y: 400.0 }),
+            );
+            refresh_clock(&mut runtime, &tank, &setup, clock(45), false);
+            trace_input(
+                &mut transcript,
+                &mut runtime,
+                "finance fade",
+                &UiInput::PointerLeave,
+            );
+            assert!(
+                trace_input(
+                    &mut transcript,
+                    &mut runtime,
+                    "rename",
+                    &UiInput::Activate(Control::RenameSelected)
+                )
+                .is_some()
+            );
+            let rename = AdventurePhase::VirtualRename {
+                id: 0,
+                name: "Pearl".into(),
+            };
+            tank.rename_fish(0, "Replacement").unwrap();
+            refresh_clock(&mut runtime, &tank, &rename, clock(46), false);
+            assert!(
+                trace_input(
+                    &mut transcript,
+                    &mut runtime,
+                    "stale fish",
+                    &UiInput::Submit
+                )
+                .is_none()
+            );
+            assert!(
+                trace_input(
+                    &mut transcript,
+                    &mut runtime,
+                    "cancel stale fish",
+                    &UiInput::Cancel
+                )
+                .is_some()
+            );
+            refresh_clock(&mut runtime, &tank, &setup, clock(47), false);
+            transcript.push_str(&format!(
+                "tank navigation request={:?}\n",
+                runtime.navigate(Navigation::TankSetup)
+            ));
+            refresh_clock(&mut runtime, &tank, &setup, clock(48), false);
+            let nav_point = Point { x: 30.0, y: 10.0 };
+            trace_input(
+                &mut transcript,
+                &mut runtime,
+                "navigation press",
+                &UiInput::PointerDown(nav_point),
+            );
+            refresh_clock(
+                &mut runtime,
+                &tank,
+                &setup,
+                UiClock {
+                    ticks: 60,
+                    focused: false,
+                },
+                false,
+            );
+            assert!(
+                trace_input(
+                    &mut transcript,
+                    &mut runtime,
+                    "navigation focus loss",
+                    &UiInput::PointerUp(nav_point)
+                )
+                .is_none()
+            );
+            refresh_clock(&mut runtime, &tank, &setup, clock(70), false);
+            assert!(
+                trace_input(
+                    &mut transcript,
+                    &mut runtime,
+                    "navigation released",
+                    &UiInput::PointerUp(nav_point)
+                )
+                .is_none()
+            );
+            assert_ne!(bytes, serde_json::to_vec(&tank).unwrap()); // Only explicit fixture changes above.
+        }
+        if let Some(path) = std::env::var_os("TURBOFISH_ACTIVE_TRACE_PATH") {
+            std::fs::write(path, &transcript).unwrap();
+        }
+        println!(
+            "A297 complete_trace bytes={} sha256={}",
+            transcript.len(),
+            sha256(transcript.as_bytes())
         );
     }
 

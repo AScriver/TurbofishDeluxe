@@ -371,20 +371,21 @@ pub struct FishTarget(pub VirtualFish);
 
 impl FishTarget {
     pub fn capture(tank: &VirtualTankState, id: u16) -> Option<Self> {
-        if usize::from(id) >= tank.fish_capacity() {
-            return None;
-        }
-        let mut matches = tank.active_fish().filter(|fish| fish.id == id);
-        let fish = matches.next()?;
-        if matches.next().is_some() {
-            return None;
-        }
-        Some(Self(fish.clone()))
+        fish_record(tank, id).cloned().map(Self)
     }
 
     pub fn matches(&self, snapshot: &VirtualUiSnapshot) -> bool {
-        Self::capture(snapshot.tank(), self.0.id).as_ref() == Some(self)
+        fish_record(snapshot.tank(), self.0.id) == Some(&self.0)
     }
+}
+
+fn fish_record(tank: &VirtualTankState, id: u16) -> Option<&VirtualFish> {
+    if usize::from(id) >= tank.fish_capacity() {
+        return None;
+    }
+    let mut matches = tank.active_fish().filter(|fish| fish.id == id);
+    let fish = matches.next()?;
+    matches.next().is_none().then_some(fish)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -434,6 +435,10 @@ impl VirtualUiSnapshot {
 
     pub fn selected(&self) -> Option<FishTarget> {
         FishTarget::capture(&self.tank, self.tank.selected_fish?)
+    }
+
+    fn selected_record(&self) -> Option<&VirtualFish> {
+        fish_record(&self.tank, self.tank.selected_fish?)
     }
 
     fn sale_value(&self, fish: &VirtualFish) -> Option<u32> {
@@ -667,17 +672,57 @@ enum Stamp {
     Static,
 }
 
-fn roster(snapshot: &VirtualUiSnapshot) -> Vec<FishTarget> {
+fn roster_records(snapshot: &VirtualUiSnapshot) -> Vec<&VirtualFish> {
     let tank = snapshot.tank();
     let mut fish: Vec<_> = tank
         .active_fish()
         .filter(|fish| usize::from(fish.id) < tank.fish_capacity())
-        .cloned()
-        .map(FishTarget)
         .collect();
-    fish.sort_by_key(|fish| (fish.0.purchased_at_seconds, fish.0.id));
+    fish.sort_by_key(|fish| (fish.purchased_at_seconds, fish.id));
     fish.truncate(crate::virtual_tank::BUBBULATOR_CAPACITY);
     fish
+}
+
+fn roster(snapshot: &VirtualUiSnapshot) -> Vec<FishTarget> {
+    roster_records(snapshot)
+        .into_iter()
+        .cloned()
+        .map(FishTarget)
+        .collect()
+}
+
+/// Transient hit/admission data; no labels, previews, targets or saved state.
+#[derive(Clone, Copy)]
+struct InputControl {
+    control: Control,
+    bounds: Rect,
+    enabled: bool,
+}
+
+#[derive(Clone, Copy)]
+struct ButtonSpec {
+    control: Control,
+    bounds: Rect,
+    text: &'static str,
+    available: bool,
+    style: ButtonStyle,
+}
+
+impl ButtonSpec {
+    fn input(self, interaction: &Interaction, snapshot: &VirtualUiSnapshot) -> InputControl {
+        interaction.control(snapshot, self.control, self.bounds, self.available)
+    }
+
+    fn view(self, interaction: &Interaction, snapshot: &VirtualUiSnapshot) -> ButtonView {
+        interaction.button(
+            snapshot,
+            self.control,
+            self.bounds,
+            self.text,
+            self.available,
+            self.style,
+        )
+    }
 }
 
 fn stamp(snapshot: &VirtualUiSnapshot, control: Control) -> Option<Stamp> {
@@ -724,6 +769,24 @@ impl Interaction {
         elapsed
     }
 
+    fn control(
+        &self,
+        snapshot: &VirtualUiSnapshot,
+        control: Control,
+        bounds: Rect,
+        available: bool,
+    ) -> InputControl {
+        let modal_control = matches!(control, Control::DialogAccept | Control::DialogCancel);
+        InputControl {
+            control,
+            bounds,
+            enabled: available
+                && self.last_clock.is_some_and(|clock| clock.focused)
+                && !snapshot.external_block
+                && (snapshot.dialog.is_none() || modal_control),
+        }
+    }
+
     fn button(
         &self,
         snapshot: &VirtualUiSnapshot,
@@ -735,10 +798,7 @@ impl Interaction {
     ) -> ButtonView {
         let modal_control = matches!(control, Control::DialogAccept | Control::DialogCancel);
         let available = enabled;
-        let enabled = enabled
-            && self.last_clock.is_some_and(|clock| clock.focused)
-            && !snapshot.external_block
-            && (snapshot.dialog.is_none() || modal_control);
+        let enabled = self.control(snapshot, control, bounds, available).enabled;
         ButtonView {
             control,
             bounds,
@@ -763,7 +823,7 @@ impl Interaction {
         &mut self,
         snapshot: &VirtualUiSnapshot,
         input: &UiInput,
-        buttons: &[ButtonView],
+        buttons: impl DoubleEndedIterator<Item = InputControl> + Clone,
     ) -> Option<Control> {
         if !self.last_clock.is_some_and(|clock| clock.focused) || snapshot.external_block {
             self.down = None;
@@ -775,7 +835,7 @@ impl Interaction {
         };
         let hit = |point| {
             buttons
-                .iter()
+                .clone()
                 .rev()
                 .find(|button| allowed(button.control) && button.bounds.contains(point))
         };
@@ -814,7 +874,7 @@ impl Interaction {
             UiInput::Activate(control) => {
                 self.down = None;
                 if buttons
-                    .iter()
+                    .clone()
                     .any(|button| button.control == *control && button.enabled && allowed(*control))
                 {
                     return Some(*control);
@@ -822,7 +882,7 @@ impl Interaction {
             }
             UiInput::Submit => {
                 return buttons
-                    .iter()
+                    .clone()
                     .find(|button| button.control == Control::DialogAccept && button.enabled)
                     .map(|button| button.control);
             }
@@ -889,9 +949,44 @@ fn can_sell_backdrop(snapshot: &VirtualUiSnapshot, index: u8) -> bool {
             .any(|(other, owned)| *owned && other != usize::from(index))
 }
 
+fn dialog_specs(snapshot: &VirtualUiSnapshot) -> Option<[ButtonSpec; 2]> {
+    let dialog = snapshot.dialog.as_ref()?;
+    let available = match dialog {
+        PendingDialog::Purchase { target, name } => {
+            offer_state(snapshot, target) == OfferState::Available
+                && (!matches!(target.product, StoreProduct::Fish(_)) || valid_name(name))
+        }
+        PendingDialog::Rename { target, name } => target.matches(snapshot) && valid_name(name),
+        PendingDialog::FishSale { target } => {
+            target.matches(snapshot) && snapshot.sale_value(&target.0).is_some()
+        }
+        PendingDialog::BackdropSale { index } => can_sell_backdrop(snapshot, *index),
+    };
+    Some([
+        ButtonSpec {
+            control: Control::DialogAccept,
+            bounds: Rect::new(140.0, 310.0, 150.0, 38.0),
+            text: if matches!(dialog, PendingDialog::Rename { .. }) {
+                "Save"
+            } else {
+                "Confirm"
+            },
+            available,
+            style: ButtonStyle::Dialog,
+        },
+        ButtonSpec {
+            control: Control::DialogCancel,
+            bounds: Rect::new(350.0, 310.0, 150.0, 38.0),
+            text: "Cancel",
+            available: true,
+            style: ButtonStyle::Dialog,
+        },
+    ])
+}
+
 fn dialog_view(snapshot: &VirtualUiSnapshot, interaction: &Interaction) -> Option<DialogView> {
     let dialog = snapshot.dialog.as_ref()?;
-    let (title, guidance, name, price, preview, stale, enabled) = match dialog {
+    let (title, guidance, name, price, preview, stale) = match dialog {
         PendingDialog::Purchase { target, name } => {
             let stale = !target.matches(snapshot);
             let state = offer_state(snapshot, target);
@@ -907,7 +1002,6 @@ fn dialog_view(snapshot: &VirtualUiSnapshot, interaction: &Interaction) -> Optio
                     interaction.ticks,
                 )),
                 stale,
-                state == OfferState::Available && (!needs_name || valid_name(name)),
             )
         }
         PendingDialog::Rename { target, name } => (
@@ -917,7 +1011,6 @@ fn dialog_view(snapshot: &VirtualUiSnapshot, interaction: &Interaction) -> Optio
             None,
             None,
             !target.matches(snapshot),
-            target.matches(snapshot) && valid_name(name),
         ),
         PendingDialog::FishSale { target } => {
             let price = snapshot.sale_value(&target.0);
@@ -938,7 +1031,6 @@ fn dialog_view(snapshot: &VirtualUiSnapshot, interaction: &Interaction) -> Optio
                 price,
                 None,
                 !target.matches(snapshot),
-                target.matches(snapshot) && price.is_some(),
             )
         }
         PendingDialog::BackdropSale { index } => (
@@ -948,7 +1040,6 @@ fn dialog_view(snapshot: &VirtualUiSnapshot, interaction: &Interaction) -> Optio
             Some(crate::virtual_tank::BACKDROP_SALE_REFUND),
             None,
             !can_sell_backdrop(snapshot, *index),
-            can_sell_backdrop(snapshot, *index),
         ),
     };
     Some(DialogView {
@@ -966,28 +1057,7 @@ fn dialog_view(snapshot: &VirtualUiSnapshot, interaction: &Interaction) -> Optio
         price,
         preview,
         stale,
-        buttons: [
-            interaction.button(
-                snapshot,
-                Control::DialogAccept,
-                Rect::new(140.0, 310.0, 150.0, 38.0),
-                if matches!(dialog, PendingDialog::Rename { .. }) {
-                    "Save"
-                } else {
-                    "Confirm"
-                },
-                enabled,
-                ButtonStyle::Dialog,
-            ),
-            interaction.button(
-                snapshot,
-                Control::DialogCancel,
-                Rect::new(350.0, 310.0, 150.0, 38.0),
-                "Cancel",
-                true,
-                ButtonStyle::Dialog,
-            ),
-        ],
+        buttons: dialog_specs(snapshot)?.map(|spec| spec.view(interaction, snapshot)),
     })
 }
 
