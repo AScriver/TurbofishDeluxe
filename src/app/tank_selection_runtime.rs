@@ -6,7 +6,7 @@ use super::{Presentation, RenderedFont};
 use crate::{
     adventure::{AdventurePhase, AdventureSession},
     music::{MusicOwner, MusicReport},
-    sim::Action,
+    sim::{Action, Event},
     tank_selection::{
         DrawKind, ImageDraw, ImageMetadata, ImageProjection, Rect as TankRect, SceneUnavailable,
         SelectionMode, TankFacts, TankFont, TankImage, TankInput, TankIntent, TankResources,
@@ -112,6 +112,41 @@ pub(super) fn action_for_intent(intent: TankIntent) -> Option<Action> {
         TankIntent::Menu => Some(Action::OpenMenu),
         TankIntent::Stories | TankIntent::PlayButtonSound(_) => None,
     }
+}
+
+/// Consume this chooser frame outside the fixed-step pause gate. Only this
+/// mode's choices and Menu may reach Session; eligibility remains authoritative
+/// there. A transition consumes the rest of the frame without applying it to
+/// the newly opened screen. Blocked input is discarded rather than deferred.
+pub(super) fn dispatch_actions(
+    session: &mut AdventureSession,
+    actions: &mut Vec<Action>,
+    focused: bool,
+    blocked: bool,
+) -> (Vec<Event>, bool) {
+    let actions = std::mem::take(actions);
+    let Some(mode) = mode_for_phase(&session.phase) else {
+        return (Vec::new(), false);
+    };
+    if !focused || blocked {
+        return (Vec::new(), false);
+    }
+    let mut events = Vec::new();
+    for action in actions {
+        if !matches!(
+            (mode, &action),
+            (_, Action::OpenMenu)
+                | (SelectionMode::TimeTrial, Action::SelectTimeTrialTank { .. })
+                | (SelectionMode::Challenge, Action::SelectChallengeTank { .. })
+        ) {
+            continue;
+        }
+        events.extend(session.apply_actions(std::slice::from_ref(&action)));
+        if mode_for_phase(&session.phase) != Some(mode) {
+            return (events, true);
+        }
+    }
+    (events, false)
 }
 
 /// One sound request is emitted on the model's first valid pointer down.

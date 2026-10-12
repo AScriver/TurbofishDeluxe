@@ -5362,6 +5362,10 @@ impl Default for SelectorUi {
     }
 }
 
+fn chooser_input_blocked(selector_ui: &SelectorUi, paused: bool, input_owned: bool) -> bool {
+    input_owned || paused || selector_ui.panel.is_some() || selector_ui.normal_modal_active()
+}
+
 fn ui_button(rect: Rect, label: &str) {
     crate::ui::fallback_button(rect, label);
 }
@@ -6997,7 +7001,7 @@ pub async fn run(
         } else {
             entry_code.reset();
         }
-        if !startup_menu_open && let Some(current) = profiles.current() {
+        if !startup_menu_open && let Some(current) = profiles.current_mut() {
             if let Some(mode) = tank_selection_runtime::mode_for_phase(&current.session.phase) {
                 let facts = tank_selection_runtime::facts(&current.session, mode);
                 if chooser
@@ -7008,11 +7012,10 @@ pub async fn run(
                 }
                 let controller = chooser.as_mut().expect("chooser initialized");
                 controller.set_facts(facts);
-                let modal = help_was_active
-                    || story_was_active
-                    || preview_was_active
-                    || hall_was_active
-                    || gift_active_frame;
+                // Earlier owners include overlay closing frames. Their input
+                // cannot reach the chooser underneath, even after dismissal.
+                let modal = chooser_input_blocked(&selector_ui, pause.is_paused(), ui_owned_input);
+                let mut chooser_actions = Vec::new();
                 let point = crate::tank_selection::Point {
                     x: pointer.x,
                     y: pointer.y,
@@ -7030,7 +7033,7 @@ pub async fn run(
                 }
                 if is_key_pressed(KeyCode::Escape) && !modal && focused {
                     inputs.push(crate::tank_selection::TankInput::Cancel);
-                    input_capture.pending_actions.push(Action::OpenMenu);
+                    chooser_actions.push(Action::OpenMenu);
                 }
                 for input in inputs {
                     match tank_selection_runtime::input(controller, &presentation, input) {
@@ -7046,7 +7049,7 @@ pub async fn run(
                                 if let Some(action) =
                                     tank_selection_runtime::action_for_intent(intent)
                                 {
-                                    input_capture.pending_actions.push(action);
+                                    chooser_actions.push(action);
                                 } else if intent == crate::tank_selection::TankIntent::Stories {
                                     ui_command = Some(UiCommand::Stories);
                                 }
@@ -7057,6 +7060,20 @@ pub async fn run(
                         }
                     }
                 }
+                let (chooser_events, transitioned) = tank_selection_runtime::dispatch_actions(
+                    &mut current.session,
+                    &mut chooser_actions,
+                    focused,
+                    modal,
+                );
+                frontend_events.extend(chooser_events);
+                frontend_transitioned |= transitioned;
+                if transitioned {
+                    clock.clear_backlog();
+                    input_capture.cancel_holds();
+                }
+                // Retain ownership when dispatch closes the chooser so this
+                // release/Escape cannot also act on the destination screen.
                 ui_owned_input = true;
             } else {
                 chooser = None;
@@ -10108,5 +10125,355 @@ mod feed_input_tests {
         assert!(!arms_held_feed(&unrelated, Some((350, 390))));
         assert!(arms_held_feed(&unrelated, Some((300, 200))));
         assert!(arms_held_feed(&unrelated, None));
+    }
+}
+
+#[cfg(test)]
+mod chooser_dispatch_tests {
+    use super::*;
+    use crate::{
+        adventure::GameMode,
+        sim::Rejection,
+        tank_selection::{SelectionMode, Tank, TankIntent},
+    };
+
+    const MODES: [SelectionMode; 2] = [SelectionMode::TimeTrial, SelectionMode::Challenge];
+
+    // Fresh, synthetic current Sessions; no save, installation or UI context.
+    fn chooser_session(mode: SelectionMode) -> AdventureSession {
+        let mut session = AdventureSession::new(309);
+        session.board = None;
+        session.phase = AdventurePhase::GameSelector;
+        session.ticks = 77;
+        session.progress.tank = 2;
+        session.progress.unlocked_pets = vec![
+            PetKind::Stinky,
+            PetKind::Niko,
+            PetKind::Itchy,
+            PetKind::Prego,
+            PetKind::Zorf,
+        ];
+        if mode == SelectionMode::Challenge {
+            session.progress.tank = 5;
+            session.progress.level = 2;
+            session.progress.adventure_completed = true;
+            session.progress.adventure_completions = 1;
+            session.progress.unlocked_pets = crate::sim::TANK5_PETS.to_vec();
+            session
+                .progress
+                .unlocked_pets
+                .extend([PetKind::Angie, PetKind::Presto]);
+        }
+        session.apply_actions(&[match mode {
+            SelectionMode::TimeTrial => Action::PlayTimeTrial,
+            SelectionMode::Challenge => Action::PlayChallenge,
+        }]);
+        assert_eq!(
+            tank_selection_runtime::mode_for_phase(&session.phase),
+            Some(mode)
+        );
+        session.validate().unwrap();
+        session
+    }
+
+    fn select(mode: SelectionMode, tank: u8) -> Action {
+        match mode {
+            SelectionMode::TimeTrial => Action::SelectTimeTrialTank { tank },
+            SelectionMode::Challenge => Action::SelectChallengeTank { tank },
+        }
+    }
+
+    fn selected_phase(mode: SelectionMode) -> AdventurePhase {
+        match mode {
+            SelectionMode::TimeTrial => AdventurePhase::TimeTrialPetSelection {
+                tank: 1,
+                selected: Vec::new(),
+            },
+            SelectionMode::Challenge => AdventurePhase::ChallengePetSelection {
+                tank: 1,
+                selected: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn eligible_selection_reaches_session_once_without_advancing_clocks() {
+        for mode in MODES {
+            let mut session = chooser_session(mode);
+            let seed = serde_json::to_value(&session).unwrap()["next_seed"].clone();
+            let intent = TankIntent::SelectTank {
+                mode,
+                tank: Tank::One,
+            };
+            let mut actions = vec![tank_selection_runtime::action_for_intent(intent).unwrap()];
+            let (events, transitioned) =
+                tank_selection_runtime::dispatch_actions(&mut session, &mut actions, true, false);
+            assert!(transitioned);
+            assert_eq!(session.phase, selected_phase(mode));
+            assert!(actions.is_empty());
+            assert_eq!(session.ticks, 77);
+            assert!(session.board.is_none());
+            assert_eq!(serde_json::to_value(&session).unwrap()["next_seed"], seed);
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| matches!(event, Event::Action { .. }))
+                    .count(),
+                1
+            );
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| matches!(
+                        event,
+                        Event::PetSelectionOpened {
+                            tick: 77,
+                            capacity: 3
+                        }
+                    ))
+                    .count(),
+                1
+            );
+            session.validate().unwrap();
+            let after = serde_json::to_value(&session).unwrap();
+            let (duplicate, transitioned) =
+                tank_selection_runtime::dispatch_actions(&mut session, &mut actions, true, false);
+            assert!(duplicate.is_empty());
+            assert!(!transitioned);
+            assert_eq!(serde_json::to_value(&session).unwrap(), after);
+        }
+    }
+
+    #[test]
+    fn locked_and_invalid_choices_keep_session_unchanged_and_consume_input() {
+        for mode in MODES {
+            for tank in [0, 2, 5] {
+                let mut session = chooser_session(mode);
+                let before = serde_json::to_value(&session).unwrap();
+                let mut actions = vec![select(mode, tank)];
+                let (events, transitioned) = tank_selection_runtime::dispatch_actions(
+                    &mut session,
+                    &mut actions,
+                    true,
+                    false,
+                );
+                assert!(!transitioned);
+                assert!(actions.is_empty());
+                assert_eq!(serde_json::to_value(&session).unwrap(), before);
+                assert!(events.iter().any(|event| matches!(
+                    event,
+                    Event::Rejected {
+                        tick: 77,
+                        reason: Rejection::Locked
+                    }
+                )));
+            }
+        }
+    }
+
+    #[test]
+    fn session_rechecks_selection_after_available_controller_snapshot() {
+        for mode in MODES {
+            let mut session = chooser_session(mode);
+            assert!(tank_selection_runtime::facts(&session, mode).available[0]);
+            match mode {
+                SelectionMode::TimeTrial => session.progress.tank = 1,
+                SelectionMode::Challenge => session.progress.adventure_completed = false,
+            }
+            let before = serde_json::to_value(&session).unwrap();
+            let mut actions = vec![select(mode, 1)];
+            let (events, transitioned) =
+                tank_selection_runtime::dispatch_actions(&mut session, &mut actions, true, false);
+            assert!(!transitioned);
+            assert!(actions.is_empty());
+            assert_eq!(serde_json::to_value(&session).unwrap(), before);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::Rejected {
+                    reason: Rejection::Locked,
+                    ..
+                }
+            )));
+        }
+    }
+
+    #[test]
+    fn menu_and_escape_leave_both_choosers_without_a_tick_or_later_flush() {
+        for mode in MODES {
+            for action in [
+                tank_selection_runtime::action_for_intent(TankIntent::Menu).unwrap(),
+                Action::OpenMenu,
+            ] {
+                let mut session = chooser_session(mode);
+                let mut actions = vec![action];
+                let (events, transitioned) = tank_selection_runtime::dispatch_actions(
+                    &mut session,
+                    &mut actions,
+                    true,
+                    false,
+                );
+                assert!(transitioned);
+                assert!(actions.is_empty());
+                assert_eq!(session.phase, AdventurePhase::GameSelector);
+                assert_eq!(session.mode, GameMode::Adventure);
+                assert_eq!(session.ticks, 77);
+                assert!(session.board.is_none());
+                assert_eq!(
+                    events
+                        .iter()
+                        .filter(|event| matches!(event, Event::GameSelectorOpened { tick: 77 }))
+                        .count(),
+                    1
+                );
+                session.validate().unwrap();
+                let after = serde_json::to_value(&session).unwrap();
+                assert!(session.apply_actions(&actions).is_empty());
+                assert_eq!(serde_json::to_value(&session).unwrap(), after);
+            }
+        }
+    }
+
+    #[test]
+    fn unfocused_or_blocked_input_is_discarded_without_a_deferred_selection() {
+        for mode in MODES {
+            for (focused, blocked) in [(false, false), (true, true), (false, true)] {
+                let mut session = chooser_session(mode);
+                let before = serde_json::to_value(&session).unwrap();
+                let mut actions = vec![select(mode, 1), Action::OpenMenu];
+                let (events, transitioned) = tank_selection_runtime::dispatch_actions(
+                    &mut session,
+                    &mut actions,
+                    focused,
+                    blocked,
+                );
+                assert!(events.is_empty());
+                assert!(!transitioned);
+                assert!(actions.is_empty());
+                assert_eq!(serde_json::to_value(&session).unwrap(), before);
+                let (events, transitioned) = tank_selection_runtime::dispatch_actions(
+                    &mut session,
+                    &mut actions,
+                    true,
+                    false,
+                );
+                assert!(events.is_empty());
+                assert!(!transitioned);
+                assert_eq!(serde_json::to_value(&session).unwrap(), before);
+            }
+        }
+    }
+
+    #[test]
+    fn first_transition_consumes_remaining_actions_before_destination_can_use_them() {
+        for mode in MODES {
+            let mut session = chooser_session(mode);
+            let mut actions = vec![
+                select(mode, 1),
+                Action::Continue,
+                Action::OpenMenu,
+                select(mode, 1),
+            ];
+            let (events, transitioned) =
+                tank_selection_runtime::dispatch_actions(&mut session, &mut actions, true, false);
+            assert!(transitioned);
+            assert!(actions.is_empty());
+            assert_eq!(session.phase, selected_phase(mode));
+            assert_eq!(session.ticks, 77);
+            assert!(session.board.is_none());
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| matches!(event, Event::Action { .. }))
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn dispatcher_does_not_admit_gameplay_wrong_mode_or_stale_screen_actions() {
+        for mode in MODES {
+            let mut session = chooser_session(mode);
+            let before = serde_json::to_value(&session).unwrap();
+            let opposite = match mode {
+                SelectionMode::TimeTrial => SelectionMode::Challenge,
+                SelectionMode::Challenge => SelectionMode::TimeTrial,
+            };
+            let mut actions = vec![
+                select(opposite, 1),
+                Action::Continue,
+                Action::Click { x: 200.0, y: 200.0 },
+            ];
+            let (events, transitioned) =
+                tank_selection_runtime::dispatch_actions(&mut session, &mut actions, true, false);
+            assert!(events.is_empty());
+            assert!(!transitioned);
+            assert!(actions.is_empty());
+            assert_eq!(serde_json::to_value(&session).unwrap(), before);
+        }
+        let mut session = AdventureSession::new(309);
+        let before = serde_json::to_value(&session).unwrap();
+        let mut actions = vec![Action::SelectTimeTrialTank { tank: 1 }, Action::OpenMenu];
+        let (events, transitioned) =
+            tank_selection_runtime::dispatch_actions(&mut session, &mut actions, true, false);
+        assert!(events.is_empty());
+        assert!(!transitioned);
+        assert!(actions.is_empty());
+        assert_eq!(serde_json::to_value(&session).unwrap(), before);
+    }
+
+    #[test]
+    fn parent_gate_blocks_panels_pause_normal_modals_and_closing_frame_owner() {
+        let profiles = Profiles::new("Chooser309", 309).unwrap();
+        let mut ui = SelectorUi::default();
+        assert!(!chooser_input_blocked(&ui, false, false));
+        assert!(chooser_input_blocked(&ui, true, false));
+        assert!(chooser_input_blocked(&ui, false, true));
+        ui.panel = Some(SelectorPanel::Scores);
+        assert!(chooser_input_blocked(&ui, false, false));
+        ui.panel = None;
+        ui.sync_normal_modals(&profiles, true, false);
+        assert!(chooser_input_blocked(&ui, false, false));
+        ui.sync_normal_modals(&profiles, false, false);
+        for panel in [
+            SelectorPanel::Options,
+            SelectorPanel::Profiles,
+            SelectorPanel::Quit,
+            SelectorPanel::Notice,
+        ] {
+            ui.panel = Some(panel);
+            ui.sync_normal_modals(&profiles, false, true);
+            assert!(ui.normal_modal_active());
+            ui.panel = None; // The earlier modal still owns input until synchronized.
+            assert!(chooser_input_blocked(&ui, false, false));
+            ui.sync_normal_modals(&profiles, false, false);
+            assert!(!ui.normal_modal_active());
+            assert!(chooser_input_blocked(&ui, false, true));
+        }
+        for mode in MODES {
+            let mut session = chooser_session(mode);
+            let before = serde_json::to_value(&session).unwrap();
+            let mut actions = vec![select(mode, 1)];
+            let (events, transitioned) = tank_selection_runtime::dispatch_actions(
+                &mut session,
+                &mut actions,
+                true,
+                chooser_input_blocked(&ui, false, true),
+            );
+            assert!(events.is_empty());
+            assert!(!transitioned);
+            assert_eq!(serde_json::to_value(&session).unwrap(), before);
+            assert!(actions.is_empty());
+            // Dismissal's release cannot replay next frame; a fresh press can.
+            let mut actions = vec![select(mode, 1)];
+            let (_, transitioned) = tank_selection_runtime::dispatch_actions(
+                &mut session,
+                &mut actions,
+                true,
+                chooser_input_blocked(&ui, false, false),
+            );
+            assert!(transitioned);
+            assert_eq!(session.phase, selected_phase(mode));
+        }
     }
 }
