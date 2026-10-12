@@ -255,6 +255,19 @@ mod current_codec {
     }
 
     #[test]
+    fn named_story_state_cannot_be_replaced_by_a_positional_array() {
+        let mut current = serde_json::to_value(AdventureSession::new(0x299)).unwrap();
+        current["progress"]["stories"] = json!([0, false]);
+        // Serde alone accepts this valid positional struct. The current-save
+        // contract requires the named object and both containers must reject it.
+        serde_json::from_value::<AdventureSession>(current.clone())
+            .unwrap()
+            .validate()
+            .unwrap();
+        both_reject(&current);
+    }
+
+    #[test]
     fn valid_sessions_decode_identically_in_standalone_and_profiles() {
         let fresh = AdventureSession::new(0x299);
         let mut playing = fresh.clone();

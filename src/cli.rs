@@ -257,23 +257,6 @@ fn decode_save_value(mut value: serde_json::Value) -> Result<AdventureSession, B
 pub(crate) fn decode_current_session(
     value: serde_json::Value,
 ) -> Result<AdventureSession, Box<dyn Error>> {
-    for board in [
-        "/board",
-        "/retained_adventure/board",
-        "/retained_time_trial/board",
-        "/retained_challenge/board",
-    ]
-    .iter()
-    .filter_map(|path| value.pointer(path).and_then(serde_json::Value::as_object))
-    {
-        let other_fields = ["stinky", "niko", "clyde", "rufus", "rhubarb"];
-        if other_fields
-            .iter()
-            .any(|field| board.get(*field).is_none_or(|pet| !pet.is_array()))
-        {
-            return Err("Format-twenty-three OtherPet fields must be arrays".into());
-        }
-    }
     {
         let session = value
             .pointer("")
@@ -299,156 +282,6 @@ pub(crate) fn decode_current_session(
         {
             return Err("Incomplete format-twenty-six mode or Time Trial state".into());
         }
-    }
-    let mode_boards: Vec<_> = [
-        "/board",
-        "/retained_adventure/board",
-        "/retained_time_trial/board",
-        "/retained_challenge/board",
-    ]
-    .iter()
-    .filter_map(|path| value.pointer(path).filter(|board| !board.is_null()))
-    .collect();
-    {
-        let purchase = |result: &serde_json::Value| {
-            result.get("purchase").is_some_and(|receipt| {
-                ["offered_cursor", "confirming", "purchased"]
-                    .iter()
-                    .all(|field| receipt.get(*field).is_some())
-            })
-        };
-        if value.pointer("/progress/purchase_cursor").is_none()
-            || value
-                .pointer("/phase/BonusResults/result")
-                .is_some_and(|result| !purchase(result))
-            || [
-                "/time_trial/result",
-                "/retained_time_trial/time_trial/result",
-            ]
-            .iter()
-            .filter_map(|path| value.pointer(path).filter(|result| !result.is_null()))
-            .any(|result| result.get("updates").is_none() || !purchase(result))
-            || mode_boards.iter().any(|board| {
-                board
-                    .get("fish_pets")
-                    .and_then(serde_json::Value::as_array)
-                    .is_some_and(|pets| {
-                        pets.iter().any(|pet| {
-                            pet.get("brinkley_meals").is_none()
-                                || pet.get("brinkley_cooldown").is_none()
-                        })
-                    })
-            })
-        {
-            return Err("Incomplete format-twenty-seven purchase or Brinkley state".into());
-        }
-    }
-    if mode_boards.iter().any(|board| {
-        board
-            .get("fish_pets")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|pets| {
-                pets.iter().any(|pet| {
-                    ["nostra_elapsed", "nostra_threshold", "nostra_converted"]
-                        .iter()
-                        .any(|field| pet.get(*field).is_none())
-                })
-            })
-            || board
-                .get("food")
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|food| {
-                    food.iter().any(|item| {
-                        ["food_type", "picked_up"]
-                            .iter()
-                            .any(|field| item.get(*field).is_none())
-                    })
-                })
-            || board
-                .get("invasion")
-                .filter(|wave| !wave.is_null())
-                .is_some_and(|wave| wave.get("sneeze_shake_ticks").is_none())
-    }) {
-        return Err("Incomplete format-twenty-eight Nostradamus state".into());
-    }
-    if mode_boards.iter().any(|board| {
-        board
-            .get("fish_pets")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|pets| {
-                pets.iter().any(|pet| {
-                    pet.get("stanley_action_ticks").is_none()
-                        || pet.get("stanley_diversion_cooldown").is_none()
-                })
-            })
-            || board
-                .get("missiles")
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|missiles| {
-                    missiles.iter().any(|missile| {
-                        [
-                            "target_id",
-                            "stanley_hit",
-                            "diversion_clock",
-                            "diversion_limit",
-                            "diversion_x",
-                            "diversion_y",
-                            "movement_divisor",
-                        ]
-                        .iter()
-                        .any(|field| missile.get(*field).is_none())
-                    })
-                })
-    }) {
-        return Err("Incomplete format-twenty-nine Stanley state".into());
-    }
-    if mode_boards.iter().any(|board| {
-        ["fish", "oscars", "ultras", "gekkos", "fish_pets"]
-            .iter()
-            .any(|kind| {
-                board
-                    .get(*kind)
-                    .and_then(serde_json::Value::as_array)
-                    .is_none_or(|actors| {
-                        actors.iter().any(|actor| {
-                            actor.get("walter").is_none()
-                                || (*kind == "fish_pets"
-                                    && [
-                                        "age",
-                                        "walter_action",
-                                        "walter_punches",
-                                        "walter_cooldown",
-                                        "glove",
-                                    ]
-                                    .iter()
-                                    .any(|field| actor.get(*field).is_none()))
-                        })
-                    })
-            })
-    }) {
-        return Err("Incomplete format-thirty Walter state".into());
-    }
-    if value.pointer("/challenge").is_none()
-        || value.pointer("/challenge_scores").is_none()
-        || ["/challenge", "/retained_challenge/challenge"]
-            .iter()
-            .filter_map(|path| value.pointer(path).filter(|run| !run.is_null()))
-            .any(|run| run.get("result").is_none())
-        || value
-            .pointer("/progress/challenge_completed")
-            .and_then(serde_json::Value::as_array)
-            .is_none_or(|flags| flags.len() != 4 || flags.iter().any(|flag| !flag.is_boolean()))
-        || [
-            "/board",
-            "/retained_adventure/board",
-            "/retained_time_trial/board",
-            "/retained_challenge/board",
-        ]
-        .iter()
-        .filter_map(|path| value.pointer(path).filter(|board| !board.is_null()))
-        .any(|board| board.get("challenge_shop").is_none())
-    {
-        return Err("Incomplete format-thirty-two Challenge state".into());
     }
     {
         let session = value
@@ -667,13 +500,6 @@ pub(crate) fn decode_current_session(
             return Err("Incomplete format-thirty-five Virtual Tank state".into());
         }
     }
-    if value.pointer("/progress/stories").is_none_or(|stories| {
-        ["seen_mask", "cyrax_unlocked"]
-            .iter()
-            .any(|key| stories.get(*key).is_none())
-    }) {
-        return Err("Incomplete format-thirty-six Story state".into());
-    }
     if [
         "retained_adventure",
         "retained_time_trial",
@@ -760,7 +586,6 @@ pub(crate) fn decode_current_session(
             || (["breeder_unlocked", "breeders", "dead_breeders", "rhubarb"]
                 .iter()
                 .any(|field| !board.contains_key(*field)))
-            || (incomplete_physical_group_board(board))
             || ([
                 "dead_fish",
                 "dead_oscars",
@@ -959,177 +784,63 @@ pub(crate) fn decode_current_session(
             "Incomplete format-thirty-seven save; required state fields are missing".into(),
         );
     }
+    // Serde also accepts positional arrays for structs. Preserve the named
+    // object contract while leaving required fields to typed deserialization.
+    let not_object = |item: &serde_json::Value| !item.is_null() && !item.is_object();
+    let non_objects = |items: Option<&serde_json::Value>| {
+        items
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|items| items.iter().any(not_object))
+    };
+    if [
+        "/progress/stories",
+        "/challenge",
+        "/retained_challenge/challenge",
+    ]
+    .iter()
+    .filter_map(|path| value.pointer(path))
+    .any(not_object)
+        || [
+            "/phase/BonusResults/result",
+            "/time_trial/result",
+            "/retained_time_trial/time_trial/result",
+        ]
+        .iter()
+        .filter_map(|path| value.pointer(path).filter(|result| !result.is_null()))
+        .any(|result| {
+            !result
+                .get("purchase")
+                .is_some_and(serde_json::Value::is_object)
+        })
+        || [
+            "/board",
+            "/retained_adventure/board",
+            "/retained_time_trial/board",
+            "/retained_challenge/board",
+        ]
+        .iter()
+        .filter_map(|path| value.pointer(path))
+        .any(|board| {
+            ["oscars", "gekkos", "ultras"]
+                .iter()
+                .any(|field| non_objects(board.get(*field)))
+                || non_objects(board.pointer("/invasion/fragments"))
+                || non_objects(board.pointer("/invasion/bilaterus"))
+                || board
+                    .pointer("/invasion/bilaterus")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|groups| {
+                        groups.iter().any(|group| {
+                            non_objects(group.get("heads")) || non_objects(group.get("bones"))
+                        })
+                    })
+        })
+    {
+        return Err("Current-save state requires named object fields".into());
+    }
     let session: AdventureSession = serde_json::from_value(value)?;
     session.validate()?;
     Ok(session)
-}
-
-// Physical groups and Ultra actors require their complete current state;
-// nullable heads remain distinct from omitted actor fields.
-fn incomplete_physical_group_board(board: &serde_json::Map<String, serde_json::Value>) -> bool {
-    use serde_json::Value;
-    fn missing(value: &Value, fields: &[&str]) -> bool {
-        fields.iter().any(|field| value.get(*field).is_none())
-    }
-    fn incomplete_items(value: &Value, fields: &[&str]) -> bool {
-        value
-            .as_array()
-            .is_none_or(|items| items.iter().any(|item| missing(item, fields)))
-    }
-    if ["ultra_unlocked", "ultras", "dead_ultras"]
-        .iter()
-        .any(|field| !board.contains_key(*field))
-    {
-        return true;
-    }
-    if incomplete_items(
-        &board["ultras"],
-        &[
-            "id",
-            "alive",
-            "x",
-            "y",
-            "widget_x",
-            "widget_y",
-            "vx",
-            "vy",
-            "hunger",
-            "cannot_be_eaten_ticks",
-            "frame",
-            "turn_ticks",
-            "eating_ticks",
-            "coin_timer",
-            "coin_threshold",
-            "bought_timer",
-            "speed_mod",
-            "previous_vx",
-            "movement_state",
-            "movement_timer",
-            "special_timer",
-            "x_direction",
-            "vx_abs",
-            "swim_counter",
-            "speedy_speed_ticks",
-            "hunger_shown",
-            "hunger_animation_ticks",
-        ],
-    ) || incomplete_items(
-        &board["dead_ultras"],
-        &[
-            "id",
-            "x",
-            "y",
-            "widget_x",
-            "widget_y",
-            "frame",
-            "opacity",
-            "facing_right",
-            "remaining_ticks",
-            "vx",
-            "vy",
-            "speed_mod",
-        ],
-    ) {
-        return true;
-    }
-    if board
-        .get("food")
-        .is_some_and(|food| incomplete_items(food, &["nimbus_rising"]))
-    {
-        return true;
-    }
-    let Some(wave) = board.get("invasion").filter(|wave| !wave.is_null()) else {
-        return false;
-    };
-    if missing(wave, &["bilaterus", "fragments"])
-        || incomplete_items(
-            &wave["fragments"],
-            &[
-                "id",
-                "kind",
-                "x",
-                "y",
-                "widget_x",
-                "widget_y",
-                "vx",
-                "vy",
-                "frame",
-                "loop_count",
-            ],
-        )
-    {
-        return true;
-    }
-    wave["bilaterus"].as_array().is_none_or(|groups| {
-        groups.iter().any(|group| {
-            if missing(
-                group,
-                &[
-                    "id",
-                    "heads",
-                    "active_head",
-                    "bones",
-                    "emergence_ticks",
-                    "swap_ticks",
-                    "first_head_lost",
-                    "widget_x",
-                    "widget_y",
-                ],
-            ) {
-                return true;
-            }
-            group["heads"].as_array().is_none_or(|heads| {
-                heads.iter().any(|head| {
-                    !head.is_null()
-                        && missing(
-                            head,
-                            &[
-                                "x",
-                                "y",
-                                "widget_x",
-                                "widget_y",
-                                "vx",
-                                "vy",
-                                "health",
-                                "hit_ticks",
-                                "bite_cooldown",
-                                "frame",
-                                "swim_ticks",
-                                "turn_ticks",
-                                "movement_state",
-                                "movement_ticks",
-                                "movement_vx",
-                                "movement_vy",
-                                "facing_velocity",
-                                "follow_vx",
-                                "follow_vy",
-                                "follow_x",
-                                "follow_y",
-                                "follow_ticks",
-                                "connector_left",
-                                "turn_suppressed",
-                                "back",
-                            ],
-                        )
-                })
-            }) || incomplete_items(
-                &group["bones"],
-                &[
-                    "x",
-                    "y",
-                    "widget_x",
-                    "widget_y",
-                    "vx",
-                    "vy",
-                    "facing_velocity",
-                    "bite_cooldown",
-                    "follow_ticks",
-                    "follow_vx",
-                    "follow_vy",
-                ],
-            )
-        })
-    })
 }
 
 pub fn load_session(options: &Options) -> Result<AdventureSession, Box<dyn Error>> {

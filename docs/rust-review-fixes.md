@@ -33,8 +33,8 @@ any later main changes.
 | 1 | #311 | Valid final-candidate Time Trial fixture | Committed `c7b06fe` |
 | 2 | #312 | All-entry Sandbox publication projection | Committed `8f80305` |
 | 3 | #313 | Covered pending-money debt admission | Committed `587b6b6` |
-| 4 | #314 | Required nullable `last_laser` | Checked; commit follows |
-| 5 | #315 | Remove proven duplicate schema inventories | Pending |
+| 4 | #314 | Required nullable `last_laser` | Committed `2ec1a62` |
+| 5 | #315 | Remove proven duplicate schema inventories | Checked; commit follows |
 | 6 | #316 | Deliver applause through the effect path | Pending |
 | 7 | #317 | Reuse existing glyph layout for clipped text | Pending |
 | 8 | #318 | Retain installation digests instead of buffers | Pending |
@@ -134,3 +134,24 @@ All44 focused persistence/invasion checks, formatting, strict lint, compilation,
 isolated build and workflow pass. #314's non-retryable claim failed without
 mutation, correlation `6befece8-242b-4100-9290-d600efe1a92b`; inspection confirms
 Ready version6, unclaimed. No gameplay or live save was used.
+
+## Duplicate schema inventories
+
+Remove343 lines of OtherPet, purchase, special-pet, Challenge, Story and physical
+group field inventories, their helper and the now-unused board collection.
+Typed decoding retains required fields, scalar types, list shapes and lengths.
+A targeted source challenge falsified the initial complete-deletion claim:
+ordinary Serde structs accept positional arrays, and some old key checks also
+forced objects. A new Story-array regression reproduced that acceptance despite
+the first121 persistence checks passing. Retain54 lines of compact object-shape
+checks at exactly the previously constrained paths (results/receipts, Story,
+Challenge runs and selected actor/physical-group elements). Net CLI reduction is
+289 lines; no allocation, field-name inventory or new architectural layer is added.
+Existing nullable, forbidden-key, format and domain guards remain. Error wording
+for removed duplicate checks may now come from Serde.
+
+All122 persistence and17 CLI checks pass (139 passes, one ignored), including
+the new array rejection. Formatting, strict lint, compilation, isolated build
+and workflow pass. #315's non-retryable claim failed without mutation,
+correlation `6e42f9d6-73ac-4877-897c-1f0f79b0f6ef`; inspection confirms Ready
+version6, unclaimed. No gameplay or live saves were used.

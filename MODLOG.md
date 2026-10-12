@@ -2,6 +2,19 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Remove duplicate save-schema inventories (#315)
+
+`src/cli.rs` deletes343 inventory/helper lines and retains54 compact shape-check
+lines:289 net lines removed. The initial deletion passed121 persistence tests,
+but an adversarial review found Serde's positional struct-array acceptance.
+A new `tests/persistence.rs` regression reproduced the lost object restriction;
+the final correction preserves exactly those prior shape constraints. Required
+nullable fields, forbidden Sandbox keys, format and domain checks remain. All139
+persistence/CLI checks pass (one ignored), plus strict lint and compilation;
+formatting/build/workflow precede commit. #315 remains Ready/unclaimed after
+claim failure; [batch record](docs/rust-review-fixes.md) retains counter-evidence
+and exact tracking limits. No gameplay/live saves/install were used. Next: #316.
+
 ## 2026-10-12 — Require nullable laser-key presence (#314)
 
 `src/invasion.rs` requires `last_laser` during deserialization while accepting
