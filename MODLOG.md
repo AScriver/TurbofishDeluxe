@@ -2,6 +2,21 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Repair stale Time Trial final-candidate fixture (#311)
+
+The user authorized fixing all eight review findings in order. #311-318 were
+created and researched/prepared. #311's claim failed with a non-retryable internal
+error and readback remains Ready/unclaimed; the installed workflow fallback is
+recorded in the [owning batch record](docs/rust-review-fixes.md). The test now
+uses earned progress and buys through the two-candidate boundary before checking
+maxing, next price400, no Adventure eggs/victory and final validation. Production
+admission and shared fixtures are unchanged. Baseline failure and exact rerun
+were retained. Concurrent guppy test changes caused three unrelated failures and
+a formatting failure in the first mixed-tree check; own edits moved to a managed
+worktree without changing those files. All901 non-ignored tests, formatting,
+strict lint, isolated build and workflow now pass in isolation. No gameplay/live
+saves/install or normal-launch artifacts are touched. Next: commit, then #312.
+
 ## 2026-10-12 — Check guppy turn clock against movement speed
 
 The human suggested that turns might miss a movement-speed factor. Fresh target

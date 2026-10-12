@@ -4346,8 +4346,7 @@ mod tests {
 
     #[test]
     fn time_trial_final_candidate_maxes_egg_without_adventure_victory() {
-        let mut session = selection_session();
-        session.mode = GameMode::TimeTrial;
+        let mut session = time_trial_session();
         let mut events = Vec::new();
         assert!(session.start_time_trial(
             1,
@@ -4360,14 +4359,25 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .time_trial_candidates(&session.progress.unlocked_pets),
-            [PetKind::Prego]
+            [PetKind::Prego, PetKind::Zorf]
         );
+        session.board.as_mut().unwrap().balance = 300;
+        session.validate().unwrap();
+        session.apply_actions(&[Action::BuyEgg]);
+        let candidates = session
+            .board
+            .as_ref()
+            .unwrap()
+            .time_trial_candidates(&session.progress.unlocked_pets);
+        assert_eq!(candidates.len(), 1);
+        let last_candidate = candidates[0];
         session.apply_actions(&[Action::BuyEgg]);
         let run = session.time_trial.as_ref().unwrap();
-        assert_eq!(run.acquired_pets, [PetKind::Prego]);
+        assert_eq!(run.acquired_pets.len(), 2);
+        assert_eq!(run.acquired_pets.last(), Some(&last_candidate));
         assert_eq!(run.last_purchase_candidates, Some(1));
         assert!(run.egg_maxed);
-        assert_eq!(session.board.as_ref().unwrap().egg_price, 200);
+        assert_eq!(session.board.as_ref().unwrap().egg_price, 400);
         assert_eq!(session.board.as_ref().unwrap().eggs, 0);
         assert!(!session.board.as_ref().unwrap().victory);
         assert!(
