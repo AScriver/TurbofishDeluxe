@@ -308,6 +308,7 @@ pub struct Invasion1_2 {
     /// and missile leaves. It distinguishes a finished battle from peace.
     pub battle_active: bool,
     pub food_delay: u8,
+    #[serde(deserialize_with = "Option::<(i32, i32)>::deserialize")]
     pub last_laser: Option<(i32, i32)>,
     pub post_spawn_flash_ticks: u8,
     pub warps: Vec<WarpEffect>,

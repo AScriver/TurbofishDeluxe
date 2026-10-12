@@ -2,6 +2,17 @@
 
 Newest entries first. Update triggers and evidence rules are authoritative in [AGENTS](AGENTS.md). Each coherent entry records changed files, reason, actual checks/results, failures or not tested work, and next action. Completed entries are historical; add later corrections rather than hiding failed approaches.
 
+## 2026-10-12 — Require nullable laser-key presence (#314)
+
+`src/invasion.rs` requires `last_laser` during deserialization while accepting
+explicit null. A new `tests/persistence.rs` regression reproduced the omitted-key
+bug, then passed for active and retained boards in both containers and raw Serde.
+Null/coordinate next-click food-delay behavior is preserved. All44 focused
+persistence/invasion checks pass; formatting, strict lint, isolated build and
+workflow are checked before commit. #314 remains Ready/unclaimed after the
+claim error; [batch record](docs/rust-review-fixes.md) owns exact evidence.
+No gameplay/live saves/install were used. Next: commit, then #315.
+
 ## 2026-10-12 — Admit covered pending-money debt in both modes (#313)
 
 Two predicates in `src/sim.rs` now validate available funds, preserving the

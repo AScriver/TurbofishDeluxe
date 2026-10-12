@@ -197,6 +197,64 @@ mod current_codec {
     }
 
     #[test]
+    fn last_laser_is_required_nullable_and_preserves_active_and_retained_clicks() {
+        use turbofish_deluxe::invasion::InvasionEvent;
+
+        for retained in [false, true] {
+            for last_laser in [None, Some((0, 0))] {
+                let mut session = second_stage_session();
+                let wave = session.board.as_mut().unwrap().invasion.as_mut().unwrap();
+                wave.food_delay = 1;
+                wave.last_laser = last_laser;
+                session.validate().unwrap();
+                if retained {
+                    session
+                        .select_mode(GameMode::VirtualTank, 1_000, 0)
+                        .unwrap();
+                }
+                let current = serde_json::to_value(&session).unwrap();
+                let path = if retained {
+                    "/retained_adventure/board/invasion"
+                } else {
+                    "/board/invasion"
+                };
+                let standalone = cli::decode_save(&standalone_bytes(&current)).unwrap();
+                let profiles =
+                    Profiles::decode(&serde_json::to_vec(&profile_value(current.clone())).unwrap())
+                        .unwrap();
+                assert_eq!(serde_json::to_value(&standalone).unwrap(), current);
+                assert_eq!(
+                    serde_json::to_value(&profiles.current().unwrap().session).unwrap(),
+                    current
+                );
+
+                let mut reopened = standalone;
+                if retained {
+                    reopened.select_mode(GameMode::Adventure, 1_000, 0).unwrap();
+                }
+                let wave = reopened.board.as_mut().unwrap().invasion.as_mut().unwrap();
+                let click = wave.click_with_weapon_random_and_ids(100, 100, 2, || 0, || 100);
+                assert_eq!(click.suppress_food, last_laser.is_none());
+                assert_eq!(
+                    click.events.contains(&InvasionEvent::FoodDelayCleared),
+                    last_laser.is_some()
+                );
+
+                let mut missing = current;
+                missing
+                    .pointer_mut(path)
+                    .unwrap()
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("last_laser")
+                    .unwrap();
+                both_reject(&missing);
+                assert!(serde_json::from_value::<AdventureSession>(missing).is_err());
+            }
+        }
+    }
+
+    #[test]
     fn valid_sessions_decode_identically_in_standalone_and_profiles() {
         let fresh = AdventureSession::new(0x299);
         let mut playing = fresh.clone();

@@ -32,8 +32,8 @@ any later main changes.
 |---|---|---|---|
 | 1 | #311 | Valid final-candidate Time Trial fixture | Committed `c7b06fe` |
 | 2 | #312 | All-entry Sandbox publication projection | Committed `8f80305` |
-| 3 | #313 | Covered pending-money debt admission | Checked; commit follows |
-| 4 | #314 | Required nullable `last_laser` | Pending |
+| 3 | #313 | Covered pending-money debt admission | Committed `587b6b6` |
+| 4 | #314 | Required nullable `last_laser` | Checked; commit follows |
 | 5 | #315 | Remove proven duplicate schema inventories | Pending |
 | 6 | #316 | Deliver applause through the effect path | Pending |
 | 7 | #317 | Reuse existing glyph layout for clipped text | Pending |
@@ -122,3 +122,15 @@ also passed during focused verification. Formatting, strict lint, compilation,
 isolated build and workflow pass. #313's claim failed without mutation,
 correlation `d2d57eb1-bf92-43ef-a446-5a2ef172be32`; inspection confirms Ready
 version6, unclaimed. No gameplay or live saves were used.
+
+## Required nullable laser state
+
+`Invasion1_2::last_laser` uses the existing required-nullable Serde pattern.
+Omitted keys reject in raw sessions and both containers, including retained
+boards; explicit null remains valid. The new regression first reproduced missing
+key acceptance, then passed all active/retained and null/coordinate combinations.
+Reopened next-click food suppression and delay clearing preserve both cases.
+All44 focused persistence/invasion checks, formatting, strict lint, compilation,
+isolated build and workflow pass. #314's non-retryable claim failed without
+mutation, correlation `6befece8-242b-4100-9290-d600efe1a92b`; inspection confirms
+Ready version6, unclaimed. No gameplay or live save was used.
